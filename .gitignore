@@ -1,0 +1,5 @@
+/gloak
+/dist/
+*.db
+*.db-shm
+*.db-wal
