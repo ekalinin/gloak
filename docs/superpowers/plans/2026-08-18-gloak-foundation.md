@@ -1205,6 +1205,8 @@ package keys_test
 import (
 	"testing"
 
+	jose "github.com/go-jose/go-jose/v4"
+
 	"github.com/ekalinin/gloak/internal/keys"
 )
 
@@ -1248,25 +1250,52 @@ func TestJWKSExposesOnlyThePublicRSAKey(t *testing.T) {
 }
 
 func TestSignersUseTheExpectedAlgorithms(t *testing.T) {
+	// Signing and reading the JWS header back is what catches the mistake that
+	// matters here: the two signers swapped, so refresh tokens end up RS256 and
+	// access tokens HS512.
 	k, err := keys.Generate()
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
+	cases := []struct {
+		name    string
+		signer  func() (jose.Signer, error)
+		wantAlg string
+		wantKid string
+	}{
+		{"access and ID tokens", k.RSASigner, "RS256", k.RSAKeyID},
+		{"refresh tokens", k.HMACSigner, "HS512", k.HMACKeyID},
+	}
 
-	rs, err := k.RSASigner()
-	if err != nil {
-		t.Fatalf("RSASigner: %v", err)
-	}
-	hs, err := k.HMACSigner()
-	if err != nil {
-		t.Fatalf("HMACSigner: %v", err)
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			signer, err := tc.signer()
+			if err != nil {
+				t.Fatalf("signer: %v", err)
+			}
 
-	if got := rs.Options().ExtraHeaders; got == nil {
-		t.Fatal("want the RSA signer to carry headers")
-	}
-	if hs == nil {
-		t.Fatal("want an HMAC signer")
+			jws, err := signer.Sign([]byte(`{"sub":"probe"}`))
+			if err != nil {
+				t.Fatalf("Sign: %v", err)
+			}
+			serialised, err := jws.CompactSerialize()
+			if err != nil {
+				t.Fatalf("CompactSerialize: %v", err)
+			}
+			parsed, err := jose.ParseSigned(serialised,
+				[]jose.SignatureAlgorithm{jose.RS256, jose.HS512})
+			if err != nil {
+				t.Fatalf("ParseSigned: %v", err)
+			}
+
+			hdr := parsed.Signatures[0].Header
+			if string(hdr.Algorithm) != tc.wantAlg {
+				t.Errorf("want alg %s, got %s", tc.wantAlg, hdr.Algorithm)
+			}
+			if hdr.KeyID != tc.wantKid {
+				t.Errorf("want kid %s, got %s", tc.wantKid, hdr.KeyID)
+			}
+		})
 	}
 }
 ```
