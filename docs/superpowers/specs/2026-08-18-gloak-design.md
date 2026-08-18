@@ -113,6 +113,10 @@ prefix: Keycloak dropped it in version 17.
 
 PKCE is mandatory for public clients, `code_challenge_method=S256`.
 
+Access and ID tokens are signed RS256, **refresh tokens HS512 with a separate
+symmetric key**. That asymmetry was measured, not assumed, and it is the reason
+`keys` has to manage more than one key from the start rather than a single RSA pair.
+
 The `password` and `client_credentials` grants are in the first slice not as part
 of the browser login, but as a precondition for the admin API being usable at all:
 `kcadm.sh` authenticates through the password grant on the `admin-cli` client, and
@@ -139,9 +143,23 @@ the JSON exactly right from the beginning.
 
 ## 8. Bootstrap
 
-At startup we create: the `master` realm, the public `admin-cli` client with direct
-grant enabled, an administrator user, and the `realm-management` client roles. This
-is the arrangement existing tooling expects to find.
+At startup we create the `master` realm with the six clients the original ships
+with (`account`, `account-console`, `admin-cli`, `broker`, `master-realm`,
+`security-admin-console`), the five realm roles (`admin`, `create-realm`,
+`default-roles-master`, `offline_access`, `uma_authorization`), and an
+administrator user. This is the arrangement existing tooling expects to find.
+
+Two details were measured rather than assumed, and both matter:
+
+- the admin role container for `master` is the **`master-realm` client** with its 21
+  roles. `realm-management` is the equivalent client inside non-master realms, not
+  in `master`
+- `admin-cli` carries the attribute
+  `client.use.lightweight.access.token.enabled = true`, has direct grant enabled and
+  standard flow **disabled**. Without that attribute its tokens carry a different
+  claim set than the original's
+
+Exact values are in `2026-08-18-keycloak-26.7.1-observed.md`.
 
 ## 9. Deliberate departures from the original
 
@@ -198,15 +216,30 @@ must not stand in the way of adding it later.
 
 ## 11. Error format
 
-There are two formats:
+Measurement corrected this section. There are **four** distinct shapes, not two,
+and they do not split cleanly along the protocol/admin boundary:
 
-- **protocol errors** follow RFC 6749:
-  `{"error": "invalid_grant", "error_description": "..."}`
-- **admin API errors** use Keycloak's own format with an `errorMessage` field and
-  its own conventions for status codes, in particular 409 on conflicts
+1. **RFC 6749** on the token endpoint:
+   `{"error": "invalid_grant", "error_description": "..."}`
+2. **A bare `error` field holding prose**, used for 401 and 404 by both the protocol
+   and the admin API: `{"error": "Realm not found."}`
+3. **`errorMessage`**, used for admin API conflicts and validation failures:
+   `{"errorMessage": "Client X already exists"}`
+4. **RFC 6749 shape on the admin API**, for a malformed JSON body:
+   `{"error": "invalid_request", "error_description": "Cannot parse the JSON"}`
 
-Both are pinned by golden tests, because they cannot be reconstructed from the
-documentation.
+`userinfo` with an invalid token is a case of its own: 401, `text/plain`, an empty
+body, and the error carried in a `WWW-Authenticate` header.
+
+Two traps worth naming, both measured: an unknown client returns `invalid_client`
+while a wrong client secret returns `unauthorized_client`, with identical
+descriptions; and the "realm not found" message differs between the protocol and
+admin endpoints down to the trailing period.
+
+All of this is pinned by golden tests. Exact statuses and bodies are in
+`2026-08-18-keycloak-26.7.1-observed.md`. It cannot be reconstructed from the
+documentation, and, as this section demonstrates, it cannot be reconstructed from
+memory either.
 
 ## 12. Technology decisions
 
@@ -237,16 +270,22 @@ exchange.
 
 Each of these is a spec and an implementation cycle of its own.
 
-## 14. To be measured against a live instance during implementation
+## 14. Measured against a live instance
 
-Not "open design questions", but a list of things to be taken by measurement against
-`quay.io/keycloak/keycloak:26.7.1` rather than from memory:
+All six items below were measured on `quay.io/keycloak/keycloak:26.7.1` on
+2026-08-18, before the implementation plan was written. Results are recorded in
+`2026-08-18-keycloak-26.7.1-observed.md`:
 
-- the default password hashing algorithm and its parameters (in 26.x this is argon2;
-  the exact parameters are to be read from the instance)
-- the exact contents of the discovery document
-- the exact claim sets of access, refresh and ID tokens
-- the exact bodies and status codes for malformed requests, in both formats
-- the exact field sets of `RealmRepresentation`, `ClientRepresentation` and
-  `UserRepresentation`
-- the set of objects Keycloak creates when bootstrapping the `master` realm
+- default password hashing algorithm and parameters - argon2id 1.3, 5 iterations,
+  7168 KiB, parallelism 1, 32-byte output
+- contents of the discovery document - 53 top-level keys
+- claim sets of access, refresh and ID tokens, including the lightweight variant
+- bodies and status codes for malformed requests - four distinct error shapes
+- field sets of `RealmRepresentation` (106), `ClientRepresentation` (26) and
+  `UserRepresentation` (11)
+- objects created when bootstrapping the `master` realm - six clients, five realm
+  roles, 21 roles on the `master-realm` client
+
+Three of these contradicted what this spec originally assumed: the number of error
+shapes, the name of the admin role container, and the fact that refresh tokens are
+signed HS512 rather than RS256. Sections 8 and 11 were corrected as a result.
