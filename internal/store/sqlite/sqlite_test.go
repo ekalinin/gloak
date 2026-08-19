@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ekalinin/gloak/internal/model"
 	"github.com/ekalinin/gloak/internal/store"
 	"github.com/ekalinin/gloak/internal/store/sqlite"
 	"github.com/ekalinin/gloak/internal/store/storetest"
@@ -21,4 +22,41 @@ func TestConformance(t *testing.T) {
 		t.Cleanup(func() { _ = s.Close() })
 		return s
 	})
+}
+
+// TestReopenAnAlreadyMigratedStoreSucceeds proves Open is safe to call a
+// second time against a database file that already has all migrations
+// applied - the situation every server restart hits. A file DSN in
+// t.TempDir() is required rather than an in-memory database, since an
+// in-memory database never survives a Close and would prove nothing about
+// reopening persisted data.
+func TestReopenAnAlreadyMigratedStoreSucceeds(t *testing.T) {
+	ctx := context.Background()
+	dsn := filepath.Join(t.TempDir(), "gloak.db")
+
+	s1, err := sqlite.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+	want := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+	if err := s1.Realms().Create(ctx, want); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := s1.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	s2, err := sqlite.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("second Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.Close() })
+
+	got, err := s2.Realms().ByName(ctx, "master")
+	if err != nil {
+		t.Fatalf("ByName after reopen: %v", err)
+	}
+	if got.ID != want.ID {
+		t.Fatalf("realm lost across reopen: want id %q, got %q", want.ID, got.ID)
+	}
 }

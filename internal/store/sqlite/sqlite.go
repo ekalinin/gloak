@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,19 +36,84 @@ func Open(ctx context.Context, dsn string) (store.Store, error) {
 	return &Store{db: db}, nil
 }
 
+// migrate applies every migration file not yet recorded in
+// schema_migrations, in filename order, so Open is safe to call again
+// against a database that is already fully migrated - the situation every
+// server restart hits.
 func migrate(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+		filename   TEXT PRIMARY KEY,
+		applied_at INTEGER NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("sqlite: create schema_migrations: %w", err)
+	}
+
+	applied, err := appliedMigrations(ctx, db)
+	if err != nil {
+		return err
+	}
+
 	entries, err := migrations.ReadDir("migrations")
 	if err != nil {
 		return fmt.Errorf("sqlite: read migrations: %w", err)
 	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+
 	for _, e := range entries {
+		if applied[e.Name()] {
+			continue
+		}
 		b, err := migrations.ReadFile("migrations/" + e.Name())
 		if err != nil {
 			return fmt.Errorf("sqlite: read %s: %w", e.Name(), err)
 		}
-		if _, err := db.ExecContext(ctx, string(b)); err != nil {
-			return fmt.Errorf("sqlite: apply %s: %w", e.Name(), err)
+		if err := applyMigration(ctx, db, e.Name(), string(b)); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+// appliedMigrations returns the set of migration filenames already recorded
+// in schema_migrations.
+func appliedMigrations(ctx context.Context, db *sql.DB) (map[string]bool, error) {
+	rows, err := db.QueryContext(ctx, `SELECT filename FROM schema_migrations`)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: read schema_migrations: %w", err)
+	}
+	defer rows.Close()
+
+	applied := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("sqlite: scan schema_migrations: %w", err)
+		}
+		applied[name] = true
+	}
+	return applied, rows.Err()
+}
+
+// applyMigration runs one migration file's SQL and records it as applied
+// within the same transaction, so a crash between the two can never leave a
+// migration recorded as applied without having actually run.
+func applyMigration(ctx context.Context, db *sql.DB, name, sqlText string) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("sqlite: begin %s: %w", name, err)
+	}
+	defer tx.Rollback() // no-op once Commit has succeeded
+
+	if _, err := tx.ExecContext(ctx, sqlText); err != nil {
+		return fmt.Errorf("sqlite: apply %s: %w", name, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)`,
+		name, time.Now().UnixMilli()); err != nil {
+		return fmt.Errorf("sqlite: record %s: %w", name, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("sqlite: commit %s: %w", name, err)
 	}
 	return nil
 }
