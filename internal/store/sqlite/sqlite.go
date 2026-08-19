@@ -25,7 +25,7 @@ type Store struct{ db *sql.DB }
 
 // Open opens the database at dsn and applies all migrations.
 func Open(ctx context.Context, dsn string) (store.Store, error) {
-	db, err := sql.Open("sqlite", dsn+"?_pragma=foreign_keys(1)")
+	db, err := sql.Open("sqlite", withForeignKeysPragma(dsn))
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: open: %w", err)
 	}
@@ -34,6 +34,23 @@ func Open(ctx context.Context, dsn string) (store.Store, error) {
 		return nil, err
 	}
 	return &Store{db: db}, nil
+}
+
+// withForeignKeysPragma appends the _pragma=foreign_keys(1) query parameter
+// modernc.org/sqlite reads to enable foreign key enforcement, joining it
+// with "&" when dsn already carries a query string and "?" otherwise. A
+// naive dsn+"?_pragma=..." concatenation produces a second "?" whenever the
+// caller's DSN already has one (for example "file:x.db?cache=shared"); the
+// driver's query parser then folds everything after the first "&" (there is
+// none) into the value of the first parameter, so the pragma is silently
+// dropped rather than rejected outright - foreign key constraints stop
+// being enforced with no error to notice.
+func withForeignKeysPragma(dsn string) string {
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	return dsn + sep + "_pragma=foreign_keys(1)"
 }
 
 // migrate applies every migration file not yet recorded in

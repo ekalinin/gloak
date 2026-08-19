@@ -60,3 +60,33 @@ func TestReopenAnAlreadyMigratedStoreSucceeds(t *testing.T) {
 		t.Fatalf("realm lost across reopen: want id %q, got %q", want.ID, got.ID)
 	}
 }
+
+// TestForeignKeysEnforcedWithExistingQueryString proves that Open still
+// enables foreign key enforcement when the caller's DSN already carries a
+// query string. Open used to build the pragma DSN as dsn+"?_pragma=...",
+// which for a DSN like "file:x.db?cache=shared" produces two "?" characters;
+// the driver's query parser then folds everything after "cache=" into that
+// single value instead of seeing two parameters, so the pragma never takes
+// effect and this insert would wrongly succeed.
+func TestForeignKeysEnforcedWithExistingQueryString(t *testing.T) {
+	ctx := context.Background()
+	dsn := filepath.Join(t.TempDir(), "gloak.db") + "?cache=shared"
+
+	s, err := sqlite.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	err = s.Clients().Create(ctx, &model.Client{
+		ID:           model.NewID(),
+		RealmID:      "does-not-exist",
+		ClientID:     "probe",
+		RedirectURIs: []string{},
+		WebOrigins:   []string{},
+		Attributes:   map[string]string{},
+	})
+	if err == nil {
+		t.Fatal("want foreign key violation for a client referencing a nonexistent realm, got nil error")
+	}
+}
