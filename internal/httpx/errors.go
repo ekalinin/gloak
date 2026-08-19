@@ -8,6 +8,7 @@
 package httpx
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -48,17 +49,15 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.WriteHeader(status)
 	// Keycloak emits no trailing newline; SetEscapeHTML(false) keeps
 	// descriptions containing quotes or angle brackets byte-identical.
-	enc := json.NewEncoder(noNewline{w})
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
 	_ = enc.Encode(body)
-}
 
-// noNewline strips the trailing newline json.Encoder appends.
-type noNewline struct{ w http.ResponseWriter }
-
-func (n noNewline) Write(p []byte) (int, error) {
-	if len(p) > 0 && p[len(p)-1] == '\n' {
-		p = p[:len(p)-1]
+	// Trim the trailing newline that json.Encoder.Encode appends
+	b := buf.Bytes()
+	if len(b) > 0 && b[len(b)-1] == '\n' {
+		b = b[:len(b)-1]
 	}
-	return n.w.Write(p)
+	_, _ = w.Write(b)
 }

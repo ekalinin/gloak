@@ -74,3 +74,29 @@ func TestWriteBearerChallenge(t *testing.T) {
 		t.Fatalf("want %s, got %s", want, got)
 	}
 }
+
+func TestNoTrailingNewline(t *testing.T) {
+	// Verify that no trailing newline is present in the JSON body,
+	// regardless of payload size. This test uses a large error description
+	// to ensure the payload is interesting.
+	w := httptest.NewRecorder()
+
+	longDescription := "This is a very long error description that might span multiple chunks if not handled correctly. " +
+		"It contains lots of characters to make the JSON output large enough to be interesting. " +
+		"The json.Encoder.Encode method appends a trailing newline, and we must strip it."
+	httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_request", longDescription)
+
+	body := w.Body.String()
+
+	// Verify the body ends with }
+	if len(body) == 0 || body[len(body)-1] != '}' {
+		t.Fatalf("body must end with }, got: %q", body)
+	}
+
+	// Verify no newline exists anywhere in the body
+	for i, ch := range body {
+		if ch == '\n' {
+			t.Fatalf("body contains newline at position %d: %q", i, body)
+		}
+	}
+}
