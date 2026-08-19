@@ -3,6 +3,7 @@ module github.com/ekalinin/gloak
 go 1.26
 
 require (
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/moby/moby/api v1.55.0
 	github.com/testcontainers/testcontainers-go v0.44.0
