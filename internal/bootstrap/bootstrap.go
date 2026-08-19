@@ -19,6 +19,10 @@ import (
 
 const masterRealmName = "master"
 
+// passwordCredentialType is Keycloak's CredentialRepresentation.type value
+// for a password credential.
+const passwordCredentialType = "password"
+
 // Lifespans measured on a live Keycloak 26.7.1 instance: 60s access tokens,
 // 1800s refresh tokens in the master realm.
 const (
@@ -65,32 +69,24 @@ const (
 )
 
 // EnsureMaster creates the master realm, its default clients, its default
-// realm roles and the administrator account if they do not already exist.
-// It returns early, doing nothing, when the master realm is already
-// present, which makes it safe to call on every process start.
+// realm roles and the administrator account, creating only whatever is
+// currently missing. It converges rather than short-circuiting on "the realm
+// already exists": every object is ensured individually, so a process that
+// crashed midway through a previous run is repaired on the next call instead
+// of being left permanently half-built. Existing objects are never modified;
+// in particular, an existing admin credential is left alone rather than
+// reset, so this is safe to call on every process start.
 func EnsureMaster(ctx context.Context, s store.Store, adminUser, adminPassword string) error {
-	if _, err := s.Realms().ByName(ctx, masterRealmName); err == nil {
-		return nil
-	} else if !errors.Is(err, store.ErrNotFound) {
-		return fmt.Errorf("bootstrap: look up master realm: %w", err)
-	}
-
-	realm := &model.Realm{
-		ID:                   model.NewID(),
-		Name:                 masterRealmName,
-		Enabled:              true,
-		AccessTokenLifespan:  accessTokenLifespan,
-		RefreshTokenLifespan: refreshTokenLifespan,
-	}
-	if err := s.Realms().Create(ctx, realm); err != nil {
-		return fmt.Errorf("bootstrap: create master realm: %w", err)
+	realm, err := ensureRealm(ctx, s)
+	if err != nil {
+		return err
 	}
 
 	for _, c := range defaultClients {
 		c.ID = model.NewID()
 		c.RealmID = realm.ID
 		c.Enabled = true
-		if err := s.Clients().Create(ctx, &c); err != nil {
+		if err := s.Clients().Create(ctx, &c); err != nil && !errors.Is(err, store.ErrConflict) {
 			return fmt.Errorf("bootstrap: create client %q: %w", c.ClientID, err)
 		}
 	}
@@ -98,30 +94,89 @@ func EnsureMaster(ctx context.Context, s store.Store, adminUser, adminPassword s
 	for _, r := range defaultRealmRoles {
 		r.ID = model.NewID()
 		r.RealmID = realm.ID
-		if err := s.Roles().Create(ctx, &r); err != nil {
+		if err := s.Roles().Create(ctx, &r); err != nil && !errors.Is(err, store.ErrConflict) {
 			return fmt.Errorf("bootstrap: create role %q: %w", r.Name, err)
 		}
 	}
 
+	user, err := ensureAdminUser(ctx, s, realm.ID, adminUser)
+	if err != nil {
+		return err
+	}
+
+	return ensureAdminCredential(ctx, s, user.ID, adminPassword)
+}
+
+// ensureRealm creates the master realm, or looks up the existing one if a
+// previous run (or a concurrent one) already created it.
+func ensureRealm(ctx context.Context, s store.Store) (*model.Realm, error) {
+	realm := &model.Realm{
+		ID:                   model.NewID(),
+		Name:                 masterRealmName,
+		Enabled:              true,
+		AccessTokenLifespan:  accessTokenLifespan,
+		RefreshTokenLifespan: refreshTokenLifespan,
+	}
+	err := s.Realms().Create(ctx, realm)
+	switch {
+	case err == nil:
+		return realm, nil
+	case errors.Is(err, store.ErrConflict):
+		existing, err := s.Realms().ByName(ctx, masterRealmName)
+		if err != nil {
+			return nil, fmt.Errorf("bootstrap: look up master realm: %w", err)
+		}
+		return existing, nil
+	default:
+		return nil, fmt.Errorf("bootstrap: create master realm: %w", err)
+	}
+}
+
+// ensureAdminUser creates the admin user, or looks up the existing one.
+// Fields of an existing user are left untouched.
+func ensureAdminUser(ctx context.Context, s store.Store, realmID, adminUser string) (*model.User, error) {
 	user := &model.User{
 		ID:               model.NewID(),
-		RealmID:          realm.ID,
+		RealmID:          realmID,
 		Username:         adminUser,
 		Enabled:          true,
 		CreatedTimestamp: time.Now().UnixMilli(),
 	}
-	if err := s.Users().Create(ctx, user); err != nil {
-		return fmt.Errorf("bootstrap: create admin user: %w", err)
+	err := s.Users().Create(ctx, user)
+	switch {
+	case err == nil:
+		return user, nil
+	case errors.Is(err, store.ErrConflict):
+		existing, err := s.Users().ByUsername(ctx, realmID, adminUser)
+		if err != nil {
+			return nil, fmt.Errorf("bootstrap: look up admin user: %w", err)
+		}
+		return existing, nil
+	default:
+		return nil, fmt.Errorf("bootstrap: create admin user: %w", err)
+	}
+}
+
+// ensureAdminCredential stores a password credential for the admin user only
+// if one is not already present. SetCredential upserts, so this check is
+// what stops a second EnsureMaster call from resetting a password the
+// operator has since changed.
+func ensureAdminCredential(ctx context.Context, s store.Store, userID, adminPassword string) error {
+	_, err := s.Users().CredentialByUser(ctx, userID, passwordCredentialType)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("bootstrap: look up admin credential: %w", err)
 	}
 
-	cred, err := passwordCredential(user.ID, adminPassword)
+	cred, err := passwordCredential(userID, adminPassword)
 	if err != nil {
 		return fmt.Errorf("bootstrap: hash admin password: %w", err)
 	}
 	if err := s.Users().SetCredential(ctx, cred); err != nil {
 		return fmt.Errorf("bootstrap: store admin credential: %w", err)
 	}
-
 	return nil
 }
 
@@ -138,7 +193,7 @@ func passwordCredential(userID, password string) (*model.Credential, error) {
 	return &model.Credential{
 		ID:             model.NewID(),
 		UserID:         userID,
-		Type:           "password",
+		Type:           passwordCredentialType,
 		CreatedDate:    time.Now().UnixMilli(),
 		Algorithm:      "argon2",
 		HashIterations: argonTime,
