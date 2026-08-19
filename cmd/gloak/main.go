@@ -56,10 +56,18 @@ func parseConfig(args []string) (*config, error) {
 		"externally visible issuer base URL, no trailing slash (env GLOAK_ISSUER)")
 	fs.StringVar(&cfg.adminUser, "admin-user", envOr("GLOAK_ADMIN_USER", "admin"),
 		"master realm admin username (env GLOAK_ADMIN_USER)")
-	fs.StringVar(&cfg.adminPassword, "admin-password", envOr("GLOAK_ADMIN_PASSWORD", "admin"),
-		"master realm admin password (env GLOAK_ADMIN_PASSWORD)")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
+	}
+
+	// The admin password is deliberately not a flag: argv is visible to
+	// any other process on the machine (e.g. via ps). It is also
+	// deliberately not defaulted: a silent admin/admin bootstrap is a
+	// credential an operator may never learn they have.
+	cfg.adminPassword = os.Getenv("GLOAK_ADMIN_PASSWORD")
+	if cfg.adminPassword == "" {
+		return nil, errors.New("gloak: GLOAK_ADMIN_PASSWORD must be set; " +
+			"the master realm admin password has no default")
 	}
 	return cfg, nil
 }
@@ -97,10 +105,7 @@ func serve(args []string) error {
 		return fmt.Errorf("gloak: generate realm keys: %w", err)
 	}
 
-	server := &http.Server{
-		Addr:    cfg.addr,
-		Handler: logRequests(oidc.NewRouter(s, k, cfg.issuer)),
-	}
+	server := newHTTPServer(cfg.addr, logRequests(oidc.NewRouter(s, k, cfg.issuer)))
 
 	slog.Info("gloak: listening", "addr", cfg.addr, "issuer", cfg.issuer, "db", cfg.db)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -119,6 +124,31 @@ func openStore(ctx context.Context, driver, dsn string) (store.Store, error) {
 		return postgres.Open(ctx, dsn)
 	default:
 		return nil, fmt.Errorf("gloak: unknown store driver %q (want sqlite or postgres)", driver)
+	}
+}
+
+// newHTTPServer builds the http.Server for addr and handler with timeouts
+// set on every stage of a connection's lifecycle, so a stalled or malicious
+// peer cannot hold a connection - and the goroutine serving it - open
+// indefinitely:
+//   - ReadHeaderTimeout bounds how long a client may take to send request
+//     headers, the standard defence against slowloris-style attacks.
+//   - ReadTimeout bounds the full request, headers and body together; every
+//     request Gloak serves today is a small, header-only GET, so this is
+//     generous rather than tight.
+//   - WriteTimeout bounds how long writing the response may take; Gloak's
+//     bodies are small JSON documents, so this only guards against a stuck
+//     client that stops reading.
+//   - IdleTimeout bounds how long a keep-alive connection may sit idle
+//     between requests before it is closed.
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 }
 
