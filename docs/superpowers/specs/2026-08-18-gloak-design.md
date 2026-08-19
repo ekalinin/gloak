@@ -278,7 +278,7 @@ All six items below were measured on `quay.io/keycloak/keycloak:26.7.1` on
 
 - default password hashing algorithm and parameters - argon2id 1.3, 5 iterations,
   7168 KiB, parallelism 1, 32-byte output
-- contents of the discovery document - 53 top-level keys
+- contents of the discovery document - 56 top-level keys
 - claim sets of access, refresh and ID tokens, including the lightweight variant
 - bodies and status codes for malformed requests - four distinct error shapes
 - field sets of `RealmRepresentation` (106), `ClientRepresentation` (26) and

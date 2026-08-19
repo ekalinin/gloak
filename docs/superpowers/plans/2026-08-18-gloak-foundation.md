@@ -1639,13 +1639,13 @@ curl -s http://localhost:18091/realms/master/.well-known/openid-configuration \
 docker rm -f gloak-ref
 ```
 
-Verify it holds 53 keys before continuing:
+Verify it holds 56 keys before continuing:
 
 ```bash
 python3 -c "import json;print(len(json.load(open('internal/oidc/testdata/discovery-26.7.1.json'))))"
 ```
 
-Expected output: `53`
+Expected output: `56`
 
 - [ ] **Step 2: Write the failing test**
 
