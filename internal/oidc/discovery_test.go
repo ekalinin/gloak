@@ -1,6 +1,7 @@
 package oidc_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -65,6 +66,94 @@ func TestDiscoveryKeySetMatchesKeycloak(t *testing.T) {
 	sort.Strings(missing)
 	if len(missing) > 0 {
 		t.Fatalf("discovery is missing %d keys Keycloak emits: %v", len(missing), missing)
+	}
+}
+
+// topLevelKeyOrder walks a JSON object's top-level keys in the order they
+// appear in raw, without sorting them the way unmarshalling into a Go map
+// would. dec.More paired with decoding each value into json.RawMessage
+// advances past nested objects and arrays without needing to parse them.
+func topLevelKeyOrder(t *testing.T, raw []byte) []string {
+	t.Helper()
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		t.Fatalf("read opening token: %v", err)
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		t.Fatalf("want a top-level JSON object, got %v", tok)
+	}
+	var keys []string
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			t.Fatalf("read key: %v", err)
+		}
+		key, ok := keyTok.(string)
+		if !ok {
+			t.Fatalf("want a string key, got %v", keyTok)
+		}
+		keys = append(keys, key)
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			t.Fatalf("skip value for %q: %v", key, err)
+		}
+	}
+	return keys
+}
+
+// TestDiscoveryKeyOrderMatchesKeycloak pins the discovery document's field
+// order, byte position by byte position, against
+// testdata/discovery-26.7.1.json - the order captured from a live Keycloak
+// 26.7.1 instance. Go marshals map[string]any alphabetically, which does not
+// match Keycloak's order (it begins with "issuer", not "acr_values_supported");
+// this test would fail against a map-based implementation, and only passes
+// against a struct whose fields are declared in the captured order.
+func TestDiscoveryKeyOrderMatchesKeycloak(t *testing.T) {
+	raw, err := os.ReadFile("testdata/discovery-26.7.1.json")
+	if err != nil {
+		t.Fatalf("read reference: %v", err)
+	}
+	want := topLevelKeyOrder(t, raw)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/realms/master/.well-known/openid-configuration", nil)
+	w := httptest.NewRecorder()
+	newServer(t).ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body)
+	}
+	got := topLevelKeyOrder(t, w.Body.Bytes())
+
+	for i := range want {
+		if i >= len(got) {
+			t.Fatalf("response has only %d keys, want at least %d; first missing at position %d: %q",
+				len(got), len(want), i, want[i])
+		}
+		if got[i] != want[i] {
+			t.Fatalf("key order mismatch at position %d: want %q, got %q\nwant order: %v\ngot order:  %v",
+				i, want[i], got[i], want, got)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("key count mismatch: want %d, got %d\ngot order: %v", len(want), len(got), got)
+	}
+}
+
+// TestSuccessBodyEndsWithoutTrailingNewline proves the discovery response
+// ends with '}', not the newline json.Encoder.Encode appends. Keycloak sends
+// no trailing newline; a router-local writer that skips package httpx's
+// trimming step would fail this.
+func TestSuccessBodyEndsWithoutTrailingNewline(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet,
+		"/realms/master/.well-known/openid-configuration", nil)
+	w := httptest.NewRecorder()
+
+	newServer(t).ServeHTTP(w, req)
+
+	body := w.Body.Bytes()
+	if len(body) == 0 || body[len(body)-1] != '}' {
+		t.Fatalf("success body must end with '}', got: %q", body)
 	}
 }
 

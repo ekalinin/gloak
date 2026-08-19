@@ -7,8 +7,8 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/ekalinin/gloak/internal/httpx"
@@ -33,8 +33,67 @@ func NewRouter(s store.Store, k *keys.RealmKeys, issuerBase string) http.Handler
 	mux.HandleFunc("GET /realms/{realm}/.well-known/openid-configuration", h.discovery)
 	mux.HandleFunc("GET /realms/{realm}/protocol/openid-connect/certs", h.certs)
 	mux.HandleFunc("GET /realms/{realm}", h.realmInfo)
-	return mux
+	return withKeycloakFallbacks(mux)
 }
+
+// withKeycloakFallbacks routes requests that match no registered route, or
+// match a route's path with the wrong method, through package httpx instead
+// of falling through to net/http's own "404 page not found" and "Method Not
+// Allowed" plain-text bodies - shapes no Keycloak client expects and which
+// package httpx does not otherwise produce.
+//
+// Neither case is measured in
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md, since it
+// only records the routes Gloak implements today. The closest measured
+// precedent is the admin API's bad-token shape, `{"error":"HTTP 401
+// Unauthorized"}` (shape 2 with a generic "HTTP <code> <reason>" message);
+// that pattern is reused here for 404 and 405.
+func withKeycloakFallbacks(mux *http.ServeMux) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, pattern := mux.Handler(r); pattern == "" {
+			// mux.Handler returns an empty pattern both when no route
+			// matches the path and when a route matches the path but not
+			// the method. Run the request against a throwaway response so
+			// Go's own routing tells us which of the two happened (and,
+			// for a method mismatch, which methods it would have
+			// accepted), without ever writing net/http's own body to the
+			// real client.
+			probe := &fallbackProbe{}
+			h, _ := mux.Handler(r)
+			h.ServeHTTP(probe, r)
+
+			status := probe.status
+			if status == 0 {
+				status = http.StatusNotFound
+			}
+			if allow := probe.header.Get("Allow"); allow != "" {
+				w.Header().Set("Allow", allow)
+			}
+			httpx.WriteMessageError(w, status, fmt.Sprintf("HTTP %d %s", status, http.StatusText(status)))
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
+// fallbackProbe is a throwaway http.ResponseWriter used to learn the status
+// net/http's default handlers would have produced, without committing any
+// of their output to the real client.
+type fallbackProbe struct {
+	header http.Header
+	status int
+}
+
+func (p *fallbackProbe) Header() http.Header {
+	if p.header == nil {
+		p.header = make(http.Header)
+	}
+	return p.header
+}
+
+func (p *fallbackProbe) Write(b []byte) (int, error) { return len(b), nil }
+
+func (p *fallbackProbe) WriteHeader(status int) { p.status = status }
 
 // resolveRealm looks up the realm named in the request path. On
 // store.ErrNotFound it writes Keycloak's measured 404 shape and returns
@@ -57,14 +116,28 @@ func (h *handler) discovery(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, discoveryDoc(h.issuerBase, realm))
+	httpx.WriteJSON(w, http.StatusOK, discoveryDoc(h.issuerBase, realm))
 }
 
 func (h *handler) certs(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.resolveRealm(w, r); !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, h.keys.JWKS())
+	httpx.WriteJSON(w, http.StatusOK, h.keys.JWKS())
+}
+
+// realmInfoDocument is Keycloak's public realm descriptor. Field order is
+// not captured in a reference file the way the discovery document is (see
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md), so it is
+// chosen rather than measured: it follows the order this handler has used
+// since it was first written against a live Keycloak 26.7.1 instance
+// (realm, public_key, token-service, account-service, tokens-not-before).
+type realmInfoDocument struct {
+	Realm           string `json:"realm"`
+	PublicKey       string `json:"public_key"`
+	TokenService    string `json:"token-service"`
+	AccountService  string `json:"account-service"`
+	TokensNotBefore int    `json:"tokens-not-before"`
 }
 
 // realmInfo serves Keycloak's public realm descriptor: the realm name, its
@@ -82,12 +155,12 @@ func (h *handler) realmInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	realmBase := h.issuerBase + "/realms/" + realm
-	writeJSON(w, http.StatusOK, map[string]any{
-		"realm":             realm,
-		"public_key":        pub,
-		"token-service":     realmBase + "/protocol/openid-connect",
-		"account-service":   realmBase + "/account",
-		"tokens-not-before": 0,
+	httpx.WriteJSON(w, http.StatusOK, realmInfoDocument{
+		Realm:           realm,
+		PublicKey:       pub,
+		TokenService:    realmBase + "/protocol/openid-connect",
+		AccountService:  realmBase + "/account",
+		TokensNotBefore: 0,
 	})
 }
 
@@ -104,14 +177,4 @@ func publicKeyDER(k *keys.RealmKeys) (string, error) {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(der), nil
-}
-
-// writeJSON writes a 200-path JSON body. Error responses always go through
-// package httpx instead, which owns Keycloak's error shapes.
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	_ = enc.Encode(v)
 }

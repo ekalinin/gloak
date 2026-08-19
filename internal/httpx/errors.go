@@ -17,7 +17,7 @@ import (
 // WriteOAuthError writes shape 1, the RFC 6749 body used by the token endpoint
 // and by the admin API for an unparseable JSON payload.
 func WriteOAuthError(w http.ResponseWriter, status int, code, description string) {
-	writeJSON(w, status, map[string]string{
+	WriteJSON(w, status, map[string]string{
 		"error":             code,
 		"error_description": description,
 	})
@@ -26,13 +26,13 @@ func WriteOAuthError(w http.ResponseWriter, status int, code, description string
 // WriteMessageError writes shape 2: a bare error field carrying prose rather
 // than an OAuth error code, used for 401 and 404 on both sides.
 func WriteMessageError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
+	WriteJSON(w, status, map[string]string{"error": message})
 }
 
 // WriteAdminError writes shape 3: the errorMessage field the admin API uses for
 // conflicts and validation failures.
 func WriteAdminError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"errorMessage": message})
+	WriteJSON(w, status, map[string]string{"errorMessage": message})
 }
 
 // WriteBearerChallenge writes the userinfo rejection: 401, text/plain, an empty
@@ -44,7 +44,13 @@ func WriteBearerChallenge(w http.ResponseWriter, realm, errCode, description str
 	w.WriteHeader(http.StatusUnauthorized)
 }
 
-func writeJSON(w http.ResponseWriter, status int, body any) {
+// WriteJSON writes a JSON response body byte-exact to what Keycloak sends:
+// Content-Type: application/json, no trailing newline. json.Encoder always
+// appends one; WriteJSON trims it. This is the only function in Gloak that
+// is allowed to format a response body - every package that writes JSON,
+// success or error, must go through it, so the byte-exactness guarantee
+// cannot drift between call sites.
+func WriteJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	// Keycloak emits no trailing newline; SetEscapeHTML(false) keeps

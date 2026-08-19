@@ -1,5 +1,87 @@
 package oidc
 
+// mtlsEndpointAliases mirrors Keycloak's nested mtls_endpoint_aliases
+// object. Field order matches the order captured in
+// internal/oidc/testdata/discovery-26.7.1.json.
+type mtlsEndpointAliases struct {
+	TokenEndpoint                      string `json:"token_endpoint"`
+	RevocationEndpoint                 string `json:"revocation_endpoint"`
+	IntrospectionEndpoint              string `json:"introspection_endpoint"`
+	DeviceAuthorizationEndpoint        string `json:"device_authorization_endpoint"`
+	RegistrationEndpoint               string `json:"registration_endpoint"`
+	UserinfoEndpoint                   string `json:"userinfo_endpoint"`
+	PushedAuthorizationRequestEndpoint string `json:"pushed_authorization_request_endpoint"`
+	BackchannelAuthenticationEndpoint  string `json:"backchannel_authentication_endpoint"`
+}
+
+// discoveryDocument is the OpenID Connect discovery document served at
+// /realms/{realm}/.well-known/openid-configuration.
+//
+// Field order is declared exactly as Keycloak 26.7.1 emits it, transcribed
+// key-by-key from internal/oidc/testdata/discovery-26.7.1.json (56
+// top-level keys). Go marshals struct fields in declaration order, unlike
+// map keys, which are sorted alphabetically; that ordering is part of the
+// byte-exact contract, so it must never be reshuffled for readability.
+// TestDiscoveryKeyOrderMatchesKeycloak pins this against the captured file.
+type discoveryDocument struct {
+	Issuer                                                    string              `json:"issuer"`
+	AuthorizationEndpoint                                     string              `json:"authorization_endpoint"`
+	TokenEndpoint                                             string              `json:"token_endpoint"`
+	IntrospectionEndpoint                                     string              `json:"introspection_endpoint"`
+	UserinfoEndpoint                                          string              `json:"userinfo_endpoint"`
+	EndSessionEndpoint                                        string              `json:"end_session_endpoint"`
+	FrontchannelLogoutSessionSupported                        bool                `json:"frontchannel_logout_session_supported"`
+	FrontchannelLogoutSupported                               bool                `json:"frontchannel_logout_supported"`
+	JwksURI                                                   string              `json:"jwks_uri"`
+	CheckSessionIframe                                        string              `json:"check_session_iframe"`
+	GrantTypesSupported                                       []string            `json:"grant_types_supported"`
+	AcrValuesSupported                                        []string            `json:"acr_values_supported"`
+	ResponseTypesSupported                                    []string            `json:"response_types_supported"`
+	SubjectTypesSupported                                     []string            `json:"subject_types_supported"`
+	PromptValuesSupported                                     []string            `json:"prompt_values_supported"`
+	IDTokenSigningAlgValuesSupported                          []string            `json:"id_token_signing_alg_values_supported"`
+	IDTokenEncryptionAlgValuesSupported                       []string            `json:"id_token_encryption_alg_values_supported"`
+	IDTokenEncryptionEncValuesSupported                       []string            `json:"id_token_encryption_enc_values_supported"`
+	UserinfoSigningAlgValuesSupported                         []string            `json:"userinfo_signing_alg_values_supported"`
+	UserinfoEncryptionAlgValuesSupported                      []string            `json:"userinfo_encryption_alg_values_supported"`
+	UserinfoEncryptionEncValuesSupported                      []string            `json:"userinfo_encryption_enc_values_supported"`
+	RequestObjectSigningAlgValuesSupported                    []string            `json:"request_object_signing_alg_values_supported"`
+	RequestObjectEncryptionAlgValuesSupported                 []string            `json:"request_object_encryption_alg_values_supported"`
+	RequestObjectEncryptionEncValuesSupported                 []string            `json:"request_object_encryption_enc_values_supported"`
+	ResponseModesSupported                                    []string            `json:"response_modes_supported"`
+	RegistrationEndpoint                                      string              `json:"registration_endpoint"`
+	TokenEndpointAuthMethodsSupported                         []string            `json:"token_endpoint_auth_methods_supported"`
+	TokenEndpointAuthSigningAlgValuesSupported                []string            `json:"token_endpoint_auth_signing_alg_values_supported"`
+	IntrospectionEndpointAuthMethodsSupported                 []string            `json:"introspection_endpoint_auth_methods_supported"`
+	IntrospectionEndpointAuthSigningAlgValuesSupported        []string            `json:"introspection_endpoint_auth_signing_alg_values_supported"`
+	AuthorizationSigningAlgValuesSupported                    []string            `json:"authorization_signing_alg_values_supported"`
+	AuthorizationEncryptionAlgValuesSupported                 []string            `json:"authorization_encryption_alg_values_supported"`
+	AuthorizationEncryptionEncValuesSupported                 []string            `json:"authorization_encryption_enc_values_supported"`
+	ClaimsSupported                                           []string            `json:"claims_supported"`
+	ClaimTypesSupported                                       []string            `json:"claim_types_supported"`
+	ClaimsParameterSupported                                  bool                `json:"claims_parameter_supported"`
+	ScopesSupported                                           []string            `json:"scopes_supported"`
+	RequestParameterSupported                                 bool                `json:"request_parameter_supported"`
+	RequestURIParameterSupported                              bool                `json:"request_uri_parameter_supported"`
+	RequireRequestURIRegistration                             bool                `json:"require_request_uri_registration"`
+	CodeChallengeMethodsSupported                             []string            `json:"code_challenge_methods_supported"`
+	TLSClientCertificateBoundAccessTokens                     bool                `json:"tls_client_certificate_bound_access_tokens"`
+	DpopSigningAlgValuesSupported                             []string            `json:"dpop_signing_alg_values_supported"`
+	RevocationEndpoint                                        string              `json:"revocation_endpoint"`
+	RevocationEndpointAuthMethodsSupported                    []string            `json:"revocation_endpoint_auth_methods_supported"`
+	RevocationEndpointAuthSigningAlgValuesSupported           []string            `json:"revocation_endpoint_auth_signing_alg_values_supported"`
+	BackchannelLogoutSupported                                bool                `json:"backchannel_logout_supported"`
+	BackchannelLogoutSessionSupported                         bool                `json:"backchannel_logout_session_supported"`
+	DeviceAuthorizationEndpoint                               string              `json:"device_authorization_endpoint"`
+	BackchannelTokenDeliveryModesSupported                    []string            `json:"backchannel_token_delivery_modes_supported"`
+	BackchannelAuthenticationEndpoint                         string              `json:"backchannel_authentication_endpoint"`
+	BackchannelAuthenticationRequestSigningAlgValuesSupported []string            `json:"backchannel_authentication_request_signing_alg_values_supported"`
+	RequirePushedAuthorizationRequests                        bool                `json:"require_pushed_authorization_requests"`
+	PushedAuthorizationRequestEndpoint                        string              `json:"pushed_authorization_request_endpoint"`
+	MtlsEndpointAliases                                       mtlsEndpointAliases `json:"mtls_endpoint_aliases"`
+	AuthorizationResponseIssParameterSupported                bool                `json:"authorization_response_iss_parameter_supported"`
+}
+
 // discoveryDoc builds the OpenID Connect discovery document served at
 // /realms/{realm}/.well-known/openid-configuration.
 //
@@ -7,9 +89,8 @@ package oidc
 // The algorithm and capability arrays are fixed values transcribed from a
 // live Keycloak 26.7.1 instance, captured in
 // internal/oidc/testdata/discovery-26.7.1.json (56 top-level keys); see
-// TestDiscoveryKeySetMatchesKeycloak, which pins every key that capture
-// emits.
-func discoveryDoc(issuerBase, realm string) map[string]any {
+// TestDiscoveryKeySetMatchesKeycloak and TestDiscoveryKeyOrderMatchesKeycloak.
+func discoveryDoc(issuerBase, realm string) discoveryDocument {
 	realmBase := issuerBase + "/realms/" + realm
 	protoBase := realmBase + "/protocol/openid-connect"
 
@@ -39,18 +120,18 @@ func discoveryDoc(issuerBase, realm string) map[string]any {
 		"tls_client_auth", "client_secret_jwt",
 	}
 
-	return map[string]any{
-		"issuer":                                realmBase,
-		"authorization_endpoint":                protoBase + "/auth",
-		"token_endpoint":                        tokenEndpoint,
-		"introspection_endpoint":                introspectionEndpoint,
-		"userinfo_endpoint":                     userinfoEndpoint,
-		"end_session_endpoint":                  protoBase + "/logout",
-		"frontchannel_logout_session_supported": true,
-		"frontchannel_logout_supported":         true,
-		"jwks_uri":                              protoBase + "/certs",
-		"check_session_iframe":                  protoBase + "/login-status-iframe.html",
-		"grant_types_supported": []string{
+	return discoveryDocument{
+		Issuer:                             realmBase,
+		AuthorizationEndpoint:              protoBase + "/auth",
+		TokenEndpoint:                      tokenEndpoint,
+		IntrospectionEndpoint:              introspectionEndpoint,
+		UserinfoEndpoint:                   userinfoEndpoint,
+		EndSessionEndpoint:                 protoBase + "/logout",
+		FrontchannelLogoutSessionSupported: true,
+		FrontchannelLogoutSupported:        true,
+		JwksURI:                            protoBase + "/certs",
+		CheckSessionIframe:                 protoBase + "/login-status-iframe.html",
+		GrantTypesSupported: []string{
 			"authorization_code", "client_credentials", "implicit", "password",
 			"refresh_token", "urn:ietf:params:oauth:grant-type:device_code",
 			"urn:ietf:params:oauth:grant-type:jwt-bearer",
@@ -58,79 +139,79 @@ func discoveryDoc(issuerBase, realm string) map[string]any {
 			"urn:ietf:params:oauth:grant-type:uma-ticket",
 			"urn:openid:params:grant-type:ciba",
 		},
-		"acr_values_supported": []string{"0", "1"},
-		"response_types_supported": []string{
+		AcrValuesSupported: []string{"0", "1"},
+		ResponseTypesSupported: []string{
 			"code", "none", "id_token", "token", "id_token token",
 			"code id_token", "code token", "code id_token token",
 		},
-		"subject_types_supported":                        []string{"public", "pairwise"},
-		"prompt_values_supported":                        []string{"none", "login", "consent"},
-		"id_token_signing_alg_values_supported":          signingAlgs,
-		"id_token_encryption_alg_values_supported":       encryptionAlgs,
-		"id_token_encryption_enc_values_supported":       encryptionEncs,
-		"userinfo_signing_alg_values_supported":          append(append([]string{}, signingAlgs...), "none"),
-		"userinfo_encryption_alg_values_supported":       encryptionAlgs,
-		"userinfo_encryption_enc_values_supported":       encryptionEncs,
-		"request_object_signing_alg_values_supported":    append(append([]string{}, signingAlgs...), "none"),
-		"request_object_encryption_alg_values_supported": encryptionAlgs,
-		"request_object_encryption_enc_values_supported": encryptionEncs,
-		"response_modes_supported": []string{
+		SubjectTypesSupported:                     []string{"public", "pairwise"},
+		PromptValuesSupported:                     []string{"none", "login", "consent"},
+		IDTokenSigningAlgValuesSupported:          signingAlgs,
+		IDTokenEncryptionAlgValuesSupported:       encryptionAlgs,
+		IDTokenEncryptionEncValuesSupported:       encryptionEncs,
+		UserinfoSigningAlgValuesSupported:         append(append([]string{}, signingAlgs...), "none"),
+		UserinfoEncryptionAlgValuesSupported:      encryptionAlgs,
+		UserinfoEncryptionEncValuesSupported:      encryptionEncs,
+		RequestObjectSigningAlgValuesSupported:    append(append([]string{}, signingAlgs...), "none"),
+		RequestObjectEncryptionAlgValuesSupported: encryptionAlgs,
+		RequestObjectEncryptionEncValuesSupported: encryptionEncs,
+		ResponseModesSupported: []string{
 			"query", "fragment", "form_post", "query.jwt", "fragment.jwt",
 			"form_post.jwt", "jwt",
 		},
-		"registration_endpoint":                                    registrationEndpoint,
-		"token_endpoint_auth_methods_supported":                    clientAuthMethods,
-		"token_endpoint_auth_signing_alg_values_supported":         signingAlgs,
-		"introspection_endpoint_auth_methods_supported":            clientAuthMethods,
-		"introspection_endpoint_auth_signing_alg_values_supported": signingAlgs,
-		"authorization_signing_alg_values_supported":               signingAlgs,
-		"authorization_encryption_alg_values_supported":            encryptionAlgs,
-		"authorization_encryption_enc_values_supported":            encryptionEncs,
-		"claims_supported": []string{
+		RegistrationEndpoint:                               registrationEndpoint,
+		TokenEndpointAuthMethodsSupported:                  clientAuthMethods,
+		TokenEndpointAuthSigningAlgValuesSupported:         signingAlgs,
+		IntrospectionEndpointAuthMethodsSupported:          clientAuthMethods,
+		IntrospectionEndpointAuthSigningAlgValuesSupported: signingAlgs,
+		AuthorizationSigningAlgValuesSupported:             signingAlgs,
+		AuthorizationEncryptionAlgValuesSupported:          encryptionAlgs,
+		AuthorizationEncryptionEncValuesSupported:          encryptionEncs,
+		ClaimsSupported: []string{
 			"iss", "sub", "aud", "exp", "iat", "auth_time", "name",
 			"given_name", "family_name", "preferred_username", "email",
 			"acr", "azp", "nonce",
 		},
-		"claim_types_supported":      []string{"normal"},
-		"claims_parameter_supported": true,
-		"scopes_supported": []string{
+		ClaimTypesSupported:      []string{"normal"},
+		ClaimsParameterSupported: true,
+		ScopesSupported: []string{
 			"openid", "phone", "offline_access", "profile", "basic", "email",
 			"web-origins", "acr", "organization", "microprofile-jwt", "roles",
 			"address", "service_account",
 		},
-		"request_parameter_supported":                true,
-		"request_uri_parameter_supported":            true,
-		"require_request_uri_registration":           true,
-		"code_challenge_methods_supported":           []string{"plain", "S256"},
-		"tls_client_certificate_bound_access_tokens": true,
-		"dpop_signing_alg_values_supported": []string{
+		RequestParameterSupported:             true,
+		RequestURIParameterSupported:          true,
+		RequireRequestURIRegistration:         true,
+		CodeChallengeMethodsSupported:         []string{"plain", "S256"},
+		TLSClientCertificateBoundAccessTokens: true,
+		DpopSigningAlgValuesSupported: []string{
 			"PS384", "RS384", "EdDSA", "ES384", "ES256", "RS256", "ES512",
 			"PS256", "PS512", "RS512",
 		},
-		"revocation_endpoint":                                   revocationEndpoint,
-		"revocation_endpoint_auth_methods_supported":            clientAuthMethods,
-		"revocation_endpoint_auth_signing_alg_values_supported": signingAlgs,
-		"backchannel_logout_supported":                          true,
-		"backchannel_logout_session_supported":                  true,
-		"device_authorization_endpoint":                         deviceAuthorizationEndpoint,
-		"backchannel_token_delivery_modes_supported":            []string{"poll", "ping"},
-		"backchannel_authentication_endpoint":                   backchannelAuthenticationEndpoint,
-		"backchannel_authentication_request_signing_alg_values_supported": []string{
+		RevocationEndpoint:                              revocationEndpoint,
+		RevocationEndpointAuthMethodsSupported:          clientAuthMethods,
+		RevocationEndpointAuthSigningAlgValuesSupported: signingAlgs,
+		BackchannelLogoutSupported:                      true,
+		BackchannelLogoutSessionSupported:               true,
+		DeviceAuthorizationEndpoint:                     deviceAuthorizationEndpoint,
+		BackchannelTokenDeliveryModesSupported:          []string{"poll", "ping"},
+		BackchannelAuthenticationEndpoint:               backchannelAuthenticationEndpoint,
+		BackchannelAuthenticationRequestSigningAlgValuesSupported: []string{
 			"PS384", "RS384", "EdDSA", "ES384", "ES256", "RS256", "ES512",
 			"PS256", "PS512", "RS512",
 		},
-		"require_pushed_authorization_requests": false,
-		"pushed_authorization_request_endpoint": pushedAuthorizationRequestEndpoint,
-		"mtls_endpoint_aliases": map[string]string{
-			"token_endpoint":                        tokenEndpoint,
-			"revocation_endpoint":                   revocationEndpoint,
-			"introspection_endpoint":                introspectionEndpoint,
-			"device_authorization_endpoint":         deviceAuthorizationEndpoint,
-			"registration_endpoint":                 registrationEndpoint,
-			"userinfo_endpoint":                     userinfoEndpoint,
-			"pushed_authorization_request_endpoint": pushedAuthorizationRequestEndpoint,
-			"backchannel_authentication_endpoint":   backchannelAuthenticationEndpoint,
+		RequirePushedAuthorizationRequests: false,
+		PushedAuthorizationRequestEndpoint: pushedAuthorizationRequestEndpoint,
+		MtlsEndpointAliases: mtlsEndpointAliases{
+			TokenEndpoint:                      tokenEndpoint,
+			RevocationEndpoint:                 revocationEndpoint,
+			IntrospectionEndpoint:              introspectionEndpoint,
+			DeviceAuthorizationEndpoint:        deviceAuthorizationEndpoint,
+			RegistrationEndpoint:               registrationEndpoint,
+			UserinfoEndpoint:                   userinfoEndpoint,
+			PushedAuthorizationRequestEndpoint: pushedAuthorizationRequestEndpoint,
+			BackchannelAuthenticationEndpoint:  backchannelAuthenticationEndpoint,
 		},
-		"authorization_response_iss_parameter_supported": true,
+		AuthorizationResponseIssParameterSupported: true,
 	}
 }
