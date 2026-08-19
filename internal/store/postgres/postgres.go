@@ -29,39 +29,11 @@ func Open(ctx context.Context, dsn string) (store.Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("postgres: open: %w", err)
 	}
-	if err := waitReady(ctx, pool); err != nil {
-		pool.Close()
-		return nil, err
-	}
 	if err := migrate(ctx, pool); err != nil {
 		pool.Close()
 		return nil, err
 	}
 	return &Store{pool: pool}, nil
-}
-
-// waitReady tolerates the short window right after a Postgres server starts
-// accepting TCP connections but before it is ready to serve queries (for
-// example, while a freshly started container's listener is still coming up).
-// It is a no-op once the first ping succeeds, which is immediate against an
-// already-warm server.
-func waitReady(ctx context.Context, pool *pgxpool.Pool) error {
-	const (
-		attempts = 40
-		delay    = 250 * time.Millisecond
-	)
-	var err error
-	for i := 0; i < attempts; i++ {
-		if err = pool.Ping(ctx); err == nil {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("postgres: not reachable: %w", ctx.Err())
-		case <-time.After(delay):
-		}
-	}
-	return fmt.Errorf("postgres: not reachable after %d attempts: %w", attempts, err)
 }
 
 func migrate(ctx context.Context, pool *pgxpool.Pool) error {
