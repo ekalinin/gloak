@@ -63,10 +63,10 @@ func compare(t *testing.T, c Case, want Golden, got *httptest.ResponseRecorder) 
 	}
 
 	// Keep the first value for a repeated header name, matching what
-	// got.Header().Get(name) returns below: it is also first-value. A map
-	// built by letting a later entry overwrite an earlier one would compare
-	// the golden's last value against the response's first, disagreeing on
-	// any golden with a duplicated header name.
+	// gotByName below also does: it is also first-value. A map built by
+	// letting a later entry overwrite an earlier one would compare the
+	// golden's last value against the response's first, disagreeing on any
+	// golden with a duplicated header name.
 	byName := make(map[string]string, len(want.Headers))
 	for _, h := range want.Headers {
 		canonical := http.CanonicalHeaderKey(h.Name)
@@ -74,6 +74,27 @@ func compare(t *testing.T, c Case, want Golden, got *httptest.ResponseRecorder) 
 			byName[canonical] = h.Value
 		}
 	}
+
+	// Fold the response's headers into a canonicalised map too, rather than
+	// reading them through Header.Get. Get canonicalises its argument and
+	// then does a plain map lookup, so it can never see a header stored
+	// under a non-canonical map key - which is exactly how
+	// WriteBearerChallenge sets WWW-Authenticate, to match Keycloak's wire
+	// casing (see internal/httpx/errors.go's WriteBearerChallenge doc
+	// comment). Folding both sides the same way, with the same
+	// canonicalisation, makes a literal "WWW-Authenticate" map key and a
+	// canonical "Www-Authenticate" golden entry land in the same bucket.
+	gotByName := make(map[string]string, len(got.Header()))
+	for name, values := range got.Header() {
+		if len(values) == 0 {
+			continue
+		}
+		canonical := http.CanonicalHeaderKey(name)
+		if _, seen := gotByName[canonical]; !seen {
+			gotByName[canonical] = values[0]
+		}
+	}
+
 	for _, name := range c.AssertHeaders {
 		canonical := http.CanonicalHeaderKey(name)
 		expected, ok := byName[canonical]
@@ -81,12 +102,12 @@ func compare(t *testing.T, c Case, want Golden, got *httptest.ResponseRecorder) 
 			t.Errorf("header %s is asserted but absent from the golden", name)
 			continue
 		}
-		if actual := got.Header().Get(name); actual != expected {
+		if actual := gotByName[canonical]; actual != expected {
 			t.Errorf("header %s: want %q, got %q", name, expected, actual)
 		}
 	}
 	for _, name := range c.AssertAbsentHeaders {
-		if actual := got.Header().Get(name); actual != "" {
+		if actual, ok := gotByName[http.CanonicalHeaderKey(name)]; ok {
 			t.Errorf("header %s: want absent, got %q", name, actual)
 		}
 	}
