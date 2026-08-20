@@ -14,6 +14,33 @@ import (
 	"net/http"
 )
 
+// SetSecurityHeaders sets the five security headers Keycloak 26.7.1 attaches
+// to a response that reaches its filter chain: Referrer-Policy,
+// Strict-Transport-Security, X-Content-Type-Options, X-Frame-Options and
+// X-Robots-Tag. This is not called from writeJSON: Keycloak does not send
+// these on a request matching no route at all (see the "Fallback responses"
+// section of docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md),
+// so callers set them explicitly rather than getting them on every response.
+func SetSecurityHeaders(w http.ResponseWriter) {
+	h := w.Header()
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("X-Frame-Options", "SAMEORIGIN")
+	h.Set("X-Robots-Tag", "none")
+}
+
+// suppressDate omits the Date header net/http would otherwise add
+// automatically. Keycloak 26.7.1 sends no Date header on any response, so a
+// running Gloak that let net/http add one would differ from Keycloak on
+// every single response - a divergence the conformance harness cannot see,
+// since it serves through httptest.ResponseRecorder, which adds no Date
+// either. Setting the map entry to nil is net/http's documented way to omit
+// an otherwise-automatic header; see http.ResponseWriter.Header.
+func suppressDate(w http.ResponseWriter) {
+	w.Header()["Date"] = nil
+}
+
 // WriteOAuthError writes shape 1, the RFC 6749 body used by the token endpoint
 // and by the admin API for an unparseable JSON payload.
 func WriteOAuthError(w http.ResponseWriter, status int, code, description string) {
@@ -38,6 +65,7 @@ func WriteAdminError(w http.ResponseWriter, status int, message string) {
 // WriteBearerChallenge writes the userinfo rejection: 401, text/plain, an empty
 // body, and the error carried entirely in WWW-Authenticate.
 func WriteBearerChallenge(w http.ResponseWriter, realm, errCode, description string) {
+	suppressDate(w)
 	w.Header().Set("Content-Type", "text/plain;charset=utf-8")
 	w.Header().Set("WWW-Authenticate", fmt.Sprintf(
 		"Bearer realm=%q, error=%q, error_description=%q", realm, errCode, description))
@@ -65,6 +93,7 @@ func WriteJSONCharset(w http.ResponseWriter, status int, body any) {
 }
 
 func writeJSON(w http.ResponseWriter, status int, contentType string, body any) {
+	suppressDate(w)
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(status)
 	// Keycloak emits no trailing newline; SetEscapeHTML(false) keeps

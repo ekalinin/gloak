@@ -50,6 +50,13 @@ func NewRouter(s store.Store, k *keys.RealmKeys, issuerBase string) http.Handler
 // method the same way it answers every other unroutable request, its
 // generic shape-2 404 (`{"error":"HTTP 404 Not Found"}`) - not 405, and
 // with no `Allow` header.
+//
+// The five security headers (Referrer-Policy, Strict-Transport-Security,
+// X-Content-Type-Options, X-Frame-Options, X-Robots-Tag) track the same
+// split: present whenever a request reaches Keycloak's filter chain, which
+// happens for a route match and for a known path hit with the wrong method,
+// but not for a path matching no route at all. That is set here, at the
+// point that distinguishes the two, rather than in package httpx.
 func withKeycloakFallbacks(mux *http.ServeMux) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, pattern := mux.Handler(r); pattern == "" {
@@ -64,12 +71,14 @@ func withKeycloakFallbacks(mux *http.ServeMux) http.Handler {
 			h.ServeHTTP(probe, r)
 
 			if probe.header.Get("Allow") != "" {
+				httpx.SetSecurityHeaders(w)
 				httpx.WriteMessageError(w, http.StatusNotFound, "HTTP 404 Not Found")
 				return
 			}
 			httpx.WriteMessageError(w, http.StatusNotFound, "Unable to find matching target resource method")
 			return
 		}
+		httpx.SetSecurityHeaders(w)
 		mux.ServeHTTP(w, r)
 	})
 }
@@ -113,6 +122,10 @@ func (h *handler) discovery(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Measured on the golden: longer than every other endpoint's, and only
+	// present on the 200 - the "realm does not exist" 404 above sends no
+	// Cache-Control at all.
+	w.Header().Set("Cache-Control", "no-cache, must-revalidate, no-transform, no-store")
 	httpx.WriteJSON(w, http.StatusOK, discoveryDoc(h.issuerBase, realm))
 }
 
@@ -120,6 +133,7 @@ func (h *handler) certs(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.resolveRealm(w, r); !ok {
 		return
 	}
+	w.Header().Set("Cache-Control", "no-cache")
 	httpx.WriteJSON(w, http.StatusOK, jwksFor(h.keys))
 }
 
@@ -150,6 +164,7 @@ func (h *handler) realmInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	realmBase := h.issuerBase + "/realms/" + realm
+	w.Header().Set("Cache-Control", "no-cache")
 	httpx.WriteJSONCharset(w, http.StatusOK, realmInfoDocument{
 		Realm:           realm,
 		PublicKey:       pub,

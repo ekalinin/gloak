@@ -8,6 +8,49 @@ import (
 	"github.com/ekalinin/gloak/internal/httpx"
 )
 
+// TestWriteJSONOmitsDateHeader proves Gloak sends no Date header, matching
+// Keycloak 26.7.1, which sends none on any response. This cannot be proven
+// with httptest.NewRecorder as every other test in this file uses: a
+// ResponseRecorder never adds a Date header itself, so it can't tell a
+// suppressed header from one net/http would have added anyway. A real
+// http.Server does add one automatically unless the handler suppresses it,
+// so this test needs httptest.NewServer.
+func TestWriteJSONOmitsDateHeader(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpx.WriteJSON(w, http.StatusOK, map[string]string{"ok": "true"})
+	}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if got := resp.Header.Get("Date"); got != "" {
+		t.Fatalf("want no Date header, got %q", got)
+	}
+}
+
+// TestWriteBearerChallengeOmitsDateHeader is TestWriteJSONOmitsDateHeader's
+// counterpart for the one response shape that does not go through writeJSON.
+func TestWriteBearerChallengeOmitsDateHeader(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpx.WriteBearerChallenge(w, "master", "invalid_token", "Token verification failed")
+	}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if got := resp.Header.Get("Date"); got != "" {
+		t.Fatalf("want no Date header, got %q", got)
+	}
+}
+
 func TestWriteOAuthError(t *testing.T) {
 	w := httptest.NewRecorder()
 
