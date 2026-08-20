@@ -28,7 +28,7 @@ func newServer(t *testing.T) http.Handler {
 	if err := bootstrap.EnsureMaster(ctx, s, "admin", "admin"); err != nil {
 		t.Fatalf("EnsureMaster: %v", err)
 	}
-	k, err := keys.Generate()
+	k, err := keys.Generate("master")
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}

@@ -13,15 +13,16 @@ Each was reproduced, not theorised.
 
 `docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md` records the token
 endpoint, the error shapes, the cookies, the discovery document and the bootstrap.
-It has no section for `/protocol/openid-connect/certs` or for `GET /realms/{realm}`.
+It had no section for `/protocol/openid-connect/certs` or for `GET /realms/{realm}`.
 
-So the JWKS entry's field set, the realm-info field order, and the `Cache-Control`
-and CORS headers on all three shipped endpoints were written from memory. That
-breaks the project's own rule. Live Keycloak also publishes `x5c`, `x5t` and
-`x5t#S256` in its JWKS, which Gloak currently does not.
+**`/protocol/openid-connect/certs` is now measured and closed** (conformance
+harness task 7): the JWKS field set, order and base64 variants are recorded in the
+"Certificate endpoint" section of the observed-behaviour document, and
+`internal/oidc/discovery.go`'s `jwksDocument`/`jwksFor` marshal in that order with
+`x5c`, `x5t` and `x5t#S256` populated from a real self-signed certificate.
 
-Measure and record before the golden harness is written, or the harness will pin
-guesses.
+`GET /realms/{realm}` is still open: its field order was written from memory, not
+measured. Measure and record before trusting it as a contract.
 
 ## F4: the two store drivers are not behaviourally identical under concurrency
 
@@ -42,6 +43,16 @@ keys.
 
 The same single `RealmKeys` value also serves every realm the router resolves,
 which stops being correct as soon as a second realm exists.
+
+A live `master` realm's `/protocol/openid-connect/certs` publishes **two** keys,
+not one: an RS256 key with `use: sig` and a separate RSA-OAEP key with
+`use: enc` (measured while recording `oidc/certs/master` for the conformance
+harness, task 7 - see the "Certificate endpoint" section of the
+observed-behaviour document). `keys.Generate` only ever produces the signing
+key, so the `oidc/certs/master` conformance case cannot pass byte-for-byte
+until Gloak also generates and persists an encryption key: it is one more
+symptom of this finding, not a separate one, since both come down to realm
+keys not being modelled and persisted the way Keycloak models them.
 
 ## F6: migrations take no lock
 

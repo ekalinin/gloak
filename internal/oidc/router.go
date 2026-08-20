@@ -123,7 +123,7 @@ func (h *handler) certs(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.resolveRealm(w, r); !ok {
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, h.keys.JWKS())
+	httpx.WriteJSON(w, http.StatusOK, jwksFor(h.keys))
 }
 
 // realmInfoDocument is Keycloak's public realm descriptor. Field order is

@@ -100,7 +100,7 @@ func serve(args []string) error {
 		return fmt.Errorf("gloak: bootstrap master realm: %w", err)
 	}
 
-	k, err := keys.Generate()
+	k, err := keys.Generate("master")
 	if err != nil {
 		return fmt.Errorf("gloak: generate realm keys: %w", err)
 	}

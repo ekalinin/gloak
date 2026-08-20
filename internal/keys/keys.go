@@ -7,7 +7,11 @@ package keys
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"fmt"
+	"math/big"
+	"time"
 
 	jose "github.com/go-jose/go-jose/v4"
 
@@ -19,14 +23,23 @@ type RealmKeys struct {
 	HMACKeyID string
 
 	rsaKey  *rsa.PrivateKey
+	certDER []byte
 	hmacKey []byte
 }
 
-// Generate creates a fresh RSA key for RS256 and a fresh secret for HS512.
-func Generate() (*RealmKeys, error) {
+// Generate creates a fresh RSA key for RS256, a self-signed certificate over
+// it, and a fresh secret for HS512. Keycloak publishes the certificate in the
+// JWKS as x5c with its two thumbprints, so the key alone is not enough.
+// subjectCN is the realm name, which is what appears in the published
+// certificate's subject.
+func Generate(subjectCN string) (*RealmKeys, error) {
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, fmt.Errorf("keys: generate rsa: %w", err)
+	}
+	certDER, err := selfSign(rsaKey, subjectCN)
+	if err != nil {
+		return nil, err
 	}
 	hmacKey := make([]byte, 64)
 	if _, err := rand.Read(hmacKey); err != nil {
@@ -36,9 +49,32 @@ func Generate() (*RealmKeys, error) {
 		RSAKeyID:  model.NewID(),
 		HMACKeyID: model.NewID(),
 		rsaKey:    rsaKey,
+		certDER:   certDER,
 		hmacKey:   hmacKey,
 	}, nil
 }
+
+// selfSign issues the certificate Keycloak publishes alongside a realm key.
+// The validity window is fixed rather than derived from the clock so that two
+// processes generating a key produce comparable certificates; nothing
+// validates this chain, it is published for clients that pin x5c.
+func selfSign(key *rsa.PrivateKey, subjectCN string) ([]byte, error) {
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: subjectCN},
+		NotBefore:    time.Unix(0, 0).UTC(),
+		NotAfter:     time.Unix(0, 0).UTC().AddDate(100, 0, 0),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		return nil, fmt.Errorf("keys: self-sign: %w", err)
+	}
+	return der, nil
+}
+
+// CertificateDER is the realm certificate, published as x5c and hashed into
+// x5t and x5t#S256.
+func (k *RealmKeys) CertificateDER() []byte { return k.certDER }
 
 // JWKS returns the public key set served at
 // /realms/{realm}/protocol/openid-connect/certs. The HMAC key is never

@@ -1,5 +1,56 @@
 package oidc
 
+import (
+	"crypto/rsa"
+	"crypto/sha1"
+	"crypto/sha256"
+	"encoding/base64"
+	"math/big"
+
+	"github.com/ekalinin/gloak/internal/keys"
+)
+
+// jwksDocument is the JWKS as Keycloak orders it. Field order is taken from
+// internal/conformance/testdata/golden/oidc/certs/master.http; go-jose's own
+// marshalling uses a different order, which is why the set is not handed to
+// httpx.WriteJSON directly.
+type jwksDocument struct {
+	Keys []jwksKey `json:"keys"`
+}
+
+type jwksKey struct {
+	Kid     string   `json:"kid"`
+	Kty     string   `json:"kty"`
+	Alg     string   `json:"alg"`
+	Use     string   `json:"use"`
+	X5c     []string `json:"x5c"`
+	X5t     string   `json:"x5t"`
+	X5tS256 string   `json:"x5t#S256"`
+	N       string   `json:"n"`
+	E       string   `json:"e"`
+}
+
+// jwksFor builds the published key set from a realm's signing material.
+func jwksFor(k *keys.RealmKeys) jwksDocument {
+	set := k.JWKS()
+	pub := set.Keys[0].Key.(*rsa.PublicKey)
+	der := k.CertificateDER()
+	sha1Sum := sha1.Sum(der)
+	sha256Sum := sha256.Sum256(der)
+	enc := base64.RawURLEncoding
+	return jwksDocument{Keys: []jwksKey{{
+		Kid:     set.Keys[0].KeyID,
+		Kty:     "RSA",
+		Alg:     set.Keys[0].Algorithm,
+		Use:     set.Keys[0].Use,
+		X5c:     []string{base64.StdEncoding.EncodeToString(der)},
+		X5t:     enc.EncodeToString(sha1Sum[:]),
+		X5tS256: enc.EncodeToString(sha256Sum[:]),
+		N:       enc.EncodeToString(pub.N.Bytes()),
+		E:       enc.EncodeToString(big.NewInt(int64(pub.E)).Bytes()),
+	}}}
+}
+
 // mtlsEndpointAliases mirrors Keycloak's nested mtls_endpoint_aliases
 // object. Field order matches the order captured in
 // internal/oidc/testdata/discovery-26.7.1.json.

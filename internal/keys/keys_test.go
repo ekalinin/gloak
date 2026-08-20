@@ -1,6 +1,8 @@
 package keys_test
 
 import (
+	"crypto/rsa"
+	"crypto/x509"
 	"testing"
 
 	jose "github.com/go-jose/go-jose/v4"
@@ -9,7 +11,7 @@ import (
 )
 
 func TestGenerateProducesBothKeys(t *testing.T) {
-	k, err := keys.Generate()
+	k, err := keys.Generate("master")
 
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
@@ -25,7 +27,7 @@ func TestGenerateProducesBothKeys(t *testing.T) {
 func TestJWKSExposesOnlyThePublicRSAKey(t *testing.T) {
 	// The HMAC key signs refresh tokens, which are opaque to clients. Publishing
 	// it would hand out the ability to mint refresh tokens.
-	k, err := keys.Generate()
+	k, err := keys.Generate("master")
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -47,11 +49,42 @@ func TestJWKSExposesOnlyThePublicRSAKey(t *testing.T) {
 	}
 }
 
+func TestCertificateDERMatchesTheJWKSPublicKey(t *testing.T) {
+	// Keycloak publishes a certificate over the same RSA key it publishes in
+	// the JWKS. A certificate over a different key would still parse and
+	// still satisfy the field-set/order assertions, so this checks the one
+	// thing those cannot: that x5c actually attests the published key.
+	k, err := keys.Generate("master")
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	cert, err := x509.ParseCertificate(k.CertificateDER())
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+	if cert.Subject.CommonName != "master" {
+		t.Fatalf("want subject CN %q, got %q", "master", cert.Subject.CommonName)
+	}
+
+	certPub, ok := cert.PublicKey.(*rsa.PublicKey)
+	if !ok {
+		t.Fatalf("want an RSA public key in the certificate, got %T", cert.PublicKey)
+	}
+	jwkPub, ok := k.JWKS().Keys[0].Key.(*rsa.PublicKey)
+	if !ok {
+		t.Fatalf("want an RSA public key in the JWKS, got %T", k.JWKS().Keys[0].Key)
+	}
+	if !certPub.Equal(jwkPub) {
+		t.Fatal("want the certificate's public key to match the JWKS entry's")
+	}
+}
+
 func TestSignersUseTheExpectedAlgorithms(t *testing.T) {
 	// Signing and reading the JWS header back is what catches the mistake that
 	// matters here: the two signers swapped, so refresh tokens end up RS256 and
 	// access tokens HS512.
-	k, err := keys.Generate()
+	k, err := keys.Generate("master")
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}

@@ -33,4 +33,38 @@ var oidcCore = []Case{
 		Request:       Request{Method: http.MethodGet, Path: "/realms/nosuchrealm/.well-known/openid-configuration"},
 		AssertHeaders: []string{"Content-Type"},
 	},
+	{
+		ID: "oidc/certs/master",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Keycloak server OIDC endpoints: certificate endpoint",
+			Retrieved: "2026-08-20",
+		},
+		Status:        Implemented,
+		Fixture:       "bootstrap",
+		Request:       Request{Method: http.MethodGet, Path: "/realms/master/protocol/openid-connect/certs"},
+		AssertHeaders: []string{"Content-Type"},
+		// The realm key is generated per process, so everything derived from
+		// it varies. The field set, their order, and the algorithm metadata
+		// are what this case pins.
+		Volatile: []string{
+			"keys/*/kid",
+			"keys/*/n",
+			"keys/*/x5c",
+			"keys/*/x5t",
+			"keys/*/x5t#S256",
+		},
+	},
+	{
+		ID: "oidc/certs/unknown-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Keycloak server OIDC endpoints: certificate endpoint",
+			Retrieved: "2026-08-20",
+		},
+		Status:        Implemented,
+		Fixture:       "bootstrap",
+		Request:       Request{Method: http.MethodGet, Path: "/realms/nosuchrealm/protocol/openid-connect/certs"},
+		AssertHeaders: []string{"Content-Type"},
+	},
 }
