@@ -24,6 +24,9 @@ Working today:
 - realm info endpoint
 - Postgres and SQLite behind one storage interface, both passing the same
   conformance suite
+- a documentation-derived conformance suite (`internal/conformance`) that checks
+  Gloak's responses byte-for-byte against bytes recorded from a live
+  Keycloak 26.7.1
 
 Not implemented yet: tokens and grants, the browser login flow, userinfo, logout,
 introspection, revocation, the admin REST API, SAML, user federation, identity
@@ -111,6 +114,24 @@ go test -tags docker ./internal/store/postgres/
 That suite is the only evidence the two store drivers agree, so it is worth running
 before touching either.
 
+### Conformance against a live Keycloak
+
+The regression catalogue in `internal/conformance` lists documented Keycloak
+behaviours. The documentation supplies the list; a running Keycloak supplies the
+expected bytes. Nothing in the suite asserts a value taken from a document.
+
+```bash
+make conformance   # how much of the documented surface is served
+make record        # re-record expected bytes from Keycloak 26.7.1; needs Docker
+```
+
+`make record` rewrites the expected values in
+`internal/conformance/testdata/golden`. Read its diff before committing: an
+unreviewed re-record pins a regression as the new contract.
+
+An endpoint served without a recorded golden fails `make test`. That is
+deliberate - it is how "measured, never remembered" stops being a convention.
+
 If Docker runs through Colima or another non-default context, testcontainers does
 not discover it on its own:
 
@@ -131,6 +152,8 @@ single-binary property.
 | `docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md` | measured Keycloak behaviour, the compatibility contract |
 | `docs/superpowers/specs/2026-08-18-gloak-followups.md` | known gaps, each reproduced rather than theorised |
 | `docs/superpowers/plans/2026-08-18-gloak-foundation.md` | the implementation plan that produced the current code |
+| `docs/superpowers/specs/2026-08-20-conformance-harness-design.md` | design of the conformance harness |
+| `docs/superpowers/plans/2026-08-20-conformance-harness.md` | the plan that produced it |
 | `AGENTS.md` | working conventions, including the traps that look like bugs |
 
 ## Trademark

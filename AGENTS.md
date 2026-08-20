@@ -28,10 +28,10 @@ until curl -sf http://localhost:18091/realms/master >/dev/null; do sleep 2; done
 docker rm -f gloak-ref
 ```
 
-Two endpoints are shipped with no measured contract yet, noted in the follow-ups
-document: `/protocol/openid-connect/certs` and `GET /realms/{realm}`. Their field
-sets and cache headers were written from memory, against this rule, and should be
-measured before the golden harness lands.
+The rule is no longer only a convention. `internal/conformance` fails the build
+for any endpoint marked `Implemented` that has no recorded golden, so shipping a
+response nobody measured is a red test rather than something a reviewer has to
+catch.
 
 ## Things that look like bugs and are not
 
@@ -45,6 +45,10 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `unauthorized_client`** with identical descriptions.
 - **"Realm not found." has a trailing period on the admin API and none on the
   protocol endpoint.**
+- **`GET /realms/{realm}` sends `Content-Type: application/json;charset=UTF-8` on
+  its 200, and plain `application/json` on its own 404.** Every other endpoint
+  measured so far, success or error, sends plain `application/json`. The
+  inconsistency is real and it is only on this one endpoint.
 - **`not-before-policy`** in the token response is spelled with hyphens.
 - **Refresh tokens are signed HS512**, access and ID tokens RS256. That is why a
   realm holds two keys.
@@ -66,6 +70,7 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 | `internal/oidc` | protocol handlers | know about SQL; it sees only `store` interfaces |
 | `internal/bootstrap` | creating the `master` realm | modify objects that already exist |
 | `cmd/gloak` | config, wiring, serving | contain logic worth testing on its own |
+| `internal/conformance` | the documentation-derived catalogue and golden comparison | be imported by production code, or know about SQL or handler internals; it sees only an `http.Handler` |
 
 Two of these have already been violated once and repaired, so they are worth
 restating:
