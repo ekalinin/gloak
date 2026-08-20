@@ -95,6 +95,3 @@ a second replica exits at startup.
   claims it covers every one. Either widen it or correct the comment.
 - The 21 client roles on the `master-realm` client are required by section 8 of the
   design spec and were deliberately deferred to the admin API plan.
-- One response shape is still chosen rather than measured, and is marked as such
-  in the code: the 404 and 405 fallback bodies. (The realm-info key order was the
-  other one; it is now measured, see F3 above.)

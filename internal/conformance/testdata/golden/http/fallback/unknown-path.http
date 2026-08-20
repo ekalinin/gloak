@@ -1,0 +1,6 @@
+# GET /nosuchpath
+HTTP/1.1 404 Not Found
+Content-Length: {{volatile}}
+Content-Type: application/json
+
+{"error":"Unable to find matching target resource method"}

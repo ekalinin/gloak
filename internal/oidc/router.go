@@ -8,7 +8,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/ekalinin/gloak/internal/httpx"
@@ -42,46 +41,44 @@ func NewRouter(s store.Store, k *keys.RealmKeys, issuerBase string) http.Handler
 // Allowed" plain-text bodies - shapes no Keycloak client expects and which
 // package httpx does not otherwise produce.
 //
-// Neither case is measured in
-// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md, since it
-// only records the routes Gloak implements today. The closest measured
-// precedent is the admin API's bad-token shape, `{"error":"HTTP 401
-// Unauthorized"}` (shape 2 with a generic "HTTP <code> <reason>" message);
-// that pattern is reused here for 404 and 405.
+// Both bodies are measured, recorded in
+// internal/conformance/testdata/golden/http/fallback/ and written up in the
+// "Fallback responses" section of
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md. Keycloak
+// answers a path matching no route with `{"error":"Unable to find matching
+// target resource method"}`; it answers a known path hit with the wrong
+// method the same way it answers every other unroutable request, its
+// generic shape-2 404 (`{"error":"HTTP 404 Not Found"}`) - not 405, and
+// with no `Allow` header.
 func withKeycloakFallbacks(mux *http.ServeMux) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, pattern := mux.Handler(r); pattern == "" {
 			// mux.Handler returns an empty pattern both when no route
 			// matches the path and when a route matches the path but not
 			// the method. Run the request against a throwaway response so
-			// Go's own routing tells us which of the two happened (and,
-			// for a method mismatch, which methods it would have
-			// accepted), without ever writing net/http's own body to the
-			// real client.
+			// Go's own routing tells us which of the two happened, without
+			// ever writing net/http's own body to the real client. Go's
+			// ServeMux only ever sets an Allow header on the second case.
 			probe := &fallbackProbe{}
 			h, _ := mux.Handler(r)
 			h.ServeHTTP(probe, r)
 
-			status := probe.status
-			if status == 0 {
-				status = http.StatusNotFound
+			if probe.header.Get("Allow") != "" {
+				httpx.WriteMessageError(w, http.StatusNotFound, "HTTP 404 Not Found")
+				return
 			}
-			if allow := probe.header.Get("Allow"); allow != "" {
-				w.Header().Set("Allow", allow)
-			}
-			httpx.WriteMessageError(w, status, fmt.Sprintf("HTTP %d %s", status, http.StatusText(status)))
+			httpx.WriteMessageError(w, http.StatusNotFound, "Unable to find matching target resource method")
 			return
 		}
 		mux.ServeHTTP(w, r)
 	})
 }
 
-// fallbackProbe is a throwaway http.ResponseWriter used to learn the status
-// net/http's default handlers would have produced, without committing any
-// of their output to the real client.
+// fallbackProbe is a throwaway http.ResponseWriter used to learn whether
+// net/http's default handling would have set an Allow header, without
+// committing any of its output to the real client.
 type fallbackProbe struct {
 	header http.Header
-	status int
 }
 
 func (p *fallbackProbe) Header() http.Header {
@@ -93,7 +90,7 @@ func (p *fallbackProbe) Header() http.Header {
 
 func (p *fallbackProbe) Write(b []byte) (int, error) { return len(b), nil }
 
-func (p *fallbackProbe) WriteHeader(status int) { p.status = status }
+func (p *fallbackProbe) WriteHeader(status int) {}
 
 // resolveRealm looks up the realm named in the request path. On
 // store.ErrNotFound it writes Keycloak's measured 404 shape and returns

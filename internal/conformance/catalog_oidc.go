@@ -96,4 +96,28 @@ var oidcCore = []Case{
 		Request:       Request{Method: http.MethodGet, Path: "/realms/nosuchrealm"},
 		AssertHeaders: []string{"Content-Type"},
 	},
+	{
+		ID: "http/fallback/unknown-path",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Keycloak server OIDC endpoints: paths outside the endpoint set",
+			Retrieved: "2026-08-20",
+		},
+		Status:        Implemented,
+		Fixture:       "bootstrap",
+		Request:       Request{Method: http.MethodGet, Path: "/nosuchpath"},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "http/fallback/method-not-allowed",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Keycloak server OIDC endpoints: well-known configuration endpoint",
+			Retrieved: "2026-08-20",
+		},
+		Status:        Implemented,
+		Fixture:       "bootstrap",
+		Request:       Request{Method: http.MethodPost, Path: "/realms/master/.well-known/openid-configuration"},
+		AssertHeaders: []string{"Content-Type"},
+	},
 }
