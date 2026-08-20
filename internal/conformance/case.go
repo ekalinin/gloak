@@ -10,6 +10,14 @@
 // This package is test-only. Production code must not import it.
 package conformance
 
+import (
+	"bytes"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+)
+
 // Status says whether Gloak serves a documented behaviour today.
 type Status int
 
@@ -65,4 +73,48 @@ type Case struct {
 	// change per response. Their values are replaced before comparison while
 	// their presence and position stay asserted. "*" matches one segment.
 	Volatile []string
+
+	// Unordered lists paths pointing at JSON arrays Keycloak emits in no
+	// stable order. Their elements are sorted before comparison, so membership
+	// and length stay asserted while order does not.
+	Unordered []string
+}
+
+// buildRequest turns a Case's Request into an *http.Request aimed at base.
+// The recorder points base at the reference container; the verifier points it
+// at the in-process handler's issuer.
+func buildRequest(base string, r Request) (*http.Request, error) {
+	target := base + r.Path
+	if len(r.Query) > 0 {
+		q := url.Values{}
+		for k, v := range r.Query {
+			q.Set(k, v)
+		}
+		target += "?" + q.Encode()
+	}
+
+	var body io.Reader
+	form := len(r.Form) > 0
+	switch {
+	case form:
+		values := url.Values{}
+		for k, v := range r.Form {
+			values.Set(k, v)
+		}
+		body = strings.NewReader(values.Encode())
+	case len(r.Body) > 0:
+		body = bytes.NewReader(r.Body)
+	}
+
+	req, err := http.NewRequest(r.Method, target, body)
+	if err != nil {
+		return nil, err
+	}
+	if form {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	for k, v := range r.Headers {
+		req.Header.Set(k, v)
+	}
+	return req, nil
 }

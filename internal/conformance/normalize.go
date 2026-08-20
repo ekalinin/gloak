@@ -44,11 +44,43 @@ func Normalize(raw []byte, paths []string) ([]byte, error) {
 	}
 
 	e := &editor{dec: json.NewDecoder(bytes.NewReader(raw)), patterns: patterns}
+	e.onMatch = e.replace
 	if err := e.value(nil); err != nil {
 		if err == io.EOF {
 			return raw, nil
 		}
 		return nil, fmt.Errorf("conformance: normalize: %w", err)
+	}
+	return applyEdits(raw, e.edits), nil
+}
+
+// SortUnordered reorders the elements of the JSON arrays at the given paths,
+// sorted by each element's own raw bytes. Each element keeps its bytes
+// verbatim; only their sequence changes. Everything else - key order,
+// spacing, the rest of the document - is untouched, using the same
+// byte-range splice machinery as Normalize.
+//
+// Path syntax matches Normalize: slash-separated from the document root,
+// "*" matching one segment. A path that does not resolve to an array is an
+// error rather than a silent no-op: Unordered exists to keep asserting
+// membership while giving up order, and a scalar or object at that path
+// means the wrong path was named.
+func SortUnordered(raw []byte, paths []string) ([]byte, error) {
+	if len(paths) == 0 || len(bytes.TrimSpace(raw)) == 0 {
+		return raw, nil
+	}
+	patterns := make([][]string, 0, len(paths))
+	for _, p := range paths {
+		patterns = append(patterns, strings.Split(p, "/"))
+	}
+
+	e := &editor{dec: json.NewDecoder(bytes.NewReader(raw)), patterns: patterns}
+	e.onMatch = e.sortArray
+	if err := e.value(nil); err != nil {
+		if err == io.EOF {
+			return raw, nil
+		}
+		return nil, fmt.Errorf("conformance: sort unordered: %w", err)
 	}
 	return applyEdits(raw, e.edits), nil
 }
@@ -62,6 +94,10 @@ type editor struct {
 	dec      *json.Decoder
 	patterns [][]string
 	edits    []edit
+	// onMatch is called with the decoder positioned at a value whose path
+	// matched a pattern exactly. Normalize and SortUnordered plug in
+	// different behaviour here; the walk and the splice are shared.
+	onMatch func() error
 }
 
 // value handles the JSON value at the decoder's current position, given the
@@ -69,7 +105,7 @@ type editor struct {
 func (e *editor) value(path []string) error {
 	switch {
 	case matchesAny(path, e.patterns):
-		return e.replace()
+		return e.onMatch()
 	case prefixOfAny(path, e.patterns):
 		return e.descend(path)
 	default:
@@ -93,6 +129,52 @@ func (e *editor) replace() error {
 		end:   end,
 		repl:  []byte(`"{{` + jsonTypeOf(raw) + `}}"`),
 	})
+	return nil
+}
+
+// sortArray records an edit that reorders the elements of the array at the
+// current position, sorted by their own raw bytes. It reuses replace's
+// offset arithmetic to find the array's byte range, then re-decodes just
+// that range to split it into elements without disturbing their bytes.
+func (e *editor) sortArray() error {
+	var raw json.RawMessage
+	if err := e.dec.Decode(&raw); err != nil {
+		return err
+	}
+	end := int(e.dec.InputOffset())
+	start := end - len(raw)
+
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return fmt.Errorf("value at this path is not an array: %s", raw)
+	}
+
+	elemDec := json.NewDecoder(bytes.NewReader(raw))
+	if _, err := elemDec.Token(); err != nil { // consume '['
+		return err
+	}
+	var elems []json.RawMessage
+	for elemDec.More() {
+		var el json.RawMessage
+		if err := elemDec.Decode(&el); err != nil {
+			return err
+		}
+		elems = append(elems, el)
+	}
+
+	sort.Slice(elems, func(i, j int) bool { return bytes.Compare(elems[i], elems[j]) < 0 })
+
+	var buf bytes.Buffer
+	buf.WriteByte('[')
+	for i, el := range elems {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		buf.Write(el)
+	}
+	buf.WriteByte(']')
+
+	e.edits = append(e.edits, edit{start: start, end: end, repl: buf.Bytes()})
 	return nil
 }
 

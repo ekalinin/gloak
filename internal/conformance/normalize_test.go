@@ -114,3 +114,64 @@ func TestNormalizeStillDistinguishesTransposedKeys(t *testing.T) {
 		t.Fatalf("normalisation erased key order: both became %s", a)
 	}
 }
+
+// TestSortUnorderedSortsATwoElementArray pins the basic case: elements come
+// back lexicographically ordered by their own raw bytes, and the fields
+// surrounding the array are untouched.
+func TestSortUnorderedSortsATwoElementArray(t *testing.T) {
+	in := []byte(`{"before":1,"scopes":["b","a"],"after":2}`)
+	got, err := SortUnordered(in, []string{"scopes"})
+	if err != nil {
+		t.Fatalf("SortUnordered: %v", err)
+	}
+	want := `{"before":1,"scopes":["a","b"],"after":2}`
+	if string(got) != want {
+		t.Fatalf("want %s, got %s", want, got)
+	}
+}
+
+func TestSortUnorderedResolvesANestedPath(t *testing.T) {
+	in := []byte(`{"a":{"b":["z","y","x"]}}`)
+	got, err := SortUnordered(in, []string{"a/b"})
+	if err != nil {
+		t.Fatalf("SortUnordered: %v", err)
+	}
+	want := `{"a":{"b":["x","y","z"]}}`
+	if string(got) != want {
+		t.Fatalf("want %s, got %s", want, got)
+	}
+}
+
+func TestSortUnorderedWildcardMatchesOneSegment(t *testing.T) {
+	in := []byte(`{"items":[{"tags":["b","a"]},{"tags":["y","x"]}]}`)
+	got, err := SortUnordered(in, []string{"items/*/tags"})
+	if err != nil {
+		t.Fatalf("SortUnordered: %v", err)
+	}
+	want := `{"items":[{"tags":["a","b"]},{"tags":["x","y"]}]}`
+	if string(got) != want {
+		t.Fatalf("want %s, got %s", want, got)
+	}
+}
+
+func TestSortUnorderedLeavesAnAlreadySortedArrayUnchanged(t *testing.T) {
+	in := []byte(`{"scopes":["a","b","c"]}`)
+	got, err := SortUnordered(in, []string{"scopes"})
+	if err != nil {
+		t.Fatalf("SortUnordered: %v", err)
+	}
+	if string(got) != string(in) {
+		t.Fatalf("want %s, got %s", in, got)
+	}
+}
+
+// TestSortUnorderedRejectsANonArrayPath is the negative test: Unordered
+// exists to assert membership while giving up order, and a path that does
+// not point at an array means the wrong path was named. Silently doing
+// nothing would hide that mistake.
+func TestSortUnorderedRejectsANonArrayPath(t *testing.T) {
+	in := []byte(`{"scopes":"not-an-array"}`)
+	if _, err := SortUnordered(in, []string{"scopes"}); err == nil {
+		t.Fatal("want an error for a path that is not an array, got nil")
+	}
+}

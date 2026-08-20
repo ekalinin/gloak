@@ -16,6 +16,10 @@ var oidcCore = []Case{
 		Fixture:       "bootstrap",
 		Request:       Request{Method: http.MethodGet, Path: "/realms/master/.well-known/openid-configuration"},
 		AssertHeaders: []string{"Content-Type"},
+		// scopes_supported is a Java set whose iteration order is fixed at
+		// container startup but differs between starts; see
+		// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+		Unordered: []string{"scopes_supported"},
 	},
 	{
 		ID: "oidc/discovery/unknown-realm",
