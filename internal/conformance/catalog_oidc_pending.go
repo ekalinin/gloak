@@ -300,12 +300,37 @@ var oidcPending = []Case{
 	// lists. They are configured token lifespans (60 and 1800 for master;
 	// see the "Token endpoint response" section of
 	// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md), not
-	// per-request randomness, and recording oidc/token/password-grant-admin-cli
-	// twice against independent fresh containers (2026-08-20) returned the
-	// identical values both times - the only field that changed between the
-	// two runs was scope's word order, already tracked below. session_state
-	// stays masked: it is a fresh UUID per response, unlike the two duration
-	// fields.
+	// per-request randomness - but that is measured for exactly one of the
+	// eight token-issuing cases this affects, not for all eight.
+	//
+	// oidc/token/password-grant-admin-cli, the only one with a bootstrap
+	// fixture today, was recorded twice against independent fresh containers
+	// (2026-08-20) and returned identical expires_in/refresh_expires_in both
+	// times - the only field that changed between the two runs was scope's
+	// word order, already tracked below. That is a measurement.
+	//
+	// The other seven - oidc/token/authorization-code-grant,
+	// refresh-token-grant, client-credentials-grant, device-code-grant,
+	// ciba-grant, dpop-bound-token, and oidc/ciba/poll-complete further down
+	// this file - have no golden at all; none of them can be recorded yet.
+	// Unmasking expires_in/refresh_expires_in for those seven is an
+	// inference from the one measured case, not a measurement of its own: it
+	// assumes they share the master realm's token endpoint closely enough to
+	// behave the same way. The direction is safe - removing a path from
+	// Volatile writes no value anywhere, and a wrong inference fails loudly
+	// the moment a case gains a fixture and gets recorded - but it is an
+	// inference, not the measurement this project's rule asks for. Confirm
+	// each one when it gains a fixture.
+	//
+	// oidc/token/refresh-token-grant is the weakest member of the seven:
+	// refresh_expires_in on a *refresh* response is bounded by the
+	// remaining SSO session lifetime, not purely by the configured
+	// refresh-token lifespan, so "configured lifespan, not randomness" is
+	// least obviously safe there. That is a flag for whoever measures it,
+	// not a measurement.
+	//
+	// session_state stays masked in all eight: it is a fresh UUID per
+	// response, unlike the two duration fields.
 	{
 		ID: "oidc/token/password-grant-admin-cli",
 		Doc: Doc{
