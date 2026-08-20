@@ -299,7 +299,8 @@ A harness that proves nothing passes quietly, so it is tested directly:
 
 ### 12.1 Implemented cases
 
-Eight, all recorded and all green when the slice lands:
+Eight, all recorded. Seven are green when the slice lands; `oidc/certs/master` is
+red by decision - see 12.3.
 
 | ID | Request |
 |---|---|
@@ -341,7 +342,24 @@ endpoints and six grants. Grouped by endpoint:
 
 Sixty entries. The implementation plan enumerates them by ID.
 
-### 12.3 Fixes required to land green
+### 12.3 Fixes required, and the one deliberately not made
+
+**Decision, 2026-08-20: `oidc/certs/master` ships red.** Recording showed the `master`
+realm publishes **two** keys, an RS256 `use: sig` key and a separate RSA-OAEP
+`use: enc` key. Gloak generates only the signing key. Everything else about the
+endpoint now matches byte for byte - field order, `x5c`, both thumbprints, `n`, `e` -
+so the failure is exactly one missing key entry.
+
+Generating an encryption key Gloak cannot use was rejected. Realm keys are already
+known to be broken in a way that needs its own slice: they are generated per process,
+never persisted, the `kid` changes on every restart, and two replicas publish
+different keys. Adding a second key with all of those properties doubles that surface
+for the sake of a green tick. The case stays red until realm keys are modelled and
+persisted, and the follow-ups document records it under F5.
+
+The cost is real and is accepted: tasks that follow run against a suite with one known
+failure, so their acceptance gate is "exactly one failure, `oidc/certs/master`, and
+nothing else" rather than a clean run.
 
 Recording will expose the divergences follow-up F3 already predicted:
 
