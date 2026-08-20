@@ -127,11 +127,9 @@ func (h *handler) certs(w http.ResponseWriter, r *http.Request) {
 }
 
 // realmInfoDocument is Keycloak's public realm descriptor. Field order is
-// not captured in a reference file the way the discovery document is (see
-// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md), so it is
-// chosen rather than measured: it follows the order this handler has used
-// since it was first written against a live Keycloak 26.7.1 instance
-// (realm, public_key, token-service, account-service, tokens-not-before).
+// measured: see the "Realm info endpoint" section of
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md and
+// internal/conformance/testdata/golden/realm/info/master.http.
 type realmInfoDocument struct {
 	Realm           string `json:"realm"`
 	PublicKey       string `json:"public_key"`
@@ -155,7 +153,7 @@ func (h *handler) realmInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	realmBase := h.issuerBase + "/realms/" + realm
-	httpx.WriteJSON(w, http.StatusOK, realmInfoDocument{
+	httpx.WriteJSONCharset(w, http.StatusOK, realmInfoDocument{
 		Realm:           realm,
 		PublicKey:       pub,
 		TokenService:    realmBase + "/protocol/openid-connect",

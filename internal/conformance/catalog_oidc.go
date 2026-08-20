@@ -71,4 +71,29 @@ var oidcCore = []Case{
 		Request:       Request{Method: http.MethodGet, Path: "/realms/nosuchrealm/protocol/openid-connect/certs"},
 		AssertHeaders: []string{"Content-Type"},
 	},
+	{
+		ID: "realm/info/master",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs/26.7.1/server_admin/index.html",
+			Section:   "Realm public information endpoint used by adapters",
+			Retrieved: "2026-08-20",
+		},
+		Status:        Implemented,
+		Fixture:       "bootstrap",
+		Request:       Request{Method: http.MethodGet, Path: "/realms/master"},
+		AssertHeaders: []string{"Content-Type"},
+		Volatile:      []string{"public_key"},
+	},
+	{
+		ID: "realm/info/unknown-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs/26.7.1/server_admin/index.html",
+			Section:   "Realm public information endpoint used by adapters",
+			Retrieved: "2026-08-20",
+		},
+		Status:        Implemented,
+		Fixture:       "bootstrap",
+		Request:       Request{Method: http.MethodGet, Path: "/realms/nosuchrealm"},
+		AssertHeaders: []string{"Content-Type"},
+	},
 }

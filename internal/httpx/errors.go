@@ -51,7 +51,21 @@ func WriteBearerChallenge(w http.ResponseWriter, realm, errCode, description str
 // success or error, must go through it, so the byte-exactness guarantee
 // cannot drift between call sites.
 func WriteJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
+	writeJSON(w, status, "application/json", body)
+}
+
+// WriteJSONCharset is WriteJSON with ";charset=UTF-8" appended to the
+// Content-Type. Measured on GET /realms/{realm}: unlike every other endpoint
+// recorded so far, which sends plain "application/json", Keycloak 26.7.1
+// sends this on the realm info endpoint's success response. See the "Realm
+// info endpoint" section of
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+func WriteJSONCharset(w http.ResponseWriter, status int, body any) {
+	writeJSON(w, status, "application/json;charset=UTF-8", body)
+}
+
+func writeJSON(w http.ResponseWriter, status int, contentType string, body any) {
+	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(status)
 	// Keycloak emits no trailing newline; SetEscapeHTML(false) keeps
 	// descriptions containing quotes or angle brackets byte-identical.

@@ -54,6 +54,25 @@ func TestWriteAdminError(t *testing.T) {
 	}
 }
 
+func TestWriteJSONCharset(t *testing.T) {
+	// Realm info's success response carries a charset, unlike every other
+	// JSON endpoint recorded so far.
+	w := httptest.NewRecorder()
+
+	httpx.WriteJSONCharset(w, http.StatusOK, map[string]string{"realm": "master"})
+
+	if w.Code != 200 {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+	if got, want := w.Header().Get("Content-Type"), "application/json;charset=UTF-8"; got != want {
+		t.Fatalf("want %q, got %q", want, got)
+	}
+	want := `{"realm":"master"}`
+	if got := w.Body.String(); got != want {
+		t.Fatalf("want %s, got %s", want, got)
+	}
+}
+
 func TestWriteBearerChallenge(t *testing.T) {
 	// userinfo with a bad token: 401, text/plain, empty body, error in the header.
 	w := httptest.NewRecorder()

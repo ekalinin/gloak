@@ -9,7 +9,7 @@ recorded here so the next plan starts from them rather than rediscovering them.
 
 Each was reproduced, not theorised.
 
-## F3: two shipped endpoints have no measured contract
+## F3: two shipped endpoints have no measured contract (closed)
 
 `docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md` records the token
 endpoint, the error shapes, the cookies, the discovery document and the bootstrap.
@@ -21,8 +21,17 @@ harness task 7): the JWKS field set, order and base64 variants are recorded in t
 `internal/oidc/discovery.go`'s `jwksDocument`/`jwksFor` marshal in that order with
 `x5c`, `x5t` and `x5t#S256` populated from a real self-signed certificate.
 
-`GET /realms/{realm}` is still open: its field order was written from memory, not
-measured. Measure and record before trusting it as a contract.
+**`GET /realms/{realm}` is now measured and closed** too (conformance harness
+task 8): the field order is recorded in the "Realm info endpoint" section of the
+observed-behaviour document, and `internal/oidc/router.go`'s `realmInfoDocument`
+carries that order (it turned out to match the guess already in place, but was a
+guess until this recording). The one surprise was `Content-Type`: the success
+response carries `;charset=UTF-8`, unlike every other endpoint measured so far,
+which `internal/httpx.WriteJSONCharset` now accounts for.
+
+Both endpoints now have `Implemented` cases in `internal/conformance`, so the
+conformance verifier enforces this rule - measured, never remembered - for them
+on every test run, and for every endpoint added after them.
 
 ## F4: the two store drivers are not behaviourally identical under concurrency
 
@@ -86,5 +95,6 @@ a second replica exits at startup.
   claims it covers every one. Either widen it or correct the comment.
 - The 21 client roles on the `master-realm` client are required by section 8 of the
   design spec and were deliberately deferred to the admin API plan.
-- Two response shapes are chosen rather than measured, and are marked as such in the
-  code: the 404 and 405 fallback bodies, and the realm-info key order.
+- One response shape is still chosen rather than measured, and is marked as such
+  in the code: the 404 and 405 fallback bodies. (The realm-info key order was the
+  other one; it is now measured, see F3 above.)
