@@ -296,6 +296,16 @@ var oidcPending = []Case{
 	},
 
 	// --- Token endpoint ---
+	// expires_in and refresh_expires_in are not in these cases' Volatile
+	// lists. They are configured token lifespans (60 and 1800 for master;
+	// see the "Token endpoint response" section of
+	// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md), not
+	// per-request randomness, and recording oidc/token/password-grant-admin-cli
+	// twice against independent fresh containers (2026-08-20) returned the
+	// identical values both times - the only field that changed between the
+	// two runs was scope's word order, already tracked below. session_state
+	// stays masked: it is a fresh UUID per response, unlike the two duration
+	// fields.
 	{
 		ID: "oidc/token/password-grant-admin-cli",
 		Doc: Doc{
@@ -328,8 +338,7 @@ var oidcPending = []Case{
 		},
 		AssertHeaders: []string{"Content-Type"},
 		Volatile: []string{
-			"access_token", "refresh_token", "id_token",
-			"expires_in", "refresh_expires_in", "session_state",
+			"access_token", "refresh_token", "id_token", "session_state",
 		},
 	},
 	{
@@ -376,8 +385,7 @@ var oidcPending = []Case{
 		},
 		AssertHeaders: []string{"Content-Type"},
 		Volatile: []string{
-			"access_token", "refresh_token", "id_token",
-			"expires_in", "refresh_expires_in", "session_state",
+			"access_token", "refresh_token", "id_token", "session_state",
 		},
 	},
 	{
@@ -401,8 +409,7 @@ var oidcPending = []Case{
 		},
 		AssertHeaders: []string{"Content-Type"},
 		Volatile: []string{
-			"access_token", "refresh_token", "id_token",
-			"expires_in", "refresh_expires_in", "session_state",
+			"access_token", "refresh_token", "id_token", "session_state",
 		},
 	},
 	{
@@ -425,7 +432,7 @@ var oidcPending = []Case{
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
-		Volatile:      []string{"access_token", "expires_in"},
+		Volatile:      []string{"access_token"},
 	},
 	{
 		ID: "oidc/token/device-code-grant",
@@ -448,8 +455,7 @@ var oidcPending = []Case{
 		},
 		AssertHeaders: []string{"Content-Type"},
 		Volatile: []string{
-			"access_token", "refresh_token", "id_token",
-			"expires_in", "refresh_expires_in", "session_state",
+			"access_token", "refresh_token", "id_token", "session_state",
 		},
 	},
 	{
@@ -473,8 +479,7 @@ var oidcPending = []Case{
 		},
 		AssertHeaders: []string{"Content-Type"},
 		Volatile: []string{
-			"access_token", "refresh_token", "id_token",
-			"expires_in", "refresh_expires_in", "session_state",
+			"access_token", "refresh_token", "id_token", "session_state",
 		},
 	},
 	{
@@ -545,8 +550,7 @@ var oidcPending = []Case{
 		},
 		AssertHeaders: []string{"Content-Type"},
 		Volatile: []string{
-			"access_token", "refresh_token", "id_token",
-			"expires_in", "refresh_expires_in", "session_state",
+			"access_token", "refresh_token", "id_token", "session_state",
 		},
 	},
 	{
@@ -1248,8 +1252,7 @@ var oidcPending = []Case{
 		},
 		AssertHeaders: []string{"Content-Type"},
 		Volatile: []string{
-			"access_token", "refresh_token", "id_token",
-			"expires_in", "refresh_expires_in", "session_state",
+			"access_token", "refresh_token", "id_token", "session_state",
 		},
 	},
 

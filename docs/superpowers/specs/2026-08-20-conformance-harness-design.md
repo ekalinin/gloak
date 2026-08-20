@@ -150,9 +150,18 @@ before comparison, so membership and length stay asserted while sequence does no
 See section 7 for the measurement that forced it.
 
 `Volatile` is what makes the approach possible at all. A token response carries a
-fresh `access_token`, `expires_in` and `session_state` on every run, but the field
-set and their order are exactly the contract being copied. Volatile paths have their
-values replaced and their **presence and position still asserted**.
+fresh `access_token` and `session_state` on every run, but the field set and their
+order are exactly the contract being copied. Volatile paths have their values
+replaced and their **presence and position still asserted**.
+
+Not everything that looks per-request actually is. `expires_in` and
+`refresh_expires_in` are configured token lifespans, not randomness - recording
+`oidc/token/password-grant-admin-cli` against two independent fresh containers
+(2026-08-20) returned the identical values, 60 and 1800, both times; see the "Token
+endpoint response" section of
+docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md. They are pinned like
+any other field rather than masked, which is what "measured, never remembered"
+requires: masking a value nobody checked is a guess wearing the harness's clothes.
 
 `Fixture` has one value in this slice, `bootstrap`, and one implementation: a fresh
 store with `EnsureMaster` applied. It is a seam, not machinery - without it the
