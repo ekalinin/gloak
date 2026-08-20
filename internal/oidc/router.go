@@ -41,6 +41,17 @@ func NewRouter(s store.Store, k *keys.RealmKeys, issuerBase string) http.Handler
 // Allowed" plain-text bodies - shapes no Keycloak client expects and which
 // package httpx does not otherwise produce.
 //
+// This does not cover every path net/http answers on its own. mux.Handler
+// reports a non-empty pattern - the redirect handler's - for a request whose
+// path is not "clean" in ServeMux's sense: a doubled slash (//realms/master)
+// or a "." or ".." element (/realms/master/../master). The guard below only
+// distinguishes "no route" from "route, wrong method"; it treats a non-clean
+// path the same as a route match and hands it to mux.ServeHTTP, which
+// answers with net/http's own 307 and an HTML body, never reaching httpx.
+// See follow-up F11 in docs/superpowers/specs/2026-08-18-gloak-followups.md
+// - what Keycloak 26.7.1 itself answers for these paths has not been
+// measured yet.
+//
 // Both bodies are measured, recorded in
 // internal/conformance/testdata/golden/http/fallback/ and written up in the
 // "Fallback responses" section of
