@@ -1286,8 +1286,14 @@ func compare(t *testing.T, c Case, want Golden, got *httptest.ResponseRecorder) 
 		}
 	}
 
+	// The same three passes the recorder applied, in the same order, so the
+	// two sides are comparable.
 	body := ReplaceIssuer(got.Body.Bytes(), testIssuer)
-	body, err := Normalize(body, c.Volatile)
+	body, err := SortUnordered(body, c.Unordered)
+	if err != nil {
+		t.Fatalf("sort unordered: %v", err)
+	}
+	body, err = Normalize(body, c.Volatile)
 	if err != nil {
 		t.Fatalf("normalize response: %v", err)
 	}
