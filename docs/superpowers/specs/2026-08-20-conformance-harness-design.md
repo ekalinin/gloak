@@ -131,6 +131,7 @@ type Case struct {
 	Request       Request
 	AssertHeaders []string // response headers compared exactly
 	Volatile      []string // JSON paths whose values are replaced before comparison
+	Unordered     []string // JSON paths pointing at arrays sorted before comparison
 }
 ```
 
@@ -143,6 +144,10 @@ restricted to the subset the catalogue needs, plus the `*` wildcard.
 
 `ID` is a path-like slug: `oidc/token/password-grant-admin-cli`. It is the golden
 filename, so it must be stable; renaming one is renaming a file.
+
+`Unordered` covers arrays Keycloak emits in no stable order. Its elements are sorted
+before comparison, so membership and length stay asserted while sequence does not.
+See section 7 for the measurement that forced it.
 
 `Volatile` is what makes the approach possible at all. A token response carries a
 fresh `access_token`, `expires_in` and `session_state` on every run, but the field
@@ -204,7 +209,18 @@ holds `{{issuer}}` and re-running the pass over it at verify time is a no-op. Th
 verifier still runs it over both sides, because a substitution that is idempotent
 everywhere is easier to reason about than one that is conditional.
 
-**Pass 2, volatile values.** Declared paths have their values replaced with a
+**Pass 2, unordered arrays.** Declared paths have their array elements sorted by
+their raw bytes. Each element keeps its own bytes; only their sequence changes.
+
+This pass exists because it was measured, not anticipated. Keycloak 26.7.1 emits
+`scopes_supported` in a different order on every container start - three starts gave
+three orders of the same thirteen values, while a second request to a running
+instance always repeated the first. That is a Java set's iteration order, fixed at
+startup and meaningless as a contract. Pinning it would fail roughly twelve times in
+thirteen. Sorting keeps what is real - which scopes exist, and how many - and drops
+what is not. RFC 8414 likewise defines the field as a set.
+
+**Pass 3, volatile values.** Declared paths have their values replaced with a
 placeholder that carries the original JSON type, so a string becoming a number is
 still caught.
 

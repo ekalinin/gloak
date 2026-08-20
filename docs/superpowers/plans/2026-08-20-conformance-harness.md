@@ -24,6 +24,38 @@
 - Code comments in English.
 - Prefer the smallest diff that does the job; preserve existing names.
 
+## Amendment, 2026-08-20: unordered arrays
+
+Recording during Task 4 measured something the plan did not anticipate. Keycloak
+26.7.1 emits `scopes_supported` in a **different order on every container start** -
+three starts produced three orders of the same thirteen values, while repeated
+requests to one running instance always returned the order that instance started
+with. That is a Java set's iteration order, fixed at startup. `openid` came first
+each time; the other twelve were shuffled.
+
+Pinning that order would fail on roughly twelve starts in thirteen. Dropping the
+whole array into `Volatile` would stop asserting which scopes exist at all.
+
+So `Case` gains a third comparison list:
+
+```go
+	// Unordered lists paths pointing at JSON arrays Keycloak emits in no
+	// stable order. Their elements are sorted before comparison, so membership
+	// and length stay asserted while order does not.
+	Unordered []string
+```
+
+and `normalize.go` gains `func SortUnordered(raw []byte, paths []string) ([]byte, error)`,
+which sorts the elements at each declared path by their raw bytes. Each element keeps
+its own bytes; only their sequence changes. `Normalize`'s signature does not change.
+
+Both the recorder and the verifier apply the passes in this order:
+`ReplaceIssuer` → `SortUnordered` → `Normalize`.
+
+This amendment lands inside Task 4. Later tasks should use `Unordered` for any array
+whose order the recorder shows to be unstable, and must record the measurement in the
+observed spec rather than assuming it.
+
 ## File Structure
 
 | File | Responsibility |
