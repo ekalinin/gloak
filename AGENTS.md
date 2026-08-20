@@ -49,6 +49,25 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   its 200, and plain `application/json` on its own 404.** Every other endpoint
   measured so far, success or error, sends plain `application/json`. The
   inconsistency is real and it is only on this one endpoint.
+- **A wrong method on a known path returns 404, not 405, with no `Allow`
+  header.** Gloak once invented a 405 that does not exist; Keycloak answers with
+  the same generic 404 it uses for everything else it cannot route. The two 404s
+  are not the same body, though: an unmatched path answers `{"error":"Unable to
+  find matching target resource method"}`, a wrong method on a known path
+  answers `{"error":"HTTP 404 Not Found"}`. That is why `withKeycloakFallbacks`
+  still tells the two cases apart even though both return the same status.
+- **The five security headers reach every response except the unmatched-path
+  404.** A route match and a known path hit with the wrong method both get
+  `Referrer-Policy`, `Strict-Transport-Security`, `X-Content-Type-Options`,
+  `X-Frame-Options` and `X-Robots-Tag`; a path matching no route at all gets
+  none of them, because that request never reaches Keycloak's filter chain.
+  Applying them uniformly "for consistency" is the fix that would break this.
+- **Gloak deletes the `Date` header on every response.** Keycloak sends none;
+  Go's `net/http` adds one automatically, so `internal/httpx` suppresses it with
+  `w.Header()["Date"] = nil`. The conformance verifier cannot catch its removal:
+  it serves through `httptest.ResponseRecorder`, which never adds a `Date`
+  header either. The guard is `internal/httpx`'s own test, which uses a real
+  `httptest.NewServer` instead.
 - **`not-before-policy`** in the token response is spelled with hyphens.
 - **Refresh tokens are signed HS512**, access and ID tokens RS256. That is why a
   realm holds two keys.
