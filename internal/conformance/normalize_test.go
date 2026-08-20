@@ -88,14 +88,31 @@ func TestNormalizeKeepsTheMissingTrailingNewline(t *testing.T) {
 	}
 }
 
-func TestNormalizeLeavesNonJSONBodiesAlone(t *testing.T) {
-	in := []byte("")
-	got, err := Normalize(in, nil)
-	if err != nil {
-		t.Fatalf("Normalize: %v", err)
+// TestNormalizeLeavesNonJSONBodiesAloneWhenNoPathsAreDeclared pins the
+// no-op path: with an empty path list, Normalize never looks at the body,
+// so a body that is not JSON - empty or otherwise - comes back untouched.
+// This is what lets a 401 with an empty body (the userinfo rejection) go
+// through this function safely.
+func TestNormalizeLeavesNonJSONBodiesAloneWhenNoPathsAreDeclared(t *testing.T) {
+	for _, in := range [][]byte{[]byte(""), []byte("not json at all")} {
+		got, err := Normalize(in, nil)
+		if err != nil {
+			t.Fatalf("Normalize(%q): %v", in, err)
+		}
+		if string(got) != string(in) {
+			t.Fatalf("want %q back, got %q", in, got)
+		}
 	}
-	if len(got) != 0 {
-		t.Fatalf("want an empty body back, got %q", got)
+}
+
+// TestNormalizeErrorsOnANonJSONBodyWithPathsDeclared is the fail-loud
+// counterpart. Once a case declares Volatile paths, Normalize has to parse
+// the body to find them; a body that fails to parse is an error, not a
+// silent pass-through, since matching Keycloak by coincidence because
+// nobody looked would defeat what this harness exists to check.
+func TestNormalizeErrorsOnANonJSONBodyWithPathsDeclared(t *testing.T) {
+	if _, err := Normalize([]byte("not json at all"), []string{"a"}); err == nil {
+		t.Fatal("want an error for a non-JSON body with paths declared, got nil")
 	}
 }
 

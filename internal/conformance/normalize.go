@@ -32,8 +32,14 @@ func ReplaceIssuer(raw []byte, base string) []byte {
 // this suite exists to check. Paths are slash-separated from the document
 // root, array elements addressed by index, "*" matching any one segment.
 //
-// A body that is not a JSON value is returned unchanged - the userinfo
-// rejection is 401 with an empty body, and that is a case, not an error.
+// With an empty path list, or an empty (or whitespace-only) body, the body
+// is returned unchanged without being looked at, JSON or not - this is what
+// lets a 401 with an empty body (the userinfo rejection) pass through
+// safely with no paths declared. Outside those two cases, though, Normalize
+// has to parse the body to find the declared paths, and a non-empty body
+// that is not valid JSON at that point is an error, not a silent
+// pass-through: masking nothing while claiming to have checked is worse
+// than failing loud.
 func Normalize(raw []byte, paths []string) ([]byte, error) {
 	if len(paths) == 0 || len(bytes.TrimSpace(raw)) == 0 {
 		return raw, nil
@@ -201,13 +207,18 @@ func (e *editor) descend(path []string) error {
 			if !ok {
 				return fmt.Errorf("want a string key, got %v", keyTok)
 			}
-			if err := e.value(append(path, key)); err != nil {
+			// Cap path's capacity to its length so this append always
+			// allocates a new backing array rather than writing into one a
+			// sibling call is still holding a slice over. Nothing retains a
+			// path today, which is exactly the kind of invariant that stops
+			// being true silently.
+			if err := e.value(append(path[:len(path):len(path)], key)); err != nil {
 				return err
 			}
 		}
 	case '[':
 		for i := 0; e.dec.More(); i++ {
-			if err := e.value(append(path, strconv.Itoa(i))); err != nil {
+			if err := e.value(append(path[:len(path):len(path)], strconv.Itoa(i))); err != nil {
 				return err
 			}
 		}
