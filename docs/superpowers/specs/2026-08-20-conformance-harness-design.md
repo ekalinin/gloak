@@ -153,6 +153,12 @@ values replaced and their **presence and position still asserted**.
 store with `EnsureMaster` applied. It is a seam, not machinery - without it the
 second slice rewrites the type - but it gains no second implementation here.
 
+An **empty** `Fixture` means the case needs setup that does not exist yet: a
+confidential client, a second user, a completed browser login. The recorder skips
+those rather than failing on them, and the coverage report counts them separately as
+inventory only. This is how most of the pending OIDC inventory enters the catalogue
+without blocking on fixtures that belong to the next slice.
+
 ## 6. The golden file
 
 `testdata/golden/<ID>.http`, a raw capture:
@@ -171,8 +177,15 @@ Every response header is written; only those in `AssertHeaders` are compared. Th
 file stays a faithful slice of the wire, which matters because the recorder's diff is
 reviewed by a person, while `Date` and `Content-Length` do not make the suite flicker.
 
-The body is stored after issuer substitution (section 7) and otherwise verbatim -
-including whitespace and the absence of a trailing newline. The existing capture in
+**Both bodies and headers are stored already normalised** - that is, after both
+passes of section 7, not verbatim. Storing raw values would make every `make record`
+produce a diff on every volatile field, and a recorder whose output always churns is
+a recorder whose diff nobody reads. Headers whose values change per response, `Date`
+and `Content-Length`, keep their names and get `{{volatile}}` for a value, so a header
+disappearing is still visible.
+
+Everything not normalised is verbatim, including whitespace and the absence of a
+trailing newline. The existing capture in
 `internal/oidc/testdata/discovery-26.7.1.json` confirms what that means in practice:
 Keycloak emits compact JSON on one line with no trailing newline.
 
@@ -243,8 +256,8 @@ the observed spec, waits for `/realms/master`, runs every catalogue case against
 and writes the goldens. testcontainers is already a dependency.
 
 The recorder rewrites checked-in files, so its diff is reviewed by a person before it
-is committed. A case whose fixture cannot be satisfied is reported as an error, not
-skipped quietly.
+is committed. Cases with an empty `Fixture` are skipped and counted; a case that
+names a fixture the recorder cannot build is an error, not a quiet skip.
 
 ## 10. The coverage report
 
@@ -319,6 +332,12 @@ Recording will expose the divergences follow-up F3 already predicted:
 
 - JWKS gains `x5c`, `x5t` and `x5t#S256`, which means `internal/keys` must generate a
   self-signed certificate for the realm key. This is real work, not a string edit.
+- **JWKS stops being marshalled by go-jose.** `certs` currently hands
+  `jose.JSONWebKeySet` straight to `httpx.WriteJSON`, so the key order is go-jose's
+  `rawJSONWebKey`: `use, kty, kid, alg, n, e, x5c, x5t, x5t#S256`. That is a
+  third-party struct with a third-party order, which is the same failure AGENTS.md
+  describes for `map[string]any`. The endpoint needs a Gloak-owned struct whose fields
+  are declared in the order the recorded golden shows.
 - realm-info field set and order.
 - `Cache-Control` and CORS headers on all three shipped endpoints.
 - The 404 and 405 fallback bodies.
