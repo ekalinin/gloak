@@ -151,3 +151,48 @@ fixture has to close both before recording it, not after:
   point the map silently reorders itself and the divergence looks like a passing
   test until someone parses the raw bytes. Should be a struct with fields declared
   in order, like every other response type, before that happens rather than after.
+
+## F13: known gaps in the conformance harness itself
+
+Carried out of the harness branch's task reviews and its whole-branch review. None
+blocks the harness from doing its job; each is a way it could quietly do less than it
+appears to.
+
+- **`TestCatalogIsWellFormed` has no negative cases.** It validates the catalogue but
+  nothing proves each rule catches the malformation it targets. Today's entries all
+  pass, so the test is a guard for future entries rather than evidence about itself.
+- **The catalogue does not validate `Volatile` and `Unordered` path syntax.** A
+  leading slash or a typo silently matches nothing in `Normalize`, while
+  `SortUnordered` errors on the same input. The asymmetry is defensible and
+  undocumented.
+- **Nothing detects an orphan golden.** Rename or delete a case and its `.http` file
+  lingers with nothing noticing. A loop over `testdata/golden/**` asserting each file
+  maps to a catalogue ID closes the other half of the verifier's state table.
+- **The golden format cannot store an HTTP reason phrase.** `FormatGolden`
+  regenerates it from `http.StatusText`, so a non-standard phrase could not be
+  pinned. Every status recorded so far is standard, so this costs nothing yet.
+- **`VolatileHeaders` lists `Date`, which Keycloak never sends.** Dead but harmless
+  and self-documenting; remove it only alongside a reason.
+- **The certificate validity window is held by a comment, not a test.** `selfSign`
+  now matches the measured ~10-year window, but nothing pins it, so an edit back to
+  the epoch would be silent. `oidc/certs/master` marks `x5c` and both thumbprints
+  volatile, so the harness cannot see it either.
+- **`internal/conformance`'s test-only boundary is convention, not enforcement.**
+  Nothing stops production code importing it. An import-graph test is cheap
+  insurance.
+- **`gotByName` in `compare` folds the response's headers by iterating a map.** If two
+  header names ever canonicalised to the same key, which wins would depend on map
+  iteration order. Gloak sets each header once, so this is unreachable today.
+- **Four of twenty-six goldens churn on `make record`**, three from a login-theme
+  cache-busting hash and one from the token response's `scope` word order. Documented
+  in README's record section; all four cases are `Pending`, so nothing compares them.
+
+Two shape-level notes rather than defects:
+
+- `internal/oidc/discovery.go` now holds the JWKS document type alongside the
+  discovery document. Two unrelated response shapes in one file; a `jwks.go` would
+  say what it is.
+- `userinfo` is not wired into `oidc.NewRouter` at all, so a request for it currently
+  falls into the unmatched-path 404. Expected while the endpoint is unimplemented,
+  but it means the three `Pending` userinfo cases cannot be exercised even by
+  temporarily flipping them to `Implemented`.
