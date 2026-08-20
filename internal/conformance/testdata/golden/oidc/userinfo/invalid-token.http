@@ -1,0 +1,12 @@
+# GET /realms/master/protocol/openid-connect/userinfo
+HTTP/1.1 401 Unauthorized
+Cache-Control: no-store
+Content-Length: {{volatile}}
+Content-Type: text/plain;charset=utf-8
+Pragma: no-cache
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+Www-Authenticate: Bearer realm="master", error="invalid_token", error_description="Token verification failed"
+X-Content-Type-Options: nosniff
+X-Robots-Tag: none
+

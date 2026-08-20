@@ -5,5 +5,6 @@ package conformance
 var Catalog = func() []Case {
 	var all []Case
 	all = append(all, oidcCore...)
+	all = append(all, oidcPending...)
 	return all
 }()
