@@ -50,7 +50,14 @@ which sorts the elements at each declared path by their raw bytes. Each element 
 its own bytes; only their sequence changes. `Normalize`'s signature does not change.
 
 Both the recorder and the verifier apply the passes in this order:
-`ReplaceIssuer` → `SortUnordered` → `Normalize`.
+`ReplaceIssuer` → `Normalize` → `SortUnordered`.
+
+**Sorting comes last, and that correction cost twelve container starts.** This
+amendment originally put `SortUnordered` second. Recording then failed to reproduce,
+because the first field of each JWKS entry is `kid`, which is random per process - so
+the sort was ordering entries by random content. Masking volatile values first lets
+the comparison fall through to a stable field. Any future pass that reorders data must
+run after the masking pass for the same reason.
 
 This amendment lands inside Task 4. Later tasks should use `Unordered` for any array
 whose order the recorder shows to be unstable, and must record the measurement in the
@@ -1287,15 +1294,16 @@ func compare(t *testing.T, c Case, want Golden, got *httptest.ResponseRecorder) 
 	}
 
 	// The same three passes the recorder applied, in the same order, so the
-	// two sides are comparable.
+	// two sides are comparable. Sorting runs last: sorting before masking
+	// would order entries by values that change per process.
 	body := ReplaceIssuer(got.Body.Bytes(), testIssuer)
-	body, err := SortUnordered(body, c.Unordered)
-	if err != nil {
-		t.Fatalf("sort unordered: %v", err)
-	}
-	body, err = Normalize(body, c.Volatile)
+	body, err := Normalize(body, c.Volatile)
 	if err != nil {
 		t.Fatalf("normalize response: %v", err)
+	}
+	body, err = SortUnordered(body, c.Unordered)
+	if err != nil {
+		t.Fatalf("sort unordered: %v", err)
 	}
 	if string(body) != string(want.Body) {
 		t.Errorf("body differs from the recorded Keycloak response.\nwant: %s\ngot:  %s",

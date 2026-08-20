@@ -209,8 +209,19 @@ holds `{{issuer}}` and re-running the pass over it at verify time is a no-op. Th
 verifier still runs it over both sides, because a substitution that is idempotent
 everywhere is easier to reason about than one that is conditional.
 
-**Pass 2, unordered arrays.** Declared paths have their array elements sorted by
+**Pass 2, volatile values.** Declared paths have their values replaced with a
+placeholder that carries the original JSON type, so a string becoming a number is
+still caught.
+
+**Pass 3, unordered arrays.** Declared paths have their array elements sorted by
 their raw bytes. Each element keeps its own bytes; only their sequence changes.
+
+**Sorting must come after masking, and that ordering was itself a measurement.** The
+first version of this design sorted before masking. It made recording
+non-reproducible, because the first field of each JWKS entry is `kid`, which is
+random per process - so the sort was ordering by random content. Masking first leaves
+the sort to fall through to a stable field, `alg`. Twelve container starts were
+needed to see it: three recordings agreed and a fourth flipped.
 
 This pass exists because it was measured, not anticipated. Keycloak 26.7.1 emits
 `scopes_supported` in a different order on every container start - three starts gave
@@ -219,10 +230,6 @@ instance always repeated the first. That is a Java set's iteration order, fixed 
 startup and meaningless as a contract. Pinning it would fail roughly twelve times in
 thirteen. Sorting keeps what is real - which scopes exist, and how many - and drops
 what is not. RFC 8414 likewise defines the field as a set.
-
-**Pass 3, volatile values.** Declared paths have their values replaced with a
-placeholder that carries the original JSON type, so a string becoming a number is
-still caught.
 
 ### 7.1 The rewriting must not re-marshal
 
