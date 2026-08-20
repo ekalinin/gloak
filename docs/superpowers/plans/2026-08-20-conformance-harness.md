@@ -58,7 +58,7 @@
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `Case`, `Status` (`Implemented`, `Pending`), `Doc`, `Request`, `var Catalog []Case`, `func (c Case) GoldenID() string`.
+- Produces: `Case`, `Status` (`Implemented`, `Pending`), `Doc`, `Request`, `var Catalog []Case`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -191,10 +191,6 @@ type Case struct {
 	// their presence and position stay asserted. "*" matches one segment.
 	Volatile []string
 }
-
-// GoldenID is the case ID, named separately so callers reading golden paths
-// do not reach for the field directly.
-func (c Case) GoldenID() string { return c.ID }
 ```
 
 - [ ] **Step 4: Write `catalog.go`**
