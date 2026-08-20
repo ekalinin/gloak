@@ -56,19 +56,24 @@ func TestRecordGoldens(t *testing.T) {
 			}
 
 			// Passes run in this order: ReplaceIssuer first so issuer URLs
-			// inside array elements (there are none today, but future cases
-			// may add them) are already rewritten before SortUnordered
-			// compares raw bytes; SortUnordered before Normalize so a sorted
-			// array is what gets its elements replaced with placeholders, if
-			// a case ever needs both.
+			// inside array elements are already rewritten before either pass
+			// compares raw bytes; Normalize before SortUnordered so that an
+			// array element whose own identity is volatile (oidc/certs/master's
+			// "keys" entries start with a random "kid") is sorted by what is
+			// left after normalisation rather than by the random bytes being
+			// masked. Sorting first would make the recorded order depend on
+			// whichever "kid" happened to compare smaller, which is exactly
+			// the kind of per-run churn this pass order exists to avoid; see
+			// the "Certificate endpoint" section of
+			// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
 			body = ReplaceIssuer(body, base)
-			body, err = SortUnordered(body, c.Unordered)
-			if err != nil {
-				t.Fatalf("sort unordered: %v", err)
-			}
 			body, err = Normalize(body, c.Volatile)
 			if err != nil {
 				t.Fatalf("normalize: %v", err)
+			}
+			body, err = SortUnordered(body, c.Unordered)
+			if err != nil {
+				t.Fatalf("sort unordered: %v", err)
 			}
 
 			g := Golden{

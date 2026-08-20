@@ -54,6 +54,10 @@ var oidcCore = []Case{
 			"keys/*/x5t",
 			"keys/*/x5t#S256",
 		},
+		// The keys array's element order is not stable across container
+		// starts; see the "Certificate endpoint" section of
+		// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+		Unordered: []string{"keys"},
 	},
 	{
 		ID: "oidc/certs/unknown-realm",
