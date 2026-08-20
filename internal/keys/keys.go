@@ -55,15 +55,18 @@ func Generate(subjectCN string) (*RealmKeys, error) {
 }
 
 // selfSign issues the certificate Keycloak publishes alongside a realm key.
-// The validity window is fixed rather than derived from the clock so that two
-// processes generating a key produce comparable certificates; nothing
-// validates this chain, it is published for clients that pin x5c.
+// The validity window matches what a live Keycloak 26.7.1 was observed to
+// issue: roughly ten years starting at generation time, not the Unix epoch.
+// See the "Certificate endpoint" section of
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md. Nothing
+// validates this chain; it is published for clients that pin x5c.
 func selfSign(key *rsa.PrivateKey, subjectCN string) ([]byte, error) {
+	now := time.Now().UTC()
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject:      pkix.Name{CommonName: subjectCN},
-		NotBefore:    time.Unix(0, 0).UTC(),
-		NotAfter:     time.Unix(0, 0).UTC().AddDate(100, 0, 0),
+		NotBefore:    now,
+		NotAfter:     now.AddDate(10, 0, 0),
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
