@@ -64,11 +64,21 @@ func WriteAdminError(w http.ResponseWriter, status int, message string) {
 
 // WriteBearerChallenge writes the userinfo rejection: 401, text/plain, an empty
 // body, and the error carried entirely in WWW-Authenticate.
+//
+// The header name is set through the map directly rather than Header.Set,
+// which would canonicalise it to "Www-Authenticate". Keycloak 26.7.1 sends
+// "WWW-Authenticate" on the wire; net/http writes a header exactly as its map
+// key spells it, so this is the one place that spelling has to be forced.
+// The same blind spot the Date header has applies here too: a client parsing
+// the response - including this package's own tests via http.Get - always
+// sees the canonical form, since textproto.Reader re-canonicalises on the
+// way in. Only a raw read of the wire, as in
+// TestWriteBearerChallengeSendsKeycloaksHeaderCasing, can tell the two apart.
 func WriteBearerChallenge(w http.ResponseWriter, realm, errCode, description string) {
 	suppressDate(w)
 	w.Header().Set("Content-Type", "text/plain;charset=utf-8")
-	w.Header().Set("WWW-Authenticate", fmt.Sprintf(
-		"Bearer realm=%q, error=%q, error_description=%q", realm, errCode, description))
+	w.Header()["WWW-Authenticate"] = []string{fmt.Sprintf(
+		"Bearer realm=%q, error=%q, error_description=%q", realm, errCode, description)}
 	w.WriteHeader(http.StatusUnauthorized)
 }
 

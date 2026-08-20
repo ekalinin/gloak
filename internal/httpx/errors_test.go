@@ -1,6 +1,9 @@
 package httpx_test
 
 import (
+	"bytes"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -131,9 +134,53 @@ func TestWriteBearerChallenge(t *testing.T) {
 	if got, want := w.Header().Get("Content-Type"), "text/plain;charset=utf-8"; got != want {
 		t.Fatalf("want %q, got %q", want, got)
 	}
+	// Read the header through the exact map key WriteBearerChallenge sets,
+	// not Header.Get: Get canonicalises its argument to "Www-Authenticate"
+	// before looking it up, which would miss the literal "WWW-Authenticate"
+	// key this function deliberately sets. See WriteBearerChallenge's doc
+	// comment and TestWriteBearerChallengeSendsKeycloaksHeaderCasing below.
 	want := `Bearer realm="master", error="invalid_token", error_description="Token verification failed"`
-	if got := w.Header().Get("WWW-Authenticate"); got != want {
-		t.Fatalf("want %s, got %s", want, got)
+	got := w.Header()["WWW-Authenticate"]
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("want [%s], got %v", want, got)
+	}
+}
+
+// TestWriteBearerChallengeSendsKeycloaksHeaderCasing proves the header
+// reaches the wire spelled "WWW-Authenticate", matching Keycloak 26.7.1, not
+// "Www-Authenticate", the form Header.Set would produce. http.Get cannot
+// distinguish the two: textproto.Reader canonicalises every header name it
+// parses, so a client-side read always shows the canonical form regardless
+// of what was actually sent. This test reads the raw bytes off the
+// connection instead, the same class of blind spot as the Date header
+// (TestWriteJSONOmitsDateHeader above), just on the client-parsing side
+// rather than the server-writing side.
+func TestWriteBearerChallengeSendsKeycloaksHeaderCasing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpx.WriteBearerChallenge(w, "master", "invalid_token", "Token verification failed")
+	}))
+	defer srv.Close()
+
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	req := "GET / HTTP/1.1\r\nHost: " + srv.Listener.Addr().String() + "\r\nConnection: close\r\n\r\n"
+	if _, err := conn.Write([]byte(req)); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	raw, err := io.ReadAll(conn)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+
+	if !bytes.Contains(raw, []byte("\r\nWWW-Authenticate:")) {
+		t.Fatalf("want the wire header spelled WWW-Authenticate, got:\n%s", raw)
+	}
+	if bytes.Contains(raw, []byte("\r\nWww-Authenticate:")) {
+		t.Fatalf("header was canonicalised to Www-Authenticate on the wire:\n%s", raw)
 	}
 }
 
