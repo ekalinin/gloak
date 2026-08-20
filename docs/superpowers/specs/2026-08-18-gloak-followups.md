@@ -81,6 +81,53 @@ a second replica exits at startup.
   that the two drivers agree, and it runs only when someone remembers to run it.
   The design spec's Docker image is undelivered.
 
+## F11: non-clean paths escape `withKeycloakFallbacks` into net/http's own body
+
+Reproduced 2026-08-20 while reviewing the conformance harness slice: `GET
+//realms/master` and `GET /realms/master/../master` both return **307** with
+net/http's own `text/html; charset=utf-8` body (`<a href="/realms/master">Temporary
+Redirect</a>.`), not a response `internal/httpx` produced. `net/http.ServeMux`
+resolves a "non-clean" path - a doubled slash, or a `.`/`..` element - to its own
+redirect handler, and `mux.Handler(r)` reports a **non-empty** pattern for that
+handler. `withKeycloakFallbacks` (`internal/oidc/router.go`) only distinguishes "no
+route" from "route, wrong method" by whether the pattern is empty, so it treats this
+case as an ordinary route match and hands the request straight to `mux.ServeHTTP`,
+which performs the redirect itself before `internal/httpx` ever sees it.
+
+This needs a measurement before it needs a fix: what does a live Keycloak 26.7.1
+actually answer for these two paths? It may well not be a 307 with an HTML body at
+all - Keycloak sits behind its own routing layer, not `net/http.ServeMux`. Guessing
+the fix without that measurement would violate the one rule this project is built
+on. Once measured, the fix is presumably to have `withKeycloakFallbacks` check
+`r.URL.Path` against its cleaned form itself, ahead of the `mux.Handler` probe,
+rather than trusting "non-empty pattern" to mean "real route".
+
+## F12: the recorder cannot capture a multi-valued header or a volatile `Location`, together
+
+Two gaps in `internal/conformance` block on the same future case - the first
+recorded response carrying a repeated header, most likely `Set-Cookie` on a
+completed browser login - and are filed together because whichever plan adds that
+fixture has to close both before recording it, not after:
+
+- `recordedHeaders` in `record_test.go` builds each golden header from `h.Get(name)`,
+  which returns only the **first** value of a multi-valued response header. A
+  response that sends two `Set-Cookie` headers would have its golden capture only
+  one of them, silently, at the moment `make record` writes the file - not at
+  verify time. The observed-behaviour document has a whole "Cookies" section
+  cataloguing three cookies on `GET /auth` alone; recording that endpoint today
+  would quietly drop two-thirds of the record. Needs `Golden.Headers` (or a parallel
+  structure) to hold every value for a repeated name, and `FormatGolden`/`ParseGolden`
+  to round-trip them.
+- `Volatile` (`internal/conformance/case.go`) only ever addresses JSON body paths. A
+  header value that changes per response - `Location` on a redirect carrying a
+  session-specific authorization code, for instance - has no masking mechanism at
+  all; only `AssertHeaders`' exact-match or the hardcoded `VolatileHeaders` list
+  (`Date`, `Content-Length`) exist today, and neither can express "present, but
+  don't compare the value" for an arbitrary header. The authorization and logout
+  endpoints' pending cases already assert `Location` is present via `AssertHeaders`,
+  which will fail the moment they go `Implemented`, since the code/state/session
+  Keycloak puts there is different on every run.
+
 ## Smaller items carried from the task reviews
 
 - `classify` in both drivers maps only "no rows" and unique-constraint violations. A
@@ -95,3 +142,12 @@ a second replica exits at startup.
   claims it covers every one. Either widen it or correct the comment.
 - The 21 client roles on the `master-realm` client are required by section 8 of the
   design spec and were deliberately deferred to the admin API plan.
+- `httpx.WriteOAuthError` marshals from `map[string]string`, the pattern AGENTS.md's
+  "Response bodies" section forbids for exactly this reason: Go sorts map keys
+  alphabetically, and it happens that `error` sorts before `error_description`,
+  which happens to be Keycloak's order too - so nothing is broken today. Nothing
+  stops that from becoming false the moment a third field joins the shape (`error`,
+  `error_description`, and something else in a non-alphabetical position), at which
+  point the map silently reorders itself and the divergence looks like a passing
+  test until someone parses the raw bytes. Should be a struct with fields declared
+  in order, like every other response type, before that happens rather than after.
