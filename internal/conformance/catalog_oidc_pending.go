@@ -306,6 +306,16 @@ var oidcPending = []Case{
 		Status:  Pending,
 		Reason:  "the token endpoint is not implemented",
 		Fixture: "bootstrap",
+		// The recorded scope field's word order (e.g. "profile email" vs
+		// "email profile") is not stable across container starts - see the
+		// "scopes_supported order" finding in
+		// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md,
+		// same underlying cause (a Java set with no fixed iteration order),
+		// just surfacing inside a space-separated string here instead of a
+		// JSON array. Neither Volatile nor Unordered can mask word order
+		// within one string value, so this golden will churn on re-record
+		// until that gets handled - deliberately left alone rather than
+		// widening either mechanism for one pending case.
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",

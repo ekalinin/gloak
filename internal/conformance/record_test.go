@@ -28,7 +28,20 @@ import (
 func TestRecordGoldens(t *testing.T) {
 	ctx := context.Background()
 	base := startKeycloak(ctx, t)
-	client := &http.Client{Timeout: 30 * time.Second}
+	// A redirect is the response being measured, not a step on the way to
+	// one: for the authorization and logout endpoints the contract is the
+	// 3xx status and its Location header (the code/state/session_state/iss,
+	// or error, Keycloak puts there), not whatever page the client would
+	// land on next. Without this, http.Client's default redirect-following
+	// silently turns those recordings into a capture of Keycloak's login
+	// theme instead - a giant HTML page that is not part of the contract and
+	// churns per container start besides.
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 
 	var skipped []string
 	for _, c := range Catalog {
