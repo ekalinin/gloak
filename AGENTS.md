@@ -119,6 +119,10 @@ make lint
 make build
 ```
 
+- `make test` is not clean: `TestConformance/oidc/certs/master` fails, deliberately,
+  until realm keys are modelled and persisted (12.3 of
+  `docs/superpowers/specs/2026-08-20-conformance-harness-design.md`, follow-up F5).
+  That is the **only** case allowed to fail. Any other failure is a real regression.
 - `go test ./...` must never require Docker or network access. Anything that does
   goes behind the `docker` build tag.
 - `CGO_ENABLED=0 go build ./...` must work. SQLite is `modernc.org/sqlite` to keep

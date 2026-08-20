@@ -26,7 +26,7 @@ Working today:
   conformance suite
 - a documentation-derived conformance suite (`internal/conformance`) that checks
   Gloak's responses byte-for-byte against bytes recorded from a live
-  Keycloak 26.7.1
+  Keycloak 26.7.1 - with one known exception, see below
 
 Not implemented yet: tokens and grants, the browser login flow, userinfo, logout,
 introspection, revocation, the admin REST API, SAML, user federation, identity
@@ -131,6 +131,25 @@ unreviewed re-record pins a regression as the new contract.
 
 An endpoint served without a recorded golden fails `make test`. That is
 deliberate - it is how "measured, never remembered" stops being a convention.
+
+`make test` has exactly one known failure, `TestConformance/oidc/certs/master`:
+the `master` realm publishes two JWKS keys and Gloak generates one, left red
+until realm keys get their own slice. Any other failure is a real regression -
+see AGENTS.md's "Build and test" section.
+
+`make record` is not silent on a clean checkout: four of the goldens it writes
+churn on every run and will show a diff even when nothing has changed:
+
+- `oidc/authorization/invalid-redirect-uri`, `oidc/authorization/unknown-client-id`
+  and `oidc/logout/invalid-post-logout-redirect-uri` capture login-theme HTML that
+  carries a resource cache-busting hash generated fresh per container start.
+- `oidc/token/password-grant-admin-cli`'s `scope` field has word order that is not
+  stable across container starts (a Java set with no fixed iteration order; see the
+  observed-behaviour document).
+
+All four are `Pending`, so nothing compares them yet, but their diffs are expected
+and can be skipped when reviewing a `make record` run; a diff on any other golden is
+the one to read carefully.
 
 If Docker runs through Colima or another non-default context, testcontainers does
 not discover it on its own:
