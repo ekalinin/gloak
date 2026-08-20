@@ -82,7 +82,7 @@ internal/conformance/
   catalog_oidc.go          # the inventory from /securing-apps/oidc-layers
   normalize.go             # in-place byte rewriting of volatile values
   golden.go                # reading and writing testdata/golden/<id>.http
-  server.go                # building the Gloak handler under test
+  server_test.go           # building the Gloak handler under test
   conformance_test.go      # the offline verifier
   coverage_test.go         # the coverage report
   normalize_test.go        # the harness's own tests
@@ -323,8 +323,7 @@ endpoints and six grants. Grouped by endpoint:
 - **dynamic client registration** - create, read, update, delete, initial access
   token, registration access token
 
-Roughly 60 to 65 entries. The exact number is settled when the catalogue is written;
-this estimate comes from the endpoint and grant lists on that page.
+Sixty entries. The implementation plan enumerates them by ID.
 
 ### 12.3 Fixes required to land green
 
@@ -348,7 +347,7 @@ Recording will expose the divergences follow-up F3 already predicted:
 ### 12.4 Deliverables
 
 1. `internal/conformance`: `case.go`, `catalog.go`, `catalog_oidc.go`,
-   `normalize.go`, `golden.go`, `server.go`
+   `normalize.go`, `golden.go`, `server_test.go`
 2. the recorder behind `-tags docker`
 3. the offline verifier and the coverage report
 4. the harness's own tests, including the negative one
