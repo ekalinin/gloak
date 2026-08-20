@@ -156,6 +156,13 @@ var oidcCore = []Case{
 		// "Fallback responses" section of
 		// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
 		AssertHeaders: []string{"Content-Type"},
+		AssertAbsentHeaders: []string{
+			"Referrer-Policy",
+			"Strict-Transport-Security",
+			"X-Content-Type-Options",
+			"X-Frame-Options",
+			"X-Robots-Tag",
+		},
 	},
 	{
 		ID: "http/fallback/method-not-allowed",

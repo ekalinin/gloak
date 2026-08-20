@@ -62,9 +62,17 @@ func compare(t *testing.T, c Case, want Golden, got *httptest.ResponseRecorder) 
 		t.Errorf("status: want %d, got %d\nbody: %s", want.Status, got.Code, got.Body)
 	}
 
+	// Keep the first value for a repeated header name, matching what
+	// got.Header().Get(name) returns below: it is also first-value. A map
+	// built by letting a later entry overwrite an earlier one would compare
+	// the golden's last value against the response's first, disagreeing on
+	// any golden with a duplicated header name.
 	byName := make(map[string]string, len(want.Headers))
 	for _, h := range want.Headers {
-		byName[http.CanonicalHeaderKey(h.Name)] = h.Value
+		canonical := http.CanonicalHeaderKey(h.Name)
+		if _, seen := byName[canonical]; !seen {
+			byName[canonical] = h.Value
+		}
 	}
 	for _, name := range c.AssertHeaders {
 		canonical := http.CanonicalHeaderKey(name)
@@ -75,6 +83,11 @@ func compare(t *testing.T, c Case, want Golden, got *httptest.ResponseRecorder) 
 		}
 		if actual := got.Header().Get(name); actual != expected {
 			t.Errorf("header %s: want %q, got %q", name, expected, actual)
+		}
+	}
+	for _, name := range c.AssertAbsentHeaders {
+		if actual := got.Header().Get(name); actual != "" {
+			t.Errorf("header %s: want absent, got %q", name, actual)
 		}
 	}
 

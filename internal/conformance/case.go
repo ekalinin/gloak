@@ -69,6 +69,15 @@ type Case struct {
 	// always compared.
 	AssertHeaders []string
 
+	// AssertAbsentHeaders lists response headers that must not be present.
+	// AssertHeaders only ever checks a header that is named, so it can never
+	// catch one that should be missing - a header Keycloak omits on some
+	// responses but sends on most others (the five security headers on the
+	// unmatched-path 404, for instance) would silently start passing if an
+	// implementation began sending it everywhere "for consistency". This is
+	// the field that pins the negative.
+	AssertAbsentHeaders []string
+
 	// Volatile lists slash-separated paths into the JSON body whose values
 	// change per response. Their values are replaced before comparison while
 	// their presence and position stay asserted. "*" matches one segment.
