@@ -1,0 +1,15 @@
+ALTER TABLE client ADD COLUMN root_url                     TEXT NOT NULL DEFAULT '';
+ALTER TABLE client ADD COLUMN base_url                     TEXT NOT NULL DEFAULT '';
+ALTER TABLE client ADD COLUMN protocol                     TEXT NOT NULL DEFAULT '';
+ALTER TABLE client ADD COLUMN client_authenticator_type    TEXT NOT NULL DEFAULT '';
+ALTER TABLE client ADD COLUMN surrogate_auth_required      INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE client ADD COLUMN always_display_in_console    INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE client ADD COLUMN bearer_only                  INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE client ADD COLUMN consent_required             INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE client ADD COLUMN implicit_flow_enabled        INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE client ADD COLUMN frontchannel_logout          INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE client ADD COLUMN full_scope_allowed           INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE client ADD COLUMN not_before                   INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE client ADD COLUMN node_re_registration_timeout INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE client ADD COLUMN default_client_scopes        TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE client ADD COLUMN optional_client_scopes       TEXT NOT NULL DEFAULT '[]';

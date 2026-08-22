@@ -45,19 +45,44 @@ type Realm struct {
 // Client is an OAuth2 client. ID is the internal UUID used in admin API paths;
 // ClientID is the human-facing identifier used in protocol requests. Keeping
 // both is mandatory: Keycloak addresses clients by UUID in /admin/realms paths.
+//
+// The field set is what Keycloak's ClientRepresentation carries, measured on a
+// live instance rather than read off the OpenAPI schema - the schema lists what
+// may appear, and the recording says what does. See "Client representation" in
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+//
+// DefaultClientScopes and OptionalClientScopes are lists of scope *names*, not
+// the client-scope objects themselves. Those objects, and protocol mappers, are
+// P5. Keeping the names here is the least that lets the representation be
+// reproduced from stored state rather than invented per client.
 type Client struct {
 	ID                        string
 	RealmID                   string
 	ClientID                  string
 	Name                      string
+	RootURL                   string
+	BaseURL                   string
 	Enabled                   bool
 	PublicClient              bool
 	Secret                    string
+	Protocol                  string
+	ClientAuthenticatorType   string
+	SurrogateAuthRequired     bool
+	AlwaysDisplayInConsole    bool
+	BearerOnly                bool
+	ConsentRequired           bool
 	StandardFlowEnabled       bool
+	ImplicitFlowEnabled       bool
 	DirectAccessGrantsEnabled bool
 	ServiceAccountsEnabled    bool
+	FrontchannelLogout        bool
+	FullScopeAllowed          bool
+	NotBefore                 int
+	NodeReRegistrationTimeout int
 	RedirectURIs              []string
 	WebOrigins                []string
+	DefaultClientScopes       []string
+	OptionalClientScopes      []string
 	Attributes                map[string]string
 }
 

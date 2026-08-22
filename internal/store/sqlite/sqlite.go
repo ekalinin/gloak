@@ -225,39 +225,55 @@ type clientRepo struct{ db *sql.DB }
 
 func (r *clientRepo) Create(ctx context.Context, m *model.Client) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO client (id, realm_id, client_id, name, enabled, public_client, secret,
-		 standard_flow_enabled, direct_access_grants_enabled, service_accounts_enabled,
-		 redirect_uris, web_origins, attributes)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.ID, m.RealmID, m.ClientID, m.Name, m.Enabled, m.PublicClient, m.Secret,
-		m.StandardFlowEnabled, m.DirectAccessGrantsEnabled, m.ServiceAccountsEnabled,
-		encode(m.RedirectURIs), encode(m.WebOrigins), encode(m.Attributes))
+		`INSERT INTO client (id, realm_id, client_id, name, root_url, base_url, enabled, public_client, secret,
+		 protocol, client_authenticator_type, surrogate_auth_required, always_display_in_console,
+		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
+		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
+		 full_scope_allowed, not_before, node_re_registration_timeout,
+		 redirect_uris, web_origins, default_client_scopes, optional_client_scopes, attributes)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.RealmID, m.ClientID, m.Name, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
+		m.Protocol, m.ClientAuthenticatorType, m.SurrogateAuthRequired, m.AlwaysDisplayInConsole,
+		m.BearerOnly, m.ConsentRequired, m.StandardFlowEnabled, m.ImplicitFlowEnabled,
+		m.DirectAccessGrantsEnabled, m.ServiceAccountsEnabled, m.FrontchannelLogout,
+		m.FullScopeAllowed, m.NotBefore, m.NodeReRegistrationTimeout,
+		encode(m.RedirectURIs), encode(m.WebOrigins), encode(m.DefaultClientScopes),
+		encode(m.OptionalClientScopes), encode(m.Attributes))
 	return classify(err)
 }
 
 func (r *clientRepo) ByClientID(ctx context.Context, realmID, clientID string) (*model.Client, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, realm_id, client_id, name, enabled, public_client, secret,
-		 standard_flow_enabled, direct_access_grants_enabled, service_accounts_enabled,
-		 redirect_uris, web_origins, attributes
+		`SELECT id, realm_id, client_id, name, root_url, base_url, enabled, public_client, secret,
+		 protocol, client_authenticator_type, surrogate_auth_required, always_display_in_console,
+		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
+		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
+		 full_scope_allowed, not_before, node_re_registration_timeout,
+		 redirect_uris, web_origins, default_client_scopes, optional_client_scopes, attributes
 		 FROM client WHERE realm_id = ? AND client_id = ?`, realmID, clientID)
 	return scanClient(row)
 }
 
 func (r *clientRepo) ByID(ctx context.Context, realmID, id string) (*model.Client, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, realm_id, client_id, name, enabled, public_client, secret,
-		 standard_flow_enabled, direct_access_grants_enabled, service_accounts_enabled,
-		 redirect_uris, web_origins, attributes
+		`SELECT id, realm_id, client_id, name, root_url, base_url, enabled, public_client, secret,
+		 protocol, client_authenticator_type, surrogate_auth_required, always_display_in_console,
+		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
+		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
+		 full_scope_allowed, not_before, node_re_registration_timeout,
+		 redirect_uris, web_origins, default_client_scopes, optional_client_scopes, attributes
 		 FROM client WHERE realm_id = ? AND id = ?`, realmID, id)
 	return scanClient(row)
 }
 
 func (r *clientRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.Client, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, realm_id, client_id, name, enabled, public_client, secret,
-		 standard_flow_enabled, direct_access_grants_enabled, service_accounts_enabled,
-		 redirect_uris, web_origins, attributes
+		`SELECT id, realm_id, client_id, name, root_url, base_url, enabled, public_client, secret,
+		 protocol, client_authenticator_type, surrogate_auth_required, always_display_in_console,
+		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
+		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
+		 full_scope_allowed, not_before, node_re_registration_timeout,
+		 redirect_uris, web_origins, default_client_scopes, optional_client_scopes, attributes
 		 FROM client WHERE realm_id = ? ORDER BY client_id`, realmID)
 	if err != nil {
 		return nil, classify(err)
@@ -277,21 +293,31 @@ func (r *clientRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.
 
 func scanClient(row scanner) (*model.Client, error) {
 	m := &model.Client{}
-	var redirectURIs, webOrigins, attributes string
-	err := row.Scan(&m.ID, &m.RealmID, &m.ClientID, &m.Name, &m.Enabled, &m.PublicClient, &m.Secret,
-		&m.StandardFlowEnabled, &m.DirectAccessGrantsEnabled, &m.ServiceAccountsEnabled,
-		&redirectURIs, &webOrigins, &attributes)
+	var redirectURIs, webOrigins, defaultScopes, optionalScopes, attributes string
+	err := row.Scan(&m.ID, &m.RealmID, &m.ClientID, &m.Name, &m.RootURL, &m.BaseURL,
+		&m.Enabled, &m.PublicClient, &m.Secret,
+		&m.Protocol, &m.ClientAuthenticatorType, &m.SurrogateAuthRequired, &m.AlwaysDisplayInConsole,
+		&m.BearerOnly, &m.ConsentRequired, &m.StandardFlowEnabled, &m.ImplicitFlowEnabled,
+		&m.DirectAccessGrantsEnabled, &m.ServiceAccountsEnabled, &m.FrontchannelLogout,
+		&m.FullScopeAllowed, &m.NotBefore, &m.NodeReRegistrationTimeout,
+		&redirectURIs, &webOrigins, &defaultScopes, &optionalScopes, &attributes)
 	if err != nil {
 		return nil, classify(err)
 	}
-	if err := decode(redirectURIs, &m.RedirectURIs); err != nil {
-		return nil, fmt.Errorf("sqlite: decode redirect_uris: %w", err)
-	}
-	if err := decode(webOrigins, &m.WebOrigins); err != nil {
-		return nil, fmt.Errorf("sqlite: decode web_origins: %w", err)
-	}
-	if err := decode(attributes, &m.Attributes); err != nil {
-		return nil, fmt.Errorf("sqlite: decode attributes: %w", err)
+	for _, f := range []struct {
+		raw  string
+		into any
+		name string
+	}{
+		{redirectURIs, &m.RedirectURIs, "redirect_uris"},
+		{webOrigins, &m.WebOrigins, "web_origins"},
+		{defaultScopes, &m.DefaultClientScopes, "default_client_scopes"},
+		{optionalScopes, &m.OptionalClientScopes, "optional_client_scopes"},
+		{attributes, &m.Attributes, "attributes"},
+	} {
+		if err := decode(f.raw, f.into); err != nil {
+			return nil, fmt.Errorf("sqlite: decode %s: %w", f.name, err)
+		}
 	}
 	return m, nil
 }
