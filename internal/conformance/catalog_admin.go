@@ -66,6 +66,35 @@ var adminCases = []Case{
 		AssertAbsentHeaders: []string{"WWW-Authenticate"},
 	},
 	{
+		// The 403 shape is measured - see "Admin API rejection shapes" in
+		// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md, taken
+		// from a live caller holding view-users and nothing else - and it is
+		// served and covered by TestCallerWithoutTheRoleIsForbidden in
+		// internal/admin, which builds that caller through the store.
+		//
+		// It cannot be a conformance case yet. A fixture runs the same
+		// requests against the reference container and against Gloak, so
+		// reaching a narrow-role caller needs Gloak to serve user creation
+		// (this cut, later) *and* role assignment, which is the Role Mapper
+		// tag and therefore P2's second cut. There is no way to seed the
+		// container except through its API.
+		ID: "admin/users/list-without-view-users",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get users, caller lacking view-users",
+			Retrieved: "2026-08-22",
+		},
+		Status:  Pending,
+		Reason:  "the fixture needs role assignment, which is P2's second cut",
+		Fixture: "",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users",
+			Headers: map[string]string{"Authorization": "Bearer REPLACE-WITH-A-NARROW-ROLE-TOKEN"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
 		// Reported under admin/users rather than admin/realms-admin: the
 		// chapter is taken from the case ID and has to match the chapter whose
 		// denominator the named operation belongs to, or a Users operation
