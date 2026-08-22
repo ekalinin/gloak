@@ -1,6 +1,9 @@
 package conformance
 
 import (
+	"errors"
+	"io/fs"
+	"os"
 	"regexp"
 	"testing"
 )
@@ -43,6 +46,26 @@ func TestCatalogIsWellFormed(t *testing.T) {
 			}
 		default:
 			t.Errorf("%q: unknown status %d", c.ID, c.Status)
+		}
+	}
+}
+
+// TestRecordedCaseRules pins the two rules that make Recorded different from
+// Pending: the golden is mandatory, and the case must say why it is not
+// served yet.
+func TestRecordedCaseRules(t *testing.T) {
+	for _, c := range Catalog {
+		if c.Status != Recorded {
+			continue
+		}
+		if c.Reason == "" {
+			t.Errorf("%q: a Recorded case must say why it is not served yet", c.ID)
+		}
+		if c.Fixture == "" {
+			t.Errorf("%q: a Recorded case is served, so it needs a fixture", c.ID)
+		}
+		if _, err := os.Stat(GoldenPath(goldenDir, c.ID)); errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%q: Recorded means the golden was measured, but none exists", c.ID)
 		}
 	}
 }

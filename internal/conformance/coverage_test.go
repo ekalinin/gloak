@@ -17,8 +17,8 @@ import (
 // from the tests that generate it.
 func TestCoverage(t *testing.T) {
 	type tally struct {
-		implemented, pending, recorded, inventoryOnly int
-		pendingIDs                                    []string
+		implemented, recorded, pending, hasGolden, inventoryOnly int
+		pendingIDs                                               []string
 	}
 	chapters := map[string]*tally{}
 	var order []string
@@ -32,13 +32,14 @@ func TestCoverage(t *testing.T) {
 			order = append(order, name)
 		}
 		_, err := os.Stat(GoldenPath(goldenDir, c.ID))
-		hasGolden := !errors.Is(err, fs.ErrNotExist)
-		if hasGolden {
-			tl.recorded++
+		if !errors.Is(err, fs.ErrNotExist) {
+			tl.hasGolden++
 		}
 		switch c.Status {
 		case Implemented:
 			tl.implemented++
+		case Recorded:
+			tl.recorded++
 		case Pending:
 			tl.pending++
 			tl.pendingIDs = append(tl.pendingIDs, c.ID)
@@ -50,13 +51,13 @@ func TestCoverage(t *testing.T) {
 	sort.Strings(order)
 
 	var total, done int
-	t.Log("chapter                     implemented  pending  recorded  inventory-only")
+	t.Log("chapter                     implemented  recorded  pending  golden  inventory-only")
 	for _, name := range order {
 		tl := chapters[name]
-		total += tl.implemented + tl.pending
+		total += tl.implemented + tl.recorded + tl.pending
 		done += tl.implemented
-		t.Logf("%-26s  %11d  %7d  %8d  %14d",
-			name, tl.implemented, tl.pending, tl.recorded, tl.inventoryOnly)
+		t.Logf("%-26s  %11d  %8d  %7d  %6d  %14d",
+			name, tl.implemented, tl.recorded, tl.pending, tl.hasGolden, tl.inventoryOnly)
 	}
 	t.Logf("total: %d of %d documented behaviours served", done, total)
 

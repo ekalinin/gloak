@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +26,9 @@ func TestConformance(t *testing.T) {
 				t.Fatalf("%s is served but has no measured contract.\n"+
 					"Record it: make record. Documented at %s (%s).",
 					c.ID, c.Doc.URL, c.Doc.Section)
+			case missing && c.Status == Recorded:
+				t.Fatalf("%s is marked Recorded but has no golden.\n"+
+					"Record it: make record, or set it back to Pending.", c.ID)
 			case missing:
 				t.Skipf("pending, no golden recorded yet: %s", c.Reason)
 			case err != nil:
@@ -38,6 +42,18 @@ func TestConformance(t *testing.T) {
 				t.Fatalf("parse golden: %v", err)
 			}
 			got := serve(t, c)
+
+			if c.Status == Recorded {
+				diffs, err := diff(c, want, got)
+				if err != nil {
+					t.Fatalf("compare: %v", err)
+				}
+				if len(diffs) == 0 {
+					t.Fatalf("%s already matches the recorded Keycloak response.\n"+
+						"Promote it to Implemented - as Recorded it is guarded by nothing.", c.ID)
+				}
+				t.Skipf("recorded, not served yet: %s", c.Reason)
+			}
 			compare(t, c, want, got)
 		})
 	}
@@ -58,8 +74,24 @@ func serve(t *testing.T, c Case) *httptest.ResponseRecorder {
 
 func compare(t *testing.T, c Case, want Golden, got *httptest.ResponseRecorder) {
 	t.Helper()
+	diffs, err := diff(c, want, got)
+	if err != nil {
+		t.Fatalf("compare: %v", err)
+	}
+	for _, d := range diffs {
+		t.Error(d)
+	}
+}
+
+// diff returns one entry per way got departs from want, and no entries when
+// the two are equivalent under the case's normalisation rules. It is separate
+// from compare so the Recorded branch can ask "do these match?" without a
+// mismatch - the expected state for a case that is not built yet - failing
+// the test.
+func diff(c Case, want Golden, got *httptest.ResponseRecorder) ([]string, error) {
+	var out []string
 	if got.Code != want.Status {
-		t.Errorf("status: want %d, got %d\nbody: %s", want.Status, got.Code, got.Body)
+		out = append(out, fmt.Sprintf("status: want %d, got %d\nbody: %s", want.Status, got.Code, got.Body))
 	}
 
 	// Keep the first value for a repeated header name, matching what
@@ -99,32 +131,28 @@ func compare(t *testing.T, c Case, want Golden, got *httptest.ResponseRecorder) 
 		canonical := http.CanonicalHeaderKey(name)
 		expected, ok := byName[canonical]
 		if !ok {
-			t.Errorf("header %s is asserted but absent from the golden", name)
+			out = append(out, fmt.Sprintf("header %s is asserted but absent from the golden", name))
 			continue
 		}
 		if actual := gotByName[canonical]; actual != expected {
-			t.Errorf("header %s: want %q, got %q", name, expected, actual)
+			out = append(out, fmt.Sprintf("header %s: want %q, got %q", name, expected, actual))
 		}
 	}
 	for _, name := range c.AssertAbsentHeaders {
 		if actual, ok := gotByName[http.CanonicalHeaderKey(name)]; ok {
-			t.Errorf("header %s: want absent, got %q", name, actual)
+			out = append(out, fmt.Sprintf("header %s: want absent, got %q", name, actual))
 		}
 	}
 
-	// The same three passes the recorder applied, in the same order (see
-	// record_test.go), so the two sides are comparable.
-	body := ReplaceIssuer(got.Body.Bytes(), testIssuer)
-	body, err := Normalize(body, c.Volatile)
+	// The same passes the recorder applied, in the same order, so the two
+	// sides are comparable. See passes.go.
+	body, err := normalisePasses(got.Body.Bytes(), testIssuer, c)
 	if err != nil {
-		t.Fatalf("normalize response: %v", err)
-	}
-	body, err = SortUnordered(body, c.Unordered)
-	if err != nil {
-		t.Fatalf("sort unordered: %v", err)
+		return nil, err
 	}
 	if string(body) != string(want.Body) {
-		t.Errorf("body differs from the recorded Keycloak response.\nwant: %s\ngot:  %s",
-			want.Body, body)
+		out = append(out, fmt.Sprintf("body differs from the recorded Keycloak response.\nwant: %s\ngot:  %s",
+			want.Body, body))
 	}
+	return out, nil
 }

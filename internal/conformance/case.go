@@ -28,6 +28,20 @@ const (
 	Implemented Status = iota
 	// Pending means the behaviour is documented but not built yet.
 	Pending
+	// Recorded means the behaviour has been measured and written to a
+	// golden, but Gloak does not serve it yet. It is Pending with the
+	// contract already in the repository.
+	//
+	// The verifier serves a Recorded case and requires it *not* to match. A
+	// skip would leave a case that starts passing as a side effect of
+	// neighbouring work silently unguarded, so the next refactor could break
+	// a contract nobody knew was being met. Making the match itself a
+	// failure turns the list into one that clears itself.
+	//
+	// The assertion is weak on purpose: it passes on any difference and
+	// proves only "not built yet". It is a status marker with an alarm on
+	// it, not a correctness check.
+	Recorded
 )
 
 // Doc cites where a behaviour was read. The Securing Applications guide has
