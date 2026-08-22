@@ -30,6 +30,16 @@ func SetSecurityHeaders(w http.ResponseWriter) {
 	h.Set("X-Robots-Tag", "none")
 }
 
+// SetContentSecurityPolicy sets the header measured on exactly one response so
+// far: the token revocation success. No other recorded response carries it,
+// including revocation's own error responses, so it is set at that one call
+// site rather than alongside the five security headers. See
+// internal/conformance/testdata/golden/oidc/revocation/refresh-token.http.
+func SetContentSecurityPolicy(w http.ResponseWriter) {
+	w.Header().Set("Content-Security-Policy",
+		"frame-src 'self'; frame-ancestors 'self'; object-src 'none';")
+}
+
 // suppressDate omits the Date header net/http would otherwise add
 // automatically. Keycloak 26.7.1 sends no Date header on any response, so a
 // running Gloak that let net/http add one would differ from Keycloak on

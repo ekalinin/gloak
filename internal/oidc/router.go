@@ -39,6 +39,8 @@ func NewRouter(s store.Store, k *keys.Manager, issuerBase string) http.Handler {
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/token", h.token)
 	mux.HandleFunc("GET /realms/{realm}/protocol/openid-connect/userinfo", h.userinfo)
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/userinfo", h.userinfo)
+	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/token/introspect", h.introspect)
+	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/revoke", h.revoke)
 	mux.HandleFunc("GET /realms/{realm}", h.realmInfo)
 	return withKeycloakFallbacks(mux)
 }
