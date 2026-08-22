@@ -70,10 +70,11 @@ type Case struct {
 	Status Status
 	Reason string // why it is Pending; required when Status is Pending
 
-	// Fixture names the setup applied before the request. "bootstrap" is a
-	// fresh store with the master realm created. Empty means the setup does
-	// not exist yet: the recorder skips the case and the coverage report
-	// counts it as inventory only.
+	// Fixture names an entry in Fixtures: the server-side starting state,
+	// plus any requests run before this one whose responses supply values
+	// this one refers to as {{name}}. Empty means the setup does not exist
+	// yet: the recorder skips the case and the coverage report counts it as
+	// inventory only.
 	Fixture string
 
 	Request Request

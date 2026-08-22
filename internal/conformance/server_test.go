@@ -17,13 +17,17 @@ import (
 // the value only has to be stable, not equal to the recorder's.
 const testIssuer = "http://localhost:8080"
 
-// newFixture builds the Gloak handler for a named setup. "bootstrap" is a
-// fresh file-backed store with the master realm created - file-backed rather
-// than in-memory because tests on in-memory SQLite have passed here while the
-// file-backed path was broken.
-func newFixture(t *testing.T, name string) http.Handler {
+// newFixture builds the Gloak handler for a named starting state.
+// "bootstrap" is a fresh file-backed store with the master realm created -
+// file-backed rather than in-memory because tests on in-memory SQLite have
+// passed here while the file-backed path was broken.
+//
+// It handles only the state. Whatever requests a fixture runs on top of it to
+// reach the state a case measures are Fixture.Steps, executed by RunFixture
+// against the handler this returns.
+func newFixture(t *testing.T, state string) http.Handler {
 	t.Helper()
-	switch name {
+	switch state {
 	case "bootstrap":
 		ctx := context.Background()
 		s, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "gloak.db"))
@@ -40,7 +44,7 @@ func newFixture(t *testing.T, name string) http.Handler {
 		}
 		return oidc.NewRouter(s, k, testIssuer)
 	default:
-		t.Fatalf("unknown fixture %q", name)
+		t.Fatalf("unknown fixture state %q", state)
 		return nil
 	}
 }

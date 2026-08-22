@@ -41,12 +41,20 @@ func TestConformance(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse golden: %v", err)
 			}
-			got := serve(t, c)
+			got, vars, err := serve(t, c)
+			if err != nil {
+				// A fixture step that cannot run is the expected state for a
+				// case whose endpoint is exactly what has not been built.
+				if c.Status == Recorded {
+					t.Skipf("recorded, not served yet (%s): %v", c.Reason, err)
+				}
+				t.Fatalf("serve: %v", err)
+			}
 
 			if c.Status == Recorded {
-				diffs, err := diff(c, want, got)
-				if err != nil {
-					t.Fatalf("compare: %v", err)
+				diffs, dErr := diff(c, want, got, vars)
+				if dErr != nil {
+					t.Fatalf("compare: %v", dErr)
 				}
 				if len(diffs) == 0 {
 					t.Fatalf("%s already matches the recorded Keycloak response.\n"+
@@ -54,27 +62,48 @@ func TestConformance(t *testing.T) {
 				}
 				t.Skipf("recorded, not served yet: %s", c.Reason)
 			}
-			compare(t, c, want, got)
+			compare(t, c, want, got, vars)
 		})
 	}
 }
 
-// serve runs one case against its fixture and returns the recorded response.
-func serve(t *testing.T, c Case) *httptest.ResponseRecorder {
+// serve runs one case against its fixture and returns the recorded response,
+// along with whatever the fixture's steps captured so the caller can mask
+// those values out of the body.
+//
+// It returns an error rather than failing the test directly because a fixture
+// step failing is the *expected* state for a Recorded case: the endpoint its
+// steps call is exactly what has not been built yet.
+func serve(t *testing.T, c Case) (*httptest.ResponseRecorder, map[string]string, error) {
 	t.Helper()
-	h := newFixture(t, c.Fixture)
-	req, err := buildRequest(testIssuer, c.Request)
+	f, ok := Fixtures[c.Fixture]
+	if !ok {
+		return nil, nil, fmt.Errorf("unknown fixture %q", c.Fixture)
+	}
+	h := newFixture(t, f.State)
+
+	do := func(req *http.Request) (*http.Response, error) {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w.Result(), nil
+	}
+	vars, err := RunFixture(f, testIssuer, do)
 	if err != nil {
-		t.Fatalf("build request: %v", err)
+		return nil, nil, err
+	}
+
+	req, err := buildRequest(testIssuer, Expand(c.Request, vars))
+	if err != nil {
+		return nil, nil, fmt.Errorf("build request: %w", err)
 	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
-	return w
+	return w, vars, nil
 }
 
-func compare(t *testing.T, c Case, want Golden, got *httptest.ResponseRecorder) {
+func compare(t *testing.T, c Case, want Golden, got *httptest.ResponseRecorder, vars map[string]string) {
 	t.Helper()
-	diffs, err := diff(c, want, got)
+	diffs, err := diff(c, want, got, vars)
 	if err != nil {
 		t.Fatalf("compare: %v", err)
 	}
@@ -88,7 +117,7 @@ func compare(t *testing.T, c Case, want Golden, got *httptest.ResponseRecorder) 
 // from compare so the Recorded branch can ask "do these match?" without a
 // mismatch - the expected state for a case that is not built yet - failing
 // the test.
-func diff(c Case, want Golden, got *httptest.ResponseRecorder) ([]string, error) {
+func diff(c Case, want Golden, got *httptest.ResponseRecorder, vars map[string]string) ([]string, error) {
 	var out []string
 	if got.Code != want.Status {
 		out = append(out, fmt.Sprintf("status: want %d, got %d\nbody: %s", want.Status, got.Code, got.Body))
@@ -146,7 +175,7 @@ func diff(c Case, want Golden, got *httptest.ResponseRecorder) ([]string, error)
 
 	// The same passes the recorder applied, in the same order, so the two
 	// sides are comparable. See passes.go.
-	body, err := normalisePasses(got.Body.Bytes(), testIssuer, c)
+	body, err := normalisePasses(got.Body.Bytes(), testIssuer, c, vars)
 	if err != nil {
 		return nil, err
 	}

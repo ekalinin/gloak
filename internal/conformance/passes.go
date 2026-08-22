@@ -12,11 +12,16 @@ package conformance
 // recorded order depend on whichever "kid" happened to compare smaller, which
 // is exactly the kind of per-run churn this order exists to avoid.
 //
+// ReplaceCaptured runs before all of them, ahead of any pass that could mask
+// or reorder the bytes a captured token sits in, so a live token can never
+// survive into a golden.
+//
 // It lives in its own file, called from both record_test.go and
 // conformance_test.go, because a pass added to one side and not the other is
 // a divergence no test can see: both sides would simply agree on the wrong
 // bytes.
-func normalisePasses(body []byte, base string, c Case) ([]byte, error) {
+func normalisePasses(body []byte, base string, c Case, vars map[string]string) ([]byte, error) {
+	body = ReplaceCaptured(body, vars)
 	body = ReplaceIssuer(body, base)
 	body, err := Normalize(body, c.Volatile)
 	if err != nil {

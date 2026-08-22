@@ -49,12 +49,20 @@ func TestRecordGoldens(t *testing.T) {
 			skipped = append(skipped, c.ID)
 			continue
 		}
-		if c.Fixture != "bootstrap" {
-			t.Errorf("%s: no recorder support for fixture %q", c.ID, c.Fixture)
+		f, ok := Fixtures[c.Fixture]
+		if !ok {
+			t.Errorf("%s: names fixture %q, which is not declared", c.ID, c.Fixture)
 			continue
 		}
 		t.Run(c.ID, func(t *testing.T) {
-			req, err := buildRequest(base, c.Request)
+			// The fixture's own steps are run but never recorded: only the
+			// case's response becomes a golden. Recording a step would commit
+			// a live token to the repository.
+			vars, err := RunFixture(f, base, client.Do)
+			if err != nil {
+				t.Fatalf("fixture %q: %v", c.Fixture, err)
+			}
+			req, err := buildRequest(base, Expand(c.Request, vars))
 			if err != nil {
 				t.Fatalf("build request: %v", err)
 			}
@@ -70,7 +78,7 @@ func TestRecordGoldens(t *testing.T) {
 
 			// The same passes the verifier applies, in the same order, from
 			// the one place that defines them. See passes.go.
-			body, err = normalisePasses(body, base, c)
+			body, err = normalisePasses(body, base, c, vars)
 			if err != nil {
 				t.Fatalf("normalize: %v", err)
 			}
@@ -78,7 +86,7 @@ func TestRecordGoldens(t *testing.T) {
 			g := Golden{
 				RequestLine: c.Request.Method + " " + c.Request.Path,
 				Status:      resp.StatusCode,
-				Headers:     recordedHeaders(resp.Header, base),
+				Headers:     recordedHeaders(resp.Header, base, vars),
 				Body:        body,
 			}
 			path := GoldenPath(goldenDir, c.ID)
@@ -98,8 +106,9 @@ func TestRecordGoldens(t *testing.T) {
 }
 
 // recordedHeaders sorts headers by name so a re-record produces no spurious
-// diff, and blanks the values that change per response.
-func recordedHeaders(h http.Header, base string) []Header {
+// diff, and blanks the values that change per response. Captured values are
+// masked here too: a token can arrive in a header as easily as in a body.
+func recordedHeaders(h http.Header, base string, vars map[string]string) []Header {
 	volatile := make(map[string]bool, len(VolatileHeaders))
 	for _, name := range VolatileHeaders {
 		volatile[http.CanonicalHeaderKey(name)] = true
@@ -116,7 +125,7 @@ func recordedHeaders(h http.Header, base string) []Header {
 		if volatile[name] {
 			value = volatilePlaceholder
 		} else {
-			value = string(ReplaceIssuer([]byte(value), base))
+			value = string(ReplaceIssuer(ReplaceCaptured([]byte(value), vars), base))
 		}
 		out = append(out, Header{Name: name, Value: value})
 	}
