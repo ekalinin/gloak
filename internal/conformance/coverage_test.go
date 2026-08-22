@@ -15,24 +15,31 @@ import (
 //
 // It prints rather than writing a checked-in file: a generated file drifts
 // from the tests that generate it.
+//
+// The denominator comes from two sources, and the report names which one each
+// row used. A hand-kept case count measures diligence as much as coverage, so
+// it is never silently mixed with the operation counts taken from Keycloak's
+// own API description. Chapters nobody has counted are printed with "?" and
+// excluded from the total, which is then reported alongside how many chapters
+// it left out - leaving them out silently would inflate the percentage by
+// hiding exactly the parts nobody has looked at.
 func TestCoverage(t *testing.T) {
 	type tally struct {
 		implemented, recorded, pending, hasGolden, inventoryOnly int
 		pendingIDs                                               []string
 	}
-	chapters := map[string]*tally{}
-	var order []string
+	tallies := map[string]*tally{}
+	for _, ch := range Chapters {
+		tallies[ch.Name] = &tally{}
+	}
 
 	for _, c := range Catalog {
-		name := chapterOf(c.ID)
-		tl, ok := chapters[name]
+		tl, ok := tallies[chapterOf(c.ID)]
 		if !ok {
-			tl = &tally{}
-			chapters[name] = tl
-			order = append(order, name)
+			t.Errorf("%q reports under chapter %q, which is not declared", c.ID, chapterOf(c.ID))
+			continue
 		}
-		_, err := os.Stat(GoldenPath(goldenDir, c.ID))
-		if !errors.Is(err, fs.ErrNotExist) {
+		if _, err := os.Stat(GoldenPath(goldenDir, c.ID)); !errors.Is(err, fs.ErrNotExist) {
 			tl.hasGolden++
 		}
 		switch c.Status {
@@ -48,26 +55,45 @@ func TestCoverage(t *testing.T) {
 			}
 		}
 	}
-	sort.Strings(order)
 
-	var total, done int
-	t.Log("chapter                     implemented  recorded  pending  golden  inventory-only")
-	for _, name := range order {
-		tl := chapters[name]
-		total += tl.implemented + tl.recorded + tl.pending
-		done += tl.implemented
-		t.Logf("%-26s  %11d  %8d  %7d  %6d  %14d",
-			name, tl.implemented, tl.recorded, tl.pending, tl.hasGolden, tl.inventoryOnly)
+	byTag, err := OperationsByTag()
+	if err != nil {
+		t.Fatalf("OperationsByTag: %v", err)
 	}
-	t.Logf("total: %d of %d documented behaviours served", done, total)
 
-	for _, name := range order {
-		tl := chapters[name]
+	var served, documented, unenumerated int
+	t.Log("chapter                              served  recorded  documented  source")
+	for _, ch := range Chapters {
+		tl := tallies[ch.Name]
+		switch {
+		case !ch.Enumerated:
+			unenumerated++
+			t.Logf("%-36s  %6d  %8d  %10s  not enumerated: %s",
+				ch.Name, tl.implemented, tl.recorded, "?", ch.Reason)
+		case ch.OpenAPITag != "":
+			n := byTag[ch.OpenAPITag]
+			documented += n
+			served += tl.implemented
+			t.Logf("%-36s  %6d  %8d  %10d  openapi 26.7.1",
+				ch.Name, tl.implemented, tl.recorded, n)
+		default:
+			n := tl.implemented + tl.recorded + tl.pending
+			documented += n
+			served += tl.implemented
+			t.Logf("%-36s  %6d  %8d  %10d  catalogue",
+				ch.Name, tl.implemented, tl.recorded, n)
+		}
+	}
+	t.Logf("total: %d of %d enumerated behaviours served; %d chapters not enumerated",
+		served, documented, unenumerated)
+
+	for _, ch := range Chapters {
+		tl := tallies[ch.Name]
 		if len(tl.pendingIDs) == 0 {
 			continue
 		}
 		sort.Strings(tl.pendingIDs)
-		t.Logf("pending in %s:\n  %s", name, strings.Join(tl.pendingIDs, "\n  "))
+		t.Logf("pending in %s:\n  %s", ch.Name, strings.Join(tl.pendingIDs, "\n  "))
 	}
 }
 
