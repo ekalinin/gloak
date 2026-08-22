@@ -11,14 +11,58 @@ The first cut of the Admin REST API: the authorization model every admin
 operation sits on, plus the `clients` and `users` resource groups.
 
 The roadmap allocates P2 seven OpenAPI tags totalling 151 operations. This spec
-covers **69 of them** - `clients` 35 and `users` 34. `roles` 28, `roles-by-id`
-10, `groups` 11, `role-mapper` 18 and `client-role-mappings` 15 remain inside
-P2's boundary and get a second spec.
+takes the two that unblock other work, `Clients` 35 and `Users` 34, and
+implements **24 of those 69**. `Roles` 28, `Roles (by ID)` 10, `Groups` 11,
+`Role Mapper` 18 and `Client Role Mappings` 15 remain inside P2's boundary and
+get a second spec.
 
-The split is not arbitrary. `clients` and `users` are the two groups that
-unblock other work: a confidential client with a known secret is what six P1
-cases have been waiting for, and a second user is what several P3 and P8 cases
-will need. The five remaining groups unblock nothing outside P2.
+The split is not arbitrary. A confidential client with a known secret is what
+six P1 cases have been waiting for, and a second user is what several P3 and P8
+cases will need. The five remaining groups unblock nothing outside P2.
+
+### 1.1 Why 24 and not 69
+
+A tag names the resource an operation hangs off, not the feature it needs.
+Forty-five of the 69 hang off a client or a user and are built by some other
+sub-project entirely.
+
+The roadmap already states the rule - "each operation is counted once, under the
+sub-project that builds the resource, which is not always the sub-project that
+cares about it" - and gives realm export as the example. This is the same thing
+at a larger scale, so it is spelled out per operation here rather than left to
+be rediscovered as a shortfall.
+
+| Owner | Operations under `Clients` and `Users` |
+|---|---|
+| **P2 first cut** | **24** |
+| P5 client scopes | 13 - `default-client-scopes` 3, `optional-client-scopes` 3, `evaluate-scopes` 7 |
+| P6 sessions | 7 - client session counts and listings, `push-revocation`, user sessions |
+| P9 federation | 5 - `federated-identity` 3, `configured-user-storage-credential-types`, and its counterpart |
+| P14 SMTP and clustering | 6 - the three e-mail actions, `nodes` 2, `test-nodes-available` |
+| user profile, unscheduled | 4 - `users/profile` 3, `unmanagedAttributes` |
+| P2 second cut | 4 - a user's group membership |
+| consent, unscheduled | 2 - `consents` |
+| P10 authz services | 2 - `management/permissions` |
+| P13 adapters | 1 - `installation/providers` |
+| P7 dynamic registration | 1 - `registration-access-token` |
+| P3 browser flow | 1 - `impersonation` |
+
+The 24 this spec implements:
+
+**Clients, 10.** `GET` and `POST /clients`; `GET`, `PUT` and `DELETE
+/clients/{uuid}`; `GET` and `POST /clients/{uuid}/client-secret`; `GET` and
+`DELETE /clients/{uuid}/client-secret/rotated`; `GET
+/clients/{uuid}/service-account-user`.
+
+**Users, 14.** `GET` and `POST /users`; `GET /users/count`; `GET`, `PUT` and
+`DELETE /users/{id}`; `PUT /users/{id}/reset-password`; `GET` and `DELETE` on
+`/users/{id}/credentials`; `moveAfter`, `moveToFirst` and `userLabel` on a
+credential; `PUT /users/{id}/disable-credential-types`; `POST
+/users/{id}/logout`.
+
+The meter will therefore read at most `admin/clients 10 of 35` and `admin/users
+14 of 34` when this spec is done. Those are the honest numbers, and the table
+above is why the remainder is not a gap in P2.
 
 ## 2. P2 does not start at the endpoints
 
@@ -120,11 +164,18 @@ roadmap predicted: "P2 exercises the OpenAPI-derived meter on 151 operations
 with an objective denominator. If the meter's design is wrong, that is where to
 find out."
 
-The fix: `Case` gains `Operation string`, naming the OpenAPI `operationId`. A
-chapter's `served` becomes the count of **distinct operations** with at least
-one `Implemented` case. Two tests guard it - every admin case names an
-`operationId` that exists in the vendored description, and every case in a
-chapter with an OpenAPI tag names one at all.
+The fix: `Case` gains `Operation string`. A chapter's `served` becomes the count
+of **distinct operations** with at least one `Implemented` case. Two tests guard
+it - every admin case names an operation that exists in the vendored
+description, and every case in a chapter with an OpenAPI tag names one at all.
+
+**The key is `METHOD path`, not `operationId`.** The vendored description
+carries no `operationId` on any of its 413 operations - checked, it is zero, and
+the fields present on an operation are `description`, `parameters`, `responses`,
+`summary` and `tags`. An earlier draft of this spec said `operationId` and was
+wrong. `GET /admin/realms/{realm}/clients` is unique per operation, is in the
+document, and a test can confirm a case names one that exists, which is the
+whole requirement: the key has to come from outside the project.
 
 Protocol chapters keep counting cases: they have no operation list, which is
 what `source: catalogue` in the report already says.
@@ -187,12 +238,14 @@ In:
 
 - role mappings, composite role expansion, the `master-realm` client's roles
 - admin authentication and per-operation authorization
-- `clients` 35 operations, `users` 34 operations
-- the seven P1 cases section 6 names
+- the 24 operations listed in section 1.1
+- the six P1 cases section 6 names
 
 Out:
 
-- `roles`, `roles-by-id`, `groups`, `role-mapper`, `client-role-mappings` -
+- the 45 operations section 1.1 attributes to other sub-projects, each named
+  there with its owner
+- `Roles`, `Roles (by ID)`, `Groups`, `Role Mapper`, `Client Role Mappings` -
   P2's second spec
 - everything about a realm other than `master`, which is P4
 - client scopes and protocol mappers, which are P5 and which is why the claim
