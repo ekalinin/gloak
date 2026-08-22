@@ -102,6 +102,10 @@ func selfSign(key *rsa.PrivateKey, subjectCN string) ([]byte, error) {
 // sig entry and hashed into its x5t and x5t#S256.
 func (k *RealmKeys) CertificateDER() []byte { return k.certDER }
 
+// SigningPublicKey is the RS256 public key, used to verify a token this realm
+// issued. The private half never leaves this package.
+func (k *RealmKeys) SigningPublicKey() *rsa.PublicKey { return &k.rsaKey.PublicKey }
+
 // EncCertificateDER is the same for the encryption key's enc entry.
 func (k *RealmKeys) EncCertificateDER() []byte { return k.encCertDER }
 
