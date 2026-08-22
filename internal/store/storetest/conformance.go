@@ -158,6 +158,116 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	t.Run("sessions round-trip and cascade", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		u := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "admin", Enabled: true}
+		if err := s.Users().Create(ctx, u); err != nil {
+			t.Fatalf("Users().Create: %v", err)
+		}
+		c := &model.Client{ID: model.NewID(), RealmID: realm.ID, ClientID: "admin-cli", Enabled: true}
+		if err := s.Clients().Create(ctx, c); err != nil {
+			t.Fatalf("Clients().Create: %v", err)
+		}
+		us := &model.UserSession{ID: model.NewID(), RealmID: realm.ID, UserID: u.ID,
+			Username: "admin", StartedAt: 1000, LastRefresh: 1000, ExpiresAt: 2000}
+		if err := s.Sessions().CreateUserSession(ctx, us); err != nil {
+			t.Fatalf("CreateUserSession: %v", err)
+		}
+		cs := &model.ClientSession{ID: model.NewID(), UserSessionID: us.ID,
+			ClientID: c.ID, Scope: "openid email profile", StartedAt: 1000}
+		if err := s.Sessions().CreateClientSession(ctx, cs); err != nil {
+			t.Fatalf("CreateClientSession: %v", err)
+		}
+
+		got, err := s.Sessions().UserSessionByID(ctx, realm.ID, us.ID)
+		if err != nil {
+			t.Fatalf("UserSessionByID: %v", err)
+		}
+		if got.Username != "admin" || got.UserID != u.ID || got.ExpiresAt != 2000 {
+			t.Fatalf("user session round-trip wrong: %+v", got)
+		}
+		gotClient, err := s.Sessions().ClientSession(ctx, us.ID, c.ID)
+		if err != nil {
+			t.Fatalf("ClientSession: %v", err)
+		}
+		if gotClient.Scope != "openid email profile" {
+			t.Fatalf("client session scope lost: %+v", gotClient)
+		}
+
+		if err := s.Sessions().TouchUserSession(ctx, us.ID, 1500); err != nil {
+			t.Fatalf("TouchUserSession: %v", err)
+		}
+		got, err = s.Sessions().UserSessionByID(ctx, realm.ID, us.ID)
+		if err != nil {
+			t.Fatalf("UserSessionByID after touch: %v", err)
+		}
+		if got.LastRefresh != 1500 {
+			t.Fatalf("LastRefresh not updated: %+v", got)
+		}
+
+		// Revocation deletes the user session; the client sessions hanging off
+		// it must go with it, or a refresh token would still find its scope.
+		if err := s.Sessions().DeleteUserSession(ctx, realm.ID, us.ID); err != nil {
+			t.Fatalf("DeleteUserSession: %v", err)
+		}
+		if _, err := s.Sessions().UserSessionByID(ctx, realm.ID, us.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("want ErrNotFound after delete, got %v", err)
+		}
+		if _, err := s.Sessions().ClientSession(ctx, us.ID, c.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("client session outlived its user session: %v", err)
+		}
+	})
+
+	t.Run("deleting a session that is already gone reports ErrNotFound", func(t *testing.T) {
+		// Neither driver treats a delete matching no row as an error, so the
+		// repository has to check the affected count itself. Revoking the same
+		// token twice depends on this telling the two cases apart.
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+
+		err := s.Sessions().DeleteUserSession(ctx, realm.ID, model.NewID())
+
+		if !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("want ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("a session is not visible from another realm", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		other := &model.Realm{ID: model.NewID(), Name: "other", Enabled: true}
+		for _, r := range []*model.Realm{realm, other} {
+			if err := s.Realms().Create(ctx, r); err != nil {
+				t.Fatalf("Realms().Create: %v", err)
+			}
+		}
+		u := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "admin", Enabled: true}
+		if err := s.Users().Create(ctx, u); err != nil {
+			t.Fatalf("Users().Create: %v", err)
+		}
+		us := &model.UserSession{ID: model.NewID(), RealmID: realm.ID, UserID: u.ID,
+			Username: "admin", StartedAt: 1, LastRefresh: 1, ExpiresAt: 2}
+		if err := s.Sessions().CreateUserSession(ctx, us); err != nil {
+			t.Fatalf("CreateUserSession: %v", err)
+		}
+
+		_, err := s.Sessions().UserSessionByID(ctx, other.ID, us.ID)
+
+		if !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("a session leaked across realms: %v", err)
+		}
+	})
+
 	t.Run("realm keys round-trip and are listed per realm", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
