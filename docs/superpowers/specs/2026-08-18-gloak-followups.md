@@ -145,8 +145,12 @@ fixture has to close both before recording it, not after:
   foreign-key violation surfaces raw. Must land before the admin API maps store
   errors to status codes.
 - `broker` and `master-realm` are confidential clients created with an empty secret.
-  Harmless while nothing authenticates clients; an empty secret must never validate
-  once client authentication exists.
+  P1 closed the dangerous half: `internal/oidc/clientauth.go` refuses a confidential
+  client whose stored secret is empty, whatever is presented, and
+  `TestAuthenticateClientRejectsAnEmptySecretOnAConfidentialClient` guards it. What
+  remains is that bootstrap still creates two clients that can never authenticate.
+  Whether it should generate real secrets is P2's question, since that is where
+  client management lives.
 - `WriteBearerChallenge` quotes header parameters with Go's `%q` rather than RFC 7235
   rules. Fine for ASCII without quotes, wrong once realm names are user-supplied.
 - The conformance suite exercises 11 of 17 interface methods, while its doc comment
@@ -194,16 +198,56 @@ appears to.
 - **`gotByName` in `compare` folds the response's headers by iterating a map.** If two
   header names ever canonicalised to the same key, which wins would depend on map
   iteration order. Gloak sets each header once, so this is unreachable today.
-- **Four of twenty-six goldens churn on `make record`**, three from a login-theme
-  cache-busting hash and one from the token response's `scope` word order. Documented
-  in README's record section; all four cases are `Pending`, so nothing compares them.
+- **Three goldens churn on `make record`**, all from a login-theme cache-busting
+  hash. Documented in README's record section; all three cases are `Pending`, so
+  nothing compares them. A fourth used to churn on the token response's `scope`
+  word order and no longer does: `UnorderedWords` sorts the words inside a string.
 
-Two shape-level notes rather than defects:
+One shape-level note rather than a defect:
 
 - `internal/oidc/discovery.go` now holds the JWKS document type alongside the
   discovery document. Two unrelated response shapes in one file; a `jwks.go` would
   say what it is.
-- `userinfo` is not wired into `oidc.NewRouter` at all, so a request for it currently
-  falls into the unmatched-path 404. Expected while the endpoint is unimplemented,
-  but it means the three `Pending` userinfo cases cannot be exercised even by
-  temporarily flipping them to `Implemented`.
+
+The note that `userinfo` was not wired into `oidc.NewRouter` is resolved: P1
+serves it, along with the token, introspection and revocation endpoints.
+
+## F14: the access token's `jti` prefix is measured and not reproduced
+
+Keycloak's access-token `jti` carries a per-instance prefix - one captured
+sample is `onrtro:13f91f50-6b34-71c7-6d86-d201ef27be67` - while ID and refresh
+tokens use a plain UUID. See the "Claim sets" section of the observed-behaviour
+document.
+
+`internal/token` emits a plain UUID on all three. One sample says nothing
+reliable about the prefix's alphabet or its length, and inventing a generator
+from it would be exactly the remembered value this project forbids. It is
+invisible today: every token is `Volatile` in every recorded response, and the
+one endpoint that would expose a `jti` - introspection - cannot be recorded
+yet (F15).
+
+Closing it needs the prefix measured across several container starts, which is
+cheap to do the next time a reference container is running.
+
+## F15: two P1 response bodies are served but unmeasured
+
+`userinfo`'s success body and introspection's active/inactive bodies are
+emitted from shapes derived from the measured ID-token claim set and RFC 7662,
+not from a recording. Both are marked as such in the code.
+
+Neither can be recorded on a bootstrapped `master` realm. userinfo refuses
+every token `admin-cli` can issue, because they are lightweight; introspection
+refuses `admin-cli` outright, because it is public. Both need a confidential
+client with a known secret, which is client management, which is P2.
+
+The conformance cases stay `Pending` in the meantime -
+`oidc/userinfo/get-with-valid-token`, `post-with-valid-token`,
+`oidc/introspection/active-access-token`, `active-refresh-token` and
+`inactive-token` - so nothing asserts these bodies. P2 must record them and
+correct the code, rather than assuming the shapes were verified because the
+endpoints work.
+
+Same class, already noted where it lives: `client_credentials` returns the same
+body shape as the password grant, which is also unmeasured, and the
+`service-account-<clientId>` username `internal/oidc` creates on demand follows
+Keycloak's convention without having been measured.

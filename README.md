@@ -22,22 +22,30 @@ Working today:
 - OIDC discovery document, all 56 keys in Keycloak's own order
 - JWKS endpoint
 - realm info endpoint
-- Postgres and SQLite behind one storage interface, both passing the same
-  conformance suite
+- the token endpoint: the `password`, `refresh_token` and `client_credentials`
+  grants, with client authentication for public and confidential clients
+- userinfo, token introspection and token revocation
+- SSO sessions, so `sid` is stable across a refresh and revocation actually ends
+  the session
 - realm signing keys persisted per realm, so the published `kid` survives a
   restart and two replicas agree
+- Postgres and SQLite behind one storage interface, both passing the same
+  conformance suite
 - a documentation-derived conformance suite (`internal/conformance`) that checks
   Gloak's responses byte-for-byte against bytes recorded from a live
   Keycloak 26.7.1
 - a parity meter whose denominator comes from Keycloak's own OpenAPI description
-  rather than from a hand-kept list: **8 of 483 enumerated behaviours served**,
+  rather than from a hand-kept list: **25 of 483 enumerated behaviours served**,
   plus four chapters whose surface has not been counted
-- 17 behaviours measured and committed but not yet served, so the tasks that
-  build them start from byte-exact expected output
 
-Not implemented yet: tokens and grants, the browser login flow, userinfo, logout,
-introspection, revocation, the admin REST API, SAML, user federation, identity
-brokering, authorization services, the admin console.
+Not implemented yet: the browser login flow and the authorization code grant,
+logout, the admin REST API, SAML, user federation, identity brokering,
+authorization services, the admin console.
+
+Two P1 endpoints serve responses nobody has measured: userinfo's success body
+and introspection's active/inactive bodies. Both need a confidential client with
+a known secret, which no bootstrapped client is, so their conformance cases stay
+`Pending` and the code says so where it emits them. See F14 in the follow-ups.
 
 Where this is going is `docs/superpowers/specs/2026-08-21-gloak-parity-roadmap.md`:
 fourteen sub-projects with their dependencies and what each closes.
@@ -87,6 +95,10 @@ discovery document is derived from it.
 | `GET /realms/{realm}/.well-known/openid-configuration` | discovery document |
 | `GET /realms/{realm}/protocol/openid-connect/certs` | JWKS |
 | `GET /realms/{realm}` | realm name and public key, used by adapters |
+| `POST /realms/{realm}/protocol/openid-connect/token` | token issuance |
+| `GET POST /realms/{realm}/protocol/openid-connect/userinfo` | claims about the subject |
+| `POST /realms/{realm}/protocol/openid-connect/token/introspect` | token introspection |
+| `POST /realms/{realm}/protocol/openid-connect/revoke` | token revocation |
 
 There is no `/auth` prefix. Keycloak dropped it in version 17.
 
@@ -144,7 +156,7 @@ and stay out of the total rather than being dropped from it silently, which
 would inflate the percentage by hiding the parts nobody has counted. It reads:
 
 ```
-total: 8 of 483 enumerated behaviours served; 4 chapters not enumerated
+total: 25 of 483 enumerated behaviours served; 4 chapters not enumerated
 ```
 
 A case has one of three statuses. `Implemented` is served and compared, and a
@@ -155,7 +167,9 @@ it ever does - a case that starts passing as a side effect would otherwise sit
 unguarded until the next refactor broke it.
 
 That is also how a task starts: flip its cases from `Recorded` to `Implemented`
-and the failures carry byte-exact diffs against a real Keycloak response.
+and the failures carry byte-exact diffs against a real Keycloak response. P1
+worked exactly that way and cleared the list - no case is `Recorded` today, and
+the next one to record a contract ahead of building it puts cases back on it.
 
 `make record` rewrites the expected values in
 `internal/conformance/testdata/golden`. Read its diff before committing: an
