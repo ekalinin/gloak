@@ -182,7 +182,11 @@ The 31 operations OpenAPI leaves untagged are all
 Authorization Services, and they are P10.
 
 Each operation is counted once, under the sub-project that builds the resource,
-which is not always the sub-project that cares about it. Realm export and import
+which is not always the sub-project that cares about it. **The Size column is
+therefore a denominator, not an estimate of work.** Section 1.1 of
+`2026-08-22-p2-admin-api-core-design.md` works the split out per operation for
+the two largest tags and finds that 45 of 69 are built elsewhere; expect the
+same ratio wherever a resource has many sub-paths. Realm export and import
 and the events configuration are Realms Admin operations and so are counted in
 P4, while the behaviour behind them belongs to P14. P14 therefore has no
 operations of its own: its surface is the management port, SMTP and clustering,
