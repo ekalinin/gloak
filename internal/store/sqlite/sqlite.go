@@ -140,6 +140,7 @@ func (s *Store) Realms() store.RealmRepo   { return &realmRepo{s.db} }
 func (s *Store) Clients() store.ClientRepo { return &clientRepo{s.db} }
 func (s *Store) Users() store.UserRepo     { return &userRepo{s.db} }
 func (s *Store) Roles() store.RoleRepo     { return &roleRepo{s.db} }
+func (s *Store) Keys() store.KeyRepo       { return &keyRepo{s.db} }
 
 // classify maps driver errors onto the store's sentinels so handlers never
 // inspect driver-specific error text.
@@ -417,6 +418,45 @@ func (r *roleRepo) ListRealmRoles(ctx context.Context, realmID string) ([]*model
 func scanRole(row scanner) (*model.Role, error) {
 	m := &model.Role{}
 	if err := row.Scan(&m.ID, &m.RealmID, &m.ClientID, &m.Name, &m.Description, &m.Composite); err != nil {
+		return nil, classify(err)
+	}
+	return m, nil
+}
+
+type keyRepo struct{ db *sql.DB }
+
+func (r *keyRepo) Create(ctx context.Context, m *model.RealmKey) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO realm_key (id, realm_id, algorithm, key_use, private_key, certificate, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.RealmID, m.Algorithm, m.Use, m.PrivateKey, m.Certificate, m.CreatedAt)
+	return classify(err)
+}
+
+func (r *keyRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.RealmKey, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, realm_id, algorithm, key_use, private_key, certificate, created_at
+		 FROM realm_key WHERE realm_id = ? ORDER BY algorithm`, realmID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	defer rows.Close()
+
+	var out []*model.RealmKey
+	for rows.Next() {
+		m, err := scanRealmKey(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+func scanRealmKey(row scanner) (*model.RealmKey, error) {
+	m := &model.RealmKey{}
+	if err := row.Scan(&m.ID, &m.RealmID, &m.Algorithm, &m.Use,
+		&m.PrivateKey, &m.Certificate, &m.CreatedAt); err != nil {
 		return nil, classify(err)
 	}
 	return m, nil
