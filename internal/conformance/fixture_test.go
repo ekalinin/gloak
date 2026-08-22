@@ -96,6 +96,29 @@ func TestHeaderCapturesAreMaskedOutOfARecording(t *testing.T) {
 	}
 }
 
+func TestCaptureFromIndexesAnArray(t *testing.T) {
+	// A filtered list is how a fixture finds a bootstrapped object whose UUID
+	// differs between the reference container and Gloak.
+	body := []byte(`[{"id":"abc-123","clientId":"account"}]`)
+
+	got, err := captureFrom(body, "0/id")
+
+	if err != nil {
+		t.Fatalf("captureFrom: %v", err)
+	}
+	if got != "abc-123" {
+		t.Fatalf("want abc-123, got %q", got)
+	}
+}
+
+func TestCaptureFromRejectsAnEmptyArray(t *testing.T) {
+	// An empty result means the filter matched nothing. Yielding "" would
+	// substitute an empty path segment and record a 404 as the contract.
+	if _, err := captureFrom([]byte(`[]`), "0/id"); err == nil {
+		t.Fatal("indexing an empty array reported success")
+	}
+}
+
 func TestExpandSubstitutesCapturedValues(t *testing.T) {
 	in := Request{
 		Method:  http.MethodGet,
@@ -129,6 +152,32 @@ func TestExpandSubstitutesCapturedValues(t *testing.T) {
 // An unknown reference is left verbatim rather than becoming an empty string,
 // so a typo shows up in the recorded request instead of quietly changing what
 // was measured.
+func TestExpandSubstitutesThePath(t *testing.T) {
+	// The admin API addresses objects by a server-minted UUID in the path, so
+	// a case can never spell one literally. Leaving the path out recorded a
+	// 404 as the contract for the first case that needed it.
+	in := Request{
+		Method: http.MethodGet,
+		Path:   "/admin/realms/master/clients/{{client_uuid}}",
+		Body:   []byte(`{"id":"{{client_uuid}}"}`),
+	}
+
+	got := Expand(in, map[string]string{"client_uuid": "abc-123"})
+
+	if got.Path != "/admin/realms/master/clients/abc-123" {
+		t.Errorf("path: got %q", got.Path)
+	}
+	if string(got.Body) != `{"id":"abc-123"}` {
+		t.Errorf("body: got %s", got.Body)
+	}
+	if in.Path != "/admin/realms/master/clients/{{client_uuid}}" {
+		t.Errorf("Expand mutated its input path: %q", in.Path)
+	}
+	if string(in.Body) != `{"id":"{{client_uuid}}"}` {
+		t.Errorf("Expand mutated its input body: %s", in.Body)
+	}
+}
+
 func TestExpandLeavesUnknownPlaceholdersAlone(t *testing.T) {
 	got := Expand(Request{Headers: map[string]string{"A": "{{nope}}"}}, map[string]string{"x": "1"})
 	if got.Headers["A"] != "{{nope}}" {

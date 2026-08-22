@@ -65,6 +65,69 @@ var adminCases = []Case{
 		AssertHeaders:       []string{"Content-Type"},
 		AssertAbsentHeaders: []string{"WWW-Authenticate"},
 	},
+	// --- Clients ---
+	{
+		ID: "admin/clients/list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get clients belonging to the realm",
+			Retrieved: "2026-08-22",
+		},
+		Status:    Recorded,
+		Reason:    "client listing is not implemented",
+		Operation: "GET /admin/realms/{realm}/clients",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+		// Every client's internal UUID is minted at bootstrap, so it differs
+		// between the reference container and Gloak on every run. The field's
+		// presence and position stay asserted.
+		Volatile: []string{"*/id"},
+		// The list's order is not part of the contract until measured to be.
+		Unordered: []string{""},
+	},
+	{
+		ID: "admin/clients/read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get representation of the client",
+			Retrieved: "2026-08-22",
+		},
+		Status:    Recorded,
+		Reason:    "reading a client is not implemented",
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}",
+		Fixture:   "admin-token-account-client",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+		Volatile:      []string{"id"},
+	},
+	{
+		ID: "admin/clients/read-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get representation of the client",
+			Retrieved: "2026-08-22",
+		},
+		Status: Recorded,
+		Reason: "reading a client is not implemented",
+		// No Operation: a rejection, not a demonstration that reading works.
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/00000000-0000-0000-0000-000000000000",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+
 	{
 		// The 403 shape is measured - see "Admin API rejection shapes" in
 		// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md, taken

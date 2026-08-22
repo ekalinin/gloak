@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 )
 
@@ -104,6 +105,43 @@ var Fixtures = map[string]Fixture{
 			},
 		}},
 	},
+
+	// admin-token-account-client is admin-token plus the internal UUID of the
+	// bootstrapped `account` client, found by filtering the client list.
+	//
+	// The UUID cannot be a literal in a case: it is minted at bootstrap, so
+	// the reference container's differs from Gloak's on every run. Looking it
+	// up is what makes a case addressable by the UUID Keycloak's admin API
+	// addresses clients by.
+	"admin-token-account-client": {
+		State: "bootstrap",
+		Steps: []Step{
+			{
+				Request: Request{
+					Method: http.MethodPost,
+					Path:   "/realms/master/protocol/openid-connect/token",
+					Form: map[string]string{
+						"grant_type": "password",
+						"client_id":  "admin-cli",
+						"username":   "admin",
+						"password":   "admin",
+					},
+				},
+				Capture: map[string]string{"access_token": "access_token"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients",
+					Query:   map[string]string{"clientId": "account"},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				// The filter matches exactly one client, so index 0 is not a
+				// bet on list order.
+				Capture: map[string]string{"client_uuid": "0/id"},
+			},
+		},
+	},
 }
 
 // Do performs one request. The recorder's implementation talks to the
@@ -157,6 +195,11 @@ func RunFixture(f Fixture, base string, do Do) (map[string]string, error) {
 
 // captureFrom pulls one value out of a JSON body by slash-separated path.
 //
+// A numeric segment indexes an array, matching the path syntax Normalize
+// already uses. That is what lets a fixture read an identifier out of a
+// filtered list - "0/id" from GET /clients?clientId=account - without the
+// endpoint that creates one existing yet.
+//
 // Unlike the golden comparison passes this unmarshals rather than splicing
 // bytes: a captured value is fed back into a request, never written to a
 // golden, so key order does not matter here.
@@ -167,20 +210,40 @@ func captureFrom(body []byte, path string) (string, error) {
 	}
 	cur := doc
 	for seg := range strings.SplitSeq(path, "/") {
-		obj, ok := cur.(map[string]any)
-		if !ok {
-			return "", fmt.Errorf("path %q: %q is not reachable, parent is not an object", path, seg)
+		next, err := step(cur, seg)
+		if err != nil {
+			return "", fmt.Errorf("path %q: %w", path, err)
 		}
-		cur, ok = obj[seg]
-		if !ok {
-			return "", fmt.Errorf("path %q: no key %q", path, seg)
-		}
+		cur = next
 	}
 	s, ok := cur.(string)
 	if !ok {
 		return "", fmt.Errorf("path %q: value is %T, not a string", path, cur)
 	}
 	return s, nil
+}
+
+// step descends one path segment into an object key or an array index.
+func step(cur any, seg string) (any, error) {
+	switch parent := cur.(type) {
+	case map[string]any:
+		v, ok := parent[seg]
+		if !ok {
+			return nil, fmt.Errorf("no key %q", seg)
+		}
+		return v, nil
+	case []any:
+		i, err := strconv.Atoi(seg)
+		if err != nil {
+			return nil, fmt.Errorf("%q is not an array index", seg)
+		}
+		if i < 0 || i >= len(parent) {
+			return nil, fmt.Errorf("index %d is out of range, the array holds %d", i, len(parent))
+		}
+		return parent[i], nil
+	default:
+		return nil, fmt.Errorf("%q is not reachable, parent is %T", seg, cur)
+	}
 }
 
 // captureFromHeader pulls one value out of a response header.
@@ -207,21 +270,38 @@ func captureFromHeader(h http.Header, name string) (string, error) {
 	return value, nil
 }
 
-// Expand substitutes {{name}} references in a request's query, headers and
-// form values with captured variables. A reference with no matching variable
-// is left alone, so a typo shows up in the recorded request rather than
-// silently becoming an empty string.
+// Expand substitutes {{name}} references in a request's path, query, headers,
+// form values and body with captured variables. A reference with no matching
+// variable is left alone, so a typo shows up in the recorded request rather
+// than silently becoming an empty string.
+//
+// The path is substituted because the admin API addresses objects by UUID
+// there - /admin/realms/{realm}/clients/{uuid} - and that UUID is minted by
+// the server, so it can never be a literal in a case. Leaving the path out
+// was P1's shape, where every captured value went into a header or a form,
+// and it recorded a 404 as the contract for the first case that needed it.
 //
 // It copies every map it touches. One Case is expanded twice - once by the
-// recorder with the container's tokens, once by the verifier with Gloak's -
+// recorder with the container's values, once by the verifier with Gloak's -
 // so writing through to the catalogue's own maps would let the first run
 // poison the second.
 func Expand(r Request, vars map[string]string) Request {
 	out := r
+	out.Path = expandString(r.Path, vars)
 	out.Query = expandMap(r.Query, vars)
 	out.Headers = expandMap(r.Headers, vars)
 	out.Form = expandMap(r.Form, vars)
+	if len(r.Body) > 0 {
+		out.Body = []byte(expandString(string(r.Body), vars))
+	}
 	return out
+}
+
+func expandString(s string, vars map[string]string) string {
+	for name, value := range vars {
+		s = strings.ReplaceAll(s, "{{"+name+"}}", value)
+	}
+	return s
 }
 
 func expandMap(in, vars map[string]string) map[string]string {
@@ -230,10 +310,7 @@ func expandMap(in, vars map[string]string) map[string]string {
 	}
 	out := make(map[string]string, len(in))
 	for k, v := range in {
-		for name, value := range vars {
-			v = strings.ReplaceAll(v, "{{"+name+"}}", value)
-		}
-		out[k] = v
+		out[k] = expandString(v, vars)
 	}
 	return out
 }
