@@ -1,0 +1,81 @@
+package admin
+
+import (
+	"net/http"
+
+	"github.com/ekalinin/gloak/internal/httpx"
+	"github.com/ekalinin/gloak/internal/keys"
+	"github.com/ekalinin/gloak/internal/model"
+	"github.com/ekalinin/gloak/internal/store"
+)
+
+type handler struct {
+	store      store.Store
+	keys       *keys.Manager
+	issuerBase string
+}
+
+// Register adds the Admin REST API to an existing mux.
+//
+// It registers onto a caller's mux rather than building its own, and does no
+// wrapping. The security headers and the two measured fallback 404 shapes
+// belong to the whole server, not to this API: with a mux of its own, an
+// unmatched admin path would produce a third 404 shape, and only two are
+// measured. internal/oidc.WithKeycloakFallbacks wraps the composed result
+// once.
+func Register(mux *http.ServeMux, s store.Store, k *keys.Manager, issuerBase string) {
+	h := &handler{store: s, keys: k, issuerBase: issuerBase}
+	h.register(mux)
+}
+
+// register declares every route. Routes are added through h.guard so that a
+// route with no required role cannot be written by accident: guard takes the
+// role as a parameter, so omitting it does not compile.
+func (h *handler) register(mux *http.ServeMux) {
+	mux.HandleFunc("GET /admin/realms/{realm}/users", h.guard("view-users", h.listUsers))
+}
+
+// guard is the authorization filter every admin route goes through: resolve
+// the realm, resolve the caller from its session, then check the one role this
+// operation requires.
+//
+// The role is per operation rather than a blanket "is an admin" check, because
+// that is what was measured: a caller holding view-users and nothing else gets
+// 200 listing users and 403 creating one.
+func (h *handler) guard(role string, next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		realm := h.resolveRealm(w, r)
+		if realm == nil {
+			return
+		}
+		c := h.resolveCaller(w, r, realm)
+		if c == nil {
+			return
+		}
+		if !c.has(role) {
+			writeForbidden(w)
+			return
+		}
+		next(w, r, &reqContext{realm: realm, caller: c})
+	}
+}
+
+// reqContext is what a handler needs that the request itself does not carry:
+// the resolved realm and the authenticated caller.
+type reqContext struct {
+	realm  *model.Realm
+	caller *caller
+}
+
+// realmIssuer is the iss claim a token from this realm carries, and therefore
+// the value ParseAccess checks against.
+func (h *handler) realmIssuer(realm string) string {
+	return h.issuerBase + "/realms/" + realm
+}
+
+// listUsers is a placeholder until Task 13 records the representation. It
+// exists so the authentication and authorization cases have a route to reach;
+// returning a body nobody measured would be worse than returning none.
+func (h *handler) listUsers(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	httpx.WriteJSON(w, http.StatusOK, []struct{}{})
+}

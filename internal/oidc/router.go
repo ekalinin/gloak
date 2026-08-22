@@ -33,6 +33,18 @@ type handler struct {
 // follow-up F5.
 func NewRouter(s store.Store, k *keys.Manager, issuerBase string) http.Handler {
 	mux := http.NewServeMux()
+	Register(mux, s, k, issuerBase)
+	return WithKeycloakFallbacks(mux)
+}
+
+// Register adds the protocol endpoints to an existing mux, so a server can
+// serve them alongside another API on one mux and wrap the result once.
+//
+// One mux matters rather than two handlers chained: the fallback shapes below
+// are decided by whether *any* route matched, and a second mux would answer
+// its own 404 for a path the first one owns. There are two measured fallback
+// bodies and adding a third would be a divergence.
+func Register(mux *http.ServeMux, s store.Store, k *keys.Manager, issuerBase string) {
 	h := &handler{store: s, keys: k, issuerBase: issuerBase}
 	mux.HandleFunc("GET /realms/{realm}/.well-known/openid-configuration", h.discovery)
 	mux.HandleFunc("GET /realms/{realm}/protocol/openid-connect/certs", h.certs)
@@ -42,10 +54,9 @@ func NewRouter(s store.Store, k *keys.Manager, issuerBase string) http.Handler {
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/token/introspect", h.introspect)
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/revoke", h.revoke)
 	mux.HandleFunc("GET /realms/{realm}", h.realmInfo)
-	return withKeycloakFallbacks(mux)
 }
 
-// withKeycloakFallbacks routes requests that match no registered route, or
+// WithKeycloakFallbacks routes requests that match no registered route, or
 // match a route's path with the wrong method, through package httpx instead
 // of falling through to net/http's own "404 page not found" and "Method Not
 // Allowed" plain-text bodies - shapes no Keycloak client expects and which
@@ -78,7 +89,7 @@ func NewRouter(s store.Store, k *keys.Manager, issuerBase string) http.Handler {
 // happens for a route match and for a known path hit with the wrong method,
 // but not for a path matching no route at all. That is set here, at the
 // point that distinguishes the two, rather than in package httpx.
-func withKeycloakFallbacks(mux *http.ServeMux) http.Handler {
+func WithKeycloakFallbacks(mux *http.ServeMux) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, pattern := mux.Handler(r); pattern == "" {
 			// mux.Handler returns an empty pattern both when no route

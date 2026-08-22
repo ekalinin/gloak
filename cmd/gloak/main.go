@@ -13,6 +13,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/ekalinin/gloak/internal/admin"
 	"github.com/ekalinin/gloak/internal/bootstrap"
 	"github.com/ekalinin/gloak/internal/keys"
 	"github.com/ekalinin/gloak/internal/oidc"
@@ -102,7 +103,16 @@ func serve(args []string) error {
 
 	// Keys are resolved per realm on first use and persisted, so a restart
 	// republishes the same kid and a realm created later gets its own set.
-	server := newHTTPServer(cfg.addr, logRequests(oidc.NewRouter(s, keys.NewManager(s), cfg.issuer)))
+	km := keys.NewManager(s)
+
+	// One mux for both APIs, wrapped once. Two muxes chained would each answer
+	// their own 404 for paths the other owns, and there are exactly two
+	// measured fallback bodies.
+	mux := http.NewServeMux()
+	oidc.Register(mux, s, km, cfg.issuer)
+	admin.Register(mux, s, km, cfg.issuer)
+
+	server := newHTTPServer(cfg.addr, logRequests(oidc.WithKeycloakFallbacks(mux)))
 
 	slog.Info("gloak: listening", "addr", cfg.addr, "issuer", cfg.issuer, "db", cfg.db)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

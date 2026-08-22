@@ -77,16 +77,23 @@ type Case struct {
 	// inventory only.
 	Fixture string
 
-	// Operation names the OpenAPI operation this case exercises, spelled
-	// "METHOD path" as the vendored description spells it - for example
-	// "GET /admin/realms/{realm}/clients". It is required for a case in a
-	// chapter whose denominator comes from that description, and ignored for
-	// the protocol chapters, which have no operation list.
+	// Operation names the OpenAPI operation this case demonstrates is
+	// **served**, spelled "METHOD path" as the vendored description spells it
+	// - for example "GET /admin/realms/{realm}/clients". The protocol chapters
+	// have no operation list and ignore it.
 	//
 	// It exists because a chapter's denominator counts operations while the
-	// catalogue holds cases. Several cases exercise one operation - a success,
-	// a 404, a 403 - and counting cases would report more served than there is
-	// surface. See TestServedOperationsCountsEachOperationOnce.
+	// catalogue holds cases. Several cases exercise one operation, and
+	// counting cases would report more served than there is surface. See
+	// TestServedOperationsCountsEachOperationOnce.
+	//
+	// "Demonstrates is served" is narrower than "sends a request to", and the
+	// difference is deliberate. A case that only pins a rejection - no
+	// credentials, a caller without the role, an unknown realm - proves the
+	// route exists and refuses correctly, not that the operation does its job.
+	// Those cases leave this empty, so an endpoint whose success path is still
+	// a stub does not count towards parity. Naming one is what claims the
+	// operation, and forgetting to undercounts rather than inflates.
 	Operation string
 
 	Request Request

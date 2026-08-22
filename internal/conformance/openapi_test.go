@@ -85,12 +85,31 @@ func TestAdminCasesNameARealOperation(t *testing.T) {
 		if byName[chapterOf(c.ID)].OpenAPITag == "" {
 			continue
 		}
-		if c.Operation == "" {
-			t.Errorf("%q is in an OpenAPI-counted chapter and names no operation", c.ID)
+		// An empty Operation is allowed and means "this case pins a rejection,
+		// not that the operation is served" - see Case.Operation. Forgetting
+		// to name one undercounts, which is the safe direction; naming a
+		// wrong one would silently claim surface that does not exist, which is
+		// what this checks.
+		if c.Operation != "" && !ops[c.Operation] {
+			t.Errorf("%q names operation %q, which is not in the description", c.ID, c.Operation)
+		}
+	}
+}
+
+func TestProtocolCasesNameNoOperation(t *testing.T) {
+	// The protocol chapters count cases, not operations. A case there naming
+	// an operation would suggest its chapter had an external denominator when
+	// it does not.
+	byName := make(map[string]Chapter, len(Chapters))
+	for _, ch := range Chapters {
+		byName[ch.Name] = ch
+	}
+	for _, c := range Catalog {
+		if byName[chapterOf(c.ID)].OpenAPITag != "" {
 			continue
 		}
-		if !ops[c.Operation] {
-			t.Errorf("%q names operation %q, which is not in the description", c.ID, c.Operation)
+		if c.Operation != "" {
+			t.Errorf("%q is in a catalogue-counted chapter but names operation %q", c.ID, c.Operation)
 		}
 	}
 }
