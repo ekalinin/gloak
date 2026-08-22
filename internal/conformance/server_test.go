@@ -38,11 +38,7 @@ func newFixture(t *testing.T, state string) http.Handler {
 		if err := bootstrap.EnsureMaster(ctx, s, "admin", "admin"); err != nil {
 			t.Fatalf("EnsureMaster: %v", err)
 		}
-		k, err := keys.Generate("master")
-		if err != nil {
-			t.Fatalf("Generate: %v", err)
-		}
-		return oidc.NewRouter(s, k, testIssuer)
+		return oidc.NewRouter(s, keys.NewManager(s), testIssuer)
 	default:
 		t.Fatalf("unknown fixture state %q", state)
 		return nil

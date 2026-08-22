@@ -43,9 +43,20 @@ handler cannot map it to a response. Postgres has no equivalent failure.
 The conformance suite runs single-goroutine, so it can never show this. Whatever
 fixes it should also add a concurrent case to the suite.
 
-## F5: realm signing keys are generated per process and never persisted
+## F5: realm signing keys are generated per process and never persisted (closed)
 
-`keys.Generate()` runs at startup and the result lives only in memory. The `kid`
+**Closed by P1, task 2** (`docs/superpowers/plans/2026-08-22-p1-token-foundation.md`).
+A realm's three keys - RS256 for signing, RSA-OAEP for encryption, HS512 for
+refresh tokens - are now rows in `realm_key`, resolved through `keys.Manager` and
+cached per realm. `TestManagerKeepsKidAcrossRestarts` and
+`TestManagerRestoresUsableKeyMaterial` guard the `kid` and the key bytes across a
+restart, `TestManagerIsolatesRealms` guards the per-realm split, and
+`TestConformance/oidc/certs/master` - the project's one sanctioned red test -
+passes, so `make test` is clean.
+
+What the finding said, kept for the record:
+
+`keys.Generate()` ran at startup and the result lives only in memory. The `kid`
 therefore changes on every restart, invalidating every cached JWKS a client holds,
 and two replicas publish different keys for the same realm. Keycloak persists realm
 keys.

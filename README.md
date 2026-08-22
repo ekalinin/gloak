@@ -24,9 +24,11 @@ Working today:
 - realm info endpoint
 - Postgres and SQLite behind one storage interface, both passing the same
   conformance suite
+- realm signing keys persisted per realm, so the published `kid` survives a
+  restart and two replicas agree
 - a documentation-derived conformance suite (`internal/conformance`) that checks
   Gloak's responses byte-for-byte against bytes recorded from a live
-  Keycloak 26.7.1 - with one known exception, see below
+  Keycloak 26.7.1
 - a parity meter whose denominator comes from Keycloak's own OpenAPI description
   rather than from a hand-kept list: **8 of 483 enumerated behaviours served**,
   plus four chapters whose surface has not been counted
@@ -162,10 +164,11 @@ unreviewed re-record pins a regression as the new contract.
 An endpoint served without a recorded golden fails `make test`. That is
 deliberate - it is how "measured, never remembered" stops being a convention.
 
-`make test` has exactly one known failure, `TestConformance/oidc/certs/master`:
-the `master` realm publishes two JWKS keys and Gloak generates one, left red
-until realm keys get their own slice. Any other failure is a real regression -
-see AGENTS.md's "Build and test" section.
+`make test` is clean, and any failure is a real regression - see AGENTS.md's
+"Build and test" section. It used to carry one sanctioned failure,
+`TestConformance/oidc/certs/master`, because the `master` realm publishes two
+JWKS keys and Gloak generated one; realm keys are now modelled and persisted, so
+that case passes.
 
 `make record` is not silent on a clean checkout: three of the goldens it writes
 churn on every run and will show a diff even when nothing has changed.

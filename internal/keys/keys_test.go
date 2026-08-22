@@ -24,9 +24,10 @@ func TestGenerateProducesBothKeys(t *testing.T) {
 	}
 }
 
-func TestJWKSExposesOnlyThePublicRSAKey(t *testing.T) {
-	// The HMAC key signs refresh tokens, which are opaque to clients. Publishing
-	// it would hand out the ability to mint refresh tokens.
+func TestJWKSExposesOnlyThePublicRSAKeys(t *testing.T) {
+	// Two published keys, measured: RS256/sig and RSA-OAEP/enc. The HMAC key
+	// signs refresh tokens, which are opaque to clients; publishing it would
+	// hand out the ability to mint them.
 	k, err := keys.Generate("master")
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
@@ -34,18 +35,28 @@ func TestJWKSExposesOnlyThePublicRSAKey(t *testing.T) {
 
 	set := k.JWKS()
 
-	if len(set.Keys) != 1 {
-		t.Fatalf("want exactly one published key, got %d", len(set.Keys))
+	if len(set.Keys) != 2 {
+		t.Fatalf("want exactly two published keys, got %d", len(set.Keys))
 	}
-	jwk := set.Keys[0]
-	if jwk.KeyID != k.RSAKeyID {
-		t.Fatalf("want key ID %q, got %q", k.RSAKeyID, jwk.KeyID)
+	if set.Keys[0].KeyID != k.RSAKeyID {
+		t.Fatalf("want signing key ID %q, got %q", k.RSAKeyID, set.Keys[0].KeyID)
 	}
-	if !jwk.IsPublic() {
-		t.Fatal("want a public key in the JWKS, got a private one")
+	if set.Keys[1].KeyID != k.EncKeyID {
+		t.Fatalf("want encryption key ID %q, got %q", k.EncKeyID, set.Keys[1].KeyID)
 	}
-	if jwk.Algorithm != "RS256" || jwk.Use != "sig" {
-		t.Fatalf("want RS256/sig, got %s/%s", jwk.Algorithm, jwk.Use)
+	for _, jwk := range set.Keys {
+		if !jwk.IsPublic() {
+			t.Fatalf("key %q is private in the JWKS", jwk.KeyID)
+		}
+		if jwk.KeyID == k.HMACKeyID {
+			t.Fatal("the HMAC key is published")
+		}
+	}
+	if set.Keys[0].Algorithm != "RS256" || set.Keys[0].Use != "sig" {
+		t.Fatalf("want RS256/sig, got %s/%s", set.Keys[0].Algorithm, set.Keys[0].Use)
+	}
+	if set.Keys[1].Algorithm != "RSA-OAEP" || set.Keys[1].Use != "enc" {
+		t.Fatalf("want RSA-OAEP/enc, got %s/%s", set.Keys[1].Algorithm, set.Keys[1].Use)
 	}
 }
 

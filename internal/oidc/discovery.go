@@ -7,6 +7,8 @@ import (
 	"encoding/base64"
 	"math/big"
 
+	jose "github.com/go-jose/go-jose/v4"
+
 	"github.com/ekalinin/gloak/internal/keys"
 )
 
@@ -30,25 +32,43 @@ type jwksKey struct {
 	E       string   `json:"e"`
 }
 
-// jwksFor builds the published key set from a realm's signing material.
+// jwksFor builds the published key set from a realm's signing material. A live
+// master realm publishes two entries, RS256/sig and RSA-OAEP/enc; see the
+// "Certificate endpoint" section of the observed-behaviour document and
+// internal/conformance/testdata/golden/oidc/certs/master.http.
 func jwksFor(k *keys.RealmKeys) jwksDocument {
+	certs := map[string][]byte{
+		k.RSAKeyID: k.CertificateDER(),
+		k.EncKeyID: k.EncCertificateDER(),
+	}
 	set := k.JWKS()
-	pub := set.Keys[0].Key.(*rsa.PublicKey)
-	der := k.CertificateDER()
-	sha1Sum := sha1.Sum(der)
-	sha256Sum := sha256.Sum256(der)
+	doc := jwksDocument{Keys: make([]jwksKey, 0, len(set.Keys))}
+	for _, key := range set.Keys {
+		doc.Keys = append(doc.Keys, jwksEntry(key, certs[key.KeyID]))
+	}
+	return doc
+}
+
+// jwksEntry encodes one published key. The base64 variants are deliberately
+// not uniform across the entry, and that is measured: x5c is standard base64
+// with padding because it is a certificate, while x5t, x5t#S256, n and e are
+// base64url without padding, per RFC 7517.
+func jwksEntry(key jose.JSONWebKey, certDER []byte) jwksKey {
+	pub := key.Key.(*rsa.PublicKey)
+	sha1Sum := sha1.Sum(certDER)
+	sha256Sum := sha256.Sum256(certDER)
 	enc := base64.RawURLEncoding
-	return jwksDocument{Keys: []jwksKey{{
-		Kid:     set.Keys[0].KeyID,
+	return jwksKey{
+		Kid:     key.KeyID,
 		Kty:     "RSA",
-		Alg:     set.Keys[0].Algorithm,
-		Use:     set.Keys[0].Use,
-		X5c:     []string{base64.StdEncoding.EncodeToString(der)},
+		Alg:     key.Algorithm,
+		Use:     key.Use,
+		X5c:     []string{base64.StdEncoding.EncodeToString(certDER)},
 		X5t:     enc.EncodeToString(sha1Sum[:]),
 		X5tS256: enc.EncodeToString(sha256Sum[:]),
 		N:       enc.EncodeToString(pub.N.Bytes()),
 		E:       enc.EncodeToString(big.NewInt(int64(pub.E)).Bytes()),
-	}}}
+	}
 }
 
 // mtlsEndpointAliases mirrors Keycloak's nested mtls_endpoint_aliases

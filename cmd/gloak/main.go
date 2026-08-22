@@ -100,12 +100,9 @@ func serve(args []string) error {
 		return fmt.Errorf("gloak: bootstrap master realm: %w", err)
 	}
 
-	k, err := keys.Generate("master")
-	if err != nil {
-		return fmt.Errorf("gloak: generate realm keys: %w", err)
-	}
-
-	server := newHTTPServer(cfg.addr, logRequests(oidc.NewRouter(s, k, cfg.issuer)))
+	// Keys are resolved per realm on first use and persisted, so a restart
+	// republishes the same kid and a realm created later gets its own set.
+	server := newHTTPServer(cfg.addr, logRequests(oidc.NewRouter(s, keys.NewManager(s), cfg.issuer)))
 
 	slog.Info("gloak: listening", "addr", cfg.addr, "issuer", cfg.issuer, "db", cfg.db)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

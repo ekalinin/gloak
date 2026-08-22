@@ -28,11 +28,7 @@ func newServer(t *testing.T) http.Handler {
 	if err := bootstrap.EnsureMaster(ctx, s, "admin", "admin"); err != nil {
 		t.Fatalf("EnsureMaster: %v", err)
 	}
-	k, err := keys.Generate("master")
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
-	}
-	return oidc.NewRouter(s, k, "http://localhost:8080")
+	return oidc.NewRouter(s, keys.NewManager(s), "http://localhost:8080")
 }
 
 func TestDiscoveryKeySetMatchesKeycloak(t *testing.T) {
@@ -199,7 +195,10 @@ func TestDiscoveryForUnknownRealm(t *testing.T) {
 	}
 }
 
-func TestJWKSServesOneRSAKey(t *testing.T) {
+func TestJWKSServesASigningAndAnEncryptionKey(t *testing.T) {
+	// Measured: a live master realm publishes two keys, RS256/sig and
+	// RSA-OAEP/enc. See the "Certificate endpoint" section of
+	// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
 	req := httptest.NewRequest(http.MethodGet,
 		"/realms/master/protocol/openid-connect/certs", nil)
 	w := httptest.NewRecorder()
@@ -220,10 +219,22 @@ func TestJWKSServesOneRSAKey(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &set); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(set.Keys) != 1 {
-		t.Fatalf("want one key, got %d", len(set.Keys))
+	if len(set.Keys) != 2 {
+		t.Fatalf("want two keys, got %d", len(set.Keys))
 	}
-	if set.Keys[0].Kty != "RSA" || set.Keys[0].Alg != "RS256" || set.Keys[0].Use != "sig" {
-		t.Fatalf("unexpected key: %+v", set.Keys[0])
+	byUse := map[string]string{}
+	kids := map[string]bool{}
+	for _, k := range set.Keys {
+		if k.Kty != "RSA" {
+			t.Fatalf("unexpected key type: %+v", k)
+		}
+		byUse[k.Use] = k.Alg
+		kids[k.Kid] = true
+	}
+	if byUse["sig"] != "RS256" || byUse["enc"] != "RSA-OAEP" {
+		t.Fatalf("unexpected algorithms: %+v", byUse)
+	}
+	if len(kids) != 2 {
+		t.Fatal("the two published keys share one kid")
 	}
 }

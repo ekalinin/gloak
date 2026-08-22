@@ -12,12 +12,13 @@ import (
 
 	"github.com/ekalinin/gloak/internal/httpx"
 	"github.com/ekalinin/gloak/internal/keys"
+	"github.com/ekalinin/gloak/internal/model"
 	"github.com/ekalinin/gloak/internal/store"
 )
 
 type handler struct {
 	store      store.Store
-	keys       *keys.RealmKeys
+	keys       *keys.Manager
 	issuerBase string
 }
 
@@ -26,7 +27,11 @@ type handler struct {
 // externally visible scheme://host[:port] the server is reachable at; every
 // endpoint URL in the responses below is derived from it and the realm name
 // at request time.
-func NewRouter(s store.Store, k *keys.RealmKeys, issuerBase string) http.Handler {
+//
+// The key manager is per server, not per realm: it resolves each realm's own
+// persisted key set on demand. Passing a single realm's keys here was
+// follow-up F5.
+func NewRouter(s store.Store, k *keys.Manager, issuerBase string) http.Handler {
 	mux := http.NewServeMux()
 	h := &handler{store: s, keys: k, issuerBase: issuerBase}
 	mux.HandleFunc("GET /realms/{realm}/.well-known/openid-configuration", h.discovery)
@@ -113,39 +118,57 @@ func (p *fallbackProbe) Write(b []byte) (int, error) { return len(b), nil }
 func (p *fallbackProbe) WriteHeader(status int) {}
 
 // resolveRealm looks up the realm named in the request path. On
-// store.ErrNotFound it writes Keycloak's measured 404 shape and returns
-// false; callers must stop handling the request in that case.
-func (h *handler) resolveRealm(w http.ResponseWriter, r *http.Request) (string, bool) {
-	name := r.PathValue("realm")
-	if _, err := h.store.Realms().ByName(r.Context(), name); err != nil {
+// store.ErrNotFound it writes Keycloak's measured 404 shape and returns nil;
+// callers must stop handling the request in that case. It returns the realm
+// itself rather than its name because every endpoint past discovery needs its
+// ID and its token lifespans.
+func (h *handler) resolveRealm(w http.ResponseWriter, r *http.Request) *model.Realm {
+	realm, err := h.store.Realms().ByName(r.Context(), r.PathValue("realm"))
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			httpx.WriteMessageError(w, http.StatusNotFound, "Realm does not exist")
-			return "", false
+			return nil
 		}
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
-		return "", false
+		return nil
 	}
-	return name, true
+	return realm
+}
+
+// realmKeys resolves a realm's persisted key set, writing the 500 shape and
+// returning nil when it cannot.
+func (h *handler) realmKeys(w http.ResponseWriter, r *http.Request, realm *model.Realm) *keys.RealmKeys {
+	k, err := h.keys.ForRealm(r.Context(), realm)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return nil
+	}
+	return k
 }
 
 func (h *handler) discovery(w http.ResponseWriter, r *http.Request) {
-	realm, ok := h.resolveRealm(w, r)
-	if !ok {
+	realm := h.resolveRealm(w, r)
+	if realm == nil {
 		return
 	}
 	// Measured on the golden: longer than every other endpoint's, and only
 	// present on the 200 - the "realm does not exist" 404 above sends no
 	// Cache-Control at all.
 	w.Header().Set("Cache-Control", "no-cache, must-revalidate, no-transform, no-store")
-	httpx.WriteJSON(w, http.StatusOK, discoveryDoc(h.issuerBase, realm))
+	httpx.WriteJSON(w, http.StatusOK, discoveryDoc(h.issuerBase, realm.Name))
 }
 
 func (h *handler) certs(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.resolveRealm(w, r); !ok {
+	realm := h.resolveRealm(w, r)
+	if realm == nil {
+		return
+	}
+	k := h.realmKeys(w, r, realm)
+	if k == nil {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-cache")
-	httpx.WriteJSON(w, http.StatusOK, jwksFor(h.keys))
+	httpx.WriteJSON(w, http.StatusOK, jwksFor(k))
 }
 
 // realmInfoDocument is Keycloak's public realm descriptor. Field order is
@@ -165,19 +188,23 @@ type realmInfoDocument struct {
 // Keycloak 26.7.1 returns), the token service base and the account service
 // URL.
 func (h *handler) realmInfo(w http.ResponseWriter, r *http.Request) {
-	realm, ok := h.resolveRealm(w, r)
-	if !ok {
+	realm := h.resolveRealm(w, r)
+	if realm == nil {
 		return
 	}
-	pub, err := publicKeyDER(h.keys)
+	k := h.realmKeys(w, r, realm)
+	if k == nil {
+		return
+	}
+	pub, err := publicKeyDER(k)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	realmBase := h.issuerBase + "/realms/" + realm
+	realmBase := h.issuerBase + "/realms/" + realm.Name
 	w.Header().Set("Cache-Control", "no-cache")
 	httpx.WriteJSONCharset(w, http.StatusOK, realmInfoDocument{
-		Realm:           realm,
+		Realm:           realm.Name,
 		PublicKey:       pub,
 		TokenService:    realmBase + "/protocol/openid-connect",
 		AccountService:  realmBase + "/account",
