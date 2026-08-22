@@ -341,16 +341,6 @@ var oidcPending = []Case{
 		Status:  Pending,
 		Reason:  "the token endpoint is not implemented",
 		Fixture: "bootstrap",
-		// The recorded scope field's word order (e.g. "profile email" vs
-		// "email profile") is not stable across container starts - see the
-		// "scopes_supported order" finding in
-		// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md,
-		// same underlying cause (a Java set with no fixed iteration order),
-		// just surfacing inside a space-separated string here instead of a
-		// JSON array. Neither Volatile nor Unordered can mask word order
-		// within one string value, so this golden will churn on re-record
-		// until that gets handled - deliberately left alone rather than
-		// widening either mechanism for one pending case.
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
@@ -365,6 +355,14 @@ var oidcPending = []Case{
 		Volatile: []string{
 			"access_token", "refresh_token", "id_token", "session_state",
 		},
+		// The scope field's word order (e.g. "profile email" vs "email
+		// profile") is not stable across container starts - see the
+		// "scopes_supported order" finding in
+		// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md,
+		// same underlying cause (a Java set with no fixed iteration order),
+		// just surfacing inside a space-separated string here instead of a
+		// JSON array.
+		UnorderedWords: []string{"scope"},
 	},
 	{
 		ID: "oidc/token/unknown-client",
@@ -422,20 +420,23 @@ var oidcPending = []Case{
 		},
 		Status:  Pending,
 		Reason:  "the token endpoint is not implemented",
-		Fixture: "", // needs a refresh token from a previously issued grant; a Case's Request has no way to chain onto a prior response
+		Fixture: "admin-token",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
 			Form: map[string]string{
 				"grant_type":    "refresh_token",
 				"client_id":     "admin-cli",
-				"refresh_token": "REPLACE-WITH-A-REAL-REFRESH-TOKEN",
+				"refresh_token": "{{refresh_token}}",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
 		Volatile: []string{
 			"access_token", "refresh_token", "id_token", "session_state",
 		},
+		// See password-grant-admin-cli for why scope's word order is not
+		// stable across container starts.
+		UnorderedWords: []string{"scope"},
 	},
 	{
 		ID: "oidc/token/client-credentials-grant",
@@ -758,11 +759,11 @@ var oidcPending = []Case{
 		},
 		Status:  Pending,
 		Reason:  "userinfo is not implemented",
-		Fixture: "", // needs a real access token; a Case's Request cannot chain onto a token grant's response
+		Fixture: "admin-token",
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/realms/master/protocol/openid-connect/userinfo",
-			Headers: map[string]string{"Authorization": "Bearer REPLACE-WITH-A-REAL-ACCESS-TOKEN"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},
@@ -775,12 +776,12 @@ var oidcPending = []Case{
 		},
 		Status:  Pending,
 		Reason:  "userinfo is not implemented",
-		Fixture: "", // needs a real access token; a Case's Request cannot chain onto a token grant's response
+		Fixture: "admin-token",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/userinfo",
 			Form: map[string]string{
-				"access_token": "REPLACE-WITH-A-REAL-ACCESS-TOKEN",
+				"access_token": "{{access_token}}",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
@@ -935,9 +936,18 @@ var oidcPending = []Case{
 			Section:   "Introspection endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the introspection endpoint is not implemented",
-		Fixture: "", // needs a real, still-valid access token
+		Status: Pending,
+		Reason: "the introspection endpoint is not implemented",
+		// A live access token is now obtainable - the admin-token fixture
+		// has one - but that is not what blocks this case. Introspecting
+		// with client_id "admin-cli" was measured returning 403
+		// {"error":"invalid_request","error_description":"Client not
+		// allowed."}: admin-cli is public, and Keycloak refuses
+		// introspection to public clients outright, so the response never
+		// reaches the shape this case names. See inactive-token below, where
+		// that was measured. Getting there needs a confidential client with
+		// a known secret, which arrives with client management.
+		Fixture: "",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token/introspect",
@@ -955,9 +965,13 @@ var oidcPending = []Case{
 			Section:   "Introspection endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the introspection endpoint is not implemented",
-		Fixture: "", // needs a real, still-valid refresh token
+		Status: Pending,
+		Reason: "the introspection endpoint is not implemented",
+		// Blocked by the same measured refusal as active-access-token above:
+		// admin-cli is public and Keycloak does not let public clients
+		// introspect. A confidential client is what unblocks it, not a
+		// token.
+		Fixture: "",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token/introspect",
@@ -1027,13 +1041,13 @@ var oidcPending = []Case{
 		},
 		Status:  Pending,
 		Reason:  "the token revocation endpoint is not implemented",
-		Fixture: "", // needs a real refresh token to demonstrate genuine revocation, not just a well-formed request
+		Fixture: "admin-token",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/revoke",
 			Form: map[string]string{
 				"client_id": "admin-cli",
-				"token":     "REPLACE-WITH-A-REAL-REFRESH-TOKEN",
+				"token":     "{{refresh_token}}",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
@@ -1047,13 +1061,13 @@ var oidcPending = []Case{
 		},
 		Status:  Pending,
 		Reason:  "the token revocation endpoint is not implemented",
-		Fixture: "", // needs a real access token to demonstrate genuine revocation, not just a well-formed request
+		Fixture: "admin-token",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/revoke",
 			Form: map[string]string{
 				"client_id":       "admin-cli",
-				"token":           "REPLACE-WITH-A-REAL-ACCESS-TOKEN",
+				"token":           "{{access_token}}",
 				"token_type_hint": "access_token",
 			},
 		},
