@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -21,6 +22,22 @@ func newStore(t *testing.T) store.Store {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	return s
+}
+
+// bootstrapped returns a store with EnsureMaster already run and the master
+// realm looked up, which every role test below starts from.
+func bootstrapped(t *testing.T) (store.Store, *model.Realm) {
+	t.Helper()
+	s := newStore(t)
+	ctx := context.Background()
+	if err := bootstrap.EnsureMaster(ctx, s, "admin", "admin"); err != nil {
+		t.Fatalf("EnsureMaster: %v", err)
+	}
+	realm, err := s.Realms().ByName(ctx, "master")
+	if err != nil {
+		t.Fatalf("ByName: %v", err)
+	}
+	return s, realm
 }
 
 func TestEnsureMasterCreatesTheSixDefaultClients(t *testing.T) {
@@ -235,5 +252,144 @@ func TestEnsureMasterDoesNotResetAnExistingAdminCredential(t *testing.T) {
 	}
 	if !bytes.Equal(before.HashValue, after.HashValue) || !bytes.Equal(before.Salt, after.Salt) {
 		t.Error("want the admin credential untouched by a second EnsureMaster call")
+	}
+}
+
+// TestEnsureMasterCreatesTheAdminRoleContainer pins the measured role set on
+// the master-realm client. See "Admin roles on the master-realm client" in
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+func TestEnsureMasterCreatesTheAdminRoleContainer(t *testing.T) {
+	s, realm := bootstrapped(t)
+	ctx := context.Background()
+
+	container, err := s.Clients().ByClientID(ctx, realm.ID, "master-realm")
+	if err != nil {
+		t.Fatalf("ByClientID(master-realm): %v", err)
+	}
+	roles, err := s.Roles().ListClientRoles(ctx, realm.ID, container.ID)
+	if err != nil {
+		t.Fatalf("ListClientRoles: %v", err)
+	}
+
+	want := []string{
+		"create-client", "impersonation", "manage-authorization", "manage-clients",
+		"manage-events", "manage-identity-providers", "manage-organizations",
+		"manage-realm", "manage-users", "query-clients", "query-groups",
+		"query-organizations", "query-realms", "query-users", "view-authorization",
+		"view-clients", "view-events", "view-identity-providers",
+		"view-organizations", "view-realm", "view-users",
+	}
+	got := make([]string, 0, len(roles))
+	for _, r := range roles {
+		got = append(got, r.Name)
+	}
+	sort.Strings(got)
+	if len(got) != len(want) {
+		t.Fatalf("want %d roles, got %d: %v", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("role %d: want %q, got %q", i, want[i], got[i])
+		}
+	}
+}
+
+func TestEnsureMasterWiresTheMeasuredComposites(t *testing.T) {
+	s, realm := bootstrapped(t)
+	ctx := context.Background()
+	container, err := s.Clients().ByClientID(ctx, realm.ID, "master-realm")
+	if err != nil {
+		t.Fatalf("ByClientID: %v", err)
+	}
+
+	for parent, want := range map[string][]string{
+		"view-clients":       {"query-clients"},
+		"view-users":         {"query-groups", "query-users"},
+		"view-organizations": {"query-organizations"},
+	} {
+		role, err := s.Roles().ByName(ctx, realm.ID, container.ID, parent)
+		if err != nil {
+			t.Fatalf("ByName(%q): %v", parent, err)
+		}
+		if !role.Composite {
+			t.Errorf("%q is not marked composite", parent)
+		}
+		children, err := s.Roles().ListComposites(ctx, role.ID)
+		if err != nil {
+			t.Fatalf("ListComposites(%q): %v", parent, err)
+		}
+		got := make([]string, 0, len(children))
+		for _, c := range children {
+			got = append(got, c.Name)
+		}
+		sort.Strings(got)
+		if len(got) != len(want) {
+			t.Fatalf("%q: want %v, got %v", parent, want, got)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("%q: want %v, got %v", parent, want, got)
+			}
+		}
+	}
+}
+
+// TestAdminRoleIsCompositeOverTwentyTwo pins the measured count. The
+// administrator holds no client role directly, so this composite is the only
+// route to its rights.
+func TestAdminRoleIsCompositeOverTwentyTwo(t *testing.T) {
+	s, realm := bootstrapped(t)
+	ctx := context.Background()
+
+	admin, err := s.Roles().ByName(ctx, realm.ID, "", "admin")
+	if err != nil {
+		t.Fatalf("ByName(admin): %v", err)
+	}
+	children, err := s.Roles().ListComposites(ctx, admin.ID)
+	if err != nil {
+		t.Fatalf("ListComposites: %v", err)
+	}
+
+	if len(children) != 22 {
+		t.Fatalf("want 22 composites, got %d", len(children))
+	}
+	var realmRoles int
+	for _, c := range children {
+		if c.ClientID == "" {
+			realmRoles++
+			if c.Name != "create-realm" {
+				t.Errorf("unexpected realm role in admin's composites: %q", c.Name)
+			}
+		}
+	}
+	if realmRoles != 1 {
+		t.Fatalf("want exactly one realm role among the composites, got %d", realmRoles)
+	}
+}
+
+func TestEnsureMasterGivesTheAdministratorItsRoles(t *testing.T) {
+	// Measured: exactly two realm roles and no client role directly.
+	s, realm := bootstrapped(t)
+	ctx := context.Background()
+	user, err := s.Users().ByUsername(ctx, realm.ID, "admin")
+	if err != nil {
+		t.Fatalf("ByUsername: %v", err)
+	}
+
+	roles, err := s.Roles().ListUserRoles(ctx, user.ID)
+
+	if err != nil {
+		t.Fatalf("ListUserRoles: %v", err)
+	}
+	got := make([]string, 0, len(roles))
+	for _, r := range roles {
+		if r.ClientID != "" {
+			t.Errorf("the administrator holds client role %q directly", r.Name)
+		}
+		got = append(got, r.Name)
+	}
+	sort.Strings(got)
+	if len(got) != 2 || got[0] != "admin" || got[1] != "default-roles-master" {
+		t.Fatalf("want [admin default-roles-master], got %v", got)
 	}
 }
