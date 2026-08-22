@@ -416,8 +416,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: refresh_token grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "admin-token",
 		Request: Request{
 			Method: http.MethodPost,
@@ -688,8 +687,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: refresh_token grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
