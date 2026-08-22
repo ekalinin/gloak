@@ -1,6 +1,115 @@
 package conformance
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestOperationsAreKeyedByMethodAndPath(t *testing.T) {
+	// The key is "METHOD path" because the vendored description carries no
+	// operationId - zero of its 413 operations have one, and the fields an
+	// operation does have are description, parameters, responses, summary and
+	// tags. Method and path together are unique, are in the document, and come
+	// from outside this project, which is the whole requirement.
+	ops, err := Operations()
+
+	if err != nil {
+		t.Fatalf("Operations: %v", err)
+	}
+	if len(ops) != 413 {
+		t.Fatalf("want 413 operations, got %d", len(ops))
+	}
+	for _, want := range []string{
+		"GET /admin/realms/{realm}/clients",
+		"POST /admin/realms/{realm}/clients",
+		"GET /admin/realms/{realm}/users/{user-id}",
+	} {
+		if !ops[want] {
+			t.Errorf("%q is not in the description", want)
+		}
+	}
+	if ops["GET /admin/realms/{realm}/clients/{client-uuid}/parameters"] {
+		t.Error("a path item's parameters key was counted as an operation")
+	}
+}
+
+func TestNoOperationCarriesAnOperationID(t *testing.T) {
+	// Pinning the absence, because an earlier draft of P2's spec specified the
+	// meter around operationId and had to be corrected. If a future vendored
+	// version does carry them, this fails and that decision gets revisited
+	// deliberately rather than by accident.
+	raw, err := os.ReadFile(filepath.FromSlash(openapiPath))
+	if err != nil {
+		t.Fatalf("read description: %v", err)
+	}
+	var doc struct {
+		Paths map[string]map[string]json.RawMessage `json:"paths"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse description: %v", err)
+	}
+	for path, item := range doc.Paths {
+		for method, rawOp := range item {
+			if !httpMethods[method] {
+				continue
+			}
+			var op struct {
+				OperationID string `json:"operationId"`
+			}
+			if err := json.Unmarshal(rawOp, &op); err != nil {
+				t.Fatalf("parse %s %s: %v", method, path, err)
+			}
+			if op.OperationID != "" {
+				t.Fatalf("%s %s carries operationId %q; the meter's key can be revisited",
+					method, path, op.OperationID)
+			}
+		}
+	}
+}
+
+func TestAdminCasesNameARealOperation(t *testing.T) {
+	ops, err := Operations()
+	if err != nil {
+		t.Fatalf("Operations: %v", err)
+	}
+	byName := make(map[string]Chapter, len(Chapters))
+	for _, ch := range Chapters {
+		byName[ch.Name] = ch
+	}
+
+	for _, c := range Catalog {
+		// Protocol chapters have no operation list, which is what
+		// "source: catalogue" in the coverage report already says.
+		if byName[chapterOf(c.ID)].OpenAPITag == "" {
+			continue
+		}
+		if c.Operation == "" {
+			t.Errorf("%q is in an OpenAPI-counted chapter and names no operation", c.ID)
+			continue
+		}
+		if !ops[c.Operation] {
+			t.Errorf("%q names operation %q, which is not in the description", c.ID, c.Operation)
+		}
+	}
+}
+
+func TestServedOperationsCountsEachOperationOnce(t *testing.T) {
+	// Two Implemented cases on one operation count once. Without this the
+	// meter rewards writing more error cases for an endpoint already served,
+	// and would report "3 of 34" where one operation of 34 is implemented.
+	cases := []Case{
+		{ID: "admin/users/list", Status: Implemented, Operation: "GET /admin/realms/{realm}/users"},
+		{ID: "admin/users/list-forbidden", Status: Implemented, Operation: "GET /admin/realms/{realm}/users"},
+		{ID: "admin/users/read", Status: Implemented, Operation: "GET /admin/realms/{realm}/users/{user-id}"},
+		{ID: "admin/users/create", Status: Pending, Operation: "POST /admin/realms/{realm}/users"},
+	}
+
+	if got := servedOperations(cases); got != 2 {
+		t.Fatalf("want 2 distinct served operations, got %d", got)
+	}
+}
 
 // The counts below are the vendored description's own. They are checked so
 // that swapping in another version cannot change the denominator silently: a

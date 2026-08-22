@@ -77,6 +77,18 @@ type Case struct {
 	// inventory only.
 	Fixture string
 
+	// Operation names the OpenAPI operation this case exercises, spelled
+	// "METHOD path" as the vendored description spells it - for example
+	// "GET /admin/realms/{realm}/clients". It is required for a case in a
+	// chapter whose denominator comes from that description, and ignored for
+	// the protocol chapters, which have no operation list.
+	//
+	// It exists because a chapter's denominator counts operations while the
+	// catalogue holds cases. Several cases exercise one operation - a success,
+	// a 404, a 403 - and counting cases would report more served than there is
+	// surface. See TestServedOperationsCountsEachOperationOnce.
+	Operation string
+
 	Request Request
 
 	// AssertHeaders lists the response headers compared exactly. Every header
