@@ -101,6 +101,12 @@ type Case struct {
 	// stable order. Their elements are sorted before comparison, so membership
 	// and length stay asserted while order does not.
 	Unordered []string
+
+	// UnorderedWords lists paths pointing at JSON strings whose
+	// space-separated words Keycloak emits in no stable order - the token
+	// response's scope is the measured example. Their words are sorted
+	// before comparison, so membership stays asserted while order does not.
+	UnorderedWords []string
 }
 
 // buildRequest turns a Case's Request into an *http.Request aimed at base.

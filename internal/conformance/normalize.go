@@ -91,6 +91,39 @@ func SortUnordered(raw []byte, paths []string) ([]byte, error) {
 	return applyEdits(raw, e.edits), nil
 }
 
+// SortUnorderedWords sorts the space-separated words inside the string values
+// at the given paths, rewriting each as its words joined by single spaces.
+//
+// It exists because Keycloak emits at least one field - the token response's
+// scope - whose word order inside a single string is not stable across
+// container starts, for the same reason scopes_supported's array order is
+// not: a Java set with no fixed iteration order. SortUnordered addresses JSON
+// arrays and cannot reach inside a string value.
+//
+// Path syntax matches Normalize and SortUnordered. A path resolving to
+// anything but a string is an error rather than a silent no-op: it means the
+// wrong path was named, and a mask that masks nothing while claiming to have
+// checked is worse than a loud failure.
+func SortUnorderedWords(raw []byte, paths []string) ([]byte, error) {
+	if len(paths) == 0 || len(bytes.TrimSpace(raw)) == 0 {
+		return raw, nil
+	}
+	patterns := make([][]string, 0, len(paths))
+	for _, p := range paths {
+		patterns = append(patterns, strings.Split(p, "/"))
+	}
+
+	e := &editor{dec: json.NewDecoder(bytes.NewReader(raw)), patterns: patterns}
+	e.onMatch = e.sortWords
+	if err := e.value(nil); err != nil {
+		if err == io.EOF {
+			return raw, nil
+		}
+		return nil, fmt.Errorf("conformance: sort unordered words: %w", err)
+	}
+	return applyEdits(raw, e.edits), nil
+}
+
 type edit struct {
 	start, end int
 	repl       []byte
@@ -181,6 +214,32 @@ func (e *editor) sortArray() error {
 	buf.WriteByte(']')
 
 	e.edits = append(e.edits, edit{start: start, end: end, repl: buf.Bytes()})
+	return nil
+}
+
+// sortWords records an edit that rewrites the string at the current position
+// as its space-separated words in sorted order. It reuses replace's offset
+// arithmetic to find the value's byte range.
+func (e *editor) sortWords() error {
+	var raw json.RawMessage
+	if err := e.dec.Decode(&raw); err != nil {
+		return err
+	}
+	end := int(e.dec.InputOffset())
+	start := end - len(raw)
+
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return fmt.Errorf("value at this path is not a string: %s", raw)
+	}
+	words := strings.Fields(s)
+	sort.Strings(words)
+	repl, err := json.Marshal(strings.Join(words, " "))
+	if err != nil {
+		return err
+	}
+
+	e.edits = append(e.edits, edit{start: start, end: end, repl: repl})
 	return nil
 }
 

@@ -192,3 +192,63 @@ func TestSortUnorderedRejectsANonArrayPath(t *testing.T) {
 		t.Fatal("want an error for a path that is not an array, got nil")
 	}
 }
+
+func TestSortUnorderedWords(t *testing.T) {
+	tests := []struct {
+		name  string
+		in    string
+		paths []string
+		want  string
+	}{
+		{
+			name:  "sorts the words of one string value",
+			in:    `{"scope":"openid profile email","other":"b a"}`,
+			paths: []string{"scope"},
+			want:  `{"scope":"email openid profile","other":"b a"}`,
+		},
+		{
+			name:  "leaves everything else byte-for-byte alone",
+			in:    `{"a":1,"scope":"z y","b":[3,2]}`,
+			paths: []string{"scope"},
+			want:  `{"a":1,"scope":"y z","b":[3,2]}`,
+		},
+		{
+			name:  "changes nothing when already sorted",
+			in:    `{"scope":"a b c"}`,
+			paths: []string{"scope"},
+			want:  `{"scope":"a b c"}`,
+		},
+		{
+			name:  "no paths is a no-op",
+			in:    `{"scope":"b a"}`,
+			paths: nil,
+			want:  `{"scope":"b a"}`,
+		},
+		{
+			name:  "reaches through a wildcard segment",
+			in:    `{"items":[{"scope":"b a"},{"scope":"d c"}]}`,
+			paths: []string{"items/*/scope"},
+			want:  `{"items":[{"scope":"a b"},{"scope":"c d"}]}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := SortUnorderedWords([]byte(tt.in), tt.paths)
+			if err != nil {
+				t.Fatalf("SortUnorderedWords: %v", err)
+			}
+			if string(got) != tt.want {
+				t.Errorf("want %s, got %s", tt.want, got)
+			}
+		})
+	}
+}
+
+// A path naming something that is not a string is an error, not a silent
+// no-op, for the same reason SortUnordered errors on a non-array: the path
+// was wrong, and masking that produces a golden nobody is checking.
+func TestSortUnorderedWordsRejectsNonString(t *testing.T) {
+	if _, err := SortUnorderedWords([]byte(`{"scope":["b","a"]}`), []string{"scope"}); err == nil {
+		t.Fatal("want an error for an array at the path, got nil")
+	}
+}

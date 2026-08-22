@@ -22,5 +22,9 @@ func normalisePasses(body []byte, base string, c Case) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return SortUnordered(body, c.Unordered)
+	body, err = SortUnordered(body, c.Unordered)
+	if err != nil {
+		return nil, err
+	}
+	return SortUnorderedWords(body, c.UnorderedWords)
 }
