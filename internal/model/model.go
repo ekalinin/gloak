@@ -89,6 +89,46 @@ type Credential struct {
 	HashValue            []byte
 }
 
+// UserSession is an SSO session: one login, however many clients use it. Its
+// ID is what a token carries as sid and what the token response returns as
+// session_state. Timestamps are Unix milliseconds.
+type UserSession struct {
+	ID          string
+	RealmID     string
+	UserID      string
+	Username    string
+	StartedAt   int64
+	LastRefresh int64
+	ExpiresAt   int64
+}
+
+// ClientSession is one client's participation in a UserSession. Scope is the
+// space-separated scope granted to that client, which is what a refresh knows
+// to re-issue.
+type ClientSession struct {
+	ID            string
+	UserSessionID string
+	ClientID      string // the client's internal UUID, not its clientId
+	Scope         string
+	StartedAt     int64
+}
+
+// RealmKey is one of a realm's signing keys, persisted so the kid a client
+// caches survives a restart and so two replicas publish the same key set.
+// Algorithm is RS256, RSA-OAEP or HS512; Use is "sig" or "enc" and is empty
+// for the HMAC key, which is never published. PrivateKey holds PKCS#8 DER for
+// the RSA keys and the raw secret for HS512; Certificate holds the self-signed
+// DER published as x5c, and is empty for HS512.
+type RealmKey struct {
+	ID          string
+	RealmID     string
+	Algorithm   string
+	Use         string
+	PrivateKey  []byte
+	Certificate []byte
+	CreatedAt   int64
+}
+
 // Role is a realm role when ClientID is empty, otherwise a client role.
 type Role struct {
 	ID          string

@@ -1,8 +1,9 @@
 # P1: the token foundation
 
 Date: 2026-08-21
-Status: accepted
+Status: implemented, 2026-08-22
 Roadmap: `2026-08-21-gloak-parity-roadmap.md`
+Plan: `../plans/2026-08-22-p1-token-foundation.md`
 
 ## 1. What this is
 
@@ -206,3 +207,43 @@ Adds one: the empty secret on `broker` and `master-realm`, harmless until P1 and
 a real hole the moment client authentication exists. P1 must not let an empty
 secret validate; whether bootstrap should generate real secrets is P2's question,
 since that is where client management lives.
+
+## 8. What P1 shipped
+
+Written after the fact, on 2026-08-22.
+
+**Served.** The token endpoint with the `password`, `refresh_token` and
+`client_credentials` grants; `userinfo`; `token/introspect`; `revoke`. Realm
+keys are persisted per realm as three rows - RS256, RSA-OAEP, HS512 - and
+resolved through `keys.Manager`, which closed follow-up F5 and with it the
+project's one sanctioned red test. Sessions are modelled, so `sid` survives a
+refresh and revocation ends the session rather than only saying it did.
+
+**Measured and served.** Seventeen cases moved from `Recorded` to
+`Implemented`, clearing that list entirely. The meter went from 8 of 483 to 25
+of 483.
+
+**Served but unmeasured, and marked so in the code.** userinfo's success body,
+introspection's active and inactive bodies, the `client_credentials` response
+shape, the `service-account-<clientId>` username, the access token's `aud` for
+an ordinary client, `acr`. Every one of them needs a confidential client with a
+known secret, which is P2. Follow-ups F14 and F15 carry them, and their
+conformance cases stay `Pending`, so nothing asserts a value nobody measured.
+
+**Not attempted.** The `authorization_code` grant, as section 2 said: it needs
+`/auth`, which is P3.
+
+## 9. The debt this hands to P5, restated
+
+`internal/token/claims.go` hardcodes three claim sets and
+`internal/oidc/token.go` hardcodes `defaultClientScopes` and
+`internalRefreshScope`. In Keycloak all five are produced by protocol mappers
+attached to client scopes.
+
+P5 has to **replace** those, not extend them. The shape of the debt is that
+`token.Request` currently takes a finished `Scope` string and finished role
+slices from its caller; a mapper model makes the token package compute them
+from the client's scopes instead, which changes who owns the decision. Adding
+mappers on top of the current code means rewriting issuance, which is exactly
+what section 6 of the roadmap warned about and what this paragraph exists to
+stop being a surprise.

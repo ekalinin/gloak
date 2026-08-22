@@ -158,6 +158,195 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	t.Run("sessions round-trip and cascade", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		u := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "admin", Enabled: true}
+		if err := s.Users().Create(ctx, u); err != nil {
+			t.Fatalf("Users().Create: %v", err)
+		}
+		c := &model.Client{ID: model.NewID(), RealmID: realm.ID, ClientID: "admin-cli", Enabled: true}
+		if err := s.Clients().Create(ctx, c); err != nil {
+			t.Fatalf("Clients().Create: %v", err)
+		}
+		us := &model.UserSession{ID: model.NewID(), RealmID: realm.ID, UserID: u.ID,
+			Username: "admin", StartedAt: 1000, LastRefresh: 1000, ExpiresAt: 2000}
+		if err := s.Sessions().CreateUserSession(ctx, us); err != nil {
+			t.Fatalf("CreateUserSession: %v", err)
+		}
+		cs := &model.ClientSession{ID: model.NewID(), UserSessionID: us.ID,
+			ClientID: c.ID, Scope: "openid email profile", StartedAt: 1000}
+		if err := s.Sessions().CreateClientSession(ctx, cs); err != nil {
+			t.Fatalf("CreateClientSession: %v", err)
+		}
+
+		got, err := s.Sessions().UserSessionByID(ctx, realm.ID, us.ID)
+		if err != nil {
+			t.Fatalf("UserSessionByID: %v", err)
+		}
+		if got.Username != "admin" || got.UserID != u.ID || got.ExpiresAt != 2000 {
+			t.Fatalf("user session round-trip wrong: %+v", got)
+		}
+		gotClient, err := s.Sessions().ClientSession(ctx, us.ID, c.ID)
+		if err != nil {
+			t.Fatalf("ClientSession: %v", err)
+		}
+		if gotClient.Scope != "openid email profile" {
+			t.Fatalf("client session scope lost: %+v", gotClient)
+		}
+
+		if err := s.Sessions().TouchUserSession(ctx, us.ID, 1500); err != nil {
+			t.Fatalf("TouchUserSession: %v", err)
+		}
+		got, err = s.Sessions().UserSessionByID(ctx, realm.ID, us.ID)
+		if err != nil {
+			t.Fatalf("UserSessionByID after touch: %v", err)
+		}
+		if got.LastRefresh != 1500 {
+			t.Fatalf("LastRefresh not updated: %+v", got)
+		}
+
+		// Revocation deletes the user session; the client sessions hanging off
+		// it must go with it, or a refresh token would still find its scope.
+		if err := s.Sessions().DeleteUserSession(ctx, realm.ID, us.ID); err != nil {
+			t.Fatalf("DeleteUserSession: %v", err)
+		}
+		if _, err := s.Sessions().UserSessionByID(ctx, realm.ID, us.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("want ErrNotFound after delete, got %v", err)
+		}
+		if _, err := s.Sessions().ClientSession(ctx, us.ID, c.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("client session outlived its user session: %v", err)
+		}
+	})
+
+	t.Run("deleting a session that is already gone reports ErrNotFound", func(t *testing.T) {
+		// Neither driver treats a delete matching no row as an error, so the
+		// repository has to check the affected count itself. Revoking the same
+		// token twice depends on this telling the two cases apart.
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+
+		err := s.Sessions().DeleteUserSession(ctx, realm.ID, model.NewID())
+
+		if !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("want ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("a session is not visible from another realm", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		other := &model.Realm{ID: model.NewID(), Name: "other", Enabled: true}
+		for _, r := range []*model.Realm{realm, other} {
+			if err := s.Realms().Create(ctx, r); err != nil {
+				t.Fatalf("Realms().Create: %v", err)
+			}
+		}
+		u := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "admin", Enabled: true}
+		if err := s.Users().Create(ctx, u); err != nil {
+			t.Fatalf("Users().Create: %v", err)
+		}
+		us := &model.UserSession{ID: model.NewID(), RealmID: realm.ID, UserID: u.ID,
+			Username: "admin", StartedAt: 1, LastRefresh: 1, ExpiresAt: 2}
+		if err := s.Sessions().CreateUserSession(ctx, us); err != nil {
+			t.Fatalf("CreateUserSession: %v", err)
+		}
+
+		_, err := s.Sessions().UserSessionByID(ctx, other.ID, us.ID)
+
+		if !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("a session leaked across realms: %v", err)
+		}
+	})
+
+	t.Run("realm keys round-trip and are listed per realm", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		other := &model.Realm{ID: model.NewID(), Name: "other", Enabled: true}
+		if err := s.Realms().Create(ctx, other); err != nil {
+			t.Fatalf("Realms().Create(other): %v", err)
+		}
+		want := &model.RealmKey{
+			ID: model.NewID(), RealmID: realm.ID, Algorithm: "RS256", Use: "sig",
+			PrivateKey: []byte{1, 2, 3}, Certificate: []byte{4, 5, 6}, CreatedAt: 1,
+		}
+		if err := s.Keys().Create(ctx, want); err != nil {
+			t.Fatalf("Keys().Create: %v", err)
+		}
+		hmac := &model.RealmKey{
+			ID: model.NewID(), RealmID: realm.ID, Algorithm: "HS512",
+			PrivateKey: []byte{7, 8, 9}, Certificate: []byte{}, CreatedAt: 2,
+		}
+		if err := s.Keys().Create(ctx, hmac); err != nil {
+			t.Fatalf("Keys().Create(hmac): %v", err)
+		}
+		if err := s.Keys().Create(ctx, &model.RealmKey{
+			ID: model.NewID(), RealmID: other.ID, Algorithm: "RS256", Use: "sig",
+			PrivateKey: []byte{9}, Certificate: []byte{}, CreatedAt: 3,
+		}); err != nil {
+			t.Fatalf("Keys().Create(other realm): %v", err)
+		}
+
+		got, err := s.Keys().ListByRealm(ctx, realm.ID)
+
+		if err != nil {
+			t.Fatalf("ListByRealm: %v", err)
+		}
+		// Two keys, and the second realm's key is not among them: a key set
+		// leaking across realms is the bug this asserts against.
+		if len(got) != 2 {
+			t.Fatalf("want 2 keys for master, got %d", len(got))
+		}
+		byAlg := map[string]*model.RealmKey{}
+		for _, k := range got {
+			byAlg[k.Algorithm] = k
+		}
+		if rs := byAlg["RS256"]; rs == nil || rs.Use != "sig" ||
+			string(rs.PrivateKey) != "\x01\x02\x03" || string(rs.Certificate) != "\x04\x05\x06" {
+			t.Fatalf("RS256 key lost its bytes: %+v", rs)
+		}
+		if hs := byAlg["HS512"]; hs == nil || len(hs.Certificate) != 0 {
+			t.Fatalf("HS512 key round-trip wrong: %+v", hs)
+		}
+	})
+
+	t.Run("a realm holds one key per algorithm", func(t *testing.T) {
+		// Two processes racing to generate a realm's keys must not produce two
+		// RS256 keys: the kid published in the JWKS would then depend on which
+		// row was read back.
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		first := &model.RealmKey{ID: model.NewID(), RealmID: realm.ID,
+			Algorithm: "RS256", Use: "sig", PrivateKey: []byte{1}, Certificate: []byte{}, CreatedAt: 1}
+		if err := s.Keys().Create(ctx, first); err != nil {
+			t.Fatalf("first Create: %v", err)
+		}
+
+		err := s.Keys().Create(ctx, &model.RealmKey{ID: model.NewID(), RealmID: realm.ID,
+			Algorithm: "RS256", Use: "sig", PrivateKey: []byte{2}, Certificate: []byte{}, CreatedAt: 2})
+
+		if !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("want ErrConflict, got %v", err)
+		}
+	})
+
 	t.Run("realm roles are listable", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

@@ -127,6 +127,9 @@ func (s *Store) Realms() store.RealmRepo   { return &realmRepo{s.pool} }
 func (s *Store) Clients() store.ClientRepo { return &clientRepo{s.pool} }
 func (s *Store) Users() store.UserRepo     { return &userRepo{s.pool} }
 func (s *Store) Roles() store.RoleRepo     { return &roleRepo{s.pool} }
+func (s *Store) Keys() store.KeyRepo       { return &keyRepo{s.pool} }
+
+func (s *Store) Sessions() store.SessionRepo { return &sessionRepo{s.pool} }
 
 // classify maps driver errors onto the store's sentinels so handlers never
 // inspect driver-specific error text.
@@ -405,6 +408,125 @@ func (r *roleRepo) ListRealmRoles(ctx context.Context, realmID string) ([]*model
 func scanRole(row scanner) (*model.Role, error) {
 	m := &model.Role{}
 	if err := row.Scan(&m.ID, &m.RealmID, &m.ClientID, &m.Name, &m.Description, &m.Composite); err != nil {
+		return nil, classify(err)
+	}
+	return m, nil
+}
+
+type keyRepo struct{ pool *pgxpool.Pool }
+
+func (r *keyRepo) Create(ctx context.Context, m *model.RealmKey) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO realm_key (id, realm_id, algorithm, key_use, private_key, certificate, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		m.ID, m.RealmID, m.Algorithm, m.Use, m.PrivateKey, m.Certificate, m.CreatedAt)
+	return classify(err)
+}
+
+func (r *keyRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.RealmKey, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, realm_id, algorithm, key_use, private_key, certificate, created_at
+		 FROM realm_key WHERE realm_id = $1 ORDER BY algorithm`, realmID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	defer rows.Close()
+
+	var out []*model.RealmKey
+	for rows.Next() {
+		m, err := scanRealmKey(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+type sessionRepo struct{ pool *pgxpool.Pool }
+
+func (r *sessionRepo) CreateUserSession(ctx context.Context, m *model.UserSession) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO user_session (id, realm_id, user_id, username, started_at, last_refresh, expires_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		m.ID, m.RealmID, m.UserID, m.Username, m.StartedAt, m.LastRefresh, m.ExpiresAt)
+	return classify(err)
+}
+
+func (r *sessionRepo) UserSessionByID(ctx context.Context, realmID, id string) (*model.UserSession, error) {
+	row := r.pool.QueryRow(ctx,
+		`SELECT id, realm_id, user_id, username, started_at, last_refresh, expires_at
+		 FROM user_session WHERE realm_id = $1 AND id = $2`, realmID, id)
+	return scanUserSession(row)
+}
+
+// TouchUserSession records a refresh. It reports ErrNotFound when it matches
+// no row: the driver treats an update affecting nothing as success, so without
+// this check a refresh against a revoked session would look like it worked.
+func (r *sessionRepo) TouchUserSession(ctx context.Context, id string, lastRefresh int64) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE user_session SET last_refresh = $1 WHERE id = $2`, lastRefresh, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(tag.RowsAffected())
+}
+
+// DeleteUserSession removes the session and, through the schema's cascade, the
+// client sessions hanging off it.
+func (r *sessionRepo) DeleteUserSession(ctx context.Context, realmID, id string) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM user_session WHERE realm_id = $1 AND id = $2`, realmID, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(tag.RowsAffected())
+}
+
+func (r *sessionRepo) CreateClientSession(ctx context.Context, m *model.ClientSession) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO client_session (id, user_session_id, client_id, scope, started_at)
+		 VALUES ($1, $2, $3, $4, $5)`,
+		m.ID, m.UserSessionID, m.ClientID, m.Scope, m.StartedAt)
+	return classify(err)
+}
+
+func (r *sessionRepo) ClientSession(ctx context.Context, userSessionID, clientID string) (*model.ClientSession, error) {
+	row := r.pool.QueryRow(ctx,
+		`SELECT id, user_session_id, client_id, scope, started_at
+		 FROM client_session WHERE user_session_id = $1 AND client_id = $2`, userSessionID, clientID)
+	return scanClientSession(row)
+}
+
+// affectedOne turns "this statement changed nothing" into ErrNotFound.
+func affectedOne(n int64) error {
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func scanUserSession(row scanner) (*model.UserSession, error) {
+	m := &model.UserSession{}
+	if err := row.Scan(&m.ID, &m.RealmID, &m.UserID, &m.Username,
+		&m.StartedAt, &m.LastRefresh, &m.ExpiresAt); err != nil {
+		return nil, classify(err)
+	}
+	return m, nil
+}
+
+func scanClientSession(row scanner) (*model.ClientSession, error) {
+	m := &model.ClientSession{}
+	if err := row.Scan(&m.ID, &m.UserSessionID, &m.ClientID, &m.Scope, &m.StartedAt); err != nil {
+		return nil, classify(err)
+	}
+	return m, nil
+}
+
+func scanRealmKey(row scanner) (*model.RealmKey, error) {
+	m := &model.RealmKey{}
+	if err := row.Scan(&m.ID, &m.RealmID, &m.Algorithm, &m.Use,
+		&m.PrivateKey, &m.Certificate, &m.CreatedAt); err != nil {
 		return nil, classify(err)
 	}
 	return m, nil

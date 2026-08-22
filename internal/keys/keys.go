@@ -20,24 +20,32 @@ import (
 
 type RealmKeys struct {
 	RSAKeyID  string
+	EncKeyID  string
 	HMACKeyID string
 
-	rsaKey  *rsa.PrivateKey
-	certDER []byte
-	hmacKey []byte
+	rsaKey     *rsa.PrivateKey
+	certDER    []byte
+	encKey     *rsa.PrivateKey
+	encCertDER []byte
+	hmacKey    []byte
 }
 
-// Generate creates a fresh RSA key for RS256, a self-signed certificate over
-// it, and a fresh secret for HS512. Keycloak publishes the certificate in the
-// JWKS as x5c with its two thumbprints, so the key alone is not enough.
-// subjectCN is the realm name, which is what appears in the published
-// certificate's subject.
+// Generate creates a realm's three keys: an RSA key for RS256 signing, a
+// second RSA key for RSA-OAEP encryption, and a secret for HS512. Each RSA key
+// gets a self-signed certificate, because Keycloak publishes one in the JWKS
+// as x5c with its two thumbprints, so the key alone is not enough. subjectCN
+// is the realm name, which is what appears in both published certificates'
+// subject.
+//
+// The encryption key is published but never used by Gloak itself: a live
+// master realm's JWKS carries it, so a JWKS without it differs from Keycloak's
+// on the one endpoint whose whole purpose is to be read by other software.
 func Generate(subjectCN string) (*RealmKeys, error) {
-	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	rsaKey, certDER, err := generateRSAWithCertificate(subjectCN)
 	if err != nil {
-		return nil, fmt.Errorf("keys: generate rsa: %w", err)
+		return nil, err
 	}
-	certDER, err := selfSign(rsaKey, subjectCN)
+	encKey, encCertDER, err := generateRSAWithCertificate(subjectCN)
 	if err != nil {
 		return nil, err
 	}
@@ -46,12 +54,27 @@ func Generate(subjectCN string) (*RealmKeys, error) {
 		return nil, fmt.Errorf("keys: generate hmac: %w", err)
 	}
 	return &RealmKeys{
-		RSAKeyID:  model.NewID(),
-		HMACKeyID: model.NewID(),
-		rsaKey:    rsaKey,
-		certDER:   certDER,
-		hmacKey:   hmacKey,
+		RSAKeyID:   model.NewID(),
+		EncKeyID:   model.NewID(),
+		HMACKeyID:  model.NewID(),
+		rsaKey:     rsaKey,
+		certDER:    certDER,
+		encKey:     encKey,
+		encCertDER: encCertDER,
+		hmacKey:    hmacKey,
 	}, nil
+}
+
+func generateRSAWithCertificate(subjectCN string) (*rsa.PrivateKey, []byte, error) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, nil, fmt.Errorf("keys: generate rsa: %w", err)
+	}
+	certDER, err := selfSign(key, subjectCN)
+	if err != nil {
+		return nil, nil, err
+	}
+	return key, certDER, nil
 }
 
 // selfSign issues the certificate Keycloak publishes alongside a realm key.
@@ -75,20 +98,44 @@ func selfSign(key *rsa.PrivateKey, subjectCN string) ([]byte, error) {
 	return der, nil
 }
 
-// CertificateDER is the realm certificate, published as x5c and hashed into
-// x5t and x5t#S256.
+// CertificateDER is the signing key's certificate, published as x5c on the
+// sig entry and hashed into its x5t and x5t#S256.
 func (k *RealmKeys) CertificateDER() []byte { return k.certDER }
 
+// SigningPublicKey is the RS256 public key, used to verify a token this realm
+// issued. The private half never leaves this package.
+func (k *RealmKeys) SigningPublicKey() *rsa.PublicKey { return &k.rsaKey.PublicKey }
+
+// EncCertificateDER is the same for the encryption key's enc entry.
+func (k *RealmKeys) EncCertificateDER() []byte { return k.encCertDER }
+
+// HMACSecret is the HS512 secret, needed to verify a refresh token this realm
+// issued. It is deliberately absent from JWKS and from every response body:
+// handing it out would hand out the ability to mint refresh tokens. See
+// internal/keys' row in AGENTS.md's boundary table.
+func (k *RealmKeys) HMACSecret() []byte { return k.hmacKey }
+
 // JWKS returns the public key set served at
-// /realms/{realm}/protocol/openid-connect/certs. The HMAC key is never
-// published: it signs refresh tokens, which clients treat as opaque.
+// /realms/{realm}/protocol/openid-connect/certs. A live master realm publishes
+// two keys - RS256/sig and RSA-OAEP/enc - measured in the "Certificate
+// endpoint" section of
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md. The HMAC key
+// is never published: it signs refresh tokens, which clients treat as opaque.
 func (k *RealmKeys) JWKS() jose.JSONWebKeySet {
-	return jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{
-		Key:       k.rsaKey.Public(),
-		KeyID:     k.RSAKeyID,
-		Algorithm: string(jose.RS256),
-		Use:       "sig",
-	}}}
+	return jose.JSONWebKeySet{Keys: []jose.JSONWebKey{
+		{
+			Key:       k.rsaKey.Public(),
+			KeyID:     k.RSAKeyID,
+			Algorithm: string(jose.RS256),
+			Use:       "sig",
+		},
+		{
+			Key:       k.encKey.Public(),
+			KeyID:     k.EncKeyID,
+			Algorithm: string(jose.RSA_OAEP),
+			Use:       "enc",
+		},
+	}}
 }
 
 // RSASigner signs access and ID tokens.

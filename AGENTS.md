@@ -70,6 +70,16 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   it serves through `httptest.ResponseRecorder`, which never adds a `Date`
   header either. The guard is `internal/httpx`'s own test, which uses a real
   `httptest.NewServer` instead.
+- **Revocation answers an unknown token with 200 and an error body**, not 400:
+  `{"error":"invalid_token","error_description":"Invalid token"}` with a 200 status
+  line. The client asked for a token to stop working and it does not work.
+- **The revocation success is the only response measured so far carrying
+  `Content-Security-Policy`**, and it carries no `Content-Type` at all - the body
+  is empty. Revocation's own error responses carry neither. That is why the header
+  is set at one call site rather than alongside the five security headers.
+- **A public client may revoke but may not introspect.** `admin-cli` revoking
+  succeeds; `admin-cli` introspecting is refused with 403
+  `{"error":"invalid_request","error_description":"Client not allowed."}`.
 - **`not-before-policy`** in the token response is spelled with hyphens.
 - **Refresh tokens are signed HS512**, access and ID tokens RS256. That is why a
   realm holds two keys.
@@ -121,10 +131,10 @@ make lint
 make build
 ```
 
-- `make test` is not clean: `TestConformance/oidc/certs/master` fails, deliberately,
-  until realm keys are modelled and persisted (12.3 of
-  `docs/superpowers/specs/2026-08-20-conformance-harness-design.md`, follow-up F5).
-  That is the **only** case allowed to fail. Any other failure is a real regression.
+- `make test` is clean. **Any** failure is a real regression. It was not always so:
+  `TestConformance/oidc/certs/master` was allowed to fail until realm keys were
+  modelled and persisted (follow-up F5), which P1 did. No case is exempt now, and
+  adding an exemption means changing this line first.
 - `go test ./...` must never require Docker or network access. Anything that does
   goes behind the `docker` build tag.
 - `CGO_ENABLED=0 go build ./...` must work. SQLite is `modernc.org/sqlite` to keep

@@ -1,0 +1,101 @@
+package token
+
+import (
+	"encoding/json"
+	"errors"
+	"time"
+
+	jose "github.com/go-jose/go-jose/v4"
+
+	"github.com/ekalinin/gloak/internal/keys"
+)
+
+var (
+	// ErrInvalidToken covers every way a token fails to be one: rubbish
+	// input, the wrong signature, another realm's key, the wrong issuer, the
+	// wrong typ.
+	ErrInvalidToken = errors.New("token: invalid")
+	// ErrExpiredToken is a token that was valid and is not any more. It is
+	// separate from ErrInvalidToken because the endpoints answer the two
+	// differently.
+	ErrExpiredToken = errors.New("token: expired")
+)
+
+// Parsed is what a verified token carries. Subject is empty for a lightweight
+// access token, which has no sub; callers resolve the user through SessionID
+// instead.
+type Parsed struct {
+	Type      string
+	Subject   string
+	SessionID string
+	ClientID  string // azp
+	Scope     string
+	IssuedAt  time.Time
+	ExpiresAt time.Time
+}
+
+// ParseAccess verifies an RS256 access token issued by this realm.
+func ParseAccess(k *keys.RealmKeys, issuer, raw string, now time.Time) (*Parsed, error) {
+	claims, err := verify(raw, []jose.SignatureAlgorithm{jose.RS256}, k.SigningPublicKey())
+	if err != nil {
+		return nil, err
+	}
+	return check(claims, issuer, TypeAccess, now)
+}
+
+// ParseRefresh verifies an HS512 refresh token issued by this realm. The
+// algorithm list is separate from ParseAccess's on purpose: accepting RS256
+// here would let an access token stand in for a refresh token, and accepting
+// HS512 there would let anybody holding the symmetric secret mint access
+// tokens.
+func ParseRefresh(k *keys.RealmKeys, issuer, raw string, now time.Time) (*Parsed, error) {
+	claims, err := verify(raw, []jose.SignatureAlgorithm{jose.HS512}, k.HMACSecret())
+	if err != nil {
+		return nil, err
+	}
+	return check(claims, issuer, TypeRefresh, now)
+}
+
+// verify parses and checks the signature. The permitted algorithms are passed
+// in rather than read from the token's own header: trusting a token's alg is
+// the classic JWT confusion bug, and go-jose requires the list precisely so
+// that mistake cannot be made by omission.
+func verify(raw string, algs []jose.SignatureAlgorithm, key any) (*parsedClaims, error) {
+	jws, err := jose.ParseSigned(raw, algs)
+	if err != nil {
+		return nil, ErrInvalidToken
+	}
+	payload, err := jws.Verify(key)
+	if err != nil {
+		return nil, ErrInvalidToken
+	}
+	claims := &parsedClaims{}
+	if err := json.Unmarshal(payload, claims); err != nil {
+		return nil, ErrInvalidToken
+	}
+	return claims, nil
+}
+
+// check applies the assertions a valid signature does not make: the right
+// issuer, the right token type, and a token that has not expired.
+func check(claims *parsedClaims, issuer, wantType string, now time.Time) (*Parsed, error) {
+	if claims.Iss != issuer {
+		return nil, ErrInvalidToken
+	}
+	if claims.Typ != wantType {
+		return nil, ErrInvalidToken
+	}
+	expires := time.Unix(claims.Exp, 0)
+	if !now.Before(expires) {
+		return nil, ErrExpiredToken
+	}
+	return &Parsed{
+		Type:      claims.Typ,
+		Subject:   claims.Sub,
+		SessionID: claims.Sid,
+		ClientID:  claims.Azp,
+		Scope:     claims.Scope,
+		IssuedAt:  time.Unix(claims.Iat, 0),
+		ExpiresAt: expires,
+	}, nil
+}

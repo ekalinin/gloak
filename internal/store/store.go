@@ -24,6 +24,8 @@ type Store interface {
 	Clients() ClientRepo
 	Users() UserRepo
 	Roles() RoleRepo
+	Keys() KeyRepo
+	Sessions() SessionRepo
 	Close() error
 }
 
@@ -52,4 +54,24 @@ type RoleRepo interface {
 	Create(ctx context.Context, r *model.Role) error
 	ByName(ctx context.Context, realmID, clientID, name string) (*model.Role, error)
 	ListRealmRoles(ctx context.Context, realmID string) ([]*model.Role, error)
+}
+
+// SessionRepo stores SSO sessions. A user session is addressed by realm as
+// well as by ID: a session ID arrives in a token, and a token minted for one
+// realm must never resolve a session in another.
+type SessionRepo interface {
+	CreateUserSession(ctx context.Context, s *model.UserSession) error
+	UserSessionByID(ctx context.Context, realmID, id string) (*model.UserSession, error)
+	TouchUserSession(ctx context.Context, id string, lastRefresh int64) error
+	DeleteUserSession(ctx context.Context, realmID, id string) error
+	CreateClientSession(ctx context.Context, s *model.ClientSession) error
+	ClientSession(ctx context.Context, userSessionID, clientID string) (*model.ClientSession, error)
+}
+
+// KeyRepo stores a realm's signing material. There is no update method: a key
+// is created once and read back, and rotation - which Keycloak models as a
+// second active key rather than a mutation - is not P1.
+type KeyRepo interface {
+	Create(ctx context.Context, k *model.RealmKey) error
+	ListByRealm(ctx context.Context, realmID string) ([]*model.RealmKey, error)
 }

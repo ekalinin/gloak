@@ -39,7 +39,7 @@ func TestWriteJSONOmitsDateHeader(t *testing.T) {
 // counterpart for the one response shape that does not go through writeJSON.
 func TestWriteBearerChallengeOmitsDateHeader(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		httpx.WriteBearerChallenge(w, "master", "invalid_token", "Token verification failed")
+		httpx.WriteBearerChallenge(w, http.StatusUnauthorized, "master", "invalid_token", "Token verification failed")
 	}))
 	defer srv.Close()
 
@@ -123,7 +123,7 @@ func TestWriteBearerChallenge(t *testing.T) {
 	// userinfo with a bad token: 401, text/plain, empty body, error in the header.
 	w := httptest.NewRecorder()
 
-	httpx.WriteBearerChallenge(w, "master", "invalid_token", "Token verification failed")
+	httpx.WriteBearerChallenge(w, http.StatusUnauthorized, "master", "invalid_token", "Token verification failed")
 
 	if w.Code != 401 {
 		t.Fatalf("want 401, got %d", w.Code)
@@ -157,7 +157,7 @@ func TestWriteBearerChallenge(t *testing.T) {
 // rather than the server-writing side.
 func TestWriteBearerChallengeSendsKeycloaksHeaderCasing(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		httpx.WriteBearerChallenge(w, "master", "invalid_token", "Token verification failed")
+		httpx.WriteBearerChallenge(w, http.StatusUnauthorized, "master", "invalid_token", "Token verification failed")
 	}))
 	defer srv.Close()
 

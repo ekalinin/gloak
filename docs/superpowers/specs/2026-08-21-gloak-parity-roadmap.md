@@ -150,7 +150,7 @@ operations is allocated below; none is left unassigned.
 
 | # | Sub-project | Depends on | Closes | Size |
 |---|---|---|---|---|
-| **P1** | Token foundation | - | `oidc/token` (part), `userinfo` 5, `introspection` 4, `revocation` 4; fixes `oidc/certs` | ~20 cases |
+| **P1** | Token foundation **(done)** | - | `oidc/token` 8 of 17, `userinfo` 4 of 7, `introspection` 1 of 4, `revocation` 4 of 4; closed `oidc/certs` | 17 cases |
 | **P2** | Admin API core | P1 | Users 34, Clients 35, Roles 28, Roles by ID 10, Groups 11, Role Mapper 18, Client Role Mappings 15 | 151 ops |
 | **P3** | Browser code flow | P1 | `oidc/authorization` 11, `oidc/logout` (part) | ~15 cases |
 | **P4** | Multi-realm | P2 | Realms Admin 45, Key 1 | 46 ops |
@@ -167,7 +167,15 @@ operations is allocated below; none is left unassigned.
 
 Denominator today: **413 Admin API operations plus 70 protocol behaviours, 483
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: 8.
+surface is not counted and which the report says so about. Served: **25** after
+P1, up from 8.
+
+P1 did not close its four chapters outright, and the remainder is worth naming
+rather than leaving as a subtraction. Nine `oidc/token` cases need the
+authorization code (P3), the device flow or CIBA (P7), or a client the Admin
+API has to create (P2 and P5). Three `oidc/userinfo` and three
+`oidc/introspection` cases need a confidential client with a known secret,
+which is P2. None of them is blocked on token issuance any more.
 
 The 31 operations OpenAPI leaves untagged are all
 `/admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/*`. They are

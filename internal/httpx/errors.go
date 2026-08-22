@@ -30,6 +30,16 @@ func SetSecurityHeaders(w http.ResponseWriter) {
 	h.Set("X-Robots-Tag", "none")
 }
 
+// SetContentSecurityPolicy sets the header measured on exactly one response so
+// far: the token revocation success. No other recorded response carries it,
+// including revocation's own error responses, so it is set at that one call
+// site rather than alongside the five security headers. See
+// internal/conformance/testdata/golden/oidc/revocation/refresh-token.http.
+func SetContentSecurityPolicy(w http.ResponseWriter) {
+	w.Header().Set("Content-Security-Policy",
+		"frame-src 'self'; frame-ancestors 'self'; object-src 'none';")
+}
+
 // suppressDate omits the Date header net/http would otherwise add
 // automatically. Keycloak 26.7.1 sends no Date header on any response, so a
 // running Gloak that let net/http add one would differ from Keycloak on
@@ -62,8 +72,28 @@ func WriteAdminError(w http.ResponseWriter, status int, message string) {
 	WriteJSON(w, status, map[string]string{"errorMessage": message})
 }
 
-// WriteBearerChallenge writes the userinfo rejection: 401, text/plain, an empty
+// SetUserinfoSecurityHeaders leaves userinfo with the four security headers it
+// was measured sending. It omits X-Frame-Options, which is the second
+// exception to the five reaching every response - and unlike the first (a path
+// matching no route at all) it is not explained by routing, since userinfo does
+// reach Keycloak's filter chain. See AGENTS.md's "Things that look like bugs
+// and are not".
+//
+// It deletes rather than setting a smaller set because the router sets all five
+// before the mux runs.
+func SetUserinfoSecurityHeaders(w http.ResponseWriter) {
+	SetSecurityHeaders(w)
+	w.Header().Del("X-Frame-Options")
+}
+
+// WriteBearerChallenge writes the userinfo rejection: text/plain, an empty
 // body, and the error carried entirely in WWW-Authenticate.
+//
+// status is measured per rejection and is not always 401: a token missing the
+// openid scope is answered 403. An empty errCode emits the bare
+// `Bearer realm="master"` challenge Keycloak sends when no Authorization
+// header arrived at all. All four shapes are recorded under
+// internal/conformance/testdata/golden/oidc/userinfo/.
 //
 // The header name is set through the map directly rather than Header.Set,
 // which would canonicalise it to "Www-Authenticate". Keycloak 26.7.1 sends
@@ -74,12 +104,15 @@ func WriteAdminError(w http.ResponseWriter, status int, message string) {
 // sees the canonical form, since textproto.Reader re-canonicalises on the
 // way in. Only a raw read of the wire, as in
 // TestWriteBearerChallengeSendsKeycloaksHeaderCasing, can tell the two apart.
-func WriteBearerChallenge(w http.ResponseWriter, realm, errCode, description string) {
+func WriteBearerChallenge(w http.ResponseWriter, status int, realm, errCode, description string) {
 	suppressDate(w)
 	w.Header().Set("Content-Type", "text/plain;charset=utf-8")
-	w.Header()["WWW-Authenticate"] = []string{fmt.Sprintf(
-		"Bearer realm=%q, error=%q, error_description=%q", realm, errCode, description)}
-	w.WriteHeader(http.StatusUnauthorized)
+	challenge := fmt.Sprintf("Bearer realm=%q", realm)
+	if errCode != "" {
+		challenge += fmt.Sprintf(", error=%q, error_description=%q", errCode, description)
+	}
+	w.Header()["WWW-Authenticate"] = []string{challenge}
+	w.WriteHeader(status)
 }
 
 // WriteJSON writes a JSON response body byte-exact to what Keycloak sends:

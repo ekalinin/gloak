@@ -338,8 +338,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: Resource Owner Password Credentials grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
@@ -371,8 +370,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: client authentication",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
@@ -418,8 +416,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: refresh_token grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "admin-token",
 		Request: Request{
 			Method: http.MethodPost,
@@ -586,8 +583,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: Resource Owner Password Credentials grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
@@ -608,8 +604,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: client authentication",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
@@ -631,8 +626,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: request validation",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
@@ -652,8 +646,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: request validation",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
@@ -694,8 +687,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: refresh_token grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
@@ -740,8 +732,7 @@ var oidcPending = []Case{
 			Section:   "Userinfo endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "userinfo is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method:  http.MethodGet,
@@ -795,8 +786,7 @@ var oidcPending = []Case{
 			Section:   "Userinfo endpoint",
 			Retrieved: "2026-08-21",
 		},
-		Status:  Recorded,
-		Reason:  "userinfo is not implemented",
+		Status:  Implemented,
 		Fixture: "admin-token-openid",
 		Request: Request{
 			Method:  http.MethodGet,
@@ -824,8 +814,7 @@ var oidcPending = []Case{
 			Section:   "Userinfo endpoint",
 			Retrieved: "2026-08-21",
 		},
-		Status:  Recorded,
-		Reason:  "userinfo is not implemented",
+		Status:  Implemented,
 		Fixture: "admin-token",
 		Request: Request{
 			Method:  http.MethodGet,
@@ -887,8 +876,7 @@ var oidcPending = []Case{
 			Section:   "Userinfo endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "userinfo is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodGet,
@@ -1102,8 +1090,7 @@ var oidcPending = []Case{
 			Section:   "Introspection endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the introspection endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
@@ -1123,8 +1110,7 @@ var oidcPending = []Case{
 			Section:   "Token revocation endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token revocation endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "admin-token",
 		Request: Request{
 			Method: http.MethodPost,
@@ -1134,7 +1120,13 @@ var oidcPending = []Case{
 				"token":     "{{refresh_token}}",
 			},
 		},
-		AssertHeaders: []string{"Content-Type"},
+		// Measured: the revocation success carries no Content-Type at all -
+		// its body is empty - and is the only response recorded so far
+		// carrying Content-Security-Policy. Asserting Content-Type here would
+		// fail on "asserted but absent from the golden", which says nothing
+		// about the implementation; the pair below pins what was measured.
+		AssertHeaders:       []string{"Content-Security-Policy"},
+		AssertAbsentHeaders: []string{"Content-Type"},
 	},
 	{
 		ID: "oidc/revocation/access-token",
@@ -1143,8 +1135,7 @@ var oidcPending = []Case{
 			Section:   "Token revocation endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token revocation endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "admin-token",
 		Request: Request{
 			Method: http.MethodPost,
@@ -1155,7 +1146,9 @@ var oidcPending = []Case{
 				"token_type_hint": "access_token",
 			},
 		},
-		AssertHeaders: []string{"Content-Type"},
+		// Same measured shape as refresh-token above.
+		AssertHeaders:       []string{"Content-Security-Policy"},
+		AssertAbsentHeaders: []string{"Content-Type"},
 	},
 	{
 		ID: "oidc/revocation/unknown-token",
@@ -1164,8 +1157,7 @@ var oidcPending = []Case{
 			Section:   "Token revocation endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token revocation endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
@@ -1184,8 +1176,7 @@ var oidcPending = []Case{
 			Section:   "Token revocation endpoint: client authentication",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token revocation endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
