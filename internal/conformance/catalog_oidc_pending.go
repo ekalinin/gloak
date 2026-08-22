@@ -338,8 +338,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: Resource Owner Password Credentials grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
@@ -371,8 +370,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: client authentication",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
@@ -586,8 +584,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: Resource Owner Password Credentials grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
@@ -608,8 +605,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: client authentication",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
@@ -631,8 +627,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: request validation",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
@@ -652,8 +647,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: request validation",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
