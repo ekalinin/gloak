@@ -18,13 +18,15 @@ The first sub-project, P1, has its spec already:
 
 ## 2. Where the project stands
 
-`make conformance` reports 8 of 68 documented behaviours served. That number is
-honest about the OIDC protocol surface and silent about everything else, because
-the catalogue only covers the OIDC layer. The Admin REST API, SAML, the account
-and admin consoles, themes and the operational surface are not in it at all.
+Before this document, `make conformance` reported 8 of 68 documented behaviours
+served. That number was honest about the OIDC protocol surface and silent about
+everything else, because the catalogue only covered the OIDC layer. The Admin
+REST API, SAML, the account and admin consoles, themes and the operational
+surface were not in it at all.
 
-Measured against the whole target rather than the part that happens to be
-catalogued, the served fraction is under two percent.
+Measured against the whole target rather than the part that happened to be
+catalogued, the served fraction is under two percent. Section 3 is how the
+report came to say that instead.
 
 Working today: the discovery document, JWKS, the realm info endpoint and the two
 fallback 404s. Everything else in `docs/superpowers/specs/2026-08-18-gloak-design.md`
@@ -78,15 +80,15 @@ Coverage is reported per chapter, with the source of each denominator named:
 
 ```
 chapter                     served  documented  source
-oidc/token                       0          17  hand-written (docs)
-admin/Users                      0          34  openapi 26.7.1
-admin/Realms Admin               0          45  openapi 26.7.1
+oidc/token                       0          17  catalogue
+admin/users                      0          34  openapi 26.7.1
+admin/realms-admin               0          45  openapi 26.7.1
 saml                             0           ?  not enumerated
 ```
 
 A chapter with no external source carries `Enumerated: false` and a reason. The
-total then reads as "8 of 481 enumerated, plus N chapters whose surface has not
-been counted" - a sentence that cannot be mistaken for completeness.
+total then reads as "8 of 483 enumerated behaviours served; 4 chapters not
+enumerated" - a sentence that cannot be mistaken for completeness.
 
 The alternative, quietly leaving unenumerated chapters out of the denominator,
 would inflate the percentage by hiding exactly the parts nobody has looked at yet.
@@ -163,8 +165,8 @@ operations is allocated below; none is left unassigned.
 | **P13** | Themes, i18n, account console, admin console | P5 | - | not in OpenAPI |
 | **P14** | Operational parity | P4 | events and audit, SMTP, health and metrics, clustering | not in OpenAPI |
 
-Denominator today: **413 Admin API operations plus roughly 68 protocol behaviours,
-481 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
+Denominator today: **413 Admin API operations plus 70 protocol behaviours, 483
+enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
 surface is not counted and which the report says so about. Served: 8.
 
 The 31 operations OpenAPI leaves untagged are all

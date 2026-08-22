@@ -62,6 +62,37 @@ var Fixtures = map[string]Fixture{
 			},
 		}},
 	},
+
+	// admin-token-openid is admin-token with the openid scope requested.
+	//
+	// The two differ in exactly one way and it is not cosmetic: a token
+	// obtained without openid is refused by the userinfo endpoint, measured
+	// as 403 with WWW-Authenticate carrying error="insufficient_scope" and
+	// error_description="Missing openid scope". A case measuring what
+	// userinfo returns for a valid token needs this fixture; a case
+	// measuring the token endpoint's own response needs admin-token, whose
+	// recorded scope is "email profile" precisely because it did not ask for
+	// openid.
+	"admin-token-openid": {
+		State: "bootstrap",
+		Steps: []Step{{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "/realms/master/protocol/openid-connect/token",
+				Form: map[string]string{
+					"grant_type": "password",
+					"client_id":  "admin-cli",
+					"username":   "admin",
+					"password":   "admin",
+					"scope":      "openid",
+				},
+			},
+			Capture: map[string]string{
+				"access_token":  "access_token",
+				"refresh_token": "refresh_token",
+			},
+		}},
+	},
 }
 
 // Do performs one request. The recorder's implementation talks to the

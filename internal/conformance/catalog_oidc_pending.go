@@ -338,7 +338,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: Resource Owner Password Credentials grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status:  Recorded,
 		Reason:  "the token endpoint is not implemented",
 		Fixture: "bootstrap",
 		Request: Request{
@@ -371,7 +371,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: client authentication",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status:  Recorded,
 		Reason:  "the token endpoint is not implemented",
 		Fixture: "bootstrap",
 		Request: Request{
@@ -418,7 +418,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: refresh_token grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status:  Recorded,
 		Reason:  "the token endpoint is not implemented",
 		Fixture: "admin-token",
 		Request: Request{
@@ -586,7 +586,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: Resource Owner Password Credentials grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status:  Recorded,
 		Reason:  "the token endpoint is not implemented",
 		Fixture: "bootstrap",
 		Request: Request{
@@ -608,7 +608,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: client authentication",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status:  Recorded,
 		Reason:  "the token endpoint is not implemented",
 		Fixture: "bootstrap",
 		Request: Request{
@@ -631,7 +631,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: request validation",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status:  Recorded,
 		Reason:  "the token endpoint is not implemented",
 		Fixture: "bootstrap",
 		Request: Request{
@@ -652,7 +652,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: request validation",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status:  Recorded,
 		Reason:  "the token endpoint is not implemented",
 		Fixture: "bootstrap",
 		Request: Request{
@@ -694,7 +694,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: refresh_token grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status:  Recorded,
 		Reason:  "the token endpoint is not implemented",
 		Fixture: "bootstrap",
 		Request: Request{
@@ -740,7 +740,7 @@ var oidcPending = []Case{
 			Section:   "Userinfo endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status:  Recorded,
 		Reason:  "userinfo is not implemented",
 		Fixture: "bootstrap",
 		Request: Request{
@@ -749,6 +749,13 @@ var oidcPending = []Case{
 			Headers: map[string]string{"Authorization": "Bearer not-a-token"},
 		},
 		AssertHeaders: []string{"Content-Type", "WWW-Authenticate"},
+		// Measured: userinfo is the second exception to the five security
+		// headers reaching every response - it sends four of them and omits
+		// X-Frame-Options, on every status measured so far. Pinned as an
+		// absent header because AssertHeaders can only ever check a header
+		// that is named, so nothing else would catch an implementation that
+		// started sending it everywhere "for consistency".
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
 	},
 	{
 		ID: "oidc/userinfo/get-with-valid-token",
@@ -757,7 +764,67 @@ var oidcPending = []Case{
 			Section:   "Userinfo endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status: Pending,
+		Reason: "userinfo is not implemented",
+		// Measured 2026-08-21: no bootstrapped client can produce a token
+		// this endpoint accepts. admin-cli is the only one of the six with
+		// direct access grants enabled, and it carries
+		// client.use.lightweight.access.token.enabled = true, which userinfo
+		// rejects outright - 401 with error="invalid_token" and
+		// error_description="Lightweight access token not allowed for
+		// userinfo endpoint", regardless of the scope requested. Reaching
+		// the success body needs either a completed browser login or a
+		// client created through the admin API. See lightweight-token below,
+		// which pins the refusal that was measured instead.
+		Fixture: "",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/realms/master/protocol/openid-connect/userinfo",
+			Headers: map[string]string{"Authorization": "Bearer REPLACE-WITH-A-NON-LIGHTWEIGHT-ACCESS-TOKEN"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// Measured while recording get-with-valid-token: userinfo refuses a
+		// lightweight access token whatever its scope, and the refusal is
+		// not the same shape as the invalid-token one - the status is 401
+		// either way, but the error code and description differ.
+		ID: "oidc/userinfo/lightweight-token",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Userinfo endpoint",
+			Retrieved: "2026-08-21",
+		},
+		Status:  Recorded,
+		Reason:  "userinfo is not implemented",
+		Fixture: "admin-token-openid",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/realms/master/protocol/openid-connect/userinfo",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "WWW-Authenticate"},
+		// Measured: userinfo is the second exception to the five security
+		// headers reaching every response - it sends four of them and omits
+		// X-Frame-Options, on every status measured so far. Pinned as an
+		// absent header because AssertHeaders can only ever check a header
+		// that is named, so nothing else would catch an implementation that
+		// started sending it everywhere "for consistency".
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		// Measured while recording get-with-valid-token against the
+		// admin-token fixture, which asks for no scope: userinfo refuses a
+		// token that lacks openid, with a shape that is neither the success
+		// body nor the invalid-token rejection. Kept as a case of its own
+		// rather than discarded, since the bytes are already measured.
+		ID: "oidc/userinfo/token-without-openid-scope",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Userinfo endpoint",
+			Retrieved: "2026-08-21",
+		},
+		Status:  Recorded,
 		Reason:  "userinfo is not implemented",
 		Fixture: "admin-token",
 		Request: Request{
@@ -765,7 +832,14 @@ var oidcPending = []Case{
 			Path:    "/realms/master/protocol/openid-connect/userinfo",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
-		AssertHeaders: []string{"Content-Type"},
+		AssertHeaders: []string{"Content-Type", "WWW-Authenticate"},
+		// Measured: userinfo is the second exception to the five security
+		// headers reaching every response - it sends four of them and omits
+		// X-Frame-Options, on every status measured so far. Pinned as an
+		// absent header because AssertHeaders can only ever check a header
+		// that is named, so nothing else would catch an implementation that
+		// started sending it everywhere "for consistency".
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
 	},
 	{
 		ID: "oidc/userinfo/post-with-valid-token",
@@ -774,14 +848,17 @@ var oidcPending = []Case{
 			Section:   "Userinfo endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "userinfo is not implemented",
-		Fixture: "admin-token",
+		Status: Pending,
+		Reason: "userinfo is not implemented",
+		// Blocked by the same measured refusal as get-with-valid-token
+		// above: the only bootstrapped client with direct access grants
+		// issues lightweight tokens, which userinfo does not accept.
+		Fixture: "",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/userinfo",
 			Form: map[string]string{
-				"access_token": "{{access_token}}",
+				"access_token": "REPLACE-WITH-A-NON-LIGHTWEIGHT-ACCESS-TOKEN",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
@@ -810,7 +887,7 @@ var oidcPending = []Case{
 			Section:   "Userinfo endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status:  Recorded,
 		Reason:  "userinfo is not implemented",
 		Fixture: "bootstrap",
 		Request: Request{
@@ -818,6 +895,13 @@ var oidcPending = []Case{
 			Path:   "/realms/master/protocol/openid-connect/userinfo",
 		},
 		AssertHeaders: []string{"Content-Type", "WWW-Authenticate"},
+		// Measured: userinfo is the second exception to the five security
+		// headers reaching every response - it sends four of them and omits
+		// X-Frame-Options, on every status measured so far. Pinned as an
+		// absent header because AssertHeaders can only ever check a header
+		// that is named, so nothing else would catch an implementation that
+		// started sending it everywhere "for consistency".
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
 	},
 
 	// --- Logout endpoint ---
@@ -1018,7 +1102,7 @@ var oidcPending = []Case{
 			Section:   "Introspection endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status:  Recorded,
 		Reason:  "the introspection endpoint is not implemented",
 		Fixture: "bootstrap",
 		Request: Request{
@@ -1039,7 +1123,7 @@ var oidcPending = []Case{
 			Section:   "Token revocation endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status:  Recorded,
 		Reason:  "the token revocation endpoint is not implemented",
 		Fixture: "admin-token",
 		Request: Request{
@@ -1059,7 +1143,7 @@ var oidcPending = []Case{
 			Section:   "Token revocation endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status:  Recorded,
 		Reason:  "the token revocation endpoint is not implemented",
 		Fixture: "admin-token",
 		Request: Request{
@@ -1080,7 +1164,7 @@ var oidcPending = []Case{
 			Section:   "Token revocation endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status:  Recorded,
 		Reason:  "the token revocation endpoint is not implemented",
 		Fixture: "bootstrap",
 		Request: Request{
@@ -1100,7 +1184,7 @@ var oidcPending = []Case{
 			Section:   "Token revocation endpoint: client authentication",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status:  Recorded,
 		Reason:  "the token revocation endpoint is not implemented",
 		Fixture: "bootstrap",
 		Request: Request{

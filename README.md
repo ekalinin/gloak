@@ -27,10 +27,18 @@ Working today:
 - a documentation-derived conformance suite (`internal/conformance`) that checks
   Gloak's responses byte-for-byte against bytes recorded from a live
   Keycloak 26.7.1 - with one known exception, see below
+- a parity meter whose denominator comes from Keycloak's own OpenAPI description
+  rather than from a hand-kept list: **8 of 483 enumerated behaviours served**,
+  plus four chapters whose surface has not been counted
+- 17 behaviours measured and committed but not yet served, so the tasks that
+  build them start from byte-exact expected output
 
 Not implemented yet: tokens and grants, the browser login flow, userinfo, logout,
 introspection, revocation, the admin REST API, SAML, user federation, identity
 brokering, authorization services, the admin console.
+
+Where this is going is `docs/superpowers/specs/2026-08-21-gloak-parity-roadmap.md`:
+fourteen sub-projects with their dependencies and what each closes.
 
 ## Quick start
 
@@ -121,9 +129,31 @@ behaviours. The documentation supplies the list; a running Keycloak supplies the
 expected bytes. Nothing in the suite asserts a value taken from a document.
 
 ```bash
-make conformance   # how much of the documented surface is served
+make conformance   # how much of the parity surface is served
 make record        # re-record expected bytes from Keycloak 26.7.1; needs Docker
 ```
+
+`make conformance` measures against a denominator taken from outside the project
+wherever one exists. For the Admin REST API that is Keycloak's own OpenAPI
+description, vendored at
+`internal/conformance/testdata/openapi/keycloak-26.7.1.json`: 273 paths, 413
+operations, 22 resource groups. Chapters with no machine-readable source say so
+and stay out of the total rather than being dropped from it silently, which
+would inflate the percentage by hiding the parts nobody has counted. It reads:
+
+```
+total: 8 of 483 enumerated behaviours served; 4 chapters not enumerated
+```
+
+A case has one of three statuses. `Implemented` is served and compared, and a
+mismatch is a regression. `Pending` is not built and has no contract. `Recorded`
+sits between them: the bytes have been measured and committed, but nothing
+serves them yet, so the verifier requires the case *not* to match and fails if
+it ever does - a case that starts passing as a side effect would otherwise sit
+unguarded until the next refactor broke it.
+
+That is also how a task starts: flip its cases from `Recorded` to `Implemented`
+and the failures carry byte-exact diffs against a real Keycloak response.
 
 `make record` rewrites the expected values in
 `internal/conformance/testdata/golden`. Read its diff before committing: an
@@ -137,19 +167,19 @@ the `master` realm publishes two JWKS keys and Gloak generates one, left red
 until realm keys get their own slice. Any other failure is a real regression -
 see AGENTS.md's "Build and test" section.
 
-`make record` is not silent on a clean checkout: four of the goldens it writes
-churn on every run and will show a diff even when nothing has changed:
+`make record` is not silent on a clean checkout: three of the goldens it writes
+churn on every run and will show a diff even when nothing has changed.
+`oidc/authorization/invalid-redirect-uri`, `oidc/authorization/unknown-client-id`
+and `oidc/logout/invalid-post-logout-redirect-uri` capture login-theme HTML that
+carries a resource cache-busting hash generated fresh per container start.
 
-- `oidc/authorization/invalid-redirect-uri`, `oidc/authorization/unknown-client-id`
-  and `oidc/logout/invalid-post-logout-redirect-uri` capture login-theme HTML that
-  carries a resource cache-busting hash generated fresh per container start.
-- `oidc/token/password-grant-admin-cli`'s `scope` field has word order that is not
-  stable across container starts (a Java set with no fixed iteration order; see the
-  observed-behaviour document).
+All three are `Pending`, so nothing compares them yet, but their diffs are
+expected and can be skipped when reviewing a `make record` run; a diff on any
+other golden is the one to read carefully.
 
-All four are `Pending`, so nothing compares them yet, but their diffs are expected
-and can be skipped when reviewing a `make record` run; a diff on any other golden is
-the one to read carefully.
+A fourth used to churn - `oidc/token/password-grant-admin-cli`'s `scope`, whose
+word order is not stable across container starts. `UnorderedWords` sorts the
+words inside a string value, so it no longer does.
 
 If Docker runs through Colima or another non-default context, testcontainers does
 not discover it on its own:

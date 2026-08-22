@@ -37,12 +37,20 @@ func TestCatalogIsWellFormed(t *testing.T) {
 			if c.Reason == "" {
 				t.Errorf("%q: a Pending case must say why", c.ID)
 			}
+		case Recorded:
+			// The rules unique to Recorded - a mandatory golden, and a
+			// fixture, since the verifier serves it - are in
+			// TestRecordedCaseRules. What it shares with Pending is having
+			// to say why it is not served yet.
+			if c.Reason == "" {
+				t.Errorf("%q: a Recorded case must say why it is not served yet", c.ID)
+			}
 		case Implemented:
 			if c.Fixture == "" {
 				t.Errorf("%q: an Implemented case needs a fixture", c.ID)
 			}
 			if c.Reason != "" {
-				t.Errorf("%q: Reason belongs to Pending cases only", c.ID)
+				t.Errorf("%q: Reason belongs to cases that are not served yet", c.ID)
 			}
 		default:
 			t.Errorf("%q: unknown status %d", c.ID, c.Status)
