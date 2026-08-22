@@ -732,8 +732,7 @@ var oidcPending = []Case{
 			Section:   "Userinfo endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "userinfo is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method:  http.MethodGet,
@@ -787,8 +786,7 @@ var oidcPending = []Case{
 			Section:   "Userinfo endpoint",
 			Retrieved: "2026-08-21",
 		},
-		Status:  Recorded,
-		Reason:  "userinfo is not implemented",
+		Status:  Implemented,
 		Fixture: "admin-token-openid",
 		Request: Request{
 			Method:  http.MethodGet,
@@ -816,8 +814,7 @@ var oidcPending = []Case{
 			Section:   "Userinfo endpoint",
 			Retrieved: "2026-08-21",
 		},
-		Status:  Recorded,
-		Reason:  "userinfo is not implemented",
+		Status:  Implemented,
 		Fixture: "admin-token",
 		Request: Request{
 			Method:  http.MethodGet,
@@ -879,8 +876,7 @@ var oidcPending = []Case{
 			Section:   "Userinfo endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "userinfo is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodGet,
