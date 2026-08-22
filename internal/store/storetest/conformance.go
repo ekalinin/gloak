@@ -158,6 +158,181 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	t.Run("client roles are separate from realm roles", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		client := &model.Client{ID: model.NewID(), RealmID: realm.ID, ClientID: "master-realm", Enabled: true}
+		if err := s.Clients().Create(ctx, client); err != nil {
+			t.Fatalf("Clients().Create: %v", err)
+		}
+		realmRole := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "admin", Composite: true}
+		if err := s.Roles().Create(ctx, realmRole); err != nil {
+			t.Fatalf("Roles().Create(realm): %v", err)
+		}
+		for _, n := range []string{"view-users", "manage-users"} {
+			r := &model.Role{ID: model.NewID(), RealmID: realm.ID, ClientID: client.ID, Name: n}
+			if err := s.Roles().Create(ctx, r); err != nil {
+				t.Fatalf("Roles().Create(%q): %v", n, err)
+			}
+		}
+
+		clientRoles, err := s.Roles().ListClientRoles(ctx, realm.ID, client.ID)
+		if err != nil {
+			t.Fatalf("ListClientRoles: %v", err)
+		}
+		if len(clientRoles) != 2 {
+			t.Fatalf("want 2 client roles, got %d", len(clientRoles))
+		}
+		// A client role leaking into the realm list would make every realm
+		// role listing wrong the moment the admin client exists.
+		realmRoles, err := s.Roles().ListRealmRoles(ctx, realm.ID)
+		if err != nil {
+			t.Fatalf("ListRealmRoles: %v", err)
+		}
+		if len(realmRoles) != 1 || realmRoles[0].Name != "admin" {
+			t.Fatalf("client roles leaked into the realm list: %+v", realmRoles)
+		}
+	})
+
+	t.Run("a role is addressable by ID", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		want := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "admin", Composite: true}
+		if err := s.Roles().Create(ctx, want); err != nil {
+			t.Fatalf("Roles().Create: %v", err)
+		}
+
+		got, err := s.Roles().ByID(ctx, realm.ID, want.ID)
+
+		if err != nil {
+			t.Fatalf("ByID: %v", err)
+		}
+		if got.Name != "admin" || !got.Composite {
+			t.Fatalf("round-trip wrong: %+v", got)
+		}
+		if _, err := s.Roles().ByID(ctx, realm.ID, model.NewID()); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("want ErrNotFound for an unknown role, got %v", err)
+		}
+	})
+
+	t.Run("role assignments round-trip", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		u := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "admin", Enabled: true}
+		if err := s.Users().Create(ctx, u); err != nil {
+			t.Fatalf("Users().Create: %v", err)
+		}
+		role := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "admin"}
+		if err := s.Roles().Create(ctx, role); err != nil {
+			t.Fatalf("Roles().Create: %v", err)
+		}
+
+		if err := s.Roles().AssignToUser(ctx, u.ID, role.ID); err != nil {
+			t.Fatalf("AssignToUser: %v", err)
+		}
+		got, err := s.Roles().ListUserRoles(ctx, u.ID)
+		if err != nil {
+			t.Fatalf("ListUserRoles: %v", err)
+		}
+		if len(got) != 1 || got[0].Name != "admin" {
+			t.Fatalf("want the admin role back, got %+v", got)
+		}
+
+		// Assigning twice is a conflict rather than a silent no-op, so a
+		// caller can tell "already had it" from "just granted it".
+		if err := s.Roles().AssignToUser(ctx, u.ID, role.ID); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("want ErrConflict on a second assignment, got %v", err)
+		}
+
+		if err := s.Roles().RemoveFromUser(ctx, u.ID, role.ID); err != nil {
+			t.Fatalf("RemoveFromUser: %v", err)
+		}
+		// Removing what is not assigned reports ErrNotFound: neither driver
+		// treats a delete affecting no row as an error on its own.
+		if err := s.Roles().RemoveFromUser(ctx, u.ID, role.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("want ErrNotFound removing an unassigned role, got %v", err)
+		}
+	})
+
+	t.Run("deleting a user takes its role assignments with it", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		u := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "doomed", Enabled: true}
+		if err := s.Users().Create(ctx, u); err != nil {
+			t.Fatalf("Users().Create: %v", err)
+		}
+		role := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "admin"}
+		if err := s.Roles().Create(ctx, role); err != nil {
+			t.Fatalf("Roles().Create: %v", err)
+		}
+		if err := s.Roles().AssignToUser(ctx, u.ID, role.ID); err != nil {
+			t.Fatalf("AssignToUser: %v", err)
+		}
+
+		if err := s.Users().Delete(ctx, realm.ID, u.ID); err != nil {
+			t.Fatalf("Users().Delete: %v", err)
+		}
+
+		// An orphaned assignment would grant a rights to a recycled user ID.
+		got, err := s.Roles().ListUserRoles(ctx, u.ID)
+		if err != nil {
+			t.Fatalf("ListUserRoles: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("assignments outlived the user: %+v", got)
+		}
+	})
+
+	t.Run("composite roles round-trip", func(t *testing.T) {
+		// The bootstrapped administrator holds no client roles directly - all
+		// its rights arrive through the admin role's composites, measured on a
+		// live Keycloak. A build that cannot expand them grants it nothing.
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		admin := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "admin", Composite: true}
+		child := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "create-realm"}
+		for _, r := range []*model.Role{admin, child} {
+			if err := s.Roles().Create(ctx, r); err != nil {
+				t.Fatalf("Roles().Create(%q): %v", r.Name, err)
+			}
+		}
+
+		if err := s.Roles().AddComposite(ctx, admin.ID, child.ID); err != nil {
+			t.Fatalf("AddComposite: %v", err)
+		}
+		got, err := s.Roles().ListComposites(ctx, admin.ID)
+
+		if err != nil {
+			t.Fatalf("ListComposites: %v", err)
+		}
+		if len(got) != 1 || got[0].Name != "create-realm" {
+			t.Fatalf("want create-realm, got %+v", got)
+		}
+		if err := s.Roles().AddComposite(ctx, admin.ID, child.ID); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("want ErrConflict adding the same composite twice, got %v", err)
+		}
+	})
+
 	t.Run("sessions round-trip and cascade", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

@@ -46,14 +46,35 @@ type UserRepo interface {
 	Create(ctx context.Context, u *model.User) error
 	ByUsername(ctx context.Context, realmID, username string) (*model.User, error)
 	ByID(ctx context.Context, realmID, id string) (*model.User, error)
+	// Delete removes a user and, through the schema's cascades, its sessions
+	// and role assignments. It arrives here rather than with the rest of user
+	// management because the cascade is what the role-mapping tests assert:
+	// an assignment outliving its user would grant rights to a recycled ID.
+	Delete(ctx context.Context, realmID, id string) error
 	SetCredential(ctx context.Context, c *model.Credential) error
 	CredentialByUser(ctx context.Context, userID, typ string) (*model.Credential, error)
 }
 
 type RoleRepo interface {
 	Create(ctx context.Context, r *model.Role) error
+	ByID(ctx context.Context, realmID, id string) (*model.Role, error)
 	ByName(ctx context.Context, realmID, clientID, name string) (*model.Role, error)
 	ListRealmRoles(ctx context.Context, realmID string) ([]*model.Role, error)
+	// ListClientRoles returns the roles a client owns. Keycloak keeps admin
+	// rights on a client - master-realm for the master realm - so this is not
+	// a corner of the model but the main route to an authorization decision.
+	ListClientRoles(ctx context.Context, realmID, clientID string) ([]*model.Role, error)
+
+	// AddComposite makes childRoleID part of roleID. The bootstrapped
+	// administrator holds no client roles directly: measured, every right it
+	// has arrives through the admin role's 22 composites, so a caller that
+	// does not expand these transitively sees an administrator with nothing.
+	AddComposite(ctx context.Context, roleID, childRoleID string) error
+	ListComposites(ctx context.Context, roleID string) ([]*model.Role, error)
+
+	AssignToUser(ctx context.Context, userID, roleID string) error
+	RemoveFromUser(ctx context.Context, userID, roleID string) error
+	ListUserRoles(ctx context.Context, userID string) ([]*model.Role, error)
 }
 
 // SessionRepo stores SSO sessions. A user session is addressed by realm as

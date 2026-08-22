@@ -312,6 +312,15 @@ func (r *userRepo) ByID(ctx context.Context, realmID, id string) (*model.User, e
 	return scanUser(row)
 }
 
+func (r *userRepo) Delete(ctx context.Context, realmID, id string) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM user_entity WHERE realm_id = $1 AND id = $2`, realmID, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(tag.RowsAffected())
+}
+
 // SetCredential upserts on (user_id, type) so a password reset can replace an
 // existing credential of the same type without a separate delete.
 func (r *userRepo) SetCredential(ctx context.Context, m *model.Credential) error {
@@ -394,6 +403,85 @@ func (r *roleRepo) ListRealmRoles(ctx context.Context, realmID string) ([]*model
 	}
 	defer rows.Close()
 
+	var out []*model.Role
+	for rows.Next() {
+		m, err := scanRole(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+func (r *roleRepo) ByID(ctx context.Context, realmID, id string) (*model.Role, error) {
+	row := r.pool.QueryRow(ctx,
+		`SELECT id, realm_id, client_id, name, description, composite
+		 FROM keycloak_role WHERE realm_id = $1 AND id = $2`, realmID, id)
+	return scanRole(row)
+}
+
+// ListClientRoles returns the roles a client owns, the counterpart of
+// ListRealmRoles' empty-client_id filter.
+func (r *roleRepo) ListClientRoles(ctx context.Context, realmID, clientID string) ([]*model.Role, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, realm_id, client_id, name, description, composite
+		 FROM keycloak_role WHERE realm_id = $1 AND client_id = $2 ORDER BY name`, realmID, clientID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return collectRoles(rows)
+}
+
+func (r *roleRepo) AddComposite(ctx context.Context, roleID, childRoleID string) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO composite_role (composite, child_role) VALUES ($1, $2)`, roleID, childRoleID)
+	return classify(err)
+}
+
+func (r *roleRepo) ListComposites(ctx context.Context, roleID string) ([]*model.Role, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT r.id, r.realm_id, r.client_id, r.name, r.description, r.composite
+		 FROM keycloak_role r
+		 JOIN composite_role c ON c.child_role = r.id
+		 WHERE c.composite = $1 ORDER BY r.name`, roleID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return collectRoles(rows)
+}
+
+func (r *roleRepo) AssignToUser(ctx context.Context, userID, roleID string) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO user_role_mapping (user_id, role_id) VALUES ($1, $2)`, userID, roleID)
+	return classify(err)
+}
+
+func (r *roleRepo) RemoveFromUser(ctx context.Context, userID, roleID string) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM user_role_mapping WHERE user_id = $1 AND role_id = $2`, userID, roleID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(tag.RowsAffected())
+}
+
+func (r *roleRepo) ListUserRoles(ctx context.Context, userID string) ([]*model.Role, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT r.id, r.realm_id, r.client_id, r.name, r.description, r.composite
+		 FROM keycloak_role r
+		 JOIN user_role_mapping m ON m.role_id = r.id
+		 WHERE m.user_id = $1 ORDER BY r.name`, userID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return collectRoles(rows)
+}
+
+// collectRoles drains a role query. Every role listing scans the same six
+// columns, so the loop lives once.
+func collectRoles(rows pgx.Rows) ([]*model.Role, error) {
+	defer rows.Close()
 	var out []*model.Role
 	for rows.Next() {
 		m, err := scanRole(rows)
