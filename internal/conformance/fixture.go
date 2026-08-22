@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"path"
 	"strings"
 )
 
@@ -17,6 +19,15 @@ type Step struct {
 	// Capture maps a variable name to a slash-separated path into the step's
 	// JSON response body. "access_token" is the common one.
 	Capture map[string]string
+	// CaptureHeader maps a variable name to a response header. The admin API
+	// answers a create with 201, an empty body and the new object's URL in
+	// Location, so there is nothing for Capture to read; this is how a case
+	// gets hold of an identifier the server minted.
+	//
+	// A value that parses as a URL yields its final path segment, since that
+	// is what a case substitutes into a path and the base URL differs between
+	// the recorder and the verifier. Anything else is captured whole.
+	CaptureHeader map[string]string
 }
 
 // Fixture is the setup a case runs against: a named server-side starting
@@ -132,6 +143,14 @@ func RunFixture(f Fixture, base string, do Do) (map[string]string, error) {
 			}
 			vars[name] = value
 		}
+		for name, header := range s.CaptureHeader {
+			value, err := captureFromHeader(resp.Header, header)
+			if err != nil {
+				return nil, fmt.Errorf("fixture step %d: capture %q: %w (status %d)",
+					i, name, err, resp.StatusCode)
+			}
+			vars[name] = value
+		}
 	}
 	return vars, nil
 }
@@ -162,6 +181,30 @@ func captureFrom(body []byte, path string) (string, error) {
 		return "", fmt.Errorf("path %q: value is %T, not a string", path, cur)
 	}
 	return s, nil
+}
+
+// captureFromHeader pulls one value out of a response header.
+//
+// An absent header is an error rather than an empty string, for the same
+// reason a missing body capture is: substituting nothing would turn
+// ".../clients/{{client_uuid}}" into ".../clients/" and record whatever that
+// answers as though somebody had meant to ask for it.
+//
+// A value that parses as an absolute URL yields its last path segment. That is
+// what Location carries and what a case needs, and taking it here rather than
+// in every case keeps the base URL - which differs between the recorder and
+// the verifier - out of the catalogue.
+func captureFromHeader(h http.Header, name string) (string, error) {
+	value := h.Get(name)
+	if value == "" {
+		return "", fmt.Errorf("response has no %s header", name)
+	}
+	if u, err := url.Parse(value); err == nil && u.IsAbs() {
+		if segment := path.Base(u.Path); segment != "." && segment != "/" {
+			return segment, nil
+		}
+	}
+	return value, nil
 }
 
 // Expand substitutes {{name}} references in a request's query, headers and
