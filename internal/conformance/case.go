@@ -84,6 +84,17 @@ type Case struct {
 	// always compared.
 	AssertHeaders []string
 
+	// VolatileHeaders lists response headers whose value changes per response.
+	// The value is masked to {{volatile}} in the golden and skipped when
+	// comparing, while the header's presence stays asserted - a header the
+	// implementation stopped sending entirely still fails.
+	//
+	// The measured example is the admin API's Location on a 201, which carries
+	// a UUID minted at request time. Without this, every create case churns on
+	// each recording; four goldens already had that disease. The package-level
+	// VolatileHeaders in golden.go is the same idea applied to every case.
+	VolatileHeaders []string
+
 	// AssertAbsentHeaders lists response headers that must not be present.
 	// AssertHeaders only ever checks a header that is named, so it can never
 	// catch one that should be missing - a header Keycloak omits on some

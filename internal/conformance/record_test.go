@@ -86,7 +86,7 @@ func TestRecordGoldens(t *testing.T) {
 			g := Golden{
 				RequestLine: c.Request.Method + " " + c.Request.Path,
 				Status:      resp.StatusCode,
-				Headers:     recordedHeaders(resp.Header, base, vars),
+				Headers:     recordedHeaders(resp.Header, base, c, vars),
 				Body:        body,
 			}
 			path := GoldenPath(goldenDir, c.ID)
@@ -103,33 +103,6 @@ func TestRecordGoldens(t *testing.T) {
 		sort.Strings(skipped)
 		t.Logf("skipped %d cases with no fixture yet: %v", len(skipped), skipped)
 	}
-}
-
-// recordedHeaders sorts headers by name so a re-record produces no spurious
-// diff, and blanks the values that change per response. Captured values are
-// masked here too: a token can arrive in a header as easily as in a body.
-func recordedHeaders(h http.Header, base string, vars map[string]string) []Header {
-	volatile := make(map[string]bool, len(VolatileHeaders))
-	for _, name := range VolatileHeaders {
-		volatile[http.CanonicalHeaderKey(name)] = true
-	}
-	names := make([]string, 0, len(h))
-	for name := range h {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	out := make([]Header, 0, len(names))
-	for _, name := range names {
-		value := h.Get(name)
-		if volatile[name] {
-			value = volatilePlaceholder
-		} else {
-			value = string(ReplaceIssuer(ReplaceCaptured([]byte(value), vars), base))
-		}
-		out = append(out, Header{Name: name, Value: value})
-	}
-	return out
 }
 
 // startKeycloak runs the reference server and returns its base URL. The image

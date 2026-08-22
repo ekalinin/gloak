@@ -101,6 +101,55 @@ func serve(t *testing.T, c Case) (*httptest.ResponseRecorder, map[string]string,
 	return w, vars, nil
 }
 
+// volatileHeaderCase is the shape Task 1 of P2's plan exists for: a header the
+// case asserts and whose value changes per response.
+func volatileHeaderCase() (Case, Golden) {
+	c := Case{
+		ID:              "admin/clients/create",
+		AssertHeaders:   []string{"Location"},
+		VolatileHeaders: []string{"Location"},
+	}
+	want := Golden{
+		Status:  201,
+		Headers: []Header{{Name: "Location", Value: volatilePlaceholder}},
+		Body:    []byte{},
+	}
+	return c, want
+}
+
+func TestDiffAcceptsADifferentVolatileHeaderValue(t *testing.T) {
+	c, want := volatileHeaderCase()
+	got := httptest.NewRecorder()
+	got.Header().Set("Location", "http://localhost:8080/admin/realms/master/clients/a-different-uuid")
+	got.WriteHeader(201)
+
+	diffs, err := diff(c, want, got, nil)
+
+	if err != nil {
+		t.Fatalf("diff: %v", err)
+	}
+	if len(diffs) != 0 {
+		t.Fatalf("a masked header should compare equal whatever its value: %v", diffs)
+	}
+}
+
+func TestDiffRejectsAMissingVolatileHeader(t *testing.T) {
+	// Masking that also hid absence would let an endpoint stop sending the
+	// header entirely without anything noticing.
+	c, want := volatileHeaderCase()
+	got := httptest.NewRecorder()
+	got.WriteHeader(201)
+
+	diffs, err := diff(c, want, got, nil)
+
+	if err != nil {
+		t.Fatalf("diff: %v", err)
+	}
+	if len(diffs) == 0 {
+		t.Fatal("a missing Location compared equal to a masked one")
+	}
+}
+
 func compare(t *testing.T, c Case, want Golden, got *httptest.ResponseRecorder, vars map[string]string) {
 	t.Helper()
 	diffs, err := diff(c, want, got, vars)
@@ -156,6 +205,11 @@ func diff(c Case, want Golden, got *httptest.ResponseRecorder, vars map[string]s
 		}
 	}
 
+	volatile := make(map[string]bool, len(c.VolatileHeaders))
+	for _, name := range c.VolatileHeaders {
+		volatile[http.CanonicalHeaderKey(name)] = true
+	}
+
 	for _, name := range c.AssertHeaders {
 		canonical := http.CanonicalHeaderKey(name)
 		expected, ok := byName[canonical]
@@ -163,7 +217,18 @@ func diff(c Case, want Golden, got *httptest.ResponseRecorder, vars map[string]s
 			out = append(out, fmt.Sprintf("header %s is asserted but absent from the golden", name))
 			continue
 		}
-		if actual := gotByName[canonical]; actual != expected {
+		actual, present := gotByName[canonical]
+		// A volatile header is compared on presence alone: its recorded value
+		// is the placeholder, so comparing values would fail every time. It is
+		// still asserted, so an implementation that stopped sending it is
+		// caught here rather than passing quietly.
+		if volatile[canonical] {
+			if !present || actual == "" {
+				out = append(out, fmt.Sprintf("header %s: want a value, got none", name))
+			}
+			continue
+		}
+		if actual != expected {
 			out = append(out, fmt.Sprintf("header %s: want %q, got %q", name, expected, actual))
 		}
 	}
