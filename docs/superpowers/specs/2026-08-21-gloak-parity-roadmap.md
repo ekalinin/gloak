@@ -175,6 +175,8 @@ operations is allocated below; none is left unassigned.
 | **P1** | Token foundation **(done)** | - | `oidc/token` 8 of 17, `userinfo` 4 of 7, `introspection` 1 of 4, `revocation` 4 of 4; closed `oidc/certs` | 17 cases |
 | **P2** | Admin API core | P1 | Users 34, Clients 35, Roles 28, Roles by ID 10, Groups 11, Role Mapper 18, Client Role Mappings 15 | 151 ops |
 | P2 first cut | Clients and Users, done 2026-08-23 | | 24 of the 69 in those two tags; the other 45 belong to P5, P6, P7, P9, P10, P13, P14 or the second cut - see §1.1 of the P2 design | 24 ops |
+| P2 second cut | Roles and role mappings on a user, specced 2026-08-23 | P2 first cut | 43 of the 71 in `Roles`, `Roles (by ID)`, `Role Mapper`, `Client Role Mappings`; the other 28 are groups (11), organizations (11) and P10 (6) - see `2026-08-23-p2-roles-and-role-mappings-design.md` | 43 ops |
+| P2 third cut | Groups | P2 second cut | `Groups` 9, a user's group membership 4, the group halves of the two mapping tags 11 | 24 ops |
 | **P3** | Browser code flow | P1 | `oidc/authorization` 11, `oidc/logout` (part) | ~15 cases |
 | **P4** | Multi-realm | P2 | Realms Admin 45, Key 1 | 46 ops |
 | **P5** | Client scopes and protocol mappers | P2 | Client Scopes 10, Protocol Mappers 21, Scope Mappings 33, Client Attribute Certificate 7, Client Initial Access 3, Client Registration Policy 1 | 75 ops |
