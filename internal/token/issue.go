@@ -11,6 +11,7 @@ import (
 
 	jose "github.com/go-jose/go-jose/v4"
 
+	"github.com/ekalinin/gloak/internal/javamap"
 	"github.com/ekalinin/gloak/internal/keys"
 	"github.com/ekalinin/gloak/internal/model"
 )
@@ -19,15 +20,29 @@ import (
 // claim set. admin-cli ships with it set to "true".
 const LightweightAttribute = "client.use.lightweight.access.token.enabled"
 
-// internalRefreshScope is the scope string measured on a live refresh token:
-// Keycloak's full internal client-scope list, longer than the access token's.
-// See the "Claim sets" section of the observed-behaviour document.
+// refreshOnlyScopes is what a refresh token's scope carries on top of the
+// access token's.
 //
-// It is a constant here because deriving it needs the client-scope model,
-// which is P5. Words granted to this request that are not in the measured list
-// are appended, so a non-default request degrades honestly instead of
-// reporting a scope it was not granted.
-const internalRefreshScope = "openid email acr roles basic service_account web-origins profile"
+// Measured 2026-08-23: the refresh token's scope is the granted scope followed
+// by the client's default client scopes that are not already in it. On a
+// bootstrapped realm those are the six every client carries, of which profile
+// and email are already granted, leaving these four.
+//
+// P1 recorded this as a fixed list of eight including openid and
+// service_account. That was wrong twice over: openid appears only when it was
+// asked for, and service_account only on a client with service accounts
+// enabled - measured by creating one and finding a seventh word appear. Hence
+// serviceAccountScope below rather than a constant covering both.
+//
+// Deriving it from the client's own DefaultClientScopes is what Keycloak does
+// and what this cannot do yet: a client created through the admin API comes
+// back with an empty list, because the realm does not model default scopes
+// until P5. See follow-up F16.
+var refreshOnlyScopes = []string{"web-origins", "acr", "basic", "roles"}
+
+// serviceAccountScope is the seventh default client scope a client with
+// service accounts enabled carries, measured 2026-08-23.
+const serviceAccountScope = "service_account"
 
 // Issuer turns a session into tokens. Now exists so tests can pin time; nil
 // means time.Now.
@@ -40,9 +55,11 @@ type Issuer struct {
 // Request is one issuance. Scope is the granted scope, space-separated, as it
 // will appear in the token response.
 //
-// RealmRoles and ClientRoles are passed in rather than looked up: role
-// mappings are not modelled until P2, so today's callers pass what they know,
-// which for a bootstrapped realm is nothing.
+// RealmRoles and ClientRoles are passed in rather than looked up here: this
+// package signs claim sets and does not reach a store. The caller resolves
+// them - see internal/roles - and both are the user's *effective* roles, with
+// composites already expanded. ClientRoles is keyed by clientId, not by the
+// client's UUID, because that is what the claim carries.
 type Request struct {
 	Client         *model.Client
 	User           *model.User
@@ -102,72 +119,68 @@ func (i *Issuer) Issue(r Request) (Set, error) {
 func (i *Issuer) accessClaims(r Request, iat, exp int64) any {
 	if IsLightweight(r.Client) {
 		return lightweightClaims{
-			Azp:   r.Client.ClientID,
 			Exp:   exp,
 			Iat:   iat,
-			Iss:   i.Issuer,
 			Jti:   model.NewID(),
-			Scope: r.Scope,
-			Sid:   r.UserSession.ID,
+			Iss:   i.Issuer,
 			Typ:   TypeAccess,
+			Azp:   r.Client.ClientID,
+			Sid:   r.UserSession.ID,
+			Scope: r.Scope,
 		}
 	}
-	resource := map[string]roleClaim{}
-	for client, roles := range r.ClientRoles {
-		resource[client] = roleClaim{Roles: roles}
-	}
 	return accessClaims{
-		Acr:               "1",
-		AllowedOrigins:    r.Client.WebOrigins,
-		Aud:               audience(r),
-		Azp:               r.Client.ClientID,
-		EmailVerified:     r.User.EmailVerified,
 		Exp:               exp,
 		Iat:               iat,
-		Iss:               i.Issuer,
 		Jti:               model.NewID(),
-		PreferredUsername: r.UserSession.Username,
-		RealmAccess:       roleClaim{Roles: r.RealmRoles},
-		ResourceAccess:    resource,
-		Scope:             r.Scope,
-		Sid:               r.UserSession.ID,
+		Iss:               i.Issuer,
+		Aud:               audienceClaim(Audience(r.Client.ClientID, r.ClientRoles)),
 		Sub:               r.UserSession.UserID,
 		Typ:               TypeAccess,
+		Azp:               r.Client.ClientID,
+		Sid:               r.UserSession.ID,
+		Acr:               "1",
+		AllowedOrigins:    r.Client.WebOrigins,
+		RealmAccess:       realmAccessClaim(r.RealmRoles),
+		ResourceAccess:    resourceAccessClaim(r.ClientRoles),
+		Scope:             r.Scope,
+		EmailVerified:     r.User.EmailVerified,
+		PreferredUsername: r.UserSession.Username,
 	}
 }
 
 func (i *Issuer) idClaims(r Request, accessToken string, iat, exp int64) idClaims {
 	return idClaims{
-		Acr:               "1",
-		AtHash:            atHash(accessToken),
-		Aud:               r.Client.ClientID,
-		Azp:               r.Client.ClientID,
-		EmailVerified:     r.User.EmailVerified,
 		Exp:               exp,
 		Iat:               iat,
-		Iss:               i.Issuer,
 		Jti:               model.NewID(),
-		PreferredUsername: r.UserSession.Username,
-		Sid:               r.UserSession.ID,
+		Iss:               i.Issuer,
+		Aud:               r.Client.ClientID,
 		Sub:               r.UserSession.UserID,
 		Typ:               TypeID,
+		Azp:               r.Client.ClientID,
+		Sid:               r.UserSession.ID,
+		AtHash:            atHash(accessToken),
+		Acr:               "1",
+		EmailVerified:     r.User.EmailVerified,
+		PreferredUsername: r.UserSession.Username,
 	}
 }
 
 func (i *Issuer) refreshClaims(r Request, iat, exp int64) refreshClaims {
 	return refreshClaims{
-		Aud:   i.Issuer,
-		AudX:  audience(r),
-		Azp:   r.Client.ClientID,
 		Exp:   exp,
 		Iat:   iat,
-		Iss:   i.Issuer,
 		Jti:   model.NewID(),
-		Prov:  "default",
-		Scope: refreshScope(r.Scope),
-		Sid:   r.UserSession.ID,
+		Iss:   i.Issuer,
+		Aud:   i.Issuer,
 		Sub:   r.UserSession.UserID,
 		Typ:   TypeRefresh,
+		Azp:   r.Client.ClientID,
+		Sid:   r.UserSession.ID,
+		Scope: RefreshScope(r.Scope, r.Client),
+		AudX:  audienceClaim(Audience(r.Client.ClientID, r.ClientRoles)),
+		Prov:  "default",
 	}
 }
 
@@ -177,20 +190,36 @@ func IsLightweight(c *model.Client) bool {
 	return c.Attributes[LightweightAttribute] == "true"
 }
 
-// audience is what the access token puts in aud and the refresh token in
-// aud_x. What Keycloak actually puts there for an ordinary client is
-// unmeasured - no bootstrapped client can issue a non-lightweight token - so
-// this is the client's own ID, which is the value a resource server checking
-// its own audience would expect.
-func audience(r Request) []string {
-	return []string{r.Client.ClientID}
+// Audience is what the access token puts in aud and the refresh token in
+// aud_x: the clients the *user* holds roles on, in Keycloak's key order,
+// **minus the issuing client**.
+//
+// The exclusion is measured, not defensive, and it is the whole of follow-up
+// F18's second half. Assigning the administrator a role on the issuing client
+// puts that client in resource_access and still leaves it out of aud, so a
+// client can never introspect a token it asked for itself. Until 2026-08-23
+// this returned the issuing client and nothing else, which was the opposite of
+// the contract in every particular.
+func Audience(issuingClient string, clientRoles map[string][]string) []string {
+	out := make([]string, 0, len(clientRoles))
+	for c := range clientRoles {
+		if c != issuingClient {
+			out = append(out, c)
+		}
+	}
+	return javamap.KeyOrder(out)
 }
 
-// refreshScope reproduces the measured internal scope list, appending any
-// granted word it does not already contain.
-func refreshScope(granted string) string {
-	words := strings.Fields(internalRefreshScope)
-	for w := range strings.FieldsSeq(granted) {
+// RefreshScope is the refresh token's scope: the granted scope followed by the
+// client's default client scopes that are not already in it. See
+// refreshOnlyScopes for why those are a constant rather than the client's own.
+func RefreshScope(granted string, c *model.Client) string {
+	words := strings.Fields(granted)
+	extra := refreshOnlyScopes
+	if c != nil && c.ServiceAccountsEnabled {
+		extra = append(slices.Clone(extra), serviceAccountScope)
+	}
+	for _, w := range extra {
 		if !slices.Contains(words, w) {
 			words = append(words, w)
 		}

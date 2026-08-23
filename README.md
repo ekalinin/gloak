@@ -25,6 +25,10 @@ Working today:
 - the token endpoint: the `password`, `refresh_token` and `client_credentials`
   grants, with client authentication for public and confidential clients
 - userinfo, token introspection and token revocation
+- roles resolved at issuance, so a token's `realm_access`, `resource_access` and
+  `aud` are Keycloak's - including the rule that `aud` names the clients the
+  *user* has roles on and never the one that asked for the token, which is why
+  introspecting your own access token is refused
 - SSO sessions, so `sid` is stable across a refresh and revocation actually ends
   the session
 - realm signing keys persisted per realm, so the published `kid` survives a
@@ -39,7 +43,7 @@ Working today:
   Gloak's responses byte-for-byte against bytes recorded from a live
   Keycloak 26.7.1
 - a parity meter whose denominator comes from Keycloak's own OpenAPI description
-  rather than from a hand-kept list: **55 of 485 enumerated behaviours served**,
+  rather than from a hand-kept list: **57 of 485 enumerated behaviours served**,
   plus four chapters whose surface has not been counted
 - an external oracle: `make oracle` drives Gloak with `kcadm.sh`, Keycloak's own
   admin CLI, which asks for things no recorded case asks for
@@ -158,7 +162,7 @@ and stay out of the total rather than being dropped from it silently, which
 would inflate the percentage by hiding the parts nobody has counted. It reads:
 
 ```
-total: 55 of 485 enumerated behaviours served; 4 chapters not enumerated
+total: 57 of 485 enumerated behaviours served; 4 chapters not enumerated
 ```
 
 A case has one of three statuses. `Implemented` is served and compared, and a

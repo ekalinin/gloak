@@ -173,7 +173,7 @@ func (h *handler) passwordGrant(w http.ResponseWriter, r *http.Request, realm *m
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	h.writeTokens(w, realm, client, user, session, scope, k, false)
+	h.writeTokens(w, r, realm, client, user, session, scope, k, false)
 }
 
 // refreshTokenGrant exchanges a refresh token for a fresh set.
@@ -239,7 +239,7 @@ func (h *handler) refreshTokenGrant(w http.ResponseWriter, r *http.Request, real
 	// the "Token endpoint response" section of the observed-behaviour document
 	// as the weakest of the unmasked duration values. The recorded golden
 	// agrees with the configured 1800 because the session is seconds old there.
-	h.writeTokens(w, realm, client, user, session, clientSession.Scope, k, false)
+	h.writeTokens(w, r, realm, client, user, session, clientSession.Scope, k, false)
 }
 
 func writeInvalidRefreshToken(w http.ResponseWriter) {
@@ -279,7 +279,7 @@ func (h *handler) clientCredentialsGrant(w http.ResponseWriter, r *http.Request,
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	h.writeTokens(w, realm, client, user, session, scope, k, true)
+	h.writeTokens(w, r, realm, client, user, session, scope, k, true)
 }
 
 // serviceAccountUser returns the account a client acts as, creating it on
@@ -361,7 +361,13 @@ func (h *handler) startSession(ctx context.Context, realm *model.Realm, client *
 // refresh_expires_in 0 rather than the realm's lifespan. The refresh token is
 // not merely left out of the body - none is issued, so a service account
 // session cannot be refreshed.
-func (h *handler) writeTokens(w http.ResponseWriter, realm *model.Realm, client *model.Client, user *model.User, session *model.UserSession, scope string, k *keys.RealmKeys, serviceAccount bool) {
+func (h *handler) writeTokens(w http.ResponseWriter, r *http.Request, realm *model.Realm, client *model.Client, user *model.User, session *model.UserSession, scope string, k *keys.RealmKeys, serviceAccount bool) {
+	realmRoles, clientRoles, err := h.tokenRoles(r.Context(), realm, user)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+
 	accessLife := accessLifespan(realm, client)
 	issuer := &token.Issuer{Keys: k, Issuer: h.realmIssuer(realm.Name)}
 	set, err := issuer.Issue(token.Request{
@@ -369,6 +375,8 @@ func (h *handler) writeTokens(w http.ResponseWriter, realm *model.Realm, client 
 		User:           user,
 		UserSession:    session,
 		Scope:          scope,
+		RealmRoles:     realmRoles,
+		ClientRoles:    clientRoles,
 		AccessLife:     accessLife,
 		RefreshLife:    realm.RefreshTokenLifespan,
 		IncludeIDToken: hasScope(scope, "openid"),

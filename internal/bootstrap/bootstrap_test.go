@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"path/filepath"
+	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -392,4 +393,160 @@ func TestEnsureMasterGivesTheAdministratorItsRoles(t *testing.T) {
 	if len(got) != 2 || got[0] != "admin" || got[1] != "default-roles-master" {
 		t.Fatalf("want [admin default-roles-master], got %v", got)
 	}
+}
+
+// TestEnsureMasterCreatesTheAccountAndBrokerRoles pins the two role sets
+// follow-up F18 found missing. account's eight matter beyond their names: it
+// is the client every user has roles on, so a bootstrap without them issues
+// access tokens with an empty resource_access and no aud at all.
+func TestEnsureMasterCreatesTheAccountAndBrokerRoles(t *testing.T) {
+	s, realm := bootstrapped(t)
+	ctx := context.Background()
+
+	for _, c := range []struct {
+		client string
+		want   []string
+	}{
+		{
+			client: "account",
+			want: []string{
+				"delete-account", "manage-account", "manage-account-links",
+				"manage-consent", "view-applications", "view-consent",
+				"view-groups", "view-profile",
+			},
+		},
+		{client: "broker", want: []string{"read-token"}},
+		{client: "account-console", want: nil},
+		{client: "admin-cli", want: nil},
+		{client: "security-admin-console", want: nil},
+	} {
+		t.Run(c.client, func(t *testing.T) {
+			client, err := s.Clients().ByClientID(ctx, realm.ID, c.client)
+			if err != nil {
+				t.Fatalf("ByClientID(%s): %v", c.client, err)
+			}
+			roles, err := s.Roles().ListClientRoles(ctx, realm.ID, client.ID)
+			if err != nil {
+				t.Fatalf("ListClientRoles: %v", err)
+			}
+			got := make([]string, 0, len(roles))
+			for _, r := range roles {
+				got = append(got, r.Name)
+				// Every client role's description is a theme message key, and
+				// unlike the realm roles' they all follow the name.
+				if want := "${role_" + r.Name + "}"; r.Description != want {
+					t.Errorf("%s: want description %q, got %q", r.Name, want, r.Description)
+				}
+			}
+			sort.Strings(got)
+			if !slices.Equal(got, c.want) {
+				t.Fatalf("want %v, got %v", c.want, got)
+			}
+		})
+	}
+}
+
+// TestEnsureMasterWiresTheAccountComposites pins the two composites among
+// account's own roles, measured 2026-08-23.
+func TestEnsureMasterWiresTheAccountComposites(t *testing.T) {
+	s, realm := bootstrapped(t)
+	ctx := context.Background()
+	account, err := s.Clients().ByClientID(ctx, realm.ID, "account")
+	if err != nil {
+		t.Fatalf("ByClientID(account): %v", err)
+	}
+
+	for parent, want := range map[string]string{
+		"manage-account": "manage-account-links",
+		"manage-consent": "view-consent",
+	} {
+		role, err := s.Roles().ByName(ctx, realm.ID, account.ID, parent)
+		if err != nil {
+			t.Fatalf("ByName(%s): %v", parent, err)
+		}
+		if !role.Composite {
+			t.Errorf("%s is not marked composite", parent)
+		}
+		children, err := s.Roles().ListComposites(ctx, role.ID)
+		if err != nil {
+			t.Fatalf("ListComposites(%s): %v", parent, err)
+		}
+		if len(children) != 1 || children[0].Name != want {
+			t.Fatalf("%s: want [%s], got %v", parent, want, names(children))
+		}
+	}
+}
+
+// TestEnsureMasterWiresDefaultRoles pins what default-roles-master contains:
+// two realm roles and two of account's, measured 2026-08-23. This is the
+// composite that gives an ordinary user any role at all.
+func TestEnsureMasterWiresDefaultRoles(t *testing.T) {
+	s, realm := bootstrapped(t)
+	ctx := context.Background()
+	account, err := s.Clients().ByClientID(ctx, realm.ID, "account")
+	if err != nil {
+		t.Fatalf("ByClientID(account): %v", err)
+	}
+
+	role, err := s.Roles().ByName(ctx, realm.ID, "", "default-roles-master")
+	if err != nil {
+		t.Fatalf("ByName(default-roles-master): %v", err)
+	}
+	children, err := s.Roles().ListComposites(ctx, role.ID)
+	if err != nil {
+		t.Fatalf("ListComposites: %v", err)
+	}
+
+	var gotRealm, gotAccount []string
+	for _, c := range children {
+		switch c.ClientID {
+		case "":
+			gotRealm = append(gotRealm, c.Name)
+		case account.ID:
+			gotAccount = append(gotAccount, c.Name)
+		default:
+			t.Errorf("composite %q belongs to an unexpected client %q", c.Name, c.ClientID)
+		}
+	}
+	sort.Strings(gotRealm)
+	sort.Strings(gotAccount)
+	if want := []string{"offline_access", "uma_authorization"}; !slices.Equal(gotRealm, want) {
+		t.Fatalf("realm composites: want %v, got %v", want, gotRealm)
+	}
+	if want := []string{"manage-account", "view-profile"}; !slices.Equal(gotAccount, want) {
+		t.Fatalf("account composites: want %v, got %v", want, gotAccount)
+	}
+}
+
+// TestEnsureMasterDescribesTheRealmRoles pins the two descriptions that do not
+// follow the name - measured, and the reason defaultRealmRoles spells all five
+// out instead of deriving them.
+func TestEnsureMasterDescribesTheRealmRoles(t *testing.T) {
+	s, realm := bootstrapped(t)
+	ctx := context.Background()
+
+	want := map[string]string{
+		"admin":                "${role_admin}",
+		"create-realm":         "${role_create-realm}",
+		"default-roles-master": "${role_default-roles}",
+		"offline_access":       "${role_offline-access}",
+		"uma_authorization":    "${role_uma_authorization}",
+	}
+	roles, err := s.Roles().ListRealmRoles(ctx, realm.ID)
+	if err != nil {
+		t.Fatalf("ListRealmRoles: %v", err)
+	}
+	for _, r := range roles {
+		if r.Description != want[r.Name] {
+			t.Errorf("%s: want %q, got %q", r.Name, want[r.Name], r.Description)
+		}
+	}
+}
+
+func names(roles []*model.Role) []string {
+	out := make([]string, 0, len(roles))
+	for _, r := range roles {
+		out = append(out, r.Name)
+	}
+	return out
 }

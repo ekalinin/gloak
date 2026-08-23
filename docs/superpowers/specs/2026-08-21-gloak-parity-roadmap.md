@@ -18,11 +18,17 @@ The first sub-project, P1, has its spec already:
 
 ## 2. Where the project stands
 
-**Updated 2026-08-23, after P2's first cut.** `make conformance` reports
-**55 of 485** enumerated behaviours served. P1 built the token foundation and
-P2's first cut added 24 Admin REST API operations - `admin/clients` 10 of 35,
-`admin/users` 14 of 34 - along with the six protocol bodies P1 could not reach
-without a confidential client.
+**Updated 2026-08-23, after P2's first cut and follow-up F18.** `make
+conformance` reports **57 of 485** enumerated behaviours served. P1 built the
+token foundation and P2's first cut added 24 Admin REST API operations -
+`admin/clients` 10 of 35, `admin/users` 14 of 34 - along with the six protocol
+bodies P1 could not reach without a confidential client.
+
+F18 then added the last two, and they came from the other direction: roles are
+resolved at issuance, so `aud`, `realm_access` and `resource_access` are what
+Keycloak emits, and the two introspection cases that had been sitting
+`Recorded` began matching on their own. `oidc/introspection` is 4 of 5, with
+the fifth blocked on role assignment through the API.
 
 The denominator moved from 483 to 485 because two cases were added for
 behaviours nobody had catalogued: an access token introspected from outside its

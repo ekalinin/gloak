@@ -24,11 +24,18 @@ var (
 // Parsed is what a verified token carries. Subject is empty for a lightweight
 // access token, which has no sub; callers resolve the user through SessionID
 // instead.
+//
+// Audience is what the token's aud claim named, normalised to a list: the
+// claim is a string when it names one client and an array when it names
+// several, and absent when it names none. Introspection has to compare against
+// it, so the three shapes cannot stay the caller's problem.
 type Parsed struct {
 	Type      string
 	Subject   string
 	SessionID string
 	ClientID  string // azp
+	ID        string // jti
+	Audience  []string
 	Scope     string
 	IssuedAt  time.Time
 	ExpiresAt time.Time
@@ -94,8 +101,29 @@ func check(claims *parsedClaims, issuer, wantType string, now time.Time) (*Parse
 		Subject:   claims.Sub,
 		SessionID: claims.Sid,
 		ClientID:  claims.Azp,
+		ID:        claims.Jti,
+		Audience:  parseAudience(claims.Aud),
 		Scope:     claims.Scope,
 		IssuedAt:  time.Unix(claims.Iat, 0),
 		ExpiresAt: expires,
 	}, nil
+}
+
+// parseAudience flattens the aud claim's three shapes - absent, a string, an
+// array - into a list. A claim that is none of the three yields no audiences
+// rather than an error: the signature already said this token is ours, and a
+// token with an unreadable aud simply names nobody.
+func parseAudience(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(raw, &many); err == nil {
+		return many
+	}
+	var one string
+	if err := json.Unmarshal(raw, &one); err == nil {
+		return []string{one}
+	}
+	return nil
 }

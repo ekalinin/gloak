@@ -99,7 +99,7 @@ func (h *handler) createClient(w http.ResponseWriter, r *http.Request, rc *reqCo
 		return
 	}
 	if m.ServiceAccountsEnabled {
-		if _, err := h.ensureServiceAccount(r.Context(), rc.realm.ID, m); err != nil {
+		if _, err := h.ensureServiceAccount(r.Context(), rc.realm, m); err != nil {
 			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 			return
 		}
@@ -151,7 +151,7 @@ func (h *handler) updateClient(w http.ResponseWriter, r *http.Request, rc *reqCo
 	// Measured: switching serviceAccountsEnabled on through this endpoint
 	// creates the account, so the next read of service-account-user finds one.
 	if updated.ServiceAccountsEnabled {
-		if _, err := h.ensureServiceAccount(r.Context(), rc.realm.ID, updated); err != nil {
+		if _, err := h.ensureServiceAccount(r.Context(), rc.realm, updated); err != nil {
 			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 			return
 		}

@@ -115,12 +115,36 @@ var defaultClients = []model.Client{
 
 // defaultRealmRoles is the measured set of realm-level roles Keycloak
 // creates in a fresh master realm.
+//
+// Two of the descriptions do not follow the ${role_<name>} pattern the client
+// roles all follow, measured 2026-08-23: offline_access is described as
+// ${role_offline-access} with a hyphen where the name has an underscore, and
+// default-roles-master as ${role_default-roles} without the realm name. They
+// are spelled out for that reason rather than derived.
 var defaultRealmRoles = []model.Role{
-	{Name: "admin", Composite: true},
-	{Name: "create-realm"},
-	{Name: "default-roles-master", Composite: true},
-	{Name: "offline_access"},
-	{Name: "uma_authorization"},
+	{Name: "admin", Description: "${role_admin}", Composite: true},
+	{Name: "create-realm", Description: "${role_create-realm}"},
+	{Name: defaultRolesRealmRole, Description: "${role_default-roles}", Composite: true},
+	{Name: "offline_access", Description: "${role_offline-access}"},
+	{Name: "uma_authorization", Description: "${role_uma_authorization}"},
+}
+
+// defaultRolesRealmRole is the composite every user in the realm is given, and
+// the reason an ordinary user's token carries any role at all. Its name
+// carries the realm's, so a second realm gets its own.
+const defaultRolesRealmRole = "default-roles-master"
+
+// defaultRolesComposites is what that role contains, measured 2026-08-23:
+// two realm roles and two of the account client's.
+//
+// This is what puts `account` in every token's aud and resource_access, so it
+// is not decoration - without it Gloak issues tokens with no audience at all.
+var defaultRolesComposites = struct {
+	realm   []string
+	account []string
+}{
+	realm:   []string{"offline_access", "uma_authorization"},
+	account: []string{"manage-account", "view-profile"},
 }
 
 // adminRoleContainer is the client that owns the admin roles in the master
@@ -164,6 +188,41 @@ var adminRoleComposites = map[string][]string{
 	"view-clients":       {"query-clients"},
 	"view-users":         {"query-groups", "query-users"},
 	"view-organizations": {"query-organizations"},
+}
+
+// roleContainers is every bootstrapped client that owns roles, measured
+// 2026-08-23 by reading GET .../clients/{uuid}/roles on all six.
+// account-console, admin-cli and security-admin-console own none, which is why
+// they are absent rather than present with an empty list.
+//
+// account was missing entirely until follow-up F18. It is the client an
+// ordinary user has roles on, so leaving it out did not merely lose three role
+// names: it left every access token with an empty resource_access and, since
+// aud is derived from that, no audience at all.
+var roleContainers = []struct {
+	client     string
+	roles      []string
+	composites map[string][]string
+}{
+	{
+		client: "account",
+		roles: []string{
+			"delete-account",
+			"manage-account",
+			"manage-account-links",
+			"manage-consent",
+			"view-applications",
+			"view-consent",
+			"view-groups",
+			"view-profile",
+		},
+		composites: map[string][]string{
+			"manage-account": {"manage-account-links"},
+			"manage-consent": {"view-consent"},
+		},
+	},
+	{client: "broker", roles: []string{"read-token"}},
+	{client: adminRoleContainer, roles: adminClientRoles, composites: adminRoleComposites},
 }
 
 // adminComposites is what the realm role `admin` contains: measured as all 21
@@ -233,7 +292,13 @@ func EnsureMaster(ctx context.Context, s store.Store, adminUser, adminPassword s
 		}
 	}
 
-	if err := ensureAdminRoles(ctx, s, realm.ID); err != nil {
+	if err := ensureClientRoles(ctx, s, realm.ID); err != nil {
+		return err
+	}
+	if err := ensureAdminComposites(ctx, s, realm.ID); err != nil {
+		return err
+	}
+	if err := ensureDefaultRoles(ctx, s, realm.ID); err != nil {
 		return err
 	}
 
@@ -248,32 +313,46 @@ func EnsureMaster(ctx context.Context, s store.Store, adminUser, adminPassword s
 	return ensureAdminCredential(ctx, s, user.ID, adminPassword)
 }
 
-// ensureAdminRoles creates the master-realm client's 21 roles and wires the
-// measured composite structure: the three view- roles over their query-
-// counterparts, and the realm role admin over all 21 plus create-realm.
-func ensureAdminRoles(ctx context.Context, s store.Store, realmID string) error {
+// ensureClientRoles creates every role the bootstrapped clients own and wires
+// the composites among them - the three admin view- roles over their query-
+// counterparts, manage-account over manage-account-links, manage-consent over
+// view-consent.
+//
+// Client role descriptions are all theme message keys of the form
+// ${role_<name>}, measured on all 30, so they are derived rather than listed.
+// The realm roles next door are not so tidy; see defaultRealmRoles.
+func ensureClientRoles(ctx context.Context, s store.Store, realmID string) error {
+	for _, container := range roleContainers {
+		c, err := s.Clients().ByClientID(ctx, realmID, container.client)
+		if err != nil {
+			return fmt.Errorf("bootstrap: look up %s client: %w", container.client, err)
+		}
+		for _, name := range container.roles {
+			r := &model.Role{
+				ID: model.NewID(), RealmID: realmID, ClientID: c.ID, Name: name,
+				Description: "${role_" + name + "}",
+				Composite:   len(container.composites[name]) > 0,
+			}
+			if err := s.Roles().Create(ctx, r); err != nil && !errors.Is(err, store.ErrConflict) {
+				return fmt.Errorf("bootstrap: create client role %q on %q: %w", name, container.client, err)
+			}
+		}
+		for parent, children := range container.composites {
+			if err := composeRoles(ctx, s, realmID, c.ID, parent, c.ID, children); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// ensureAdminComposites wires the realm role admin over all 21 admin client
+// roles plus create-realm.
+func ensureAdminComposites(ctx context.Context, s store.Store, realmID string) error {
 	container, err := s.Clients().ByClientID(ctx, realmID, adminRoleContainer)
 	if err != nil {
 		return fmt.Errorf("bootstrap: look up %s client: %w", adminRoleContainer, err)
 	}
-
-	for _, name := range adminClientRoles {
-		r := &model.Role{
-			ID: model.NewID(), RealmID: realmID, ClientID: container.ID, Name: name,
-			Description: "${role_" + name + "}",
-			Composite:   len(adminRoleComposites[name]) > 0,
-		}
-		if err := s.Roles().Create(ctx, r); err != nil && !errors.Is(err, store.ErrConflict) {
-			return fmt.Errorf("bootstrap: create client role %q: %w", name, err)
-		}
-	}
-
-	for parent, children := range adminRoleComposites {
-		if err := composeRoles(ctx, s, realmID, container.ID, parent, container.ID, children); err != nil {
-			return err
-		}
-	}
-
 	// admin is a realm role, so its own client_id is empty while its children
 	// live on the container client - except create-realm, which is a realm
 	// role too.
@@ -281,6 +360,19 @@ func ensureAdminRoles(ctx context.Context, s store.Store, realmID string) error 
 		return err
 	}
 	return composeRoles(ctx, s, realmID, "", "admin", "", []string{adminCompositeRealmRole})
+}
+
+// ensureDefaultRoles wires default-roles-master over the two realm roles and
+// the two account client roles it was measured containing.
+func ensureDefaultRoles(ctx context.Context, s store.Store, realmID string) error {
+	account, err := s.Clients().ByClientID(ctx, realmID, "account")
+	if err != nil {
+		return fmt.Errorf("bootstrap: look up account client: %w", err)
+	}
+	if err := composeRoles(ctx, s, realmID, "", defaultRolesRealmRole, "", defaultRolesComposites.realm); err != nil {
+		return err
+	}
+	return composeRoles(ctx, s, realmID, "", defaultRolesRealmRole, account.ID, defaultRolesComposites.account)
 }
 
 // composeRoles adds each child to parent, ignoring a composite that is already
@@ -306,7 +398,7 @@ func composeRoles(ctx context.Context, s store.Store, realmID, parentClientID, p
 // measured holding - admin and default-roles-master - and no client role
 // directly.
 func ensureAdminRoleAssignment(ctx context.Context, s store.Store, realmID, userID string) error {
-	for _, name := range []string{"admin", "default-roles-master"} {
+	for _, name := range []string{"admin", defaultRolesRealmRole} {
 		r, err := s.Roles().ByName(ctx, realmID, "", name)
 		if err != nil {
 			return fmt.Errorf("bootstrap: look up role %q: %w", name, err)

@@ -11,8 +11,9 @@ Each was reproduced, not theorised.
 
 **Status, 2026-08-23.** P2's first cut closed F15 and the
 `service-account-<clientId>` half of F14's neighbour, and opened F16 through
-F19. Closed entries keep their text: the reasoning that turned out to be wrong
-is worth more than a tidy list.
+F19. F18 was then closed the same day and opened F20 through F23. Closed
+entries keep their text: the reasoning that turned out to be wrong is worth
+more than a tidy list.
 
 ## F3: two shipped endpoints have no measured contract (closed)
 
@@ -340,7 +341,51 @@ narrow-role caller has to build one through the API in both the reference
 container and Gloak. `internal/admin`'s own tests cover what they can:
 TestQueryUsersOpensTheListingButNotTheRead pins the status codes.
 
-## F18: tokens carry no roles, so `aud` is wrong and introspection is too permissive
+## F18: tokens carry no roles, so `aud` is wrong and introspection is too permissive (closed)
+
+**Closed 2026-08-23.** Roles are resolved at issuance, `aud` is derived from
+them, and introspection applies the audience check. Both cases it named came
+off `Recorded`:
+
+- `oidc/introspection/active-refresh-token` and
+  `access-token-outside-audience` are `Implemented`. The `Recorded` alarm is
+  what reported it: both started matching the recorded bytes in the same test
+  run, before anything was promoted by hand.
+- `oidc/introspection/active-access-token` stays `Pending`, for the reason this
+  entry gave. The measurement that confirms it is new, though: the audience
+  check is real membership, not a blanket refusal. A *second* confidential
+  client named in the `aud` introspects the token successfully. Reaching that
+  from a fixture still needs role assignment through the API, which is P2's
+  second cut.
+
+Six things had to be true at once, and four of them nobody had written down:
+
+1. **`account`'s eight roles and `broker`'s one were missing from bootstrap.**
+   Only `master-realm`'s 21 had ever been measured. `account` is the client
+   *every* user has roles on, so without it `resource_access` was empty for
+   everyone and `aud` was empty with it.
+2. **`default-roles-master` was created and left hollow**, so the composite the
+   administrator holds reached nothing.
+3. **No user creation path assigned it.** Both do now - the admin API's and the
+   service account one.
+4. **`aud` excludes the issuing client**, which this entry had right, and is
+   also a *string* for one audience and *absent* for none, which it did not.
+   `realm_access`, `resource_access` and `allowed-origins` are absent rather
+   than empty on the same terms.
+5. **`resource_access`'s key order is a Java `HashMap`'s**, not sorted. That is
+   `internal/javamap`, and it is confirmed against four measured key sets.
+6. **The refresh token's `scope` was a wrong constant.** It is the granted
+   scope plus the client's default client scopes; the recorded eight-word list
+   contained `openid` and `service_account` unconditionally and neither
+   belongs there.
+
+What is deliberately still not reproduced, each with its own entry below:
+the service account token's four differences (F20), ID token introspection
+(F21), and `fullScopeAllowed=false` narrowing the role set (F22).
+
+The original text follows.
+
+## F18 (original): tokens carry no roles, so `aud` is wrong and introspection is too permissive
 
 Measured 2026-08-23 while recording the introspection bodies.
 
@@ -391,3 +436,75 @@ values were measured and are not reproduced:
 36000 is ten hours and matches no value this realm models, so reproducing it
 would mean copying a number without knowing what it is. Both are corner cases
 no client sets deliberately, and both are wrong today.
+
+## F20: the service account's access token differs in four places
+
+Measured 2026-08-23 by decoding a `client_credentials` token, while closing
+F18. Gloak reproduces the roles and none of the rest:
+
+| | Keycloak | Gloak |
+|---|---|---|
+| `sid` | **absent** | present |
+| `clientHost` | the caller's address | absent |
+| `clientAddress` | the caller's address | absent |
+| `client_id` | the client's `clientId` | absent |
+
+The three extra claims sit around `preferred_username`: `clientHost` before it,
+`clientAddress` and `client_id` after. `sid`'s absence agrees with the response
+body, which carries no `session_state` either - Gloak already reproduces that
+half and issues a token that disagrees with it.
+
+None of this is observable through a golden today: every token is `Volatile` in
+every recorded response, and the one endpoint that would expose these claims is
+introspection, which cannot reach a service account's own token for the reason
+F18's closing note gives.
+
+`clientHost` and `clientAddress` also raise a question this project has not had
+to answer before - what a token claim should say behind a proxy - so they want
+deciding rather than copying.
+
+## F21: introspection does not accept an ID token
+
+Measured 2026-08-23. An ID token introspects active from a client in its
+audience, with the same rebuilt claim set the refresh token produces, `typ` and
+`token_type` both `ID`, and **no `scope` key** since an ID token has none.
+
+`internal/oidc`'s introspection tries `ParseAccess` then `ParseRefresh` and
+reports anything else inactive, so Gloak answers `{"active":false}` where
+Keycloak answers with the body. Adding a third parse is small; what stops it
+being small is that the ID token is RS256 like the access token, so the branch
+that currently answers "access token, apply the audience check" has to tell the
+two apart by `typ` before deciding which rule applies - and whether the audience
+check applies to an ID token at all is **unmeasured**.
+
+It has no conformance case yet, because a fixture needs the same role
+assignment `active-access-token` is waiting for.
+
+## F22: `fullScopeAllowed` is not honoured
+
+Every client Gloak knows about has full scope allowed - the six bootstrapped
+ones and every client the admin API creates, since Keycloak's default is true
+and F16 records the created client's representation as otherwise correct. So
+nothing is wrong today.
+
+What is missing is the switch. In Keycloak a client with `fullScopeAllowed`
+false carries only the roles in its own scope mappings, and Gloak would put all
+of them in the token regardless. That needs the scope-mapping model, which is
+P5, and it needs measuring first: nobody has recorded what a narrowed token
+looks like.
+
+## F23: three login-theme goldens churn on every re-record
+
+`oidc/authorization/invalid-redirect-uri`, `unknown-client-id` and
+`oidc/logout/invalid-post-logout-redirect-uri` record Keycloak's login page,
+whose asset URLs carry a per-container resource version -
+`/resources/l3kth/...` one run, `/resources/esh1o/...` the next. Every
+`make record` rewrites all three with no change in meaning.
+
+That is exactly what `VolatileHeaders` exists to prevent for headers, and it is
+worse here: a reviewer who sees three files change every time stops reading the
+diff, which is how a recorder's output stops being read.
+
+All three are `Pending`, so nothing compares them and nothing is at risk yet.
+The fix is a normalisation pass replacing the resource version, and it belongs
+with P3, which is when these bodies start being served and compared.
