@@ -30,21 +30,87 @@ const (
 	refreshTokenLifespan = 1800 * time.Second
 )
 
+// Client scope names every bootstrapped client carries, measured identically
+// on all six. They are names only: the client-scope objects behind them are
+// P5. See section 1.1 of
+// docs/superpowers/specs/2026-08-22-p2-admin-api-core-design.md.
+var (
+	defaultScopeNames  = []string{"web-origins", "acr", "profile", "roles", "basic", "email"}
+	optionalScopeNames = []string{"address", "phone", "organization", "offline_access", "microprofile-jwt"}
+)
+
 // defaultClients is the measured configuration of the six clients Keycloak
-// creates in a fresh master realm.
+// creates in a fresh master realm, transcribed from a recording of
+// GET /admin/realms/master/clients rather than from the OpenAPI schema. See
+// "Client representation" in
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+//
+// Two values here correct what this file had before, and neither was
+// contradicted by an earlier measurement - nobody had looked:
+//
+//   - broker and master-realm are bearer-only. They were created as ordinary
+//     confidential clients.
+//   - security-admin-console also carries the lightweight-access-token
+//     attribute. Only admin-cli was thought to.
+//
+// Name is a theme message key for five of the six; master-realm's is prose
+// derived from the realm name, which is why it is filled in at creation time
+// rather than listed here.
 var defaultClients = []model.Client{
-	{ClientID: "account", PublicClient: true, StandardFlowEnabled: true},
-	{ClientID: "account-console", PublicClient: true, StandardFlowEnabled: true},
 	{
-		ClientID: "admin-cli", PublicClient: true,
-		StandardFlowEnabled: false, DirectAccessGrantsEnabled: true,
+		ClientID: "account", Name: "${client_account}",
+		RootURL: "${authBaseUrl}", BaseURL: "/realms/master/account/",
+		Protocol: "openid-connect", PublicClient: true, StandardFlowEnabled: true,
+		RedirectURIs: []string{"/realms/master/account/*"},
 		Attributes: map[string]string{
+			"realm_client": "false", "post.logout.redirect.uris": "+",
+		},
+	},
+	{
+		ClientID: "account-console", Name: "${client_account-console}",
+		RootURL: "${authBaseUrl}", BaseURL: "/realms/master/account/",
+		Protocol: "openid-connect", PublicClient: true, StandardFlowEnabled: true,
+		RedirectURIs: []string{"/realms/master/account/*"},
+		Attributes: map[string]string{
+			"realm_client": "false", "post.logout.redirect.uris": "+",
+			"pkce.code.challenge.method": "S256",
+		},
+	},
+	{
+		ClientID: "admin-cli", Name: "${client_admin-cli}",
+		Protocol: "openid-connect", PublicClient: true,
+		StandardFlowEnabled: false, DirectAccessGrantsEnabled: true,
+		FullScopeAllowed: true,
+		Attributes: map[string]string{
+			"realm_client": "false",
 			"client.use.lightweight.access.token.enabled": "true",
 		},
 	},
-	{ClientID: "broker", PublicClient: false, StandardFlowEnabled: true},
-	{ClientID: "master-realm", PublicClient: false, StandardFlowEnabled: true},
-	{ClientID: "security-admin-console", PublicClient: true, StandardFlowEnabled: true},
+	{
+		ClientID: "broker", Name: "${client_broker}",
+		Protocol: "openid-connect", PublicClient: false, BearerOnly: true,
+		StandardFlowEnabled: true,
+		Attributes:          map[string]string{"realm_client": "true"},
+	},
+	{
+		// No Protocol: measured absent on this client alone.
+		ClientID: "master-realm", PublicClient: false, BearerOnly: true,
+		StandardFlowEnabled: true,
+		Attributes:          map[string]string{"realm_client": "true"},
+	},
+	{
+		ClientID: "security-admin-console", Name: "${client_security-admin-console}",
+		RootURL: "${authAdminUrl}", BaseURL: "/admin/master/console/",
+		Protocol: "openid-connect", PublicClient: true, StandardFlowEnabled: true,
+		FullScopeAllowed: true,
+		RedirectURIs:     []string{"/admin/master/console/*"},
+		WebOrigins:       []string{"+"},
+		Attributes: map[string]string{
+			"realm_client": "false", "post.logout.redirect.uris": "+",
+			"pkce.code.challenge.method":                  "S256",
+			"client.use.lightweight.access.token.enabled": "true",
+		},
+	},
 }
 
 // defaultRealmRoles is the measured set of realm-level roles Keycloak
@@ -138,6 +204,22 @@ func EnsureMaster(ctx context.Context, s store.Store, adminUser, adminPassword s
 		c.ID = model.NewID()
 		c.RealmID = realm.ID
 		c.Enabled = true
+		// Measured on every one of the six, so held here rather than repeated
+		// in each literal above.
+		c.ClientAuthenticatorType = "client-secret"
+		c.DefaultClientScopes = defaultScopeNames
+		c.OptionalClientScopes = optionalScopeNames
+		if c.RedirectURIs == nil {
+			c.RedirectURIs = []string{}
+		}
+		if c.WebOrigins == nil {
+			c.WebOrigins = []string{}
+		}
+		if c.ClientID == adminRoleContainer {
+			// "master Realm" - prose derived from the realm's name, not a
+			// theme message key like the other five.
+			c.Name = realm.Name + " Realm"
+		}
 		if err := s.Clients().Create(ctx, &c); err != nil && !errors.Is(err, store.ErrConflict) {
 			return fmt.Errorf("bootstrap: create client %q: %w", c.ClientID, err)
 		}

@@ -133,6 +133,14 @@ type Case struct {
 	// and length stay asserted while order does not.
 	Unordered []string
 
+	// UnorderedKeys lists paths pointing at JSON objects whose key order is
+	// not reproducible: Keycloak's `attributes` is a Java Map serialised in
+	// hash order, and Go sorts map keys alphabetically. Both sides are sorted
+	// before comparison, so membership and values stay asserted and only the
+	// order stops being. This is the suite's one documented retreat from
+	// byte-exactness - see editor.sortKeys.
+	UnorderedKeys []string
+
 	// UnorderedWords lists paths pointing at JSON strings whose
 	// space-separated words Keycloak emits in no stable order - the token
 	// response's scope is the measured example. Their words are sorted

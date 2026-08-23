@@ -73,22 +73,59 @@ var adminCases = []Case{
 			Section:   "Clients: get clients belonging to the realm",
 			Retrieved: "2026-08-22",
 		},
-		Status:    Recorded,
-		Reason:    "client listing is not implemented",
+		Status:    Implemented,
 		Operation: "GET /admin/realms/{realm}/clients",
 		Fixture:   "admin-token",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/admin/realms/master/clients",
+			// Filtered to one client on purpose. Two of the six bootstrapped
+			// clients carry protocolMappers, whose model is P5, so the
+			// unfiltered list cannot be reproduced yet - see
+			// admin/clients/list-all below. The filter is the same operation
+			// and is how a caller finds a client's server-minted UUID.
+			Query:   map[string]string{"clientId": "account"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+		// The internal UUID is minted at bootstrap, so it differs between the
+		// reference container and Gloak on every run. The field's presence and
+		// position stay asserted.
+		// The two scope-name lists come back in different orders on different
+		// container starts - measured across two independent recordings, where
+		// profile/roles and organization/offline_access swapped. Same family as
+		// scopes_supported and the token response's scope: a Java set with no
+		// fixed iteration order. Membership stays asserted.
+		Unordered: []string{"*/defaultClientScopes", "*/optionalClientScopes"},
+		Volatile:  []string{"*/id"},
+		// See Case.UnorderedKeys: attributes is a Java Map serialised in hash
+		// order, which Go cannot reproduce without emulating java.util.HashMap.
+		UnorderedKeys: []string{"*/attributes"},
+	},
+	{
+		// The unfiltered list, which cannot pass yet: account-console and
+		// security-admin-console carry protocolMappers, and protocol mappers
+		// are P5. Recorded so the contract is in the repository and so the
+		// moment P5 makes it reproducible, the Recorded alarm says so.
+		ID: "admin/clients/list-all",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get clients belonging to the realm",
+			Retrieved: "2026-08-22",
+		},
+		Status: Recorded,
+		Reason: "two bootstrapped clients carry protocolMappers, which is P5",
+		// No Operation: admin/clients/list already claims this one.
+		Fixture: "admin-token",
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/admin/realms/master/clients",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type"},
-		// Every client's internal UUID is minted at bootstrap, so it differs
-		// between the reference container and Gloak on every run. The field's
-		// presence and position stay asserted.
-		Volatile: []string{"*/id"},
-		// The list's order is not part of the contract until measured to be.
-		Unordered: []string{""},
+		Unordered:     []string{"*/defaultClientScopes", "*/optionalClientScopes"},
+		Volatile:      []string{"*/id", "*/protocolMappers/*/id"},
+		UnorderedKeys: []string{"*/attributes"},
 	},
 	{
 		ID: "admin/clients/read",
@@ -97,8 +134,7 @@ var adminCases = []Case{
 			Section:   "Clients: get representation of the client",
 			Retrieved: "2026-08-22",
 		},
-		Status:    Recorded,
-		Reason:    "reading a client is not implemented",
+		Status:    Implemented,
 		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}",
 		Fixture:   "admin-token-account-client",
 		Request: Request{
@@ -107,7 +143,9 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type"},
+		Unordered:     []string{"defaultClientScopes", "optionalClientScopes"},
 		Volatile:      []string{"id"},
+		UnorderedKeys: []string{"attributes"},
 	},
 	{
 		ID: "admin/clients/read-unknown",
@@ -116,8 +154,7 @@ var adminCases = []Case{
 			Section:   "Clients: get representation of the client",
 			Retrieved: "2026-08-22",
 		},
-		Status: Recorded,
-		Reason: "reading a client is not implemented",
+		Status: Implemented,
 		// No Operation: a rejection, not a demonstration that reading works.
 		Fixture: "admin-token",
 		Request: Request{

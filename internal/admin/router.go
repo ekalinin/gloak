@@ -33,6 +33,13 @@ func Register(mux *http.ServeMux, s store.Store, k *keys.Manager, issuerBase str
 // role as a parameter, so omitting it does not compile.
 func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/realms/{realm}/users", h.guard("view-users", h.listUsers))
+	mux.HandleFunc("GET /admin/realms/{realm}/clients", h.guard("view-clients", h.listClients))
+	// {clientUUID}, not {client-uuid}: net/http requires a wildcard name to be
+	// a Go identifier and panics on the hyphen. The OpenAPI description spells
+	// it with one, and Case.Operation keeps that spelling - the route pattern
+	// is ours, the operation key is Keycloak's, and they are not the same
+	// string.
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}", h.guard("view-clients", h.readClient))
 }
 
 // guard is the authorization filter every admin route goes through: resolve

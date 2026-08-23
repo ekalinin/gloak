@@ -91,6 +91,32 @@ func SortUnordered(raw []byte, paths []string) ([]byte, error) {
 	return applyEdits(raw, e.edits), nil
 }
 
+// SortUnorderedKeys rewrites the objects at the given paths with their keys
+// sorted, on both sides of a comparison, so that key order stops being
+// asserted there while membership and values stay asserted.
+//
+// It is the deliberate exception to this suite's rule that key order is
+// contract. See editor.sortKeys for why.
+func SortUnorderedKeys(raw []byte, paths []string) ([]byte, error) {
+	if len(paths) == 0 || len(bytes.TrimSpace(raw)) == 0 {
+		return raw, nil
+	}
+	patterns := make([][]string, 0, len(paths))
+	for _, p := range paths {
+		patterns = append(patterns, strings.Split(p, "/"))
+	}
+
+	e := &editor{dec: json.NewDecoder(bytes.NewReader(raw)), patterns: patterns}
+	e.onMatch = e.sortKeys
+	if err := e.value(nil); err != nil {
+		if err == io.EOF {
+			return raw, nil
+		}
+		return nil, fmt.Errorf("conformance: sort unordered keys: %w", err)
+	}
+	return applyEdits(raw, e.edits), nil
+}
+
 // SortUnorderedWords sorts the space-separated words inside the string values
 // at the given paths, rewriting each as its words joined by single spaces.
 //
@@ -212,6 +238,64 @@ func (e *editor) sortArray() error {
 		buf.Write(el)
 	}
 	buf.WriteByte(']')
+
+	e.edits = append(e.edits, edit{start: start, end: end, repl: buf.Bytes()})
+	return nil
+}
+
+// sortKeys records an edit that rewrites the object at the current position
+// with its keys in sorted order, leaving each value's bytes untouched.
+//
+// This is the one place the suite gives up on key order, and it is a
+// deliberate, documented deviation rather than an oversight. Keycloak's
+// `attributes` is a Java Map serialised in hash order: deterministic for a
+// given key set, but a function of Java's string hashing rather than of
+// anything Keycloak decided. Go sorts map keys alphabetically, so reproducing
+// it byte for byte would mean emulating java.util.HashMap's iteration order in
+// Go - a large amount of fragile code to match an order no client can depend
+// on and no documentation states.
+//
+// Sorting both sides keeps membership and values asserted, which is the part
+// that is contract. See "Client attribute key order" in
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+func (e *editor) sortKeys() error {
+	var raw json.RawMessage
+	if err := e.dec.Decode(&raw); err != nil {
+		return err
+	}
+	end := int(e.dec.InputOffset())
+	start := end - len(raw)
+
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return fmt.Errorf("value at this path is not an object: %s", raw)
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return err
+	}
+	names := make([]string, 0, len(fields))
+	for name := range fields {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, name := range names {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		key, err := json.Marshal(name)
+		if err != nil {
+			return err
+		}
+		buf.Write(key)
+		buf.WriteByte(':')
+		buf.Write(fields[name])
+	}
+	buf.WriteByte('}')
 
 	e.edits = append(e.edits, edit{start: start, end: end, repl: buf.Bytes()})
 	return nil
