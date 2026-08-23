@@ -40,6 +40,8 @@ type ClientRepo interface {
 	ByClientID(ctx context.Context, realmID, clientID string) (*model.Client, error)
 	ByID(ctx context.Context, realmID, id string) (*model.Client, error)
 	ListByRealm(ctx context.Context, realmID string) ([]*model.Client, error)
+	Update(ctx context.Context, c *model.Client) error
+	Delete(ctx context.Context, realmID, id string) error
 }
 
 type UserRepo interface {

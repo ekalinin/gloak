@@ -304,7 +304,10 @@ func TestFixturesAreWellFormed(t *testing.T) {
 			if s.Request.Method == "" || s.Request.Path == "" {
 				t.Errorf("fixture %q step %d: needs a method and a path", name, i)
 			}
-			if len(s.Capture) == 0 {
+			// Either form of capture counts. A step may take its value from
+			// the body or, as the admin API's create does, from a response
+			// header - the 201 there has no body at all.
+			if len(s.Capture) == 0 && len(s.CaptureHeader) == 0 {
 				t.Errorf("fixture %q step %d: a step that captures nothing is dead weight", name, i)
 			}
 		}

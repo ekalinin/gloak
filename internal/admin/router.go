@@ -40,6 +40,9 @@ func (h *handler) register(mux *http.ServeMux) {
 	// is ours, the operation key is Keycloak's, and they are not the same
 	// string.
 	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}", h.guard("view-clients", h.readClient))
+	mux.HandleFunc("POST /admin/realms/{realm}/clients", h.guard("manage-clients", h.createClient))
+	mux.HandleFunc("PUT /admin/realms/{realm}/clients/{clientUUID}", h.guard("manage-clients", h.updateClient))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/clients/{clientUUID}", h.guard("manage-clients", h.deleteClient))
 }
 
 // guard is the authorization filter every admin route goes through: resolve

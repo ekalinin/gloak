@@ -142,6 +142,58 @@ var Fixtures = map[string]Fixture{
 			},
 		},
 	},
+
+	// One fixture per case that needs a pre-created client, each with its own
+	// clientId - see clientFixture for why sharing one would break recording.
+	"admin-token-client-to-update":    clientFixture("gloak-probe-update"),
+	"admin-token-client-to-delete":    clientFixture("gloak-probe-delete"),
+	"admin-token-client-to-duplicate": clientFixture("gloak-probe-duplicate"),
+}
+
+// adminTokenStep is the first step of every admin fixture: the password grant
+// on admin-cli, the way kcadm.sh authenticates.
+func adminTokenStep() Step {
+	return Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type": "password",
+				"client_id":  "admin-cli",
+				"username":   "admin",
+				"password":   "admin",
+			},
+		},
+		Capture: map[string]string{"access_token": "access_token"},
+	}
+}
+
+// clientFixture builds a fixture that obtains an admin token and creates one
+// client, capturing its server-minted UUID from Location.
+//
+// **Each caller must pass a clientId no other fixture uses.** The recorder runs
+// every case against a single container, so state accumulates across cases: two
+// fixtures creating the same clientId would make the second one's create fail
+// with a conflict, and the capture would then read a Location that is not
+// there. The verifier does not have this problem - it builds a fresh
+// bootstrapped store per case - which is exactly why the asymmetry is easy to
+// miss and worth stating here.
+func clientFixture(clientID string) Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"clientId":"` + clientID + `","enabled":true}`),
+				},
+				CaptureHeader: map[string]string{"client_uuid": "Location"},
+			},
+		},
+	}
 }
 
 // Do performs one request. The recorder's implementation talks to the

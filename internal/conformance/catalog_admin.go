@@ -166,6 +166,107 @@ var adminCases = []Case{
 	},
 
 	{
+		ID: "admin/clients/create",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: create a new client",
+			Retrieved: "2026-08-22",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/clients",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"clientId":"gloak-probe-create","enabled":true}`),
+		},
+		// Measured: 201 with an empty body, no Content-Type, and the new
+		// object's absolute URL in Location. The UUID in it is minted per
+		// request, so the value is masked while its presence stays asserted.
+		AssertHeaders:       []string{"Location"},
+		VolatileHeaders:     []string{"Location"},
+		AssertAbsentHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/clients/create-duplicate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: create a new client, conflicting clientId",
+			Retrieved: "2026-08-22",
+		},
+		Status: Implemented,
+		// No Operation: a rejection, not a demonstration that create works.
+		Fixture: "admin-token-client-to-duplicate",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"clientId":"gloak-probe-duplicate","enabled":true}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/clients/update",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: update the client",
+			Retrieved: "2026-08-22",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/clients/{client-uuid}",
+		Fixture:   "admin-token-client-to-update",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"clientId":"gloak-probe-update","enabled":false,"description":"renamed"}`),
+		},
+	},
+	{
+		ID: "admin/clients/delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: delete the client",
+			Retrieved: "2026-08-22",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/clients/{client-uuid}",
+		Fixture:   "admin-token-client-to-delete",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+	},
+	{
+		ID: "admin/clients/delete-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: delete the client",
+			Retrieved: "2026-08-22",
+		},
+		Status: Implemented,
+		// No Operation: a rejection, not a demonstration that delete works.
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/clients/00000000-0000-0000-0000-000000000000",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+
+	{
 		// The 403 shape is measured - see "Admin API rejection shapes" in
 		// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md, taken
 		// from a live caller holding view-users and nothing else - and it is

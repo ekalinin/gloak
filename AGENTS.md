@@ -56,14 +56,22 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   find matching target resource method"}`, a wrong method on a known path
   answers `{"error":"HTTP 404 Not Found"}`. That is why `withKeycloakFallbacks`
   still tells the two cases apart even though both return the same status.
-- **The five security headers have two exceptions, not one.** A route match
+- **The five security headers have three exceptions, not one.** A route match
   and a known path hit with the wrong method both get `Referrer-Policy`,
   `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`
   and `X-Robots-Tag`. A path matching no route at all gets none of them,
   because that request never reaches Keycloak's filter chain. And
   **`userinfo` sends four of the five, omitting `X-Frame-Options`** - it does
-  reach the filter chain, so this one is not explained by routing. Applying
-  them uniformly "for consistency" is the fix that would break both.
+  reach the filter chain, so this one is not explained by routing. So does the
+  admin API's **client-delete 204**, which also omits `X-Frame-Options` while
+  the client-update 204 beside it sends all five - so it is not a rule about
+  204s either. Applying them uniformly "for consistency" is the fix that would
+  break all three.
+- **`attributes` key order is the one thing the conformance suite does not
+  compare.** It is a Java `Map` in hash order and Go sorts map keys; matching it
+  would mean emulating `java.util.HashMap` in Go. `Case.UnorderedKeys` sorts
+  both sides, so membership and values are still asserted. This is the only
+  such retreat - do not add a second without writing down why.
 - **Gloak deletes the `Date` header on every response.** Keycloak sends none;
   Go's `net/http` adds one automatically, so `internal/httpx` suppresses it with
   `w.Header()["Date"] = nil`. The conformance verifier cannot catch its removal:

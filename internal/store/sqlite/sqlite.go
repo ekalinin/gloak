@@ -291,6 +291,44 @@ func (r *clientRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.
 	return out, classify(rows.Err())
 }
 
+// Update replaces every mutable column. The admin API's PUT carries a whole
+// representation, and merge semantics are applied above this layer.
+func (r *clientRepo) Update(ctx context.Context, m *model.Client) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE client SET
+			 name = ?, root_url = ?, base_url = ?, enabled = ?, public_client = ?, secret = ?,
+			 protocol = ?, client_authenticator_type = ?, surrogate_auth_required = ?,
+			 always_display_in_console = ?, bearer_only = ?, consent_required = ?,
+			 standard_flow_enabled = ?, implicit_flow_enabled = ?, direct_access_grants_enabled = ?,
+			 service_accounts_enabled = ?, frontchannel_logout = ?, full_scope_allowed = ?,
+			 not_before = ?, node_re_registration_timeout = ?,
+			 redirect_uris = ?, web_origins = ?, default_client_scopes = ?,
+			 optional_client_scopes = ?, attributes = ?
+			 WHERE realm_id = ? AND id = ?`,
+		m.Name, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
+		m.Protocol, m.ClientAuthenticatorType, m.SurrogateAuthRequired,
+		m.AlwaysDisplayInConsole, m.BearerOnly, m.ConsentRequired,
+		m.StandardFlowEnabled, m.ImplicitFlowEnabled, m.DirectAccessGrantsEnabled,
+		m.ServiceAccountsEnabled, m.FrontchannelLogout, m.FullScopeAllowed,
+		m.NotBefore, m.NodeReRegistrationTimeout,
+		encode(m.RedirectURIs), encode(m.WebOrigins), encode(m.DefaultClientScopes),
+		encode(m.OptionalClientScopes), encode(m.Attributes),
+		m.RealmID, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
+}
+
+func (r *clientRepo) Delete(ctx context.Context, realmID, id string) error {
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM client WHERE realm_id = ? AND id = ?`, realmID, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
+}
+
 func scanClient(row scanner) (*model.Client, error) {
 	m := &model.Client{}
 	var redirectURIs, webOrigins, defaultScopes, optionalScopes, attributes string

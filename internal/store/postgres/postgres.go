@@ -279,6 +279,44 @@ func (r *clientRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.
 	return out, classify(rows.Err())
 }
 
+// Update replaces every mutable column. The admin API's PUT carries a whole
+// representation, and merge semantics are applied above this layer.
+func (r *clientRepo) Update(ctx context.Context, m *model.Client) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE client SET
+			 name = $1, root_url = $2, base_url = $3, enabled = $4, public_client = $5, secret = $6,
+			 protocol = $7, client_authenticator_type = $8, surrogate_auth_required = $9,
+			 always_display_in_console = $10, bearer_only = $11, consent_required = $12,
+			 standard_flow_enabled = $13, implicit_flow_enabled = $14, direct_access_grants_enabled = $15,
+			 service_accounts_enabled = $16, frontchannel_logout = $17, full_scope_allowed = $18,
+			 not_before = $19, node_re_registration_timeout = $20,
+			 redirect_uris = $21, web_origins = $22, default_client_scopes = $23,
+			 optional_client_scopes = $24, attributes = $25
+			 WHERE realm_id = $26 AND id = $27`,
+		m.Name, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
+		m.Protocol, m.ClientAuthenticatorType, m.SurrogateAuthRequired,
+		m.AlwaysDisplayInConsole, m.BearerOnly, m.ConsentRequired,
+		m.StandardFlowEnabled, m.ImplicitFlowEnabled, m.DirectAccessGrantsEnabled,
+		m.ServiceAccountsEnabled, m.FrontchannelLogout, m.FullScopeAllowed,
+		m.NotBefore, m.NodeReRegistrationTimeout,
+		encode(m.RedirectURIs), encode(m.WebOrigins), encode(m.DefaultClientScopes),
+		encode(m.OptionalClientScopes), encode(m.Attributes),
+		m.RealmID, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(tag.RowsAffected())
+}
+
+func (r *clientRepo) Delete(ctx context.Context, realmID, id string) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM client WHERE realm_id = $1 AND id = $2`, realmID, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(tag.RowsAffected())
+}
+
 func scanClient(row scanner) (*model.Client, error) {
 	m := &model.Client{}
 	var redirectURIs, webOrigins, defaultScopes, optionalScopes, attributes string
