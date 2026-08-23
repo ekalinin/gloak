@@ -374,18 +374,18 @@ type userRepo struct{ db *sql.DB }
 func (r *userRepo) Create(ctx context.Context, m *model.User) error {
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO user_entity (id, realm_id, username, email, email_verified, enabled,
-		 first_name, last_name, created_timestamp, attributes, required_actions)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 first_name, last_name, created_timestamp, attributes, required_actions, not_before)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.RealmID, m.Username, m.Email, m.EmailVerified, m.Enabled,
 		m.FirstName, m.LastName, m.CreatedTimestamp, encode(m.Attributes),
-		encode(nonNilStrings(m.RequiredActions)))
+		encode(nonNilStrings(m.RequiredActions)), m.NotBefore)
 	return classify(err)
 }
 
 func (r *userRepo) ByUsername(ctx context.Context, realmID, username string) (*model.User, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT id, realm_id, username, email, email_verified, enabled, first_name, last_name,
-		 created_timestamp, attributes, required_actions
+		 created_timestamp, attributes, required_actions, not_before
 		 FROM user_entity WHERE realm_id = ? AND username = ?`, realmID, username)
 	return scanUser(row)
 }
@@ -393,7 +393,7 @@ func (r *userRepo) ByUsername(ctx context.Context, realmID, username string) (*m
 func (r *userRepo) ByID(ctx context.Context, realmID, id string) (*model.User, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT id, realm_id, username, email, email_verified, enabled, first_name, last_name,
-		 created_timestamp, attributes, required_actions
+		 created_timestamp, attributes, required_actions, not_before
 		 FROM user_entity WHERE realm_id = ? AND id = ?`, realmID, id)
 	return scanUser(row)
 }
@@ -403,7 +403,7 @@ func (r *userRepo) ByID(ctx context.Context, realmID, id string) (*model.User, e
 func (r *userRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.User, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT id, realm_id, username, email, email_verified, enabled, first_name, last_name,
-		 created_timestamp, attributes, required_actions
+		 created_timestamp, attributes, required_actions, not_before
 		 FROM user_entity WHERE realm_id = ? ORDER BY username`, realmID)
 	if err != nil {
 		return nil, classify(err)
@@ -424,11 +424,11 @@ func (r *userRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.Us
 func (r *userRepo) Update(ctx context.Context, m *model.User) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE user_entity SET username = ?, email = ?, email_verified = ?, enabled = ?,
-		 first_name = ?, last_name = ?, attributes = ?, required_actions = ?
+		 first_name = ?, last_name = ?, attributes = ?, required_actions = ?, not_before = ?
 		 WHERE realm_id = ? AND id = ?`,
 		m.Username, m.Email, m.EmailVerified, m.Enabled,
 		m.FirstName, m.LastName, encode(m.Attributes),
-		encode(nonNilStrings(m.RequiredActions)), m.RealmID, m.ID)
+		encode(nonNilStrings(m.RequiredActions)), m.NotBefore, m.RealmID, m.ID)
 	if err != nil {
 		return classify(err)
 	}
@@ -475,7 +475,7 @@ func scanUser(row scanner) (*model.User, error) {
 	m := &model.User{}
 	var attributes, requiredActions string
 	err := row.Scan(&m.ID, &m.RealmID, &m.Username, &m.Email, &m.EmailVerified, &m.Enabled,
-		&m.FirstName, &m.LastName, &m.CreatedTimestamp, &attributes, &requiredActions)
+		&m.FirstName, &m.LastName, &m.CreatedTimestamp, &attributes, &requiredActions, &m.NotBefore)
 	if err != nil {
 		return nil, classify(err)
 	}
@@ -742,6 +742,12 @@ func (r *sessionRepo) DeleteUserSession(ctx context.Context, realmID, id string)
 		return classify(err)
 	}
 	return affectedOne(res)
+}
+
+func (r *sessionRepo) DeleteUserSessions(ctx context.Context, realmID, userID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM user_session WHERE realm_id = ? AND user_id = ?`, realmID, userID)
+	return classify(err)
 }
 
 func (r *sessionRepo) CreateClientSession(ctx context.Context, m *model.ClientSession) error {

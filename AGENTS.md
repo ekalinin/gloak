@@ -98,6 +98,13 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   it serves through `httptest.ResponseRecorder`, which never adds a `Date`
   header either. The guard is `internal/httpx`'s own test, which uses a real
   `httptest.NewServer` instead.
+- **A dead session and a bad refresh token answer differently.** A token whose
+  session was ended - by an admin logout or by revocation - answers
+  `"Session not active"`; one that was never valid answers
+  `"Invalid refresh token"`. Same status, same code, different description.
+- **`POST /users/{id}/logout` stamps the user's `notBefore`** with the moment
+  it happened, so its effect is visible in the representation and not only in
+  its 204.
 - **Revocation answers an unknown token with 200 and an error body**, not 400:
   `{"error":"invalid_token","error_description":"Invalid token"}` with a 200 status
   line. The client asked for a token to stop working and it does not work.

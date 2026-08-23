@@ -110,6 +110,11 @@ type SessionRepo interface {
 	UserSessionByID(ctx context.Context, realmID, id string) (*model.UserSession, error)
 	TouchUserSession(ctx context.Context, id string, lastRefresh int64) error
 	DeleteUserSession(ctx context.Context, realmID, id string) error
+	// DeleteUserSessions removes every session a user holds, which is what
+	// POST /users/{id}/logout does. It reports no error when there are none:
+	// the endpoint was measured answering 204 for a user who is already
+	// logged out, so "nothing to delete" is a success.
+	DeleteUserSessions(ctx context.Context, realmID, userID string) error
 	CreateClientSession(ctx context.Context, s *model.ClientSession) error
 	ClientSession(ctx context.Context, userSessionID, clientID string) (*model.ClientSession, error)
 }

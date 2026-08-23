@@ -362,18 +362,18 @@ type userRepo struct{ pool *pgxpool.Pool }
 func (r *userRepo) Create(ctx context.Context, m *model.User) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO user_entity (id, realm_id, username, email, email_verified, enabled,
-		 first_name, last_name, created_timestamp, attributes, required_actions)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		 first_name, last_name, created_timestamp, attributes, required_actions, not_before)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		m.ID, m.RealmID, m.Username, m.Email, m.EmailVerified, m.Enabled,
 		m.FirstName, m.LastName, m.CreatedTimestamp, encode(m.Attributes),
-		encode(nonNilStrings(m.RequiredActions)))
+		encode(nonNilStrings(m.RequiredActions)), m.NotBefore)
 	return classify(err)
 }
 
 func (r *userRepo) ByUsername(ctx context.Context, realmID, username string) (*model.User, error) {
 	row := r.pool.QueryRow(ctx,
 		`SELECT id, realm_id, username, email, email_verified, enabled, first_name, last_name,
-		 created_timestamp, attributes, required_actions
+		 created_timestamp, attributes, required_actions, not_before
 		 FROM user_entity WHERE realm_id = $1 AND username = $2`, realmID, username)
 	return scanUser(row)
 }
@@ -381,7 +381,7 @@ func (r *userRepo) ByUsername(ctx context.Context, realmID, username string) (*m
 func (r *userRepo) ByID(ctx context.Context, realmID, id string) (*model.User, error) {
 	row := r.pool.QueryRow(ctx,
 		`SELECT id, realm_id, username, email, email_verified, enabled, first_name, last_name,
-		 created_timestamp, attributes, required_actions
+		 created_timestamp, attributes, required_actions, not_before
 		 FROM user_entity WHERE realm_id = $1 AND id = $2`, realmID, id)
 	return scanUser(row)
 }
@@ -391,7 +391,7 @@ func (r *userRepo) ByID(ctx context.Context, realmID, id string) (*model.User, e
 func (r *userRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.User, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT id, realm_id, username, email, email_verified, enabled, first_name, last_name,
-		 created_timestamp, attributes, required_actions
+		 created_timestamp, attributes, required_actions, not_before
 		 FROM user_entity WHERE realm_id = $1 ORDER BY username`, realmID)
 	if err != nil {
 		return nil, classify(err)
@@ -412,11 +412,11 @@ func (r *userRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.Us
 func (r *userRepo) Update(ctx context.Context, m *model.User) error {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE user_entity SET username = $1, email = $2, email_verified = $3, enabled = $4,
-		 first_name = $5, last_name = $6, attributes = $7, required_actions = $8
-		 WHERE realm_id = $9 AND id = $10`,
+		 first_name = $5, last_name = $6, attributes = $7, required_actions = $8, not_before = $9
+		 WHERE realm_id = $10 AND id = $11`,
 		m.Username, m.Email, m.EmailVerified, m.Enabled,
 		m.FirstName, m.LastName, encode(m.Attributes),
-		encode(nonNilStrings(m.RequiredActions)), m.RealmID, m.ID)
+		encode(nonNilStrings(m.RequiredActions)), m.NotBefore, m.RealmID, m.ID)
 	if err != nil {
 		return classify(err)
 	}
@@ -463,7 +463,7 @@ func scanUser(row scanner) (*model.User, error) {
 	m := &model.User{}
 	var attributes, requiredActions string
 	err := row.Scan(&m.ID, &m.RealmID, &m.Username, &m.Email, &m.EmailVerified, &m.Enabled,
-		&m.FirstName, &m.LastName, &m.CreatedTimestamp, &attributes, &requiredActions)
+		&m.FirstName, &m.LastName, &m.CreatedTimestamp, &attributes, &requiredActions, &m.NotBefore)
 	if err != nil {
 		return nil, classify(err)
 	}
@@ -730,6 +730,12 @@ func (r *sessionRepo) DeleteUserSession(ctx context.Context, realmID, id string)
 		return classify(err)
 	}
 	return affectedOne(tag.RowsAffected())
+}
+
+func (r *sessionRepo) DeleteUserSessions(ctx context.Context, realmID, userID string) error {
+	_, err := r.pool.Exec(ctx,
+		`DELETE FROM user_session WHERE realm_id = $1 AND user_id = $2`, realmID, userID)
+	return classify(err)
 }
 
 func (r *sessionRepo) CreateClientSession(ctx context.Context, m *model.ClientSession) error {

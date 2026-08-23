@@ -664,6 +664,10 @@ var adminCases = []Case{
 	{
 		// The same term with wildcards does match, which is what makes the
 		// case above a statement about prefixes rather than about the term.
+		//
+		// The term is narrowed to this fixture's own email address. A broader
+		// one matched a *different* fixture's user the moment one was added
+		// whose username shared the prefix, and the golden recorded both.
 		ID: "admin/users/list-search-wildcard",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -676,7 +680,7 @@ var adminCases = []Case{
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/admin/realms/master/users",
-			Query:   map[string]string{"search": "*loak-probe*"},
+			Query:   map[string]string{"search": "*probe-user@example*"},
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
@@ -1177,6 +1181,62 @@ var adminCases = []Case{
 			Body: []byte(`["otp"]`),
 		},
 		AssertHeaders: []string{"X-Frame-Options"},
+	},
+
+	{
+		ID: "admin/users/logout",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: remove all user sessions",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/users/{user-id}/logout",
+		Fixture:   "admin-token-created-user",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/users/{{user_id}}/logout",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		// No Content-Type on the request, so no X-Frame-Options on the 204 -
+		// the eighth confirmation of that rule and the first on a POST.
+		AssertHeaders:       []string{"X-Content-Type-Options"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Cache-Control"},
+	},
+	{
+		// Idempotent: the user in this fixture has no session at all, and the
+		// answer is still 204 rather than a 404.
+		ID: "admin/users/logout-without-a-session",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: remove all user sessions, user already logged out",
+			Retrieved: "2026-08-23",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-user-to-update",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/users/{{user_id}}/logout",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"X-Content-Type-Options"},
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "admin/users/logout-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: remove all user sessions, unknown id",
+			Retrieved: "2026-08-23",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/users/00000000-0000-0000-0000-000000000000/logout",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
 	},
 
 	{

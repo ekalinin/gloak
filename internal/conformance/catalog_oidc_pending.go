@@ -688,6 +688,34 @@ var oidcPending = []Case{
 		AssertHeaders: []string{"Content-Type"},
 	},
 	{
+		// A refresh token that verifies and whose session an administrator
+		// ended. Measured 2026-08-23: "Session not active", where a garbage
+		// token gets "Invalid refresh token" - two causes, two messages, one
+		// status. A revocation produces the same message, so P1's assertion
+		// that revocation gave the other one was a guess and is corrected.
+		ID: "oidc/token/refresh-after-logout",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Token endpoint: refresh_token grant, session ended",
+			Retrieved: "2026-08-23",
+		},
+		Status:  Implemented,
+		Fixture: "logged-out-user",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type":    "refresh_token",
+				"client_id":     "admin-cli",
+				"refresh_token": "{{user_refresh_token}}",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// A token that never was one. The neighbouring case,
+		// refresh-after-logout, uses a token that verifies and whose session
+		// has been ended - and gets a different message for the same status.
 		ID: "oidc/token/invalid-refresh-token",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",

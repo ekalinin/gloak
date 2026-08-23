@@ -194,6 +194,10 @@ var Fixtures = map[string]Fixture{
 	"admin-token-user-with-labelled-password":  passwordFixture("gloak-probe-pw-labelled", false, "office laptop"),
 	"admin-token-user-with-temporary-password": passwordFixture("gloak-probe-pw-temp", true, ""),
 
+	// A user who logged in and was then logged out by an administrator, so a
+	// case can ask what its refresh token answers afterwards.
+	"logged-out-user": loggedOutUserFixture(),
+
 	// One fixture per case that needs a pre-created client, each with its own
 	// clientId - see clientFixture for why sharing one would break recording.
 	"admin-token-client-to-update":    clientFixture("gloak-probe-update"),
@@ -466,6 +470,36 @@ func passwordFixture(username string, temporary bool, label string) Fixture {
 			},
 		})
 	}
+	return f
+}
+
+// loggedOutUserFixture gives a user a password, logs it in, and then ends the
+// session through POST /users/{id}/logout.
+//
+// The refresh token it captures is the interesting part: a token that verifies
+// and whose session is gone answers a different message from a token that was
+// never valid.
+func loggedOutUserFixture() Fixture {
+	f := passwordFixture("gloak-probe-logged-out", false, "")
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type": "password",
+				"client_id":  "admin-cli",
+				"username":   "gloak-probe-logged-out",
+				"password":   "s3cret",
+			},
+		},
+		Capture: map[string]string{"user_refresh_token": "refresh_token"},
+	}, Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/users/{{user_id}}/logout",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+	})
 	return f
 }
 

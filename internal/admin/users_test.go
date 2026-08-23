@@ -276,3 +276,40 @@ func parseQuery(t *testing.T, raw string) map[string][]string {
 	}
 	return req.URL.Query()
 }
+
+// The logout's visible effect beyond its 204: it stamps the user's notBefore
+// with the moment it happened. No conformance case reads a logged-out user's
+// representation, because the stamp differs between the reference container
+// and Gloak on every run.
+func TestLogoutStampsNotBefore(t *testing.T) {
+	h, s, realm := newServer(t)
+	ctx := t.Context()
+	tok := tokenFor(t, h, "admin", "admin")
+	if w := postJSON(t, h, "/admin/realms/master/users",
+		`{"username":"session-holder","enabled":true}`, tok); w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body)
+	}
+	user, err := s.Users().ByUsername(ctx, realm.ID, "session-holder")
+	if err != nil {
+		t.Fatalf("ByUsername: %v", err)
+	}
+	if user.NotBefore != 0 {
+		t.Fatalf("precondition: want notBefore 0 on a fresh user, got %d", user.NotBefore)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/realms/master/users/"+user.ID+"/logout", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("logout: want 204, got %d: %s", w.Code, w.Body)
+	}
+
+	after, err := s.Users().ByUsername(ctx, realm.ID, "session-holder")
+	if err != nil {
+		t.Fatalf("ByUsername: %v", err)
+	}
+	if after.NotBefore == 0 {
+		t.Fatal("the logout left notBefore at 0")
+	}
+}

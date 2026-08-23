@@ -483,7 +483,7 @@ func userRepresentationOf(u *model.User, brief bool) userRepresentation {
 		return rep
 	}
 	totp := false
-	notBefore := 0
+	notBefore := u.NotBefore
 	// Both must marshal as [] rather than null, so the slices are empty and
 	// non-nil. Nothing populates them yet: disableableCredentialTypes needs
 	// the credential model's notion of which types can be disabled, and

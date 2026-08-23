@@ -693,6 +693,58 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	// POST /users/{id}/logout deletes every session the user holds and must
+	// leave everybody else's alone.
+	t.Run("deleting a user's sessions spares other users", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		mine := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "mine", Enabled: true}
+		theirs := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "theirs", Enabled: true}
+		for _, u := range []*model.User{mine, theirs} {
+			if err := s.Users().Create(ctx, u); err != nil {
+				t.Fatalf("Users().Create(%s): %v", u.Username, err)
+			}
+		}
+		var minesSessions []string
+		for range 2 {
+			id := model.NewID()
+			minesSessions = append(minesSessions, id)
+			if err := s.Sessions().CreateUserSession(ctx, &model.UserSession{
+				ID: id, RealmID: realm.ID, UserID: mine.ID, Username: mine.Username,
+			}); err != nil {
+				t.Fatalf("CreateUserSession: %v", err)
+			}
+		}
+		other := model.NewID()
+		if err := s.Sessions().CreateUserSession(ctx, &model.UserSession{
+			ID: other, RealmID: realm.ID, UserID: theirs.ID, Username: theirs.Username,
+		}); err != nil {
+			t.Fatalf("CreateUserSession: %v", err)
+		}
+
+		if err := s.Sessions().DeleteUserSessions(ctx, realm.ID, mine.ID); err != nil {
+			t.Fatalf("DeleteUserSessions: %v", err)
+		}
+
+		for _, id := range minesSessions {
+			if _, err := s.Sessions().UserSessionByID(ctx, realm.ID, id); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("session %s survived the logout: %v", id, err)
+			}
+		}
+		if _, err := s.Sessions().UserSessionByID(ctx, realm.ID, other); err != nil {
+			t.Fatalf("another user's session was taken with it: %v", err)
+		}
+		// Measured as a 204 for a user with no sessions, so a second call is
+		// a success rather than ErrNotFound.
+		if err := s.Sessions().DeleteUserSessions(ctx, realm.ID, mine.ID); err != nil {
+			t.Fatalf("want no error deleting nothing, got %v", err)
+		}
+	})
+
 	t.Run("a user is not listed from another realm", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

@@ -452,3 +452,34 @@ func withAction(actions []string, action string, want bool) []string {
 	}
 	return out
 }
+
+// logoutUser serves POST /admin/realms/{realm}/users/{user-id}/logout.
+//
+// Measured: 204, and it is idempotent - a user who is already logged out gets
+// 204 too, so "no sessions to end" is a success rather than a 404. An unknown
+// user still answers "User not found".
+//
+// The 204 carries no Cache-Control and, when the request declares no
+// Content-Type, no X-Frame-Options. That is the eighth confirmation of the
+// Content-Type rule and the first on a POST: the same request with
+// application/json carries the header.
+func (h *handler) logoutUser(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	user, ok := h.userFromPath(w, r, rc)
+	if !ok {
+		return
+	}
+	if err := h.store.Sessions().DeleteUserSessions(r.Context(), rc.realm.ID, user.ID); err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	// Measured: the logout also stamps the user's notBefore with the moment it
+	// happened, which the user representation then shows. Without this the
+	// endpoint's only visible effect would be its status code.
+	updated := *user
+	updated.NotBefore = int(time.Now().Unix())
+	if err := h.store.Users().Update(r.Context(), &updated); err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	httpx.WriteNoContent(w, r)
+}

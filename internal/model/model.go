@@ -154,6 +154,11 @@ type User struct {
 	// reset-password carrying temporary true adds UPDATE_PASSWORD, and the
 	// user representation shows it.
 	RequiredActions []string
+	// NotBefore is a Unix second before which the user's tokens are refused.
+	// Measured: POST /users/{id}/logout sets it to the moment of the logout,
+	// and the user representation shows it - so the endpoint's effect is
+	// visible beyond its 204.
+	NotBefore int
 }
 
 // Credential is a stored secret, split the way Keycloak splits it: a public

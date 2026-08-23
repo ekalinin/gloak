@@ -197,7 +197,12 @@ func (h *handler) refreshTokenGrant(w http.ResponseWriter, r *http.Request, real
 	session, err := h.store.Sessions().UserSessionByID(ctx, realm.ID, parsed.SessionID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeInvalidRefreshToken(w)
+			// Measured 2026-08-23: a token that verifies but whose session is
+			// gone answers "Session not active", not "Invalid refresh token".
+			// Both an admin logout and a revocation produce it, and the
+			// garbage-token case recorded in P1 still produces the other. Two
+			// causes, two messages, one status.
+			writeSessionNotActive(w)
 			return
 		}
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
@@ -239,6 +244,16 @@ func (h *handler) refreshTokenGrant(w http.ResponseWriter, r *http.Request, real
 
 func writeInvalidRefreshToken(w http.ResponseWriter) {
 	httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_grant", "Invalid refresh token")
+}
+
+// writeSessionNotActive is what a *valid* refresh token whose session has been
+// ended answers, as against writeInvalidRefreshToken for a token that never
+// was one.
+//
+// Unmeasured, and left on the other message rather than guessed at: a token
+// that has expired, and one minted for a different client.
+func writeSessionNotActive(w http.ResponseWriter) {
+	httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_grant", "Session not active")
 }
 
 // clientCredentialsGrant issues a token for a client acting on its own behalf.

@@ -35,12 +35,19 @@ func TestRevocationEndsTheSession(t *testing.T) {
 	}
 
 	// And the refresh token it revoked no longer works.
+	//
+	// The message is "Session not active", not "Invalid refresh token".
+	// Measured 2026-08-23 against the reference container, on a token whose
+	// session had been ended by revocation and again on one ended by an admin
+	// logout - both say this, while the garbage token recorded in P1's
+	// oidc/token/invalid-refresh-token golden still says the other. This
+	// assertion carried P1's guess until then.
 	refreshed := postForm(t, router, "/realms/master/protocol/openid-connect/token", url.Values{
 		"grant_type":    {"refresh_token"},
 		"client_id":     {"admin-cli"},
 		"refresh_token": {issued.RefreshToken},
 	})
-	assertOAuthError(t, refreshed, http.StatusBadRequest, "invalid_grant", "Invalid refresh token")
+	assertOAuthError(t, refreshed, http.StatusBadRequest, "invalid_grant", "Session not active")
 }
 
 func TestRevocationRejectsAnotherClientsToken(t *testing.T) {
