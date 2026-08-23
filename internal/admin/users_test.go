@@ -1,13 +1,17 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/ekalinin/gloak/internal/model"
+	"github.com/ekalinin/gloak/internal/roles"
 )
 
 // The access block is the caller's permissions, not the target user's. Every
@@ -312,4 +316,69 @@ func TestLogoutStampsNotBefore(t *testing.T) {
 	if after.NotBefore == 0 {
 		t.Fatal("the logout left notBefore at 0")
 	}
+}
+
+// TestCreatedUsersGetTheRealmDefaultRoles covers both creation paths at once,
+// because both were measured landing in the same place: a user created through
+// this API and the account behind a service-account client each hold
+// default-roles-master and nothing else directly, and each expands to the same
+// six effective roles.
+//
+// It asserts the expansion rather than the assignment, since the assignment on
+// its own is worth nothing: what a token carries is what
+// default-roles-master reaches.
+func TestCreatedUsersGetTheRealmDefaultRoles(t *testing.T) {
+	h, s, realm := newServer(t)
+	ctx := context.Background()
+	admin := tokenFor(t, h, "admin", "admin")
+
+	if w := postJSON(t, h, "/admin/realms/master/users",
+		`{"username":"probe-default","enabled":true}`, admin); w.Code != http.StatusCreated {
+		t.Fatalf("create user: %d %s", w.Code, w.Body)
+	}
+	if w := postJSON(t, h, "/admin/realms/master/clients",
+		`{"clientId":"probe-sa","enabled":true,"serviceAccountsEnabled":true}`, admin); w.Code != http.StatusCreated {
+		t.Fatalf("create client: %d %s", w.Code, w.Body)
+	}
+
+	// The measured set: two realm roles from default-roles-master's own
+	// composites, the composite itself, and the three account roles that
+	// manage-account and view-profile expand to.
+	want := []string{
+		"default-roles-master", "manage-account", "manage-account-links",
+		"offline_access", "uma_authorization", "view-profile",
+	}
+	for _, username := range []string{"probe-default", "service-account-probe-sa"} {
+		t.Run(username, func(t *testing.T) {
+			user, err := s.Users().ByUsername(ctx, realm.ID, username)
+			if err != nil {
+				t.Fatalf("ByUsername(%s): %v", username, err)
+			}
+			direct, err := s.Roles().ListUserRoles(ctx, user.ID)
+			if err != nil {
+				t.Fatalf("ListUserRoles: %v", err)
+			}
+			if len(direct) != 1 || direct[0].Name != "default-roles-master" {
+				t.Fatalf("want exactly default-roles-master assigned directly, got %v", roleNames(direct))
+			}
+
+			effective, err := roles.Effective(ctx, s.Roles(), user.ID)
+			if err != nil {
+				t.Fatalf("Effective: %v", err)
+			}
+			got := roleNames(effective)
+			sort.Strings(got)
+			if !slices.Equal(got, want) {
+				t.Fatalf("effective roles:\nwant %v\ngot  %v", want, got)
+			}
+		})
+	}
+}
+
+func roleNames(rs []*model.Role) []string {
+	out := make([]string, 0, len(rs))
+	for _, r := range rs {
+		out = append(out, r.Name)
+	}
+	return out
 }

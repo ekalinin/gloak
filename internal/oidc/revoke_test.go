@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"slices"
 	"testing"
+	"time"
 
+	"github.com/ekalinin/gloak/internal/keys"
 	"github.com/ekalinin/gloak/internal/model"
+	"github.com/ekalinin/gloak/internal/token"
 )
 
 // TestRevocationEndsTheSession is what the golden cannot see: its body is
@@ -96,8 +100,10 @@ func TestIntrospectionRefusesAPublicClient(t *testing.T) {
 }
 
 func TestIntrospectionReportsALiveTokenActive(t *testing.T) {
-	// The response body's shape is unmeasured, so this asserts only the one
-	// field RFC 7662 makes mandatory, and that revocation flips it.
+	// The *refresh* token, not the access token. Measured 2026-08-23: a
+	// refresh token introspects active from a client that is nowhere in its
+	// audience, while an access token is refused - see the test below. This
+	// asserted the access token until then, from a shape nobody had measured.
 	h, s, realm := newHandler(t)
 	router := NewRouter(s, h.keys, h.issuerBase)
 	ctx := context.Background()
@@ -110,8 +116,8 @@ func TestIntrospectionReportsALiveTokenActive(t *testing.T) {
 	issued := decodeTokenResponse(t, postForm(t, router,
 		"/realms/master/protocol/openid-connect/token", passwordGrantForm("")))
 
-	if !introspectActive(t, router, issued.AccessToken) {
-		t.Fatal("a freshly issued access token introspected as inactive")
+	if !introspectActive(t, router, issued.RefreshToken) {
+		t.Fatal("a freshly issued refresh token introspected as inactive")
 	}
 
 	postForm(t, router, "/realms/master/protocol/openid-connect/revoke", url.Values{
@@ -119,9 +125,50 @@ func TestIntrospectionReportsALiveTokenActive(t *testing.T) {
 		"token":     {issued.RefreshToken},
 	})
 
-	if introspectActive(t, router, issued.AccessToken) {
+	if introspectActive(t, router, issued.RefreshToken) {
 		t.Fatal("a revoked token still introspects as active")
 	}
+}
+
+// TestIntrospectionRefusesAnAccessTokenOutsideItsAudience is what
+// oidc/introspection/access-token-outside-audience pins from the outside, kept
+// here because the golden cannot say *why* the answer is inactive: a handler
+// that refused every access token would match it too.
+func TestIntrospectionRefusesAnAccessTokenOutsideItsAudience(t *testing.T) {
+	h, s, realm := newHandler(t)
+	router := NewRouter(s, h.keys, h.issuerBase)
+	ctx := context.Background()
+	if err := s.Clients().Create(ctx, &model.Client{
+		ID: model.NewID(), RealmID: realm.ID, ClientID: "gloak-app",
+		Enabled: true, Secret: "s3cret",
+	}); err != nil {
+		t.Fatalf("Clients().Create: %v", err)
+	}
+	issued := decodeTokenResponse(t, postForm(t, router,
+		"/realms/master/protocol/openid-connect/token", passwordGrantForm("")))
+
+	if introspectActive(t, router, issued.AccessToken) {
+		t.Fatal("an access token introspected active from a client outside its aud")
+	}
+
+	// And the same token is refused for being outside the audience rather than
+	// for being unreadable: gloak-app is not in it, master-realm is.
+	parsed, err := token.ParseAccess(mustKeys(t, h, realm), h.realmIssuer("master"), issued.AccessToken, time.Now())
+	if err != nil {
+		t.Fatalf("the token this test called inactive does not parse: %v", err)
+	}
+	if slices.Contains(parsed.Audience, "gloak-app") {
+		t.Fatal("gloak-app is in the audience, so this test proves nothing")
+	}
+}
+
+func mustKeys(t *testing.T, h *handler, realm *model.Realm) *keys.RealmKeys {
+	t.Helper()
+	k, err := h.keys.ForRealm(context.Background(), realm)
+	if err != nil {
+		t.Fatalf("ForRealm: %v", err)
+	}
+	return k
 }
 
 func introspectActive(t *testing.T, router http.Handler, tok string) bool {

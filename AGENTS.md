@@ -116,15 +116,46 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   succeeds; `admin-cli` introspecting is refused with 403
   `{"error":"invalid_request","error_description":"Client not allowed."}`.
 - **A client cannot introspect its own access token.** An access token's `aud`
-  holds the clients the *user* has roles on, never the issuing client, and
+  holds the clients the *user* has roles on **minus the issuing client**, and
   Keycloak answers `{"active":false}` with 200 when the caller is outside it.
+  The exclusion is measured directly: give the user a role on the requesting
+  client and that client appears in `resource_access` and still not in `aud`.
   A refresh token from the same client introspects active, so the check is on
-  access tokens alone. Gloak does not do this yet - see F18.
+  access tokens alone.
+- **Four token claims are absent rather than empty**: `aud` and
+  `resource_access` when the user holds no client role, `realm_access` when it
+  holds no realm role, `allowed-origins` when the client has no web origins.
+  A user with no roles gets a token with none of the four - not `[]`, not `{}`,
+  not `{"roles":[]}`. Emitting an empty one "for consistency" is the fix that
+  breaks it.
+- **`aud` is a string when it names one client and an array when it names
+  several.** So is the refresh token's `aud_x`, and so is the introspection
+  body's `aud`. The ID token's `aud` is a string always, and it names the
+  issuing client - the one place the two tokens disagree.
+- **Keycloak's JSON key order for a Java `Map` is `HashMap` bucket order**, not
+  sorted and not insertion order. `internal/javamap` reproduces it and is
+  confirmed against four measured key sets. It cannot resolve a bucket
+  collision, because those chain in insertion order and nothing observable says
+  what that was; the 21 admin role names collide twice and come back the other
+  way round. Sorting instead is what makes `resource_access` come out
+  `account, master-realm` where Keycloak says `master-realm, account`.
+- **The refresh token's `scope` is the granted scope plus the client's default
+  client scopes**, not a constant. `service_account` is one of them only on a
+  client with service accounts enabled, and `openid` only when it was asked
+  for. It was written down as a fixed list of eight and was wrong both ways.
+- **`account` is the client every user has roles on.** A bootstrap that creates
+  it without its eight roles, or without wiring `default-roles-master` over
+  `manage-account` and `view-profile`, issues tokens with an empty
+  `resource_access` and therefore no `aud` at all. Every user creation path -
+  the admin API's and the service account one - has to assign
+  `default-roles-<realm>`.
 - **`userinfo`'s 200 sends `Cache-Control` twice**, `no-store` then
   `no-cache`. Every rejection sends only `no-store`. The conformance harness
   compares every value of a repeated header because of this one response.
 - **A refresh token introspects into the access token's claim set**, nineteen
-  keys with `active` last, not RFC 7662's small set.
+  keys with `active` last, not RFC 7662's small set. The roles in it are
+  resolved at introspection time rather than read out of the token, which is
+  how a refresh token carrying none comes back with all of them.
 - **`not-before-policy`** in the token response is spelled with hyphens.
 - **Refresh tokens are signed HS512**, access and ID tokens RS256. That is why a
   realm holds two keys.
@@ -171,6 +202,8 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 | `internal/store/sqlite`, `internal/store/postgres` | the two drivers | diverge from each other in behaviour |
 | `internal/keys` | realm signing keys, JWKS | publish the HMAC key or any private key |
 | `internal/httpx` | **all** response body formatting | know anything domain-specific |
+| `internal/javamap` | Keycloak's JSON key order for a Java map | know what the keys mean |
+| `internal/roles` | expanding a user's roles through composites | write anything, or decide who may do what |
 | `internal/oidc` | protocol handlers | know about SQL; it sees only `store` interfaces |
 | `internal/bootstrap` | creating the `master` realm | modify objects that already exist |
 | `cmd/gloak` | config, wiring, serving | contain logic worth testing on its own |

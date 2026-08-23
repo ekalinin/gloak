@@ -84,6 +84,17 @@ func ServiceAccountUsername(clientID string) string {
 	return "service-account-" + clientID
 }
 
+// DefaultRolesName is the realm role every new user in a realm is given. Its
+// name carries the realm's, so `master` has default-roles-master and a second
+// realm gets its own.
+//
+// Measured: a user created through the admin API holds it and nothing else,
+// and it is the only reason an ordinary user's token carries any role at all.
+// See internal/bootstrap for what it contains.
+func DefaultRolesName(realm string) string {
+	return "default-roles-" + realm
+}
+
 // Realm is a tenant. Lifespans are stored as durations but are emitted as
 // whole seconds in token responses.
 type Realm struct {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/ekalinin/gloak/internal/httpx"
 	"github.com/ekalinin/gloak/internal/model"
+	"github.com/ekalinin/gloak/internal/roles"
 	"github.com/ekalinin/gloak/internal/store"
 )
 
@@ -190,6 +191,13 @@ func (h *handler) createUser(w http.ResponseWriter, r *http.Request, rc *reqCont
 			writeUsernameConflict(w)
 			return
 		}
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	// Measured: a user created here holds default-roles-master and nothing
+	// else. Without it the user exists but every token it is issued carries no
+	// aud, no realm_access and no resource_access.
+	if err := roles.AssignDefaults(r.Context(), h.store.Roles(), rc.realm.ID, rc.realm.Name, m.ID); err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
@@ -511,7 +519,7 @@ func (h *handler) readServiceAccountUser(w http.ResponseWriter, r *http.Request,
 			"Service account not enabled for the client '"+client.ClientID+"'")
 		return
 	}
-	user, err := h.ensureServiceAccount(r.Context(), rc.realm.ID, client)
+	user, err := h.ensureServiceAccount(r.Context(), rc.realm, client)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
@@ -536,9 +544,9 @@ func (h *handler) readServiceAccountUser(w http.ResponseWriter, r *http.Request,
 // paths stay. This one is what the admin API observes; that one covers every
 // client that never went through the admin API - the six bootstrap makes, and
 // every client a test builds straight through the store.
-func (h *handler) ensureServiceAccount(ctx context.Context, realmID string, c *model.Client) (*model.User, error) {
+func (h *handler) ensureServiceAccount(ctx context.Context, realm *model.Realm, c *model.Client) (*model.User, error) {
 	username := model.ServiceAccountUsername(c.ClientID)
-	user, err := h.store.Users().ByUsername(ctx, realmID, username)
+	user, err := h.store.Users().ByUsername(ctx, realm.ID, username)
 	if err == nil {
 		return user, nil
 	}
@@ -548,15 +556,22 @@ func (h *handler) ensureServiceAccount(ctx context.Context, realmID string, c *m
 
 	user = &model.User{
 		ID:               model.NewID(),
-		RealmID:          realmID,
+		RealmID:          realm.ID,
 		Username:         username,
 		Enabled:          true,
 		CreatedTimestamp: time.Now().UnixMilli(),
 	}
 	if err := h.store.Users().Create(ctx, user); err != nil {
 		if errors.Is(err, store.ErrConflict) {
-			return h.store.Users().ByUsername(ctx, realmID, username)
+			return h.store.Users().ByUsername(ctx, realm.ID, username)
 		}
+		return nil, err
+	}
+	// A service account is a user and gets the same default roles, measured:
+	// a client_credentials token carries default-roles-master, offline_access,
+	// uma_authorization and the three account roles, exactly as a person's
+	// does.
+	if err := roles.AssignDefaults(ctx, h.store.Roles(), realm.ID, realm.Name, user.ID); err != nil {
 		return nil, err
 	}
 	return user, nil

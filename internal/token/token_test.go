@@ -1,9 +1,11 @@
 package token_test
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -39,12 +41,44 @@ func request() token.Request {
 		UserSession: &model.UserSession{
 			ID: model.NewID(), UserID: user.ID, Username: "admin",
 		},
-		Scope:          "openid profile email",
-		RealmRoles:     []string{"default-roles-master"},
+		Scope: "openid profile email",
+		// The roles a user actually holds on a bootstrapped realm. Two
+		// clients rather than one because aud is a string when there is one
+		// audience and an array when there are several - see
+		// TestAudienceIsAStringWhenThereIsOneClient.
+		RealmRoles: []string{"default-roles-master", "offline_access"},
+		ClientRoles: map[string][]string{
+			"master-realm": {"view-users", "query-users"},
+			"account":      {"manage-account", "view-profile"},
+		},
 		AccessLife:     60 * time.Second,
 		RefreshLife:    1800 * time.Second,
 		IncludeIDToken: true,
 	}
+}
+
+// claimOrder returns the payload's keys in the order they appear, which
+// claimNames deliberately throws away. It decodes with a token stream rather
+// than into a map, since a map has no order to return.
+func claimOrder(t *testing.T, raw string) []string {
+	t.Helper()
+	dec := json.NewDecoder(bytes.NewReader(payload(t, raw)))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		t.Fatalf("payload does not open with an object: %v %v", tok, err)
+	}
+	var names []string
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			t.Fatalf("read key: %v", err)
+		}
+		names = append(names, key.(string))
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			t.Fatalf("skip value: %v", err)
+		}
+	}
+	return names
 }
 
 // claimNames returns the payload's keys, sorted, so a claim set can be
@@ -132,11 +166,157 @@ func TestAccessTokenCarriesTheMeasuredClaimSet(t *testing.T) {
 	if claims.Typ != "Bearer" {
 		t.Errorf("want typ Bearer, got %q", claims.Typ)
 	}
-	// aud is an array on the access token and a string on the ID token. That
-	// asymmetry is Keycloak's and is measured.
+	// aud is an array here because this user holds roles on two clients, and a
+	// string on the ID token whatever it holds. That asymmetry is Keycloak's
+	// and is measured.
 	var audience []string
 	if err := json.Unmarshal(claims.Aud, &audience); err != nil {
 		t.Errorf("access token aud is not an array: %s", claims.Aud)
+	}
+	// Measured 2026-08-23: the key order is Keycloak's Java map order, not
+	// sorted. master-realm before account is not a preference.
+	if want := []string{"master-realm", "account"}; !slices.Equal(audience, want) {
+		t.Errorf("aud: want %v, got %v", want, audience)
+	}
+}
+
+// TestAccessTokenClaimsAreInTheMeasuredOrder pins the order as well as the
+// set. Nothing compares a token byte for byte - every one is Volatile in every
+// recorded golden - but the introspection endpoint serves this same claim set
+// as an ordinary body, and that body is compared. Getting the order right here
+// is what keeps the two from drifting apart.
+func TestAccessTokenClaimsAreInTheMeasuredOrder(t *testing.T) {
+	set := issue(t, realmKeys(t), request())
+
+	want := []string{
+		"exp", "iat", "jti", "iss", "aud", "sub", "typ", "azp", "sid", "acr",
+		"allowed-origins", "realm_access", "resource_access", "scope",
+		"email_verified", "preferred_username",
+	}
+	if got := claimOrder(t, set.AccessToken); !slices.Equal(got, want) {
+		t.Fatalf("access token claim order:\nwant %v\ngot  %v", want, got)
+	}
+}
+
+// TestAudienceIsAStringWhenThereIsOneClient and the two below pin the three
+// shapes aud was measured taking, all on 2026-08-23.
+func TestAudienceIsAStringWhenThereIsOneClient(t *testing.T) {
+	r := request()
+	r.ClientRoles = map[string][]string{"account": {"view-profile"}}
+
+	set := issue(t, realmKeys(t), r)
+
+	var claims struct {
+		Aud json.RawMessage `json:"aud"`
+	}
+	if err := json.Unmarshal(payload(t, set.AccessToken), &claims); err != nil {
+		t.Fatalf("parse claims: %v", err)
+	}
+	if string(claims.Aud) != `"account"` {
+		t.Fatalf(`want aud "account" as a bare string, got %s`, claims.Aud)
+	}
+}
+
+func TestAudienceExcludesTheIssuingClient(t *testing.T) {
+	// Measured by assigning the administrator a role on the very client that
+	// issues the token: the client appears in resource_access and stays out of
+	// aud. That is why a client can never introspect its own access token.
+	r := request()
+	r.ClientRoles = map[string][]string{
+		"gloak-app": {"selfrole"},
+		"account":   {"view-profile"},
+	}
+
+	set := issue(t, realmKeys(t), r)
+
+	var claims struct {
+		Aud            json.RawMessage            `json:"aud"`
+		ResourceAccess map[string]json.RawMessage `json:"resource_access"`
+	}
+	if err := json.Unmarshal(payload(t, set.AccessToken), &claims); err != nil {
+		t.Fatalf("parse claims: %v", err)
+	}
+	if string(claims.Aud) != `"account"` {
+		t.Fatalf(`want aud "account", got %s`, claims.Aud)
+	}
+	if _, ok := claims.ResourceAccess["gloak-app"]; !ok {
+		t.Fatalf("the issuing client left resource_access too: %v", claims.ResourceAccess)
+	}
+}
+
+func TestAUserWithNoRolesGetsNoAudAndNoAccessClaims(t *testing.T) {
+	// Measured on a user stripped of default-roles-master: aud, realm_access
+	// and resource_access are absent, not empty. An empty realm_access is a
+	// state Keycloak can reach and this is not it.
+	r := request()
+	r.RealmRoles = nil
+	r.ClientRoles = nil
+
+	set := issue(t, realmKeys(t), r)
+
+	want := []string{
+		"acr", "allowed-origins", "azp", "email_verified", "exp", "iat", "iss",
+		"jti", "preferred_username", "scope", "sid", "sub", "typ",
+	}
+	if got := claimNames(t, set.AccessToken); !equal(got, want) {
+		t.Fatalf("claim set:\nwant %v\ngot  %v", want, got)
+	}
+}
+
+func TestAllowedOriginsIsAbsentWithoutWebOrigins(t *testing.T) {
+	// Measured both ways round on the same client: setting webOrigins made the
+	// claim appear, clearing them made it go away.
+	r := request()
+	r.Client.WebOrigins = nil
+
+	set := issue(t, realmKeys(t), r)
+
+	if slices.Contains(claimNames(t, set.AccessToken), "allowed-origins") {
+		t.Fatal("allowed-origins is present on a client with no web origins")
+	}
+}
+
+func TestRefreshScopeAddsTheClientsDefaultScopes(t *testing.T) {
+	// Measured 2026-08-23 on admin-cli and on two created clients. P1 had this
+	// as a fixed list of eight; it is the granted scope plus the client's
+	// default client scopes, and service_account is one of those only when the
+	// client has service accounts enabled.
+	for _, c := range []struct {
+		name           string
+		granted        string
+		serviceAccount bool
+		want           string
+	}{
+		{
+			name: "without openid", granted: "profile email",
+			want: "profile email web-origins acr basic roles",
+		},
+		{
+			name: "with openid", granted: "openid profile email",
+			want: "openid profile email web-origins acr basic roles",
+		},
+		{
+			name: "service account client", granted: "openid profile email", serviceAccount: true,
+			want: "openid profile email web-origins acr basic roles service_account",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := request()
+			r.Scope = c.granted
+			r.Client.ServiceAccountsEnabled = c.serviceAccount
+
+			set := issue(t, realmKeys(t), r)
+
+			var claims struct {
+				Scope string `json:"scope"`
+			}
+			if err := json.Unmarshal(payload(t, set.RefreshToken), &claims); err != nil {
+				t.Fatalf("parse claims: %v", err)
+			}
+			if claims.Scope != c.want {
+				t.Fatalf("refresh scope:\nwant %q\ngot  %q", c.want, claims.Scope)
+			}
+		})
 	}
 }
 

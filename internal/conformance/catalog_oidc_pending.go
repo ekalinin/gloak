@@ -1086,19 +1086,16 @@ var oidcPending = []Case{
 		AssertHeaders: []string{"Content-Type"},
 	},
 	{
-		// The refusal measured while trying to record active-access-token,
-		// kept because the bytes are already known and because Gloak gets
-		// this wrong today: its access tokens name their own client in aud,
-		// so it would answer active where Keycloak answers inactive. See
-		// follow-up F18.
+		// The refusal measured while trying to record active-access-token.
+		// Recorded until F18: Gloak's access tokens named their own client in
+		// aud, so this answered active where Keycloak answers inactive.
 		ID: "oidc/introspection/access-token-outside-audience",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
 			Section:   "Introspection endpoint: caller outside the token audience",
 			Retrieved: "2026-08-23",
 		},
-		Status:  Recorded,
-		Reason:  "Gloak's access tokens name their own client in aud, so it answers active - see F18",
+		Status:  Implemented,
 		Fixture: "confidential-user-token",
 		Request: Request{
 			Method: http.MethodPost,
@@ -1118,8 +1115,7 @@ var oidcPending = []Case{
 			Section:   "Introspection endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status: Recorded,
-		Reason: "the active body is the full claim set, which needs role resolution at issuance - see F18",
+		Status: Implemented,
 		// A refresh token introspects active where an access token does not:
 		// the audience check that refuses the access token is not applied
 		// here. Measured 2026-08-23.
@@ -1127,9 +1123,9 @@ var oidcPending = []Case{
 		// The body is not RFC 7662's small set. It is the *access* token's
 		// claim set rebuilt from the refresh token - realm_access,
 		// resource_access, acr, preferred_username and all - with client_id,
-		// username, token_type and active appended. Gloak cannot produce it
-		// until roles are resolved at issuance, so this is Recorded: the
-		// contract is in the repository and the alarm fires when it matches.
+		// username, token_type and active appended. It was Recorded until F18
+		// resolved roles at issuance, and the alarm that says so is what
+		// promoted it.
 		Fixture: "confidential-user-token",
 		Request: Request{
 			Method: http.MethodPost,

@@ -18,6 +18,7 @@ import (
 
 	"github.com/ekalinin/gloak/internal/httpx"
 	"github.com/ekalinin/gloak/internal/model"
+	"github.com/ekalinin/gloak/internal/roles"
 	"github.com/ekalinin/gloak/internal/store"
 	"github.com/ekalinin/gloak/internal/token"
 )
@@ -92,42 +93,18 @@ func (h *handler) resolveCaller(w http.ResponseWriter, r *http.Request, realm *m
 	return &caller{user: user, roles: roles}
 }
 
-// effectiveRoles expands a user's direct assignments through composites.
+// effectiveRoles is the caller's rights: its direct assignments expanded
+// through composites, reduced to names.
 //
-// The expansion is iterative with a seen-set rather than recursive. The
-// bootstrapped administrator holds no client role directly - all 21 arrive
-// through the admin role - so this is the whole authorization decision, and a
-// cycle in the data must exhaust the queue rather than the stack.
+// The expansion is internal/roles' because internal/oidc needs the same one to
+// fill a token's realm_access and resource_access, and the two must not be
+// able to disagree about who is an administrator.
 func (h *handler) effectiveRoles(r *http.Request, user *model.User) (map[string]bool, error) {
-	direct, err := h.store.Roles().ListUserRoles(r.Context(), user.ID)
+	effective, err := roles.Effective(r.Context(), h.store.Roles(), user.ID)
 	if err != nil {
 		return nil, err
 	}
-
-	names := map[string]bool{}
-	seen := map[string]bool{}
-	queue := make([]*model.Role, 0, len(direct))
-	queue = append(queue, direct...)
-
-	for len(queue) > 0 {
-		role := queue[0]
-		queue = queue[1:]
-		if seen[role.ID] {
-			continue
-		}
-		seen[role.ID] = true
-		names[role.Name] = true
-
-		if !role.Composite {
-			continue
-		}
-		children, err := h.store.Roles().ListComposites(r.Context(), role.ID)
-		if err != nil {
-			return nil, err
-		}
-		queue = append(queue, children...)
-	}
-	return names, nil
+	return roles.Names(effective), nil
 }
 
 // writeUnauthorized emits the measured 401. It is shape 2 carrying the generic
