@@ -156,7 +156,7 @@ func (h *handler) updateClient(w http.ResponseWriter, r *http.Request, rc *reqCo
 			return
 		}
 	}
-	w.WriteHeader(http.StatusNoContent)
+	httpx.WriteNoContent(w, r)
 }
 
 // deleteClient serves DELETE /admin/realms/{realm}/clients/{client-uuid}.
@@ -164,7 +164,7 @@ func (h *handler) updateClient(w http.ResponseWriter, r *http.Request, rc *reqCo
 // Measured: 204 carrying Cache-Control: no-cache and omitting X-Frame-Options.
 // Update's 204 next door has neither peculiarity. The omission turned out to
 // belong to every successful DELETE rather than to this response - see
-// httpx.WriteNoContentAfterDelete - while the Cache-Control does not: three of
+// httpx.WriteNoContent - while the Cache-Control does not: three of
 // the four measured DELETEs carry it and one does not.
 func (h *handler) deleteClient(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 	err := h.store.Clients().Delete(r.Context(), rc.realm.ID, r.PathValue("clientUUID"))
@@ -177,7 +177,7 @@ func (h *handler) deleteClient(w http.ResponseWriter, r *http.Request, rc *reqCo
 		return
 	}
 	w.Header().Set("Cache-Control", "no-cache")
-	httpx.WriteNoContentAfterDelete(w)
+	httpx.WriteNoContent(w, r)
 }
 
 // decodeClient reads a ClientRepresentation from the request body, writing the

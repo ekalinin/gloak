@@ -187,6 +187,13 @@ var Fixtures = map[string]Fixture{
 	// what merging left behind.
 	"admin-token-user-updated": updatedUserFixture(),
 
+	// Users that already hold a password, for the credential cases. Each
+	// creates its own user and captures the credential's server-minted id.
+	"admin-token-user-with-password":           passwordFixture("gloak-probe-pw-user", false, ""),
+	"admin-token-user-with-doomed-password":    passwordFixture("gloak-probe-pw-doomed", false, ""),
+	"admin-token-user-with-labelled-password":  passwordFixture("gloak-probe-pw-labelled", false, "office laptop"),
+	"admin-token-user-with-temporary-password": passwordFixture("gloak-probe-pw-temp", true, ""),
+
 	// One fixture per case that needs a pre-created client, each with its own
 	// clientId - see clientFixture for why sharing one would break recording.
 	"admin-token-client-to-update":    clientFixture("gloak-probe-update"),
@@ -420,6 +427,45 @@ func updatedUserFixture() Fixture {
 			Body:    []byte(`{"firstName":"Grace"}`),
 		},
 	})
+	return f
+}
+
+// passwordFixture creates a user, sets a password on it and captures the
+// credential's server-minted id.
+//
+// temporary drives the reset's temporary flag, which is what adds
+// UPDATE_PASSWORD to the user's requiredActions. A non-empty label adds a
+// userLabel step, so a case can read one back.
+func passwordFixture(username string, temporary bool, label string) Fixture {
+	f := userFixture(username)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/master/users/{{user_id}}/reset-password",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body: []byte(`{"type":"password","value":"s3cret","temporary":` +
+				strconv.FormatBool(temporary) + `}`),
+		},
+	}, Step{
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/credentials",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		// A user reaches this fixture with exactly one credential, so index 0
+		// is not a bet on list order.
+		Capture: map[string]string{"credential_id": "0/id"},
+	})
+	if label != "" {
+		f.Steps = append(f.Steps, Step{
+			Request: Request{
+				Method:  http.MethodPut,
+				Path:    "/admin/realms/master/users/{{user_id}}/credentials/{{credential_id}}/userLabel",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "text/plain"},
+				Body:    []byte(label),
+			},
+		})
+	}
 	return f
 }
 

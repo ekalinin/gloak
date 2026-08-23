@@ -150,6 +150,10 @@ type User struct {
 	LastName         string
 	CreatedTimestamp int64
 	Attributes       map[string][]string
+	// RequiredActions is what the user must do at next login. Measured: a
+	// reset-password carrying temporary true adds UPDATE_PASSWORD, and the
+	// user representation shows it.
+	RequiredActions []string
 }
 
 // Credential is a stored secret, split the way Keycloak splits it: a public
@@ -164,6 +168,14 @@ type Credential struct {
 	AdditionalParameters map[string][]string
 	Salt                 []byte
 	HashValue            []byte
+	// Label is the userLabel a caller can attach through
+	// PUT .../credentials/{id}/userLabel. Measured: it appears in the
+	// credential representation between type and createdDate, and a
+	// reset-password clears it.
+	Label string
+	// Priority is the credential's position in the user's list, which
+	// moveAfter and moveToFirst rewrite. Lower comes first.
+	Priority int
 }
 
 // UserSession is an SSO session: one login, however many clients use it. Its

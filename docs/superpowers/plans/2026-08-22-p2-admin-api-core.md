@@ -823,6 +823,15 @@ that constraint is relaxed. **Relaxing it changes P1's password lookup**, so
 `CredentialByUser` must keep returning a deterministic row - the
 highest-priority one - and its test must say so.
 
+**Amended after the recording, 2026-08-23: the constraint was not relaxed.**
+`reset-password` was measured *replacing* the password credential in place -
+same id, refreshed `createdDate`, `userLabel` cleared - and no admin API path
+creates a second credential of one type. Relaxing the constraint would model a
+state that cannot occur and would put P1's password lookup at risk for nothing,
+the same reasoning that dropped the rotated-secret column in Task 11.
+`CredentialByUser` orders by priority and then by id regardless, so it stays
+deterministic if a second row ever appears.
+
 Hashing on reset reuses `internal/bootstrap`'s parameters. Those are the
 creation parameters, which is correct here: this endpoint creates a password.
 `internal/auth` keeps reading its parameters from the stored credential.

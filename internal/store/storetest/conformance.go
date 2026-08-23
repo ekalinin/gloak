@@ -580,6 +580,119 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	// The credential endpoints need the list, the lookup by id, the delete and
+	// the label. All four are new and none is exercised by anything else, so
+	// they are held here rather than by whichever driver happens to run.
+	t.Run("credentials list, relabel and delete", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		user := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "u", Enabled: true}
+		if err := s.Users().Create(ctx, user); err != nil {
+			t.Fatalf("Users().Create: %v", err)
+		}
+		cred := &model.Credential{
+			ID: model.NewID(), UserID: user.ID, Type: "password",
+			CreatedDate: 1, Algorithm: "argon2", HashIterations: 5,
+			AdditionalParameters: map[string][]string{"memory": {"7168"}},
+			Salt:                 []byte("salt"), HashValue: []byte("hash"),
+		}
+		if err := s.Users().SetCredential(ctx, cred); err != nil {
+			t.Fatalf("SetCredential: %v", err)
+		}
+
+		listed, err := s.Users().ListCredentials(ctx, user.ID)
+		if err != nil {
+			t.Fatalf("ListCredentials: %v", err)
+		}
+		if len(listed) != 1 || listed[0].ID != cred.ID {
+			t.Fatalf("want the one credential back, got %d", len(listed))
+		}
+		if listed[0].Label != "" {
+			t.Fatalf("want no label on a fresh credential, got %q", listed[0].Label)
+		}
+
+		cred.Label = "office laptop"
+		cred.Priority = 3
+		if err := s.Users().UpdateCredential(ctx, cred); err != nil {
+			t.Fatalf("UpdateCredential: %v", err)
+		}
+		got, err := s.Users().CredentialByID(ctx, user.ID, cred.ID)
+		if err != nil {
+			t.Fatalf("CredentialByID: %v", err)
+		}
+		if got.Label != "office laptop" || got.Priority != 3 {
+			t.Fatalf("want the label and priority back, got %q / %d", got.Label, got.Priority)
+		}
+		// The hash must have survived the label write: UpdateCredential writes
+		// two columns and must not touch the rest.
+		if string(got.HashValue) != "hash" {
+			t.Fatalf("UpdateCredential disturbed the hash: %q", got.HashValue)
+		}
+
+		if err := s.Users().DeleteCredential(ctx, user.ID, cred.ID); err != nil {
+			t.Fatalf("DeleteCredential: %v", err)
+		}
+		if err := s.Users().DeleteCredential(ctx, user.ID, cred.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("want ErrNotFound deleting twice, got %v", err)
+		}
+	})
+
+	// Measured on the admin API: a reset-password replaces the credential in
+	// place - same id, refreshed createdDate - and clears the userLabel. The
+	// upsert is what has to reproduce that, and priority is deliberately not
+	// cleared, since a reset does not reorder anything.
+	t.Run("setting a credential again replaces it and clears the label", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		user := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "u", Enabled: true}
+		if err := s.Users().Create(ctx, user); err != nil {
+			t.Fatalf("Users().Create: %v", err)
+		}
+		first := &model.Credential{
+			ID: model.NewID(), UserID: user.ID, Type: "password", CreatedDate: 1,
+			Algorithm: "argon2", HashValue: []byte("old"), Label: "old label",
+		}
+		if err := s.Users().SetCredential(ctx, first); err != nil {
+			t.Fatalf("SetCredential: %v", err)
+		}
+
+		second := *first
+		second.CreatedDate = 2
+		second.HashValue = []byte("new")
+		second.Label = ""
+		if err := s.Users().SetCredential(ctx, &second); err != nil {
+			t.Fatalf("SetCredential again: %v", err)
+		}
+
+		listed, err := s.Users().ListCredentials(ctx, user.ID)
+		if err != nil {
+			t.Fatalf("ListCredentials: %v", err)
+		}
+		if len(listed) != 1 {
+			t.Fatalf("want one credential after a replace, got %d", len(listed))
+		}
+		if listed[0].ID != first.ID || listed[0].CreatedDate != 2 || listed[0].Label != "" {
+			t.Fatalf("want the id kept and the rest refreshed, got %+v", listed[0])
+		}
+		// CredentialByUser is what a login goes through, so it must see the
+		// replacement rather than a stale row.
+		byUser, err := s.Users().CredentialByUser(ctx, user.ID, "password")
+		if err != nil {
+			t.Fatalf("CredentialByUser: %v", err)
+		}
+		if string(byUser.HashValue) != "new" {
+			t.Fatalf("want the new hash, got %q", byUser.HashValue)
+		}
+	})
+
 	t.Run("a user is not listed from another realm", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

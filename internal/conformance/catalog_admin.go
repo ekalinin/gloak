@@ -919,6 +919,266 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type"},
 	},
 
+	// --- Credentials ---
+	{
+		ID: "admin/users/credentials-empty",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get the credentials, user with none",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/users/{user-id}/credentials",
+		Fixture:   "admin-token-created-user",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/credentials",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The body carries no hash and no salt. credentialData is a JSON
+		// **string**, not a nested object, describing how the secret was
+		// hashed - which is why the golden shows it escaped.
+		ID: "admin/users/credentials-list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get the credentials",
+			Retrieved: "2026-08-23",
+		},
+		Status: Implemented,
+		// No Operation: admin/users/credentials-empty already claims it.
+		Fixture: "admin-token-user-with-password",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/credentials",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/createdDate"},
+	},
+	{
+		ID: "admin/users/reset-password",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: set up a new password",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/users/{user-id}/reset-password",
+		Fixture:   "admin-token-created-user",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/users/{{user_id}}/reset-password",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"type":"password","value":"s3cret","temporary":false}`),
+		},
+		// A JSON request body, so this 204 does carry X-Frame-Options - see
+		// httpx.WriteNoContent.
+		AssertHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "admin/users/reset-password-no-value",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: set up a new password, no value",
+			Retrieved: "2026-08-23",
+		},
+		Status: Implemented,
+		// No Operation: a rejection. It is the bare-prose shape, a third
+		// error family on the user endpoints after errorMessage and OAuth.
+		Fixture: "admin-token-created-user",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/users/{{user_id}}/reset-password",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"type":"password"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// temporary true adds UPDATE_PASSWORD to the user's requiredActions,
+		// which is the only observable difference the flag makes.
+		ID: "admin/users/reset-password-temporary",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: set up a new password, temporary",
+			Retrieved: "2026-08-23",
+		},
+		Status: Implemented,
+		// No Operation: admin/users/read already claims the read this uses.
+		Fixture: "admin-token-user-with-temporary-password",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"id", "createdTimestamp"},
+	},
+	{
+		// A text/plain body, so this 204 omits X-Frame-Options. Sending JSON
+		// to it answers 415 instead.
+		ID: "admin/users/credential-label",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: update a credential label",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/users/{user-id}/credentials/{credentialId}/userLabel",
+		Fixture:   "admin-token-user-with-password",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/users/{{user_id}}/credentials/{{credential_id}}/userLabel",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "text/plain",
+			},
+			Body: []byte(`my password`),
+		},
+		AssertHeaders:       []string{"X-Content-Type-Options"},
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		// The label read back, sitting between type and createdDate.
+		ID: "admin/users/credential-label-read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get the credentials, labelled",
+			Retrieved: "2026-08-23",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-user-with-labelled-password",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/credentials",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/createdDate"},
+	},
+	{
+		ID: "admin/users/credential-move-to-first",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: move a credential to first in the list",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/users/{user-id}/credentials/{credentialId}/moveToFirst",
+		Fixture:   "admin-token-user-with-password",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/users/{{user_id}}/credentials/{{credential_id}}/moveToFirst",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"X-Content-Type-Options"},
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		// Moving a credential after a target that does not exist is still a
+		// 204: only the credential being moved is checked.
+		ID: "admin/users/credential-move-after",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: move a credential after another",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/users/{user-id}/credentials/{credentialId}/moveAfter/{newPreviousCredentialId}",
+		Fixture:   "admin-token-user-with-password",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/users/{{user_id}}/credentials/{{credential_id}}/moveAfter/00000000-0000-0000-0000-000000000000",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"X-Content-Type-Options"},
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "admin/users/credential-move-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: move a credential, unknown credential",
+			Retrieved: "2026-08-23",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-created-user",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/users/{{user_id}}/credentials/00000000-0000-0000-0000-000000000000/moveToFirst",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/users/credential-delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: remove a credential",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/users/{user-id}/credentials/{credentialId}",
+		Fixture:   "admin-token-user-with-doomed-password",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/users/{{user_id}}/credentials/{{credential_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "admin/users/credential-delete-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: remove a credential, unknown id",
+			Retrieved: "2026-08-23",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-created-user",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/users/{{user_id}}/credentials/00000000-0000-0000-0000-000000000000",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// Measured: 204 for any list, including ["password"], and nothing
+		// observable changes. On a bootstrapped realm no credential type
+		// declares itself disableable, so the endpoint does nothing - and
+		// that is the contract, not a gap.
+		ID: "admin/users/disable-credential-types",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: disable credential types",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/users/{user-id}/disable-credential-types",
+		Fixture:   "admin-token-user-with-password",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/users/{{user_id}}/disable-credential-types",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`["otp"]`),
+		},
+		AssertHeaders: []string{"X-Frame-Options"},
+	},
+
 	{
 		// The 403 shape is measured - see "Admin API rejection shapes" in
 		// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md, taken

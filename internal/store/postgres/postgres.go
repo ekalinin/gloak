@@ -157,6 +157,15 @@ func encode(v any) string {
 
 func decode(s string, v any) error { return json.Unmarshal([]byte(s), v) }
 
+// nonNilStrings keeps a nil slice out of the database as [] rather than null,
+// so a scan back yields an empty slice and the representation marshals [].
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
 // scanner is satisfied by both pgx.Row and pgx.Rows, so single-row getters
 // and list methods share one scan implementation per entity.
 type scanner interface{ Scan(dest ...any) error }
@@ -353,17 +362,18 @@ type userRepo struct{ pool *pgxpool.Pool }
 func (r *userRepo) Create(ctx context.Context, m *model.User) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO user_entity (id, realm_id, username, email, email_verified, enabled,
-		 first_name, last_name, created_timestamp, attributes)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		 first_name, last_name, created_timestamp, attributes, required_actions)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		m.ID, m.RealmID, m.Username, m.Email, m.EmailVerified, m.Enabled,
-		m.FirstName, m.LastName, m.CreatedTimestamp, encode(m.Attributes))
+		m.FirstName, m.LastName, m.CreatedTimestamp, encode(m.Attributes),
+		encode(nonNilStrings(m.RequiredActions)))
 	return classify(err)
 }
 
 func (r *userRepo) ByUsername(ctx context.Context, realmID, username string) (*model.User, error) {
 	row := r.pool.QueryRow(ctx,
 		`SELECT id, realm_id, username, email, email_verified, enabled, first_name, last_name,
-		 created_timestamp, attributes
+		 created_timestamp, attributes, required_actions
 		 FROM user_entity WHERE realm_id = $1 AND username = $2`, realmID, username)
 	return scanUser(row)
 }
@@ -371,7 +381,7 @@ func (r *userRepo) ByUsername(ctx context.Context, realmID, username string) (*m
 func (r *userRepo) ByID(ctx context.Context, realmID, id string) (*model.User, error) {
 	row := r.pool.QueryRow(ctx,
 		`SELECT id, realm_id, username, email, email_verified, enabled, first_name, last_name,
-		 created_timestamp, attributes
+		 created_timestamp, attributes, required_actions
 		 FROM user_entity WHERE realm_id = $1 AND id = $2`, realmID, id)
 	return scanUser(row)
 }
@@ -381,7 +391,7 @@ func (r *userRepo) ByID(ctx context.Context, realmID, id string) (*model.User, e
 func (r *userRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.User, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT id, realm_id, username, email, email_verified, enabled, first_name, last_name,
-		 created_timestamp, attributes
+		 created_timestamp, attributes, required_actions
 		 FROM user_entity WHERE realm_id = $1 ORDER BY username`, realmID)
 	if err != nil {
 		return nil, classify(err)
@@ -402,10 +412,11 @@ func (r *userRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.Us
 func (r *userRepo) Update(ctx context.Context, m *model.User) error {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE user_entity SET username = $1, email = $2, email_verified = $3, enabled = $4,
-		 first_name = $5, last_name = $6, attributes = $7
-		 WHERE realm_id = $8 AND id = $9`,
+		 first_name = $5, last_name = $6, attributes = $7, required_actions = $8
+		 WHERE realm_id = $9 AND id = $10`,
 		m.Username, m.Email, m.EmailVerified, m.Enabled,
-		m.FirstName, m.LastName, encode(m.Attributes), m.RealmID, m.ID)
+		m.FirstName, m.LastName, encode(m.Attributes),
+		encode(nonNilStrings(m.RequiredActions)), m.RealmID, m.ID)
 	if err != nil {
 		return classify(err)
 	}
@@ -426,46 +437,96 @@ func (r *userRepo) Delete(ctx context.Context, realmID, id string) error {
 func (r *userRepo) SetCredential(ctx context.Context, m *model.Credential) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO credential (id, user_id, type, created_date, algorithm, hash_iterations,
-		 additional_parameters, salt, hash_value)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		 additional_parameters, salt, hash_value, user_label, priority)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 ON CONFLICT (user_id, type) DO UPDATE SET
 		 	created_date = excluded.created_date,
 		 	algorithm = excluded.algorithm,
 		 	hash_iterations = excluded.hash_iterations,
 		 	additional_parameters = excluded.additional_parameters,
 		 	salt = excluded.salt,
-		 	hash_value = excluded.hash_value`,
+		 	hash_value = excluded.hash_value,
+		 	user_label = excluded.user_label`,
 		m.ID, m.UserID, m.Type, m.CreatedDate, m.Algorithm, m.HashIterations,
-		encode(m.AdditionalParameters), m.Salt, m.HashValue)
+		encode(m.AdditionalParameters), m.Salt, m.HashValue, m.Label, m.Priority)
 	return classify(err)
 }
 
 func (r *userRepo) CredentialByUser(ctx context.Context, userID, typ string) (*model.Credential, error) {
 	row := r.pool.QueryRow(ctx,
-		`SELECT id, user_id, type, created_date, algorithm, hash_iterations, additional_parameters, salt, hash_value
-		 FROM credential WHERE user_id = $1 AND type = $2`, userID, typ)
+		`SELECT id, user_id, type, created_date, algorithm, hash_iterations, additional_parameters, salt, hash_value, user_label, priority
+		 FROM credential WHERE user_id = $1 AND type = $2 ORDER BY priority, id LIMIT 1`, userID, typ)
 	return scanCredential(row)
 }
 
 func scanUser(row scanner) (*model.User, error) {
 	m := &model.User{}
-	var attributes string
+	var attributes, requiredActions string
 	err := row.Scan(&m.ID, &m.RealmID, &m.Username, &m.Email, &m.EmailVerified, &m.Enabled,
-		&m.FirstName, &m.LastName, &m.CreatedTimestamp, &attributes)
+		&m.FirstName, &m.LastName, &m.CreatedTimestamp, &attributes, &requiredActions)
 	if err != nil {
 		return nil, classify(err)
 	}
 	if err := decode(attributes, &m.Attributes); err != nil {
 		return nil, fmt.Errorf("postgres: decode attributes: %w", err)
 	}
+	if err := decode(requiredActions, &m.RequiredActions); err != nil {
+		return nil, fmt.Errorf("postgres: decode required_actions: %w", err)
+	}
 	return m, nil
+}
+
+func (r *userRepo) ListCredentials(ctx context.Context, userID string) ([]*model.Credential, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, user_id, type, created_date, algorithm, hash_iterations, additional_parameters, salt, hash_value, user_label, priority
+		 FROM credential WHERE user_id = $1 ORDER BY priority, id`, userID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	defer rows.Close()
+
+	var out []*model.Credential
+	for rows.Next() {
+		m, err := scanCredential(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+func (r *userRepo) CredentialByID(ctx context.Context, userID, id string) (*model.Credential, error) {
+	row := r.pool.QueryRow(ctx,
+		`SELECT id, user_id, type, created_date, algorithm, hash_iterations, additional_parameters, salt, hash_value, user_label, priority
+		 FROM credential WHERE user_id = $1 AND id = $2`, userID, id)
+	return scanCredential(row)
+}
+
+func (r *userRepo) DeleteCredential(ctx context.Context, userID, id string) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM credential WHERE user_id = $1 AND id = $2`, userID, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(tag.RowsAffected())
+}
+
+func (r *userRepo) UpdateCredential(ctx context.Context, m *model.Credential) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE credential SET user_label = $1, priority = $2 WHERE user_id = $3 AND id = $4`,
+		m.Label, m.Priority, m.UserID, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(tag.RowsAffected())
 }
 
 func scanCredential(row scanner) (*model.Credential, error) {
 	m := &model.Credential{}
 	var additionalParameters string
 	err := row.Scan(&m.ID, &m.UserID, &m.Type, &m.CreatedDate, &m.Algorithm, &m.HashIterations,
-		&additionalParameters, &m.Salt, &m.HashValue)
+		&additionalParameters, &m.Salt, &m.HashValue, &m.Label, &m.Priority)
 	if err != nil {
 		return nil, classify(err)
 	}

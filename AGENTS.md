@@ -64,15 +64,20 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   rejections send four of the five, omitting `X-Frame-Options`** - they do
   reach the filter chain, so this one is not explained by routing, and its
   own 200 sends all five, so it is not explained by the endpoint either. And
-  **a successful
-  `DELETE`'s 204 omits `X-Frame-Options`**: measured on clients, users, realm
-  roles and the rotated client secret, while `PUT`'s 204 sends all five and the
-  same `DELETE` answering 404 or 500 sends all five too. `httpx` has one
-  helper for it. Applying them uniformly "for consistency" is the fix that
-  would break all three.
-- **`Cache-Control` on a 204 does not follow the method.** Three of the four
-  measured `DELETE`s carry `no-cache` and `DELETE .../client-secret/rotated`
-  does not; neither `PUT` carries it. It is pinned per endpoint.
+  **a 204 carries `X-Frame-Options` only when the request declared an
+  `application/*` `Content-Type`**: measured across seven Content-Type values
+  on one endpoint, every one answering 204. That covers every delete (no
+  Content-Type, so no header), the client and user updates (JSON, so the
+  header), and `PUT .../userLabel` (`text/plain`, so no header).
+  `httpx.WriteNoContent` is the one place that decides. Applying them
+  uniformly "for consistency" is the fix that would break all three.
+- **That rule was wrong once already.** P2's Task 11 recorded it as "a
+  successful `DELETE`'s 204 omits it", from four deletes that all happened to
+  send no `Content-Type`. When a new 204 disagrees with a header rule, measure
+  the request's headers before believing the method.
+- **`Cache-Control` on a 204 does not follow the method.** Four of the five
+  measured deletes carry `no-cache` and `DELETE .../client-secret/rotated`
+  does not; no `PUT` carries it. It is pinned per endpoint.
 - **A client with no secret answers `GET .../client-secret` with 200 and no
   `value` key**, not 404 - and none of the six bootstrapped clients has one.
   `POST` mints a secret even for a public client, whose representation then
@@ -138,6 +143,17 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   one still answers 409.
 - **An empty or `null` request body on `POST /users` is a 500**, not a 400.
   Another of Keycloak's own defects, reproduced.
+- **A credential list carries no secret**, so `view-users` is enough to read
+  it. `credentialData` inside it is a **JSON string**, not a nested object, and
+  the `additionalParameters` inside *that* are a Java map in hash order which
+  the suite cannot normalise - so `internal/admin` writes the five argon2 keys
+  out in the measured order rather than marshalling a Go map.
+- **`reset-password` ignores the `type` it is given** and sets a password
+  whatever it is told, replacing the credential in place: same id, refreshed
+  `createdDate`, `userLabel` cleared.
+- **`PUT .../userLabel` consumes `text/plain`.** Sending JSON answers 415.
+- **"Credential not found" is a fourth not-found spelling**, after "Could not
+  find client", "User not found" and "Realm not found." with its full stop.
 
 ## Boundaries
 

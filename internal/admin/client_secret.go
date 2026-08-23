@@ -85,7 +85,7 @@ func (h *handler) deleteRotatedSecret(w http.ResponseWriter, r *http.Request, rc
 	if _, ok := h.clientFromPath(w, r, rc); !ok {
 		return
 	}
-	httpx.WriteNoContentAfterDelete(w)
+	httpx.WriteNoContent(w, r)
 }
 
 // deleteRotatedSecretRejection is what this one route answers a caller who

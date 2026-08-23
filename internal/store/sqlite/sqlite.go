@@ -169,6 +169,15 @@ func encode(v any) string {
 
 func decode(s string, v any) error { return json.Unmarshal([]byte(s), v) }
 
+// nonNilStrings keeps a nil slice out of the database as [] rather than null,
+// so a scan back yields an empty slice and the representation marshals [].
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
 // scanner is satisfied by both *sql.Row and *sql.Rows, so single-row getters
 // and list methods share one scan implementation per entity.
 type scanner interface{ Scan(dest ...any) error }
@@ -365,17 +374,18 @@ type userRepo struct{ db *sql.DB }
 func (r *userRepo) Create(ctx context.Context, m *model.User) error {
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO user_entity (id, realm_id, username, email, email_verified, enabled,
-		 first_name, last_name, created_timestamp, attributes)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 first_name, last_name, created_timestamp, attributes, required_actions)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.RealmID, m.Username, m.Email, m.EmailVerified, m.Enabled,
-		m.FirstName, m.LastName, m.CreatedTimestamp, encode(m.Attributes))
+		m.FirstName, m.LastName, m.CreatedTimestamp, encode(m.Attributes),
+		encode(nonNilStrings(m.RequiredActions)))
 	return classify(err)
 }
 
 func (r *userRepo) ByUsername(ctx context.Context, realmID, username string) (*model.User, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT id, realm_id, username, email, email_verified, enabled, first_name, last_name,
-		 created_timestamp, attributes
+		 created_timestamp, attributes, required_actions
 		 FROM user_entity WHERE realm_id = ? AND username = ?`, realmID, username)
 	return scanUser(row)
 }
@@ -383,7 +393,7 @@ func (r *userRepo) ByUsername(ctx context.Context, realmID, username string) (*m
 func (r *userRepo) ByID(ctx context.Context, realmID, id string) (*model.User, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT id, realm_id, username, email, email_verified, enabled, first_name, last_name,
-		 created_timestamp, attributes
+		 created_timestamp, attributes, required_actions
 		 FROM user_entity WHERE realm_id = ? AND id = ?`, realmID, id)
 	return scanUser(row)
 }
@@ -393,7 +403,7 @@ func (r *userRepo) ByID(ctx context.Context, realmID, id string) (*model.User, e
 func (r *userRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.User, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT id, realm_id, username, email, email_verified, enabled, first_name, last_name,
-		 created_timestamp, attributes
+		 created_timestamp, attributes, required_actions
 		 FROM user_entity WHERE realm_id = ? ORDER BY username`, realmID)
 	if err != nil {
 		return nil, classify(err)
@@ -414,10 +424,11 @@ func (r *userRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.Us
 func (r *userRepo) Update(ctx context.Context, m *model.User) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE user_entity SET username = ?, email = ?, email_verified = ?, enabled = ?,
-		 first_name = ?, last_name = ?, attributes = ?
+		 first_name = ?, last_name = ?, attributes = ?, required_actions = ?
 		 WHERE realm_id = ? AND id = ?`,
 		m.Username, m.Email, m.EmailVerified, m.Enabled,
-		m.FirstName, m.LastName, encode(m.Attributes), m.RealmID, m.ID)
+		m.FirstName, m.LastName, encode(m.Attributes),
+		encode(nonNilStrings(m.RequiredActions)), m.RealmID, m.ID)
 	if err != nil {
 		return classify(err)
 	}
@@ -438,46 +449,96 @@ func (r *userRepo) Delete(ctx context.Context, realmID, id string) error {
 func (r *userRepo) SetCredential(ctx context.Context, m *model.Credential) error {
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO credential (id, user_id, type, created_date, algorithm, hash_iterations,
-		 additional_parameters, salt, hash_value)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 additional_parameters, salt, hash_value, user_label, priority)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (user_id, type) DO UPDATE SET
 		 	created_date = excluded.created_date,
 		 	algorithm = excluded.algorithm,
 		 	hash_iterations = excluded.hash_iterations,
 		 	additional_parameters = excluded.additional_parameters,
 		 	salt = excluded.salt,
-		 	hash_value = excluded.hash_value`,
+		 	hash_value = excluded.hash_value,
+		 	user_label = excluded.user_label`,
 		m.ID, m.UserID, m.Type, m.CreatedDate, m.Algorithm, m.HashIterations,
-		encode(m.AdditionalParameters), m.Salt, m.HashValue)
+		encode(m.AdditionalParameters), m.Salt, m.HashValue, m.Label, m.Priority)
 	return classify(err)
 }
 
 func (r *userRepo) CredentialByUser(ctx context.Context, userID, typ string) (*model.Credential, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, user_id, type, created_date, algorithm, hash_iterations, additional_parameters, salt, hash_value
-		 FROM credential WHERE user_id = ? AND type = ?`, userID, typ)
+		`SELECT id, user_id, type, created_date, algorithm, hash_iterations, additional_parameters, salt, hash_value, user_label, priority
+		 FROM credential WHERE user_id = ? AND type = ? ORDER BY priority, id LIMIT 1`, userID, typ)
 	return scanCredential(row)
 }
 
 func scanUser(row scanner) (*model.User, error) {
 	m := &model.User{}
-	var attributes string
+	var attributes, requiredActions string
 	err := row.Scan(&m.ID, &m.RealmID, &m.Username, &m.Email, &m.EmailVerified, &m.Enabled,
-		&m.FirstName, &m.LastName, &m.CreatedTimestamp, &attributes)
+		&m.FirstName, &m.LastName, &m.CreatedTimestamp, &attributes, &requiredActions)
 	if err != nil {
 		return nil, classify(err)
 	}
 	if err := decode(attributes, &m.Attributes); err != nil {
 		return nil, fmt.Errorf("sqlite: decode attributes: %w", err)
 	}
+	if err := decode(requiredActions, &m.RequiredActions); err != nil {
+		return nil, fmt.Errorf("sqlite: decode required_actions: %w", err)
+	}
 	return m, nil
+}
+
+func (r *userRepo) ListCredentials(ctx context.Context, userID string) ([]*model.Credential, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, user_id, type, created_date, algorithm, hash_iterations, additional_parameters, salt, hash_value, user_label, priority
+		 FROM credential WHERE user_id = ? ORDER BY priority, id`, userID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	defer rows.Close()
+
+	var out []*model.Credential
+	for rows.Next() {
+		m, err := scanCredential(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+func (r *userRepo) CredentialByID(ctx context.Context, userID, id string) (*model.Credential, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT id, user_id, type, created_date, algorithm, hash_iterations, additional_parameters, salt, hash_value, user_label, priority
+		 FROM credential WHERE user_id = ? AND id = ?`, userID, id)
+	return scanCredential(row)
+}
+
+func (r *userRepo) DeleteCredential(ctx context.Context, userID, id string) error {
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM credential WHERE user_id = ? AND id = ?`, userID, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
+}
+
+func (r *userRepo) UpdateCredential(ctx context.Context, m *model.Credential) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE credential SET user_label = ?, priority = ? WHERE user_id = ? AND id = ?`,
+		m.Label, m.Priority, m.UserID, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
 }
 
 func scanCredential(row scanner) (*model.Credential, error) {
 	m := &model.Credential{}
 	var additionalParameters string
 	err := row.Scan(&m.ID, &m.UserID, &m.Type, &m.CreatedDate, &m.Algorithm, &m.HashIterations,
-		&additionalParameters, &m.Salt, &m.HashValue)
+		&additionalParameters, &m.Salt, &m.HashValue, &m.Label, &m.Priority)
 	if err != nil {
 		return nil, classify(err)
 	}

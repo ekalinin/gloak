@@ -61,8 +61,23 @@ type UserRepo interface {
 	// management because the cascade is what the role-mapping tests assert:
 	// an assignment outliving its user would grant rights to a recycled ID.
 	Delete(ctx context.Context, realmID, id string) error
+	// SetCredential upserts on (user_id, type), which is what the admin API
+	// was measured doing: a reset-password replaces the password credential in
+	// place - same id, refreshed createdDate, label cleared - and no path
+	// creates a second credential of one type.
 	SetCredential(ctx context.Context, c *model.Credential) error
+	// CredentialByUser returns the credential a login checks against. It must
+	// stay deterministic: it orders by priority and then by id, so a user who
+	// somehow held two of a type would still authenticate against the same one
+	// every time rather than against whichever row the driver returned first.
 	CredentialByUser(ctx context.Context, userID, typ string) (*model.Credential, error)
+	ListCredentials(ctx context.Context, userID string) ([]*model.Credential, error)
+	CredentialByID(ctx context.Context, userID, id string) (*model.Credential, error)
+	DeleteCredential(ctx context.Context, userID, id string) error
+	// UpdateCredential writes back the two mutable fields, label and priority.
+	// The hash is not among them: nothing but a reset-password may change it,
+	// and that goes through SetCredential.
+	UpdateCredential(ctx context.Context, c *model.Credential) error
 }
 
 type RoleRepo interface {

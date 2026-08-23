@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // SetSecurityHeaders sets the five security headers Keycloak 26.7.1 attaches
@@ -86,20 +87,38 @@ func SetUserinfoSecurityHeaders(w http.ResponseWriter) {
 	w.Header().Del("X-Frame-Options")
 }
 
-// WriteNoContentAfterDelete writes the 204 a successful DELETE answers.
+// WriteNoContent writes a 204, deciding from the request whether it carries
+// X-Frame-Options.
 //
-// It omits X-Frame-Options, which is the third exception to the five security
-// headers reaching every response. Measured 2026-08-23 on four DELETEs across
-// three resource trees - clients, users, realm roles and the rotated client
-// secret - against two PUTs whose 204s carry all five. It is the 204 that
-// omits it rather than the method: the same routes answering 404 or 500 send
-// all five.
+// **The rule is about the request's Content-Type, not the method.** Measured
+// 2026-08-23 by sending DELETE /users/{id} seven times with seven different
+// Content-Type headers, every one answering 204:
 //
-// Cache-Control is not set here. Three of the four measured DELETEs carry
+//	absent              no X-Frame-Options
+//	text/plain          no X-Frame-Options
+//	*/*                 no X-Frame-Options
+//	application/json    X-Frame-Options
+//	application/xml     X-Frame-Options
+//	application/x-www-form-urlencoded   X-Frame-Options
+//	application/json;charset=UTF-8      X-Frame-Options
+//
+// It holds across every 204 measured elsewhere: the client, user, realm-role
+// and credential deletes send no Content-Type and omit the header; the client
+// and user updates, reset-password and disable-credential-types send JSON and
+// carry it; PUT .../userLabel sends text/plain and omits it; moveToFirst and
+// moveAfter send no body at all and omit it.
+//
+// P2's Task 11 wrote this down as "a successful DELETE's 204 omits it", from
+// four DELETEs that happened to send no Content-Type. PUT .../userLabel is
+// what falsified that.
+//
+// Cache-Control is not set here: three of the four measured deletes carry
 // no-cache and DELETE .../client-secret/rotated does not, so it stays with the
 // caller.
-func WriteNoContentAfterDelete(w http.ResponseWriter) {
-	w.Header().Del("X-Frame-Options")
+func WriteNoContent(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/") {
+		w.Header().Del("X-Frame-Options")
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

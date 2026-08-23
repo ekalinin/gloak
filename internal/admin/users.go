@@ -248,7 +248,7 @@ func (h *handler) updateUser(w http.ResponseWriter, r *http.Request, rc *reqCont
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	httpx.WriteNoContent(w, r)
 }
 
 // deleteUser serves DELETE /admin/realms/{realm}/users/{user-id}.
@@ -267,7 +267,7 @@ func (h *handler) deleteUser(w http.ResponseWriter, r *http.Request, rc *reqCont
 		return
 	}
 	w.Header().Set("Cache-Control", "no-cache")
-	httpx.WriteNoContentAfterDelete(w)
+	httpx.WriteNoContent(w, r)
 }
 
 // decodeUser reads a UserRepresentation from the request body.
@@ -489,7 +489,7 @@ func userRepresentationOf(u *model.User, brief bool) userRepresentation {
 	// the credential model's notion of which types can be disabled, and
 	// requiredActions needs required actions, neither of which P2 has.
 	credentialTypes := []string{}
-	requiredActions := []string{}
+	requiredActions := nonNilActions(u.RequiredActions)
 	rep.TOTP = &totp
 	rep.DisableableCredentialTypes = &credentialTypes
 	rep.RequiredActions = &requiredActions
@@ -560,4 +560,13 @@ func (h *handler) ensureServiceAccount(ctx context.Context, realmID string, c *m
 		return nil, err
 	}
 	return user, nil
+}
+
+// nonNilActions keeps requiredActions marshalling as [] rather than null. The
+// measured representation carries an empty array for a user with none.
+func nonNilActions(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
