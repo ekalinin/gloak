@@ -32,6 +32,58 @@ func NewID() string {
 	return string(out[:])
 }
 
+// secretAlphabet is the character set Keycloak draws a generated client secret
+// from, and secretLength is how many it draws.
+//
+// Both are measured, over 25 secrets regenerated through
+// POST /admin/realms/master/clients/{uuid}/client-secret on 2026-08-23: every
+// one was 86 characters, and the 2150 characters between them covered these 62
+// and nothing else. Base64url would have shown '-' and '_' about three times
+// per secret, so the encoding is alphanumeric rather than base64 - which is the
+// sort of thing that is invisible until somebody parses a secret.
+const (
+	secretAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	secretLength   = 86
+)
+
+// NewSecret returns a client secret in Keycloak's measured shape.
+//
+// Bytes at or above 248 are drawn again rather than folded in: 248 is 4*62, so
+// keeping them would make the first eight characters of the alphabet slightly
+// likelier than the rest. The bias would be small and permanent, and rejecting
+// costs one extra byte in thirty.
+func NewSecret() string {
+	out := make([]byte, 0, secretLength)
+	buf := make([]byte, secretLength)
+	for len(out) < secretLength {
+		if _, err := rand.Read(buf); err != nil {
+			panic("model: entropy source failed: " + err.Error())
+		}
+		for _, b := range buf {
+			if b >= 248 {
+				continue
+			}
+			out = append(out, secretAlphabet[b%62])
+			if len(out) == secretLength {
+				break
+			}
+		}
+	}
+	return string(out)
+}
+
+// ServiceAccountUsername is the account a client with service accounts enabled
+// acts as.
+//
+// P1 guessed this convention when it created the account on demand during a
+// client_credentials grant, and said so. P2 measured it through
+// GET /admin/realms/{realm}/clients/{uuid}/service-account-user, which returned
+// username "service-account-probe-secret" for clientId "probe-secret". The
+// guess was right; this function is where it stops being one.
+func ServiceAccountUsername(clientID string) string {
+	return "service-account-" + clientID
+}
+
 // Realm is a tenant. Lifespans are stored as durations but are emitted as
 // whole seconds in token responses.
 type Realm struct {
@@ -45,19 +97,45 @@ type Realm struct {
 // Client is an OAuth2 client. ID is the internal UUID used in admin API paths;
 // ClientID is the human-facing identifier used in protocol requests. Keeping
 // both is mandatory: Keycloak addresses clients by UUID in /admin/realms paths.
+//
+// The field set is what Keycloak's ClientRepresentation carries, measured on a
+// live instance rather than read off the OpenAPI schema - the schema lists what
+// may appear, and the recording says what does. See "Client representation" in
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+//
+// DefaultClientScopes and OptionalClientScopes are lists of scope *names*, not
+// the client-scope objects themselves. Those objects, and protocol mappers, are
+// P5. Keeping the names here is the least that lets the representation be
+// reproduced from stored state rather than invented per client.
 type Client struct {
 	ID                        string
 	RealmID                   string
 	ClientID                  string
 	Name                      string
+	Description               string
+	RootURL                   string
+	BaseURL                   string
 	Enabled                   bool
 	PublicClient              bool
 	Secret                    string
+	Protocol                  string
+	ClientAuthenticatorType   string
+	SurrogateAuthRequired     bool
+	AlwaysDisplayInConsole    bool
+	BearerOnly                bool
+	ConsentRequired           bool
 	StandardFlowEnabled       bool
+	ImplicitFlowEnabled       bool
 	DirectAccessGrantsEnabled bool
 	ServiceAccountsEnabled    bool
+	FrontchannelLogout        bool
+	FullScopeAllowed          bool
+	NotBefore                 int
+	NodeReRegistrationTimeout int
 	RedirectURIs              []string
 	WebOrigins                []string
+	DefaultClientScopes       []string
+	OptionalClientScopes      []string
 	Attributes                map[string]string
 }
 
@@ -73,6 +151,15 @@ type User struct {
 	LastName         string
 	CreatedTimestamp int64
 	Attributes       map[string][]string
+	// RequiredActions is what the user must do at next login. Measured: a
+	// reset-password carrying temporary true adds UPDATE_PASSWORD, and the
+	// user representation shows it.
+	RequiredActions []string
+	// NotBefore is a Unix second before which the user's tokens are refused.
+	// Measured: POST /users/{id}/logout sets it to the moment of the logout,
+	// and the user representation shows it - so the endpoint's effect is
+	// visible beyond its 204.
+	NotBefore int
 }
 
 // Credential is a stored secret, split the way Keycloak splits it: a public
@@ -87,6 +174,14 @@ type Credential struct {
 	AdditionalParameters map[string][]string
 	Salt                 []byte
 	HashValue            []byte
+	// Label is the userLabel a caller can attach through
+	// PUT .../credentials/{id}/userLabel. Measured: it appears in the
+	// credential representation between type and createdDate, and a
+	// reset-password clears it.
+	Label string
+	// Priority is the credential's position in the user's list, which
+	// moveAfter and moveToFirst rewrite. Lower comes first.
+	Priority int
 }
 
 // UserSession is an SSO session: one login, however many clients use it. Its

@@ -56,20 +56,55 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   find matching target resource method"}`, a wrong method on a known path
   answers `{"error":"HTTP 404 Not Found"}`. That is why `withKeycloakFallbacks`
   still tells the two cases apart even though both return the same status.
-- **The five security headers have two exceptions, not one.** A route match
+- **The five security headers have three exceptions, not one.** A route match
   and a known path hit with the wrong method both get `Referrer-Policy`,
   `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`
   and `X-Robots-Tag`. A path matching no route at all gets none of them,
-  because that request never reaches Keycloak's filter chain. And
-  **`userinfo` sends four of the five, omitting `X-Frame-Options`** - it does
-  reach the filter chain, so this one is not explained by routing. Applying
-  them uniformly "for consistency" is the fix that would break both.
+  because that request never reaches Keycloak's filter chain. **`userinfo`'s
+  rejections send four of the five, omitting `X-Frame-Options`** - they do
+  reach the filter chain, so this one is not explained by routing, and its
+  own 200 sends all five, so it is not explained by the endpoint either. And
+  **a 204 carries `X-Frame-Options` only when the request declared an
+  `application/*` `Content-Type`**: measured across seven Content-Type values
+  on one endpoint, every one answering 204. That covers every delete (no
+  Content-Type, so no header), the client and user updates (JSON, so the
+  header), and `PUT .../userLabel` (`text/plain`, so no header).
+  `httpx.WriteNoContent` is the one place that decides. Applying them
+  uniformly "for consistency" is the fix that would break all three.
+- **That rule was wrong once already.** P2's Task 11 recorded it as "a
+  successful `DELETE`'s 204 omits it", from four deletes that all happened to
+  send no `Content-Type`. When a new 204 disagrees with a header rule, measure
+  the request's headers before believing the method.
+- **`Cache-Control` on a 204 does not follow the method.** Four of the five
+  measured deletes carry `no-cache` and `DELETE .../client-secret/rotated`
+  does not; no `PUT` carries it. It is pinned per endpoint.
+- **A client with no secret answers `GET .../client-secret` with 200 and no
+  `value` key**, not 404 - and none of the six bootstrapped clients has one.
+  `POST` mints a secret even for a public client, whose representation then
+  still omits it: `secret` in `ClientRepresentation` follows `publicClient`,
+  not what is stored.
+- **A rotated client secret cannot exist on a default 26.7.1.**
+  `CLIENT_SECRET_ROTATION` is a disabled preview feature and `secret-rotation`
+  is not a registered executor, so `GET .../client-secret/rotated` is always
+  404 and `DELETE` always 204. Those constants are the contract, not stubs.
+- **`attributes` key order is the one thing the conformance suite does not
+  compare.** It is a Java `Map` in hash order and Go sorts map keys; matching it
+  would mean emulating `java.util.HashMap` in Go. `Case.UnorderedKeys` sorts
+  both sides, so membership and values are still asserted. This is the only
+  such retreat - do not add a second without writing down why.
 - **Gloak deletes the `Date` header on every response.** Keycloak sends none;
   Go's `net/http` adds one automatically, so `internal/httpx` suppresses it with
   `w.Header()["Date"] = nil`. The conformance verifier cannot catch its removal:
   it serves through `httptest.ResponseRecorder`, which never adds a `Date`
   header either. The guard is `internal/httpx`'s own test, which uses a real
   `httptest.NewServer` instead.
+- **A dead session and a bad refresh token answer differently.** A token whose
+  session was ended - by an admin logout or by revocation - answers
+  `"Session not active"`; one that was never valid answers
+  `"Invalid refresh token"`. Same status, same code, different description.
+- **`POST /users/{id}/logout` stamps the user's `notBefore`** with the moment
+  it happened, so its effect is visible in the representation and not only in
+  its 204.
 - **Revocation answers an unknown token with 200 and an error body**, not 400:
   `{"error":"invalid_token","error_description":"Invalid token"}` with a 200 status
   line. The client asked for a token to stop working and it does not work.
@@ -80,6 +115,16 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **A public client may revoke but may not introspect.** `admin-cli` revoking
   succeeds; `admin-cli` introspecting is refused with 403
   `{"error":"invalid_request","error_description":"Client not allowed."}`.
+- **A client cannot introspect its own access token.** An access token's `aud`
+  holds the clients the *user* has roles on, never the issuing client, and
+  Keycloak answers `{"active":false}` with 200 when the caller is outside it.
+  A refresh token from the same client introspects active, so the check is on
+  access tokens alone. Gloak does not do this yet - see F18.
+- **`userinfo`'s 200 sends `Cache-Control` twice**, `no-store` then
+  `no-cache`. Every rejection sends only `no-store`. The conformance harness
+  compares every value of a repeated header because of this one response.
+- **A refresh token introspects into the access token's claim set**, nineteen
+  keys with `active` last, not RFC 7662's small set.
 - **`not-before-policy`** in the token response is spelled with hyphens.
 - **Refresh tokens are signed HS512**, access and ID tokens RS256. That is why a
   realm holds two keys.
@@ -88,6 +133,34 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   access tokens carry a different claim set than Keycloak's.
 - **The admin role container in `master` is the `master-realm` client.**
   `realm-management` is its equivalent inside non-master realms.
+- **One user serialises three ways.** `GET /users` carries a one-key `access`
+  block, `GET /users/{id}` a six-key one, and
+  `.../clients/{uuid}/service-account-user` none at all. A shared user
+  serialiser would be wrong twice. `access` describes the **caller's**
+  permissions, never the user being read.
+- **`GET /users/count` is a bare JSON number**, and it is not filtered by what
+  the caller may see, while the listing beside it is.
+- **The user listing's two filter families do not agree.** `username`, `email`,
+  `firstName` and `lastName` are case-insensitive **substrings** where `*` is a
+  literal; `search` is a case-insensitive **prefix** where `*` is a wildcard
+  and `"quotes"` mean equality, and `exact=true` does not reach it. Writing one
+  comparison for both is the mistake this project already made once.
+- **A user's username is lowercased on create and immutable on update.** A
+  `PUT` naming a free username answers 204 and changes nothing; naming a taken
+  one still answers 409.
+- **An empty or `null` request body on `POST /users` is a 500**, not a 400.
+  Another of Keycloak's own defects, reproduced.
+- **A credential list carries no secret**, so `view-users` is enough to read
+  it. `credentialData` inside it is a **JSON string**, not a nested object, and
+  the `additionalParameters` inside *that* are a Java map in hash order which
+  the suite cannot normalise - so `internal/admin` writes the five argon2 keys
+  out in the measured order rather than marshalling a Go map.
+- **`reset-password` ignores the `type` it is given** and sets a password
+  whatever it is told, replacing the credential in place: same id, refreshed
+  `createdDate`, `userLabel` cleared.
+- **`PUT .../userLabel` consumes `text/plain`.** Sending JSON answers 415.
+- **"Credential not found" is a fourth not-found spelling**, after "Could not
+  find client", "User not found" and "Realm not found." with its full stop.
 
 ## Boundaries
 
@@ -129,6 +202,7 @@ The discovery document's order comes from
 make test    # CGO_ENABLED=0 go test ./...
 make lint
 make build
+make oracle  # drives Gloak with kcadm.sh; needs Docker
 ```
 
 - `make test` is clean. **Any** failure is a real regression. It was not always so:
@@ -141,6 +215,11 @@ make build
   the binary a single static file; do not swap in a cgo driver.
 - The Postgres suite (`go test -tags docker ./internal/store/postgres/`) is the only
   evidence the drivers agree. Run it after touching either.
+- **`make oracle` is the only test that is not written against a golden.** It
+  runs Keycloak's own `kcadm.sh` against Gloak, so it asks for things no case
+  asks for. It found `ClientRepresentation.description` - a field Gloak did not
+  have, because none of the six bootstrapped clients carries one and so no
+  recording ever showed it. Run it after touching a representation.
 - Adding a store interface method means implementing it in **both** drivers. The
   conformance suite in `internal/store/storetest` does not exercise every method, so
   compiling is not proof.

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ekalinin/gloak/internal/admin"
 	"github.com/ekalinin/gloak/internal/bootstrap"
 	"github.com/ekalinin/gloak/internal/keys"
 	"github.com/ekalinin/gloak/internal/oidc"
@@ -38,7 +39,13 @@ func newFixture(t *testing.T, state string) http.Handler {
 		if err := bootstrap.EnsureMaster(ctx, s, "admin", "admin"); err != nil {
 			t.Fatalf("EnsureMaster: %v", err)
 		}
-		return oidc.NewRouter(s, keys.NewManager(s), testIssuer)
+		// Both APIs on one mux, wrapped once, exactly as cmd/gloak composes
+		// them - otherwise the suite would verify a handler nobody serves.
+		km := keys.NewManager(s)
+		mux := http.NewServeMux()
+		oidc.Register(mux, s, km, testIssuer)
+		admin.Register(mux, s, km, testIssuer)
+		return oidc.WithKeycloakFallbacks(mux)
 	default:
 		t.Fatalf("unknown fixture state %q", state)
 		return nil

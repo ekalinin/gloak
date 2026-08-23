@@ -270,3 +270,94 @@ otherwise reach for the policy engine.
 The five remaining resource groups in P2's boundary. They get their own spec
 once the first cut is serving, when the shape of the authorization model and the
 representation work is known from having done it rather than predicted.
+
+---
+
+## 11. What P2's first cut shipped
+
+Written 2026-08-23, after the eighteen tasks. Same three headings P1's spec
+ends with, because they are the three things the next sub-project needs.
+
+**Served and measured.** 24 Admin REST API operations - `admin/clients` 10 of
+35, `admin/users` 14 of 34 - each guarded by the `master-realm` client role
+Keycloak was measured guarding it with. The caller is resolved from the session
+behind the token, because an `admin-cli` access token is lightweight and
+carries no roles to read; section 3 predicted that and the recordings confirmed
+it. Clients, client secrets, service accounts, users, credentials and user
+logout are all served against recorded bytes.
+
+Six protocol bodies P1 could not reach came with them, closing follow-up F15:
+userinfo's success on GET and POST, an expired token, the
+`client_credentials` grant and introspection of an unknown token. `oidc/userinfo`
+is 7 of 7, the first protocol chapter finished.
+
+The meter went from 25 of 483 to **55 of 485**.
+
+**Measured and not served, with the reason in the case.** Six cases are
+`Recorded`: the bytes are in the repository and the verifier fails if one ever
+starts matching.
+
+| Case | Waiting on |
+|---|---|
+| `admin/clients/list-all` | protocol mappers, P5 |
+| `admin/clients/read-created` | the realm's default client scopes, P5 |
+| `admin/clients/read-described` | the same |
+| `admin/users/create-unknown-field` | Jackson's line and column, which Go's decoder does not report |
+| `oidc/introspection/active-refresh-token` | roles resolved at issuance, F18 |
+| `oidc/introspection/access-token-outside-audience` | the same |
+
+One case stays `Pending` and cannot be recorded at all:
+`oidc/introspection/active-access-token`. No fixture can put the introspecting
+client inside an access token's audience without assigning the user a role on
+it, which is the second cut, or an audience protocol mapper, which is P5.
+
+**Not attempted.** The 45 operations §1.1 attributes elsewhere, and P2's other
+five resource groups - Roles, Roles by ID, Groups, Role Mapper, Client Role
+Mappings. Those get a second spec now that the shape of the work is known from
+having done it.
+
+### 11.1 Three things the recordings changed about how this project works
+
+**A rule can be wrong from four confirming measurements.** Task 11 recorded
+"a successful `DELETE`'s 204 omits `X-Frame-Options`" from four deletes that
+all happened to send no `Content-Type`. Task 15's `PUT .../userLabel`
+falsified it, and seven Content-Type values on one endpoint produced the real
+rule. Task 14 did the same thing with `search`, recorded as a substring from
+four terms that were all prefixes. Both are now in AGENTS.md as warnings, not
+just as corrections.
+
+**The recorder shares one container, so fixtures leak.** Two goldens recorded
+another fixture's objects as though Keycloak had made them.
+`Case.PristineRealm` and `TestPristineRealmGoldensAreNotPolluted` catch the
+first kind; the second was a search term broad enough to match a sibling.
+
+**A recording-driven suite only compares what a case asks for.** `kcadm.sh`
+found `ClientRepresentation.description` - a field Gloak did not have, because
+no bootstrapped client carries one - within a minute of first running.
+`make oracle` is now part of the toolkit.
+
+## 12. The debt this hands on
+
+**F16** - a client created through the API differs from Keycloak's in three
+ways: two client-scope name lists it does not inherit, and
+`nodeReRegistrationTimeout`. The lists are P5; the `-1` is simply not applied
+yet.
+
+**F17** - the listings are gated where Keycloak filters. A caller holding only
+a `query-` role gets 200 and an empty array from Keycloak and either 403 or
+everything from Gloak. Fixing it needs the second cut's role assignment before
+a conformance case can reach it.
+
+**F18** - Gloak resolves no roles at token issuance, so `realm_access` is
+empty, `resource_access` is `{}` and `aud` names the issuing client, which is
+measurably wrong. Two introspection cases wait on it, and so does the
+audience check that makes Gloak refuse an access token the way Keycloak does.
+The machinery exists - `RoleRepo.ListUserRoles` plus composite expansion, which
+`internal/admin` already uses - but bootstrap also has to create the `account`
+client's three roles and the `default-roles-master` composite that grants them.
+
+**F19** - two `access.token.lifespan` values are measured and not reproduced.
+
+The debt P1 handed to P5 is unchanged and unpaid: `internal/token/claims.go`
+still hardcodes three claim sets. F18 is the first thing that will make paying
+it urgent, because roles at issuance is where the mapper model starts.

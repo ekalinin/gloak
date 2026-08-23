@@ -169,6 +169,15 @@ func encode(v any) string {
 
 func decode(s string, v any) error { return json.Unmarshal([]byte(s), v) }
 
+// nonNilStrings keeps a nil slice out of the database as [] rather than null,
+// so a scan back yields an empty slice and the representation marshals [].
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
 // scanner is satisfied by both *sql.Row and *sql.Rows, so single-row getters
 // and list methods share one scan implementation per entity.
 type scanner interface{ Scan(dest ...any) error }
@@ -225,39 +234,55 @@ type clientRepo struct{ db *sql.DB }
 
 func (r *clientRepo) Create(ctx context.Context, m *model.Client) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO client (id, realm_id, client_id, name, enabled, public_client, secret,
-		 standard_flow_enabled, direct_access_grants_enabled, service_accounts_enabled,
-		 redirect_uris, web_origins, attributes)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.ID, m.RealmID, m.ClientID, m.Name, m.Enabled, m.PublicClient, m.Secret,
-		m.StandardFlowEnabled, m.DirectAccessGrantsEnabled, m.ServiceAccountsEnabled,
-		encode(m.RedirectURIs), encode(m.WebOrigins), encode(m.Attributes))
+		`INSERT INTO client (id, realm_id, client_id, name, description, root_url, base_url, enabled, public_client, secret,
+		 protocol, client_authenticator_type, surrogate_auth_required, always_display_in_console,
+		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
+		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
+		 full_scope_allowed, not_before, node_re_registration_timeout,
+		 redirect_uris, web_origins, default_client_scopes, optional_client_scopes, attributes)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.RealmID, m.ClientID, m.Name, m.Description, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
+		m.Protocol, m.ClientAuthenticatorType, m.SurrogateAuthRequired, m.AlwaysDisplayInConsole,
+		m.BearerOnly, m.ConsentRequired, m.StandardFlowEnabled, m.ImplicitFlowEnabled,
+		m.DirectAccessGrantsEnabled, m.ServiceAccountsEnabled, m.FrontchannelLogout,
+		m.FullScopeAllowed, m.NotBefore, m.NodeReRegistrationTimeout,
+		encode(m.RedirectURIs), encode(m.WebOrigins), encode(m.DefaultClientScopes),
+		encode(m.OptionalClientScopes), encode(m.Attributes))
 	return classify(err)
 }
 
 func (r *clientRepo) ByClientID(ctx context.Context, realmID, clientID string) (*model.Client, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, realm_id, client_id, name, enabled, public_client, secret,
-		 standard_flow_enabled, direct_access_grants_enabled, service_accounts_enabled,
-		 redirect_uris, web_origins, attributes
+		`SELECT id, realm_id, client_id, name, description, root_url, base_url, enabled, public_client, secret,
+		 protocol, client_authenticator_type, surrogate_auth_required, always_display_in_console,
+		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
+		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
+		 full_scope_allowed, not_before, node_re_registration_timeout,
+		 redirect_uris, web_origins, default_client_scopes, optional_client_scopes, attributes
 		 FROM client WHERE realm_id = ? AND client_id = ?`, realmID, clientID)
 	return scanClient(row)
 }
 
 func (r *clientRepo) ByID(ctx context.Context, realmID, id string) (*model.Client, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, realm_id, client_id, name, enabled, public_client, secret,
-		 standard_flow_enabled, direct_access_grants_enabled, service_accounts_enabled,
-		 redirect_uris, web_origins, attributes
+		`SELECT id, realm_id, client_id, name, description, root_url, base_url, enabled, public_client, secret,
+		 protocol, client_authenticator_type, surrogate_auth_required, always_display_in_console,
+		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
+		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
+		 full_scope_allowed, not_before, node_re_registration_timeout,
+		 redirect_uris, web_origins, default_client_scopes, optional_client_scopes, attributes
 		 FROM client WHERE realm_id = ? AND id = ?`, realmID, id)
 	return scanClient(row)
 }
 
 func (r *clientRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.Client, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, realm_id, client_id, name, enabled, public_client, secret,
-		 standard_flow_enabled, direct_access_grants_enabled, service_accounts_enabled,
-		 redirect_uris, web_origins, attributes
+		`SELECT id, realm_id, client_id, name, description, root_url, base_url, enabled, public_client, secret,
+		 protocol, client_authenticator_type, surrogate_auth_required, always_display_in_console,
+		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
+		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
+		 full_scope_allowed, not_before, node_re_registration_timeout,
+		 redirect_uris, web_origins, default_client_scopes, optional_client_scopes, attributes
 		 FROM client WHERE realm_id = ? ORDER BY client_id`, realmID)
 	if err != nil {
 		return nil, classify(err)
@@ -275,23 +300,71 @@ func (r *clientRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.
 	return out, classify(rows.Err())
 }
 
+// Update replaces every mutable column. The admin API's PUT carries a whole
+// representation, and merge semantics are applied above this layer.
+func (r *clientRepo) Update(ctx context.Context, m *model.Client) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE client SET
+			 name = ?, description = ?, root_url = ?, base_url = ?, enabled = ?, public_client = ?, secret = ?,
+			 protocol = ?, client_authenticator_type = ?, surrogate_auth_required = ?,
+			 always_display_in_console = ?, bearer_only = ?, consent_required = ?,
+			 standard_flow_enabled = ?, implicit_flow_enabled = ?, direct_access_grants_enabled = ?,
+			 service_accounts_enabled = ?, frontchannel_logout = ?, full_scope_allowed = ?,
+			 not_before = ?, node_re_registration_timeout = ?,
+			 redirect_uris = ?, web_origins = ?, default_client_scopes = ?,
+			 optional_client_scopes = ?, attributes = ?
+			 WHERE realm_id = ? AND id = ?`,
+		m.Name, m.Description, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
+		m.Protocol, m.ClientAuthenticatorType, m.SurrogateAuthRequired,
+		m.AlwaysDisplayInConsole, m.BearerOnly, m.ConsentRequired,
+		m.StandardFlowEnabled, m.ImplicitFlowEnabled, m.DirectAccessGrantsEnabled,
+		m.ServiceAccountsEnabled, m.FrontchannelLogout, m.FullScopeAllowed,
+		m.NotBefore, m.NodeReRegistrationTimeout,
+		encode(m.RedirectURIs), encode(m.WebOrigins), encode(m.DefaultClientScopes),
+		encode(m.OptionalClientScopes), encode(m.Attributes),
+		m.RealmID, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
+}
+
+func (r *clientRepo) Delete(ctx context.Context, realmID, id string) error {
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM client WHERE realm_id = ? AND id = ?`, realmID, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
+}
+
 func scanClient(row scanner) (*model.Client, error) {
 	m := &model.Client{}
-	var redirectURIs, webOrigins, attributes string
-	err := row.Scan(&m.ID, &m.RealmID, &m.ClientID, &m.Name, &m.Enabled, &m.PublicClient, &m.Secret,
-		&m.StandardFlowEnabled, &m.DirectAccessGrantsEnabled, &m.ServiceAccountsEnabled,
-		&redirectURIs, &webOrigins, &attributes)
+	var redirectURIs, webOrigins, defaultScopes, optionalScopes, attributes string
+	err := row.Scan(&m.ID, &m.RealmID, &m.ClientID, &m.Name, &m.Description, &m.RootURL, &m.BaseURL,
+		&m.Enabled, &m.PublicClient, &m.Secret,
+		&m.Protocol, &m.ClientAuthenticatorType, &m.SurrogateAuthRequired, &m.AlwaysDisplayInConsole,
+		&m.BearerOnly, &m.ConsentRequired, &m.StandardFlowEnabled, &m.ImplicitFlowEnabled,
+		&m.DirectAccessGrantsEnabled, &m.ServiceAccountsEnabled, &m.FrontchannelLogout,
+		&m.FullScopeAllowed, &m.NotBefore, &m.NodeReRegistrationTimeout,
+		&redirectURIs, &webOrigins, &defaultScopes, &optionalScopes, &attributes)
 	if err != nil {
 		return nil, classify(err)
 	}
-	if err := decode(redirectURIs, &m.RedirectURIs); err != nil {
-		return nil, fmt.Errorf("sqlite: decode redirect_uris: %w", err)
-	}
-	if err := decode(webOrigins, &m.WebOrigins); err != nil {
-		return nil, fmt.Errorf("sqlite: decode web_origins: %w", err)
-	}
-	if err := decode(attributes, &m.Attributes); err != nil {
-		return nil, fmt.Errorf("sqlite: decode attributes: %w", err)
+	for _, f := range []struct {
+		raw  string
+		into any
+		name string
+	}{
+		{redirectURIs, &m.RedirectURIs, "redirect_uris"},
+		{webOrigins, &m.WebOrigins, "web_origins"},
+		{defaultScopes, &m.DefaultClientScopes, "default_client_scopes"},
+		{optionalScopes, &m.OptionalClientScopes, "optional_client_scopes"},
+		{attributes, &m.Attributes, "attributes"},
+	} {
+		if err := decode(f.raw, f.into); err != nil {
+			return nil, fmt.Errorf("sqlite: decode %s: %w", f.name, err)
+		}
 	}
 	return m, nil
 }
@@ -301,17 +374,18 @@ type userRepo struct{ db *sql.DB }
 func (r *userRepo) Create(ctx context.Context, m *model.User) error {
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO user_entity (id, realm_id, username, email, email_verified, enabled,
-		 first_name, last_name, created_timestamp, attributes)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 first_name, last_name, created_timestamp, attributes, required_actions, not_before)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.RealmID, m.Username, m.Email, m.EmailVerified, m.Enabled,
-		m.FirstName, m.LastName, m.CreatedTimestamp, encode(m.Attributes))
+		m.FirstName, m.LastName, m.CreatedTimestamp, encode(m.Attributes),
+		encode(nonNilStrings(m.RequiredActions)), m.NotBefore)
 	return classify(err)
 }
 
 func (r *userRepo) ByUsername(ctx context.Context, realmID, username string) (*model.User, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT id, realm_id, username, email, email_verified, enabled, first_name, last_name,
-		 created_timestamp, attributes
+		 created_timestamp, attributes, required_actions, not_before
 		 FROM user_entity WHERE realm_id = ? AND username = ?`, realmID, username)
 	return scanUser(row)
 }
@@ -319,9 +393,55 @@ func (r *userRepo) ByUsername(ctx context.Context, realmID, username string) (*m
 func (r *userRepo) ByID(ctx context.Context, realmID, id string) (*model.User, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT id, realm_id, username, email, email_verified, enabled, first_name, last_name,
-		 created_timestamp, attributes
+		 created_timestamp, attributes, required_actions, not_before
 		 FROM user_entity WHERE realm_id = ? AND id = ?`, realmID, id)
 	return scanUser(row)
+}
+
+// ListByRealm orders by username because Keycloak's listing was measured
+// sorted rather than in insertion order.
+func (r *userRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.User, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, realm_id, username, email, email_verified, enabled, first_name, last_name,
+		 created_timestamp, attributes, required_actions, not_before
+		 FROM user_entity WHERE realm_id = ? ORDER BY username`, realmID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	defer rows.Close()
+
+	var out []*model.User
+	for rows.Next() {
+		m, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+func (r *userRepo) Update(ctx context.Context, m *model.User) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE user_entity SET username = ?, email = ?, email_verified = ?, enabled = ?,
+		 first_name = ?, last_name = ?, attributes = ?, required_actions = ?, not_before = ?
+		 WHERE realm_id = ? AND id = ?`,
+		m.Username, m.Email, m.EmailVerified, m.Enabled,
+		m.FirstName, m.LastName, encode(m.Attributes),
+		encode(nonNilStrings(m.RequiredActions)), m.NotBefore, m.RealmID, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
+}
+
+func (r *userRepo) Delete(ctx context.Context, realmID, id string) error {
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM user_entity WHERE realm_id = ? AND id = ?`, realmID, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
 }
 
 // SetCredential upserts on (user_id, type) so a password reset can replace an
@@ -329,46 +449,96 @@ func (r *userRepo) ByID(ctx context.Context, realmID, id string) (*model.User, e
 func (r *userRepo) SetCredential(ctx context.Context, m *model.Credential) error {
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO credential (id, user_id, type, created_date, algorithm, hash_iterations,
-		 additional_parameters, salt, hash_value)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 additional_parameters, salt, hash_value, user_label, priority)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (user_id, type) DO UPDATE SET
 		 	created_date = excluded.created_date,
 		 	algorithm = excluded.algorithm,
 		 	hash_iterations = excluded.hash_iterations,
 		 	additional_parameters = excluded.additional_parameters,
 		 	salt = excluded.salt,
-		 	hash_value = excluded.hash_value`,
+		 	hash_value = excluded.hash_value,
+		 	user_label = excluded.user_label`,
 		m.ID, m.UserID, m.Type, m.CreatedDate, m.Algorithm, m.HashIterations,
-		encode(m.AdditionalParameters), m.Salt, m.HashValue)
+		encode(m.AdditionalParameters), m.Salt, m.HashValue, m.Label, m.Priority)
 	return classify(err)
 }
 
 func (r *userRepo) CredentialByUser(ctx context.Context, userID, typ string) (*model.Credential, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, user_id, type, created_date, algorithm, hash_iterations, additional_parameters, salt, hash_value
-		 FROM credential WHERE user_id = ? AND type = ?`, userID, typ)
+		`SELECT id, user_id, type, created_date, algorithm, hash_iterations, additional_parameters, salt, hash_value, user_label, priority
+		 FROM credential WHERE user_id = ? AND type = ? ORDER BY priority, id LIMIT 1`, userID, typ)
 	return scanCredential(row)
 }
 
 func scanUser(row scanner) (*model.User, error) {
 	m := &model.User{}
-	var attributes string
+	var attributes, requiredActions string
 	err := row.Scan(&m.ID, &m.RealmID, &m.Username, &m.Email, &m.EmailVerified, &m.Enabled,
-		&m.FirstName, &m.LastName, &m.CreatedTimestamp, &attributes)
+		&m.FirstName, &m.LastName, &m.CreatedTimestamp, &attributes, &requiredActions, &m.NotBefore)
 	if err != nil {
 		return nil, classify(err)
 	}
 	if err := decode(attributes, &m.Attributes); err != nil {
 		return nil, fmt.Errorf("sqlite: decode attributes: %w", err)
 	}
+	if err := decode(requiredActions, &m.RequiredActions); err != nil {
+		return nil, fmt.Errorf("sqlite: decode required_actions: %w", err)
+	}
 	return m, nil
+}
+
+func (r *userRepo) ListCredentials(ctx context.Context, userID string) ([]*model.Credential, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, user_id, type, created_date, algorithm, hash_iterations, additional_parameters, salt, hash_value, user_label, priority
+		 FROM credential WHERE user_id = ? ORDER BY priority, id`, userID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	defer rows.Close()
+
+	var out []*model.Credential
+	for rows.Next() {
+		m, err := scanCredential(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+func (r *userRepo) CredentialByID(ctx context.Context, userID, id string) (*model.Credential, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT id, user_id, type, created_date, algorithm, hash_iterations, additional_parameters, salt, hash_value, user_label, priority
+		 FROM credential WHERE user_id = ? AND id = ?`, userID, id)
+	return scanCredential(row)
+}
+
+func (r *userRepo) DeleteCredential(ctx context.Context, userID, id string) error {
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM credential WHERE user_id = ? AND id = ?`, userID, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
+}
+
+func (r *userRepo) UpdateCredential(ctx context.Context, m *model.Credential) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE credential SET user_label = ?, priority = ? WHERE user_id = ? AND id = ?`,
+		m.Label, m.Priority, m.UserID, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
 }
 
 func scanCredential(row scanner) (*model.Credential, error) {
 	m := &model.Credential{}
 	var additionalParameters string
 	err := row.Scan(&m.ID, &m.UserID, &m.Type, &m.CreatedDate, &m.Algorithm, &m.HashIterations,
-		&additionalParameters, &m.Salt, &m.HashValue)
+		&additionalParameters, &m.Salt, &m.HashValue, &m.Label, &m.Priority)
 	if err != nil {
 		return nil, classify(err)
 	}
@@ -406,6 +576,85 @@ func (r *roleRepo) ListRealmRoles(ctx context.Context, realmID string) ([]*model
 	}
 	defer rows.Close()
 
+	var out []*model.Role
+	for rows.Next() {
+		m, err := scanRole(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+func (r *roleRepo) ByID(ctx context.Context, realmID, id string) (*model.Role, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT id, realm_id, client_id, name, description, composite
+		 FROM keycloak_role WHERE realm_id = ? AND id = ?`, realmID, id)
+	return scanRole(row)
+}
+
+// ListClientRoles returns the roles a client owns, the counterpart of
+// ListRealmRoles' empty-client_id filter.
+func (r *roleRepo) ListClientRoles(ctx context.Context, realmID, clientID string) ([]*model.Role, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, realm_id, client_id, name, description, composite
+		 FROM keycloak_role WHERE realm_id = ? AND client_id = ? ORDER BY name`, realmID, clientID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return collectRoles(rows)
+}
+
+func (r *roleRepo) AddComposite(ctx context.Context, roleID, childRoleID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO composite_role (composite, child_role) VALUES (?, ?)`, roleID, childRoleID)
+	return classify(err)
+}
+
+func (r *roleRepo) ListComposites(ctx context.Context, roleID string) ([]*model.Role, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT r.id, r.realm_id, r.client_id, r.name, r.description, r.composite
+		 FROM keycloak_role r
+		 JOIN composite_role c ON c.child_role = r.id
+		 WHERE c.composite = ? ORDER BY r.name`, roleID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return collectRoles(rows)
+}
+
+func (r *roleRepo) AssignToUser(ctx context.Context, userID, roleID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO user_role_mapping (user_id, role_id) VALUES (?, ?)`, userID, roleID)
+	return classify(err)
+}
+
+func (r *roleRepo) RemoveFromUser(ctx context.Context, userID, roleID string) error {
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM user_role_mapping WHERE user_id = ? AND role_id = ?`, userID, roleID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
+}
+
+func (r *roleRepo) ListUserRoles(ctx context.Context, userID string) ([]*model.Role, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT r.id, r.realm_id, r.client_id, r.name, r.description, r.composite
+		 FROM keycloak_role r
+		 JOIN user_role_mapping m ON m.role_id = r.id
+		 WHERE m.user_id = ? ORDER BY r.name`, userID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return collectRoles(rows)
+}
+
+// collectRoles drains a role query. Every role listing scans the same six
+// columns, so the loop lives once.
+func collectRoles(rows *sql.Rows) ([]*model.Role, error) {
+	defer rows.Close()
 	var out []*model.Role
 	for rows.Next() {
 		m, err := scanRole(rows)
@@ -493,6 +742,12 @@ func (r *sessionRepo) DeleteUserSession(ctx context.Context, realmID, id string)
 		return classify(err)
 	}
 	return affectedOne(res)
+}
+
+func (r *sessionRepo) DeleteUserSessions(ctx context.Context, realmID, userID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM user_session WHERE realm_id = ? AND user_id = ?`, realmID, userID)
+	return classify(err)
 }
 
 func (r *sessionRepo) CreateClientSession(ctx context.Context, m *model.ClientSession) error {

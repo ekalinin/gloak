@@ -27,6 +27,7 @@ func TestCoverage(t *testing.T) {
 	type tally struct {
 		implemented, recorded, pending, hasGolden, inventoryOnly int
 		pendingIDs                                               []string
+		cases                                                    []Case
 	}
 	tallies := map[string]*tally{}
 	for _, ch := range Chapters {
@@ -39,6 +40,7 @@ func TestCoverage(t *testing.T) {
 			t.Errorf("%q reports under chapter %q, which is not declared", c.ID, chapterOf(c.ID))
 			continue
 		}
+		tl.cases = append(tl.cases, c)
 		if _, err := os.Stat(GoldenPath(goldenDir, c.ID)); !errors.Is(err, fs.ErrNotExist) {
 			tl.hasGolden++
 		}
@@ -71,11 +73,15 @@ func TestCoverage(t *testing.T) {
 			t.Logf("%-36s  %6d  %8d  %10s  not enumerated: %s",
 				ch.Name, tl.implemented, tl.recorded, "?", ch.Reason)
 		case ch.OpenAPITag != "":
+			// Distinct operations, not cases: the denominator counts
+			// operations, so several cases on one endpoint must not read as
+			// several operations served. See servedOperations in openapi.go.
 			n := byTag[ch.OpenAPITag]
+			ops := servedOperations(tl.cases)
 			documented += n
-			served += tl.implemented
+			served += ops
 			t.Logf("%-36s  %6d  %8d  %10d  openapi 26.7.1",
-				ch.Name, tl.implemented, tl.recorded, n)
+				ch.Name, ops, tl.recorded, n)
 		default:
 			n := tl.implemented + tl.recorded + tl.pending
 			documented += n

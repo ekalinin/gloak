@@ -1,6 +1,7 @@
 package conformance
 
 import (
+	"net/http"
 	"path/filepath"
 	"testing"
 )
@@ -52,6 +53,32 @@ func TestGoldenBodyKeepsNoTrailingNewline(t *testing.T) {
 	raw := FormatGolden(Golden{RequestLine: "GET /x", Status: 200, Body: []byte(`{"a":1}`)})
 	if raw[len(raw)-1] != '}' {
 		t.Fatalf("golden file must end on the body's last byte, got %q", raw[len(raw)-8:])
+	}
+}
+
+func TestRecordedHeadersMasksACaseVolatileHeader(t *testing.T) {
+	// Every admin 201 carries a Location holding a UUID minted at request
+	// time. Without masking it, every create case churns on each recording -
+	// the disease four goldens already had.
+	c := Case{VolatileHeaders: []string{"Location"}}
+	h := http.Header{
+		"Location":     {"http://localhost:8080/admin/realms/master/clients/9f1c-uuid"},
+		"Content-Type": {"application/json"},
+	}
+
+	got := recordedHeaders(h, "http://localhost:8080", c, nil)
+
+	byName := map[string]string{}
+	for _, entry := range got {
+		byName[entry.Name] = entry.Value
+	}
+	if byName["Location"] != volatilePlaceholder {
+		t.Errorf("Location was not masked: %q", byName["Location"])
+	}
+	// A header that is not named stays verbatim, or masking one would hide
+	// every other divergence in the same response.
+	if byName["Content-Type"] != "application/json" {
+		t.Errorf("Content-Type was masked too: %q", byName["Content-Type"])
 	}
 }
 

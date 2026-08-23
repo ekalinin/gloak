@@ -30,21 +30,87 @@ const (
 	refreshTokenLifespan = 1800 * time.Second
 )
 
+// Client scope names every bootstrapped client carries, measured identically
+// on all six. They are names only: the client-scope objects behind them are
+// P5. See section 1.1 of
+// docs/superpowers/specs/2026-08-22-p2-admin-api-core-design.md.
+var (
+	defaultScopeNames  = []string{"web-origins", "acr", "profile", "roles", "basic", "email"}
+	optionalScopeNames = []string{"address", "phone", "organization", "offline_access", "microprofile-jwt"}
+)
+
 // defaultClients is the measured configuration of the six clients Keycloak
-// creates in a fresh master realm.
+// creates in a fresh master realm, transcribed from a recording of
+// GET /admin/realms/master/clients rather than from the OpenAPI schema. See
+// "Client representation" in
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+//
+// Two values here correct what this file had before, and neither was
+// contradicted by an earlier measurement - nobody had looked:
+//
+//   - broker and master-realm are bearer-only. They were created as ordinary
+//     confidential clients.
+//   - security-admin-console also carries the lightweight-access-token
+//     attribute. Only admin-cli was thought to.
+//
+// Name is a theme message key for five of the six; master-realm's is prose
+// derived from the realm name, which is why it is filled in at creation time
+// rather than listed here.
 var defaultClients = []model.Client{
-	{ClientID: "account", PublicClient: true, StandardFlowEnabled: true},
-	{ClientID: "account-console", PublicClient: true, StandardFlowEnabled: true},
 	{
-		ClientID: "admin-cli", PublicClient: true,
-		StandardFlowEnabled: false, DirectAccessGrantsEnabled: true,
+		ClientID: "account", Name: "${client_account}",
+		RootURL: "${authBaseUrl}", BaseURL: "/realms/master/account/",
+		Protocol: "openid-connect", PublicClient: true, StandardFlowEnabled: true,
+		RedirectURIs: []string{"/realms/master/account/*"},
 		Attributes: map[string]string{
+			"realm_client": "false", "post.logout.redirect.uris": "+",
+		},
+	},
+	{
+		ClientID: "account-console", Name: "${client_account-console}",
+		RootURL: "${authBaseUrl}", BaseURL: "/realms/master/account/",
+		Protocol: "openid-connect", PublicClient: true, StandardFlowEnabled: true,
+		RedirectURIs: []string{"/realms/master/account/*"},
+		Attributes: map[string]string{
+			"realm_client": "false", "post.logout.redirect.uris": "+",
+			"pkce.code.challenge.method": "S256",
+		},
+	},
+	{
+		ClientID: "admin-cli", Name: "${client_admin-cli}",
+		Protocol: "openid-connect", PublicClient: true,
+		StandardFlowEnabled: false, DirectAccessGrantsEnabled: true,
+		FullScopeAllowed: true,
+		Attributes: map[string]string{
+			"realm_client": "false",
 			"client.use.lightweight.access.token.enabled": "true",
 		},
 	},
-	{ClientID: "broker", PublicClient: false, StandardFlowEnabled: true},
-	{ClientID: "master-realm", PublicClient: false, StandardFlowEnabled: true},
-	{ClientID: "security-admin-console", PublicClient: true, StandardFlowEnabled: true},
+	{
+		ClientID: "broker", Name: "${client_broker}",
+		Protocol: "openid-connect", PublicClient: false, BearerOnly: true,
+		StandardFlowEnabled: true,
+		Attributes:          map[string]string{"realm_client": "true"},
+	},
+	{
+		// No Protocol: measured absent on this client alone.
+		ClientID: "master-realm", PublicClient: false, BearerOnly: true,
+		StandardFlowEnabled: true,
+		Attributes:          map[string]string{"realm_client": "true"},
+	},
+	{
+		ClientID: "security-admin-console", Name: "${client_security-admin-console}",
+		RootURL: "${authAdminUrl}", BaseURL: "/admin/master/console/",
+		Protocol: "openid-connect", PublicClient: true, StandardFlowEnabled: true,
+		FullScopeAllowed: true,
+		RedirectURIs:     []string{"/admin/master/console/*"},
+		WebOrigins:       []string{"+"},
+		Attributes: map[string]string{
+			"realm_client": "false", "post.logout.redirect.uris": "+",
+			"pkce.code.challenge.method":                  "S256",
+			"client.use.lightweight.access.token.enabled": "true",
+		},
+	},
 }
 
 // defaultRealmRoles is the measured set of realm-level roles Keycloak
@@ -56,6 +122,58 @@ var defaultRealmRoles = []model.Role{
 	{Name: "offline_access"},
 	{Name: "uma_authorization"},
 }
+
+// adminRoleContainer is the client that owns the admin roles in the master
+// realm. `realm-management` is the equivalent inside non-master realms, which
+// is P4's problem; the original design named it for master and was wrong.
+const adminRoleContainer = "master-realm"
+
+// adminClientRoles is the measured set of 21 roles on the master-realm client.
+// See "Admin roles on the master-realm client" in
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+//
+// Descriptions are theme message keys of the form ${role_<name>}, not prose,
+// so they are derived rather than listed.
+var adminClientRoles = []string{
+	"create-client",
+	"impersonation",
+	"manage-authorization",
+	"manage-clients",
+	"manage-events",
+	"manage-identity-providers",
+	"manage-organizations",
+	"manage-realm",
+	"manage-users",
+	"query-clients",
+	"query-groups",
+	"query-organizations",
+	"query-realms",
+	"query-users",
+	"view-authorization",
+	"view-clients",
+	"view-events",
+	"view-identity-providers",
+	"view-organizations",
+	"view-realm",
+	"view-users",
+}
+
+// adminRoleComposites is the measured composite structure among those 21.
+// The three view- roles each contain the query- role that backs them.
+var adminRoleComposites = map[string][]string{
+	"view-clients":       {"query-clients"},
+	"view-users":         {"query-groups", "query-users"},
+	"view-organizations": {"query-organizations"},
+}
+
+// adminComposites is what the realm role `admin` contains: measured as all 21
+// client roles above plus the realm role create-realm, 22 in total.
+//
+// The administrator holds no client role directly - measured - so every right
+// it has arrives through this composite. A build that does not expand
+// composites transitively grants the bootstrapped administrator nothing at
+// all.
+const adminCompositeRealmRole = "create-realm"
 
 // Argon2id parameters measured on Keycloak 26.7.1's default admin
 // credential: 5 iterations, 7168 KiB of memory, parallelism 1, 32-byte
@@ -86,6 +204,22 @@ func EnsureMaster(ctx context.Context, s store.Store, adminUser, adminPassword s
 		c.ID = model.NewID()
 		c.RealmID = realm.ID
 		c.Enabled = true
+		// Measured on every one of the six, so held here rather than repeated
+		// in each literal above.
+		c.ClientAuthenticatorType = "client-secret"
+		c.DefaultClientScopes = defaultScopeNames
+		c.OptionalClientScopes = optionalScopeNames
+		if c.RedirectURIs == nil {
+			c.RedirectURIs = []string{}
+		}
+		if c.WebOrigins == nil {
+			c.WebOrigins = []string{}
+		}
+		if c.ClientID == adminRoleContainer {
+			// "master Realm" - prose derived from the realm's name, not a
+			// theme message key like the other five.
+			c.Name = realm.Name + " Realm"
+		}
 		if err := s.Clients().Create(ctx, &c); err != nil && !errors.Is(err, store.ErrConflict) {
 			return fmt.Errorf("bootstrap: create client %q: %w", c.ClientID, err)
 		}
@@ -99,12 +233,89 @@ func EnsureMaster(ctx context.Context, s store.Store, adminUser, adminPassword s
 		}
 	}
 
+	if err := ensureAdminRoles(ctx, s, realm.ID); err != nil {
+		return err
+	}
+
 	user, err := ensureAdminUser(ctx, s, realm.ID, adminUser)
 	if err != nil {
 		return err
 	}
+	if err := ensureAdminRoleAssignment(ctx, s, realm.ID, user.ID); err != nil {
+		return err
+	}
 
 	return ensureAdminCredential(ctx, s, user.ID, adminPassword)
+}
+
+// ensureAdminRoles creates the master-realm client's 21 roles and wires the
+// measured composite structure: the three view- roles over their query-
+// counterparts, and the realm role admin over all 21 plus create-realm.
+func ensureAdminRoles(ctx context.Context, s store.Store, realmID string) error {
+	container, err := s.Clients().ByClientID(ctx, realmID, adminRoleContainer)
+	if err != nil {
+		return fmt.Errorf("bootstrap: look up %s client: %w", adminRoleContainer, err)
+	}
+
+	for _, name := range adminClientRoles {
+		r := &model.Role{
+			ID: model.NewID(), RealmID: realmID, ClientID: container.ID, Name: name,
+			Description: "${role_" + name + "}",
+			Composite:   len(adminRoleComposites[name]) > 0,
+		}
+		if err := s.Roles().Create(ctx, r); err != nil && !errors.Is(err, store.ErrConflict) {
+			return fmt.Errorf("bootstrap: create client role %q: %w", name, err)
+		}
+	}
+
+	for parent, children := range adminRoleComposites {
+		if err := composeRoles(ctx, s, realmID, container.ID, parent, container.ID, children); err != nil {
+			return err
+		}
+	}
+
+	// admin is a realm role, so its own client_id is empty while its children
+	// live on the container client - except create-realm, which is a realm
+	// role too.
+	if err := composeRoles(ctx, s, realmID, "", "admin", container.ID, adminClientRoles); err != nil {
+		return err
+	}
+	return composeRoles(ctx, s, realmID, "", "admin", "", []string{adminCompositeRealmRole})
+}
+
+// composeRoles adds each child to parent, ignoring a composite that is already
+// there so EnsureMaster stays safe to call on every start.
+func composeRoles(ctx context.Context, s store.Store, realmID, parentClientID, parent, childClientID string, children []string) error {
+	p, err := s.Roles().ByName(ctx, realmID, parentClientID, parent)
+	if err != nil {
+		return fmt.Errorf("bootstrap: look up role %q: %w", parent, err)
+	}
+	for _, name := range children {
+		c, err := s.Roles().ByName(ctx, realmID, childClientID, name)
+		if err != nil {
+			return fmt.Errorf("bootstrap: look up role %q: %w", name, err)
+		}
+		if err := s.Roles().AddComposite(ctx, p.ID, c.ID); err != nil && !errors.Is(err, store.ErrConflict) {
+			return fmt.Errorf("bootstrap: compose %q over %q: %w", parent, name, err)
+		}
+	}
+	return nil
+}
+
+// ensureAdminRoleAssignment gives the administrator the two realm roles it was
+// measured holding - admin and default-roles-master - and no client role
+// directly.
+func ensureAdminRoleAssignment(ctx context.Context, s store.Store, realmID, userID string) error {
+	for _, name := range []string{"admin", "default-roles-master"} {
+		r, err := s.Roles().ByName(ctx, realmID, "", name)
+		if err != nil {
+			return fmt.Errorf("bootstrap: look up role %q: %w", name, err)
+		}
+		if err := s.Roles().AssignToUser(ctx, userID, r.ID); err != nil && !errors.Is(err, store.ErrConflict) {
+			return fmt.Errorf("bootstrap: assign %q: %w", name, err)
+		}
+	}
+	return nil
 }
 
 // ensureRealm creates the master realm, or looks up the existing one if a
@@ -141,6 +352,13 @@ func ensureAdminUser(ctx context.Context, s store.Store, realmID, adminUser stri
 		Username:         adminUser,
 		Enabled:          true,
 		CreatedTimestamp: time.Now().UnixMilli(),
+		// Measured: the bootstrapped administrator carries this one attribute
+		// and it is visible through the Admin API, so the user listing cannot
+		// be reproduced without it. Keycloak sets it for an account created
+		// from KC_BOOTSTRAP_ADMIN_USERNAME; what it goes on to mean is not
+		// measured, only that it is there and that the value is the string
+		// "true" in a one-element array.
+		Attributes: map[string][]string{"is_temporary_admin": {"true"}},
 	}
 	err := s.Users().Create(ctx, user)
 	switch {

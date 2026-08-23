@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // SetSecurityHeaders sets the five security headers Keycloak 26.7.1 attaches
@@ -84,6 +85,41 @@ func WriteAdminError(w http.ResponseWriter, status int, message string) {
 func SetUserinfoSecurityHeaders(w http.ResponseWriter) {
 	SetSecurityHeaders(w)
 	w.Header().Del("X-Frame-Options")
+}
+
+// WriteNoContent writes a 204, deciding from the request whether it carries
+// X-Frame-Options.
+//
+// **The rule is about the request's Content-Type, not the method.** Measured
+// 2026-08-23 by sending DELETE /users/{id} seven times with seven different
+// Content-Type headers, every one answering 204:
+//
+//	absent              no X-Frame-Options
+//	text/plain          no X-Frame-Options
+//	*/*                 no X-Frame-Options
+//	application/json    X-Frame-Options
+//	application/xml     X-Frame-Options
+//	application/x-www-form-urlencoded   X-Frame-Options
+//	application/json;charset=UTF-8      X-Frame-Options
+//
+// It holds across every 204 measured elsewhere: the client, user, realm-role
+// and credential deletes send no Content-Type and omit the header; the client
+// and user updates, reset-password and disable-credential-types send JSON and
+// carry it; PUT .../userLabel sends text/plain and omits it; moveToFirst and
+// moveAfter send no body at all and omit it.
+//
+// P2's Task 11 wrote this down as "a successful DELETE's 204 omits it", from
+// four DELETEs that happened to send no Content-Type. PUT .../userLabel is
+// what falsified that.
+//
+// Cache-Control is not set here: three of the four measured deletes carry
+// no-cache and DELETE .../client-secret/rotated does not, so it stays with the
+// caller.
+func WriteNoContent(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/") {
+		w.Header().Del("X-Frame-Options")
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // WriteBearerChallenge writes the userinfo rejection: text/plain, an empty

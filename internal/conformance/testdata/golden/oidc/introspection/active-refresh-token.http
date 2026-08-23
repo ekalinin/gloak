@@ -1,0 +1,12 @@
+# POST /realms/master/protocol/openid-connect/token/introspect
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"exp":"{{number}}","iat":"{{number}}","jti":"{{string}}","iss":"{{issuer}}/realms/master","aud":["account","master-realm","{{issuer}}/realms/master"],"sub":"{{string}}","typ":"Refresh","azp":"gloak-confidential","sid":"{{string}}","acr":"1","realm_access":{"roles":["admin","create-realm","default-roles-master","offline_access","uma_authorization"]},"resource_access":{"master-realm":{"roles":["create-client","impersonation","manage-authorization","manage-clients","manage-events","manage-identity-providers","manage-organizations","manage-realm","manage-users","query-clients","query-groups","query-organizations","query-realms","query-users","view-authorization","view-clients","view-events","view-identity-providers","view-organizations","view-realm","view-users"]},"account":{"roles":["manage-account","manage-account-links","view-profile"]}},"scope":"acr basic email openid profile roles web-origins","email_verified":false,"preferred_username":"admin","client_id":"gloak-confidential","username":"admin","token_type":"Refresh","active":true}

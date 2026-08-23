@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // openapiPath is Keycloak's own description of its Admin REST API, vendored
@@ -40,6 +41,75 @@ const untaggedTag = "(untagged)"
 var httpMethods = map[string]bool{
 	"get": true, "put": true, "post": true, "delete": true,
 	"patch": true, "options": true, "head": true,
+}
+
+// Operations returns every operation the vendored description carries, keyed
+// "METHOD path" exactly as the document spells the path - for example
+// "GET /admin/realms/{realm}/clients".
+//
+// The key is method and path rather than an operationId because **the
+// description carries no operationId at all**: zero of its 413 operations have
+// one, and the fields an operation does have are description, parameters,
+// responses, summary and tags. TestNoOperationCarriesAnOperationID pins that,
+// so a future vendored version that does carry them fails loudly instead of
+// letting this choice drift unexamined.
+//
+// Method and path together are unique within the document, come from outside
+// this project, and are checkable - which is the whole requirement for a
+// parity key. See section 5 of
+// docs/superpowers/specs/2026-08-22-p2-admin-api-core-design.md.
+func Operations() (map[string]bool, error) {
+	doc, err := readDescription()
+	if err != nil {
+		return nil, err
+	}
+	ops := make(map[string]bool)
+	for path, item := range doc {
+		for method := range item {
+			if !httpMethods[method] {
+				continue
+			}
+			ops[strings.ToUpper(method)+" "+path] = true
+		}
+	}
+	return ops, nil
+}
+
+// readDescription decodes the vendored file's paths one raw value at a time,
+// which is what lets callers filter by HTTP method before anything tries to
+// read an operation's fields. A path item's "parameters" key holds an array
+// where an operation holds an object, so decoding the whole item as operations
+// fails outright.
+func readDescription() (map[string]map[string]json.RawMessage, error) {
+	raw, err := os.ReadFile(filepath.FromSlash(openapiPath))
+	if err != nil {
+		return nil, fmt.Errorf("conformance: read openapi description: %w", err)
+	}
+	var doc struct {
+		Paths map[string]map[string]json.RawMessage `json:"paths"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, fmt.Errorf("conformance: parse openapi description: %w", err)
+	}
+	return doc.Paths, nil
+}
+
+// servedOperations counts the distinct operations that have at least one
+// Implemented case.
+//
+// Distinct is the point. A chapter's denominator is an operation count, so
+// counting cases would report "3 of 34 served" for one endpoint with a
+// success, a 404 and a 403 case - overcounting hardest exactly where the error
+// handling is most careful, and rewarding writing more cases for an endpoint
+// already served.
+func servedOperations(cases []Case) int {
+	seen := map[string]bool{}
+	for _, c := range cases {
+		if c.Status == Implemented && c.Operation != "" {
+			seen[c.Operation] = true
+		}
+	}
+	return len(seen)
 }
 
 // OperationsByTag counts the operations the vendored description carries

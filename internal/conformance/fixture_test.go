@@ -4,8 +4,120 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
+
+// The CaptureHeader tests below live at the top of this file because they are
+// the newest thing in it; the rest is P1's body-capture coverage.
+
+func TestRunFixtureCapturesFromAHeader(t *testing.T) {
+	// The admin API answers a create with 201, an empty body and the new
+	// object's URL in Location. Reading a value out of the body cannot work
+	// when there is no body.
+	f := Fixture{State: "bootstrap", Steps: []Step{{
+		Request:       Request{Method: http.MethodPost, Path: "/things"},
+		CaptureHeader: map[string]string{"thing_id": "Location"},
+	}}}
+	do := func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 201,
+			Header:     http.Header{"Location": {"http://localhost:8080/things/abc-123"}},
+			Body:       io.NopCloser(strings.NewReader("")),
+		}, nil
+	}
+
+	vars, err := RunFixture(f, "http://localhost:8080", do)
+
+	if err != nil {
+		t.Fatalf("RunFixture: %v", err)
+	}
+	// The last path segment, not the whole URL: a case substitutes it into a
+	// path, and the base URL differs between the recorder and the verifier.
+	if vars["thing_id"] != "abc-123" {
+		t.Fatalf("want abc-123, got %q", vars["thing_id"])
+	}
+}
+
+func TestRunFixtureKeepsANonURLHeaderWhole(t *testing.T) {
+	f := Fixture{State: "bootstrap", Steps: []Step{{
+		Request:       Request{Method: http.MethodPost, Path: "/things"},
+		CaptureHeader: map[string]string{"etag": "ETag"},
+	}}}
+	do := func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 201,
+			Header:     http.Header{"Etag": {"W/\"v1\""}},
+			Body:       io.NopCloser(strings.NewReader("")),
+		}, nil
+	}
+
+	vars, err := RunFixture(f, "http://localhost:8080", do)
+
+	if err != nil {
+		t.Fatalf("RunFixture: %v", err)
+	}
+	if vars["etag"] != "W/\"v1\"" {
+		t.Fatalf("a header that is not a URL was truncated: %q", vars["etag"])
+	}
+}
+
+func TestRunFixtureFailsOnAMissingHeader(t *testing.T) {
+	// A capture that silently yielded "" would substitute an empty path
+	// segment and record a 404 as though it were the contract.
+	f := Fixture{State: "bootstrap", Steps: []Step{{
+		Request:       Request{Method: http.MethodPost, Path: "/things"},
+		CaptureHeader: map[string]string{"thing_id": "Location"},
+	}}}
+	do := func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 201,
+			Header:     http.Header{},
+			Body:       io.NopCloser(strings.NewReader("")),
+		}, nil
+	}
+
+	_, err := RunFixture(f, "http://localhost:8080", do)
+
+	if err == nil {
+		t.Fatal("a fixture capturing an absent header reported success")
+	}
+}
+
+func TestHeaderCapturesAreMaskedOutOfARecording(t *testing.T) {
+	// A captured UUID left verbatim in a golden makes the file churn on every
+	// recording - the same rule body captures already follow.
+	vars := map[string]string{"thing_id": "abc-123"}
+
+	got := ReplaceCaptured([]byte(`{"id":"abc-123"}`), vars)
+
+	if string(got) != `{"id":"{{thing_id}}"}` {
+		t.Fatalf("captured header value not masked: %s", got)
+	}
+}
+
+func TestCaptureFromIndexesAnArray(t *testing.T) {
+	// A filtered list is how a fixture finds a bootstrapped object whose UUID
+	// differs between the reference container and Gloak.
+	body := []byte(`[{"id":"abc-123","clientId":"account"}]`)
+
+	got, err := captureFrom(body, "0/id")
+
+	if err != nil {
+		t.Fatalf("captureFrom: %v", err)
+	}
+	if got != "abc-123" {
+		t.Fatalf("want abc-123, got %q", got)
+	}
+}
+
+func TestCaptureFromRejectsAnEmptyArray(t *testing.T) {
+	// An empty result means the filter matched nothing. Yielding "" would
+	// substitute an empty path segment and record a 404 as the contract.
+	if _, err := captureFrom([]byte(`[]`), "0/id"); err == nil {
+		t.Fatal("indexing an empty array reported success")
+	}
+}
 
 func TestExpandSubstitutesCapturedValues(t *testing.T) {
 	in := Request{
@@ -40,6 +152,32 @@ func TestExpandSubstitutesCapturedValues(t *testing.T) {
 // An unknown reference is left verbatim rather than becoming an empty string,
 // so a typo shows up in the recorded request instead of quietly changing what
 // was measured.
+func TestExpandSubstitutesThePath(t *testing.T) {
+	// The admin API addresses objects by a server-minted UUID in the path, so
+	// a case can never spell one literally. Leaving the path out recorded a
+	// 404 as the contract for the first case that needed it.
+	in := Request{
+		Method: http.MethodGet,
+		Path:   "/admin/realms/master/clients/{{client_uuid}}",
+		Body:   []byte(`{"id":"{{client_uuid}}"}`),
+	}
+
+	got := Expand(in, map[string]string{"client_uuid": "abc-123"})
+
+	if got.Path != "/admin/realms/master/clients/abc-123" {
+		t.Errorf("path: got %q", got.Path)
+	}
+	if string(got.Body) != `{"id":"abc-123"}` {
+		t.Errorf("body: got %s", got.Body)
+	}
+	if in.Path != "/admin/realms/master/clients/{{client_uuid}}" {
+		t.Errorf("Expand mutated its input path: %q", in.Path)
+	}
+	if string(in.Body) != `{"id":"{{client_uuid}}"}` {
+		t.Errorf("Expand mutated its input body: %s", in.Body)
+	}
+}
+
 func TestExpandLeavesUnknownPlaceholdersAlone(t *testing.T) {
 	got := Expand(Request{Headers: map[string]string{"A": "{{nope}}"}}, map[string]string{"x": "1"})
 	if got.Headers["A"] != "{{nope}}" {
@@ -166,8 +304,18 @@ func TestFixturesAreWellFormed(t *testing.T) {
 			if s.Request.Method == "" || s.Request.Path == "" {
 				t.Errorf("fixture %q step %d: needs a method and a path", name, i)
 			}
-			if len(s.Capture) == 0 {
-				t.Errorf("fixture %q step %d: a step that captures nothing is dead weight", name, i)
+			// A step earns its place by capturing something or by changing
+			// server state. Either form of capture counts: a step may take
+			// its value from the body or, as the admin API's create does,
+			// from a response header - the 201 there has no body at all.
+			//
+			// A step that captures nothing must at least be a write.
+			// confidentialClientFixture has one: it creates a client and then
+			// looks the UUID up in a separate GET, so that a re-run's 409 is
+			// harmless. A GET capturing nothing really is dead weight.
+			capturesNothing := len(s.Capture) == 0 && len(s.CaptureHeader) == 0
+			if capturesNothing && s.Request.Method == http.MethodGet {
+				t.Errorf("fixture %q step %d: a GET that captures nothing is dead weight", name, i)
 			}
 		}
 	}

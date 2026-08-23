@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -85,6 +86,50 @@ func ParseGolden(raw []byte) (Golden, error) {
 		g.Headers = append(g.Headers, Header{Name: name, Value: value})
 	}
 	return g, nil
+}
+
+// recordedHeaders sorts headers by name so a re-record produces no spurious
+// diff, and blanks the values that change per response. Captured values are
+// masked here too: a token can arrive in a header as easily as in a body.
+//
+// Two masks apply. The package-level VolatileHeaders covers every case;
+// c.VolatileHeaders covers the ones this case knows about, which is how the
+// admin API's per-request Location gets masked without masking Location
+// everywhere.
+//
+// It lives here rather than beside the recorder that calls it because the
+// recorder is behind the docker build tag, and logic nothing can test without
+// Docker is logic nothing tests.
+func recordedHeaders(h http.Header, base string, c Case, vars map[string]string) []Header {
+	volatile := make(map[string]bool, len(VolatileHeaders)+len(c.VolatileHeaders))
+	for _, name := range VolatileHeaders {
+		volatile[http.CanonicalHeaderKey(name)] = true
+	}
+	for _, name := range c.VolatileHeaders {
+		volatile[http.CanonicalHeaderKey(name)] = true
+	}
+
+	names := make([]string, 0, len(h))
+	for name := range h {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	out := make([]Header, 0, len(names))
+	for _, name := range names {
+		// Every value, not just the first. userinfo's 200 sends Cache-Control
+		// twice - no-store, then no-cache - and recording one of them would
+		// commit a contract Keycloak does not have.
+		for _, value := range h.Values(name) {
+			if volatile[http.CanonicalHeaderKey(name)] {
+				value = volatilePlaceholder
+			} else {
+				value = string(ReplaceIssuer(ReplaceCaptured([]byte(value), vars), base))
+			}
+			out = append(out, Header{Name: name, Value: value})
+		}
+	}
+	return out
 }
 
 // GoldenPath turns a case ID into a file path under dir. IDs are validated as

@@ -9,6 +9,11 @@ recorded here so the next plan starts from them rather than rediscovering them.
 
 Each was reproduced, not theorised.
 
+**Status, 2026-08-23.** P2's first cut closed F15 and the
+`service-account-<clientId>` half of F14's neighbour, and opened F16 through
+F19. Closed entries keep their text: the reasoning that turned out to be wrong
+is worth more than a tidy list.
+
 ## F3: two shipped endpoints have no measured contract (closed)
 
 `docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md` records the token
@@ -113,7 +118,20 @@ on. Once measured, the fix is presumably to have `withKeycloakFallbacks` check
 `r.URL.Path` against its cleaned form itself, ahead of the `mux.Handler` probe,
 rather than trusting "non-empty pattern" to mean "real route".
 
-## F12: the recorder cannot capture a multi-valued header or a volatile `Location`, together
+## F12: the recorder cannot capture a multi-valued header or a volatile `Location`, together (closed)
+
+**Both halves are closed.** P2's Task 1 added `Case.VolatileHeaders` for the
+`Location` half. P2's Task 12 closed the multi-valued half, and not because
+anybody planned to: `userinfo`'s 200 was measured sending `Cache-Control`
+twice - `no-store` and then `no-cache` - so recording it through `Header.Get`
+would have committed a one-value contract. `recordedHeaders` now emits one
+golden line per value and the verifier compares the whole list, which is what
+this entry asked for. The `Set-Cookie` case it was written for has still not
+been recorded; when it is, the machinery is already there.
+
+The original text follows.
+
+## F12 (original): the recorder cannot capture a multi-valued header or a volatile `Location`, together
 
 Two gaps in `internal/conformance` block on the same future case - the first
 recorded response carrying a repeated header, most likely `Set-Cookie` on a
@@ -229,7 +247,26 @@ yet (F15).
 Closing it needs the prefix measured across several container starts, which is
 cheap to do the next time a reference container is running.
 
-## F15: two P1 response bodies are served but unmeasured
+## F15: two P1 response bodies are served but unmeasured (closed)
+
+**Closed 2026-08-23** by Task 12 of P2. Four of the six bodies were recorded
+and now match; the remaining two moved to F18 with a measured reason that is
+not the one this entry gives.
+
+- `oidc/userinfo/get-with-valid-token`, `post-with-valid-token` - recorded.
+  P1's guessed shape was right in every detail.
+- `oidc/token/client-credentials-grant` - recorded. P1's shape was **wrong**:
+  the body carries no `refresh_token` and no `session_state`, while
+  `refresh_expires_in` is present and 0.
+- `oidc/introspection/inactive-token` - recorded.
+- `oidc/userinfo/expired-token`, listed in the plan as a candidate rather than
+  a deliverable, is recorded too.
+- `oidc/introspection/active-access-token` and `active-refresh-token` are in
+  F18.
+
+The original text follows.
+
+## F15 (original): two P1 response bodies are served but unmeasured
 
 `userinfo`'s success body and introspection's active/inactive bodies are
 emitted from shapes derived from the measured ID-token claim set and RFC 7662,
@@ -248,6 +285,109 @@ correct the code, rather than assuming the shapes were verified because the
 endpoints work.
 
 Same class, already noted where it lives: `client_credentials` returns the same
-body shape as the password grant, which is also unmeasured, and the
-`service-account-<clientId>` username `internal/oidc` creates on demand follows
-Keycloak's convention without having been measured.
+body shape as the password grant, which is also unmeasured.
+
+The `service-account-<clientId>` username was the third item here. **Closed
+2026-08-23** by Task 11 of P2, which measured it through
+`GET .../clients/{uuid}/service-account-user`: the guess was right, and it now
+lives in `model.ServiceAccountUsername` with the recording cited.
+
+## F16: a client created through the admin API differs from Keycloak's in three ways
+
+Measured 2026-08-23 by reading back a client created with
+`{"clientId":"...","enabled":true}`, and recorded as
+`admin/clients/read-created`, which is `Recorded` rather than `Implemented`
+because of exactly this:
+
+| Field | Keycloak | Gloak |
+|---|---|---|
+| `defaultClientScopes` | six names from the realm's defaults | `[]` |
+| `optionalClientScopes` | five names from the realm's defaults | `[]` |
+| `nodeReRegistrationTimeout` | `-1` | `0` |
+
+The two scope lists need the realm to model a default set, which is P5. The
+`-1` does not need anything and is simply not applied yet; it was noticed while
+reading the recording rather than while writing the create handler.
+
+The golden is in the repository, so the `Recorded` alarm fires the moment all
+three line up.
+
+## F17: the listings are gated where Keycloak filters
+
+Measured 2026-08-23. A caller holding only the `query-` role gets **200 and an
+empty array** from a listing, even filtering to an object that exists. Keycloak
+returns the objects the caller may view rather than refusing the caller.
+
+| Listing | Gloak accepts | Gloak returns to a `query-` caller | Keycloak |
+|---|---|---|---|
+| `GET /clients` | `view-clients` only | 403 | 200 `[]` |
+| `GET /users` | `view-users`, `query-users`, `manage-users` | every user | 200 `[]` |
+
+The users half was half-fixed on 2026-08-23: the route now admits `query-users`
+because that was measured, but nothing filters the result, so a `query-users`
+caller sees everybody. Both listings need the same thing - filter by the
+caller's own view permission, `clientAccessFor(...).View` and
+`userAccessFor(...).View` respectively - and the clients route needs
+`query-clients` admitted as well.
+
+`GET /users/count` is **not** filtered by visibility, measured: the same caller
+gets `[]` from the listing and `7` from the count. So the fix belongs in the
+listing alone, and the two endpoints disagreeing is the contract.
+
+It cannot become a conformance case until role assignment is served - that is
+the Role Mapper tag, P2's second cut - because a fixture reaching a
+narrow-role caller has to build one through the API in both the reference
+container and Gloak. `internal/admin`'s own tests cover what they can:
+TestQueryUsersOpensTheListingButNotTheRead pins the status codes.
+
+## F18: tokens carry no roles, so `aud` is wrong and introspection is too permissive
+
+Measured 2026-08-23 while recording the introspection bodies.
+
+**Gloak resolves no roles at token issuance.** `token.Request.RealmRoles` and
+`ClientRoles` have no caller that sets them, so `realm_access.roles` is empty
+and `resource_access` is `{}`. Keycloak's administrator token carries five
+realm roles and twenty-four client roles across two clients.
+
+**`audience()` returns the issuing client**, which is measurably wrong: an
+access token's `aud` holds the clients the *user* has roles on and never the
+issuer. For the administrator that is `["master-realm","account"]`. The value
+is also a **string when there is one audience and an array when there are
+several**.
+
+Two things follow, and both are observable:
+
+1. `oidc/introspection/active-refresh-token` is `Recorded`. Its body is the
+   access token's whole claim set rebuilt from the refresh token, which needs
+   the roles.
+2. **Gloak reports an access token active where Keycloak reports it
+   inactive.** Keycloak refuses to introspect an access token whose `aud`
+   excludes the caller; Gloak puts the caller in `aud`, so its own check would
+   pass. `oidc/introspection/access-token-outside-audience` is `Recorded` for
+   exactly this.
+
+Fixing it needs role resolution at issuance - the machinery exists,
+`RoleRepo.ListUserRoles` plus composite expansion, and `internal/admin` already
+does it - plus bootstrap creating the `account` client's three roles and the
+`default-roles-master` composite that grants them. `aud` then falls out of
+`resource_access`, and the introspection audience check can be added with it.
+
+`oidc/introspection/active-access-token` stays `Pending` throughout: even with
+all of that, no fixture can put the introspecting client inside an access
+token's audience without assigning the user a role on it (P2's second cut) or
+an audience protocol mapper (P5).
+
+## F19: two access.token.lifespan values are measured and not reproduced
+
+Gloak honours the client attribute `access.token.lifespan` when it is a
+positive integer, which is what the expired-token case needs. Two neighbouring
+values were measured and are not reproduced:
+
+| Attribute | Keycloak | Gloak |
+|---|---|---|
+| `"0"` | `expires_in` 0, token still accepted | falls back to the realm's 60 |
+| `"-1"` | `expires_in` 36000 | falls back to the realm's 60 |
+
+36000 is ten hours and matches no value this realm models, so reproducing it
+would mean copying a number without knowing what it is. Both are corner cases
+no client sets deliberately, and both are wrong today.

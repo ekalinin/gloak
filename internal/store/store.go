@@ -40,20 +40,66 @@ type ClientRepo interface {
 	ByClientID(ctx context.Context, realmID, clientID string) (*model.Client, error)
 	ByID(ctx context.Context, realmID, id string) (*model.Client, error)
 	ListByRealm(ctx context.Context, realmID string) ([]*model.Client, error)
+	Update(ctx context.Context, c *model.Client) error
+	Delete(ctx context.Context, realmID, id string) error
 }
 
 type UserRepo interface {
 	Create(ctx context.Context, u *model.User) error
 	ByUsername(ctx context.Context, realmID, username string) (*model.User, error)
 	ByID(ctx context.Context, realmID, id string) (*model.User, error)
+	// ListByRealm returns every user, ordered by username. The order is
+	// measured, not a convenience: Keycloak's listing came back
+	// aaa-user, admin, full-user, zzz-user for users created in the reverse
+	// order, so it sorts rather than returning insertion order. Filtering and
+	// paging stay in the handler, since the query parameters that drive them
+	// are the admin API's, not the store's.
+	ListByRealm(ctx context.Context, realmID string) ([]*model.User, error)
+	Update(ctx context.Context, u *model.User) error
+	// Delete removes a user and, through the schema's cascades, its sessions
+	// and role assignments. It arrives here rather than with the rest of user
+	// management because the cascade is what the role-mapping tests assert:
+	// an assignment outliving its user would grant rights to a recycled ID.
+	Delete(ctx context.Context, realmID, id string) error
+	// SetCredential upserts on (user_id, type), which is what the admin API
+	// was measured doing: a reset-password replaces the password credential in
+	// place - same id, refreshed createdDate, label cleared - and no path
+	// creates a second credential of one type.
 	SetCredential(ctx context.Context, c *model.Credential) error
+	// CredentialByUser returns the credential a login checks against. It must
+	// stay deterministic: it orders by priority and then by id, so a user who
+	// somehow held two of a type would still authenticate against the same one
+	// every time rather than against whichever row the driver returned first.
 	CredentialByUser(ctx context.Context, userID, typ string) (*model.Credential, error)
+	ListCredentials(ctx context.Context, userID string) ([]*model.Credential, error)
+	CredentialByID(ctx context.Context, userID, id string) (*model.Credential, error)
+	DeleteCredential(ctx context.Context, userID, id string) error
+	// UpdateCredential writes back the two mutable fields, label and priority.
+	// The hash is not among them: nothing but a reset-password may change it,
+	// and that goes through SetCredential.
+	UpdateCredential(ctx context.Context, c *model.Credential) error
 }
 
 type RoleRepo interface {
 	Create(ctx context.Context, r *model.Role) error
+	ByID(ctx context.Context, realmID, id string) (*model.Role, error)
 	ByName(ctx context.Context, realmID, clientID, name string) (*model.Role, error)
 	ListRealmRoles(ctx context.Context, realmID string) ([]*model.Role, error)
+	// ListClientRoles returns the roles a client owns. Keycloak keeps admin
+	// rights on a client - master-realm for the master realm - so this is not
+	// a corner of the model but the main route to an authorization decision.
+	ListClientRoles(ctx context.Context, realmID, clientID string) ([]*model.Role, error)
+
+	// AddComposite makes childRoleID part of roleID. The bootstrapped
+	// administrator holds no client roles directly: measured, every right it
+	// has arrives through the admin role's 22 composites, so a caller that
+	// does not expand these transitively sees an administrator with nothing.
+	AddComposite(ctx context.Context, roleID, childRoleID string) error
+	ListComposites(ctx context.Context, roleID string) ([]*model.Role, error)
+
+	AssignToUser(ctx context.Context, userID, roleID string) error
+	RemoveFromUser(ctx context.Context, userID, roleID string) error
+	ListUserRoles(ctx context.Context, userID string) ([]*model.Role, error)
 }
 
 // SessionRepo stores SSO sessions. A user session is addressed by realm as
@@ -64,6 +110,11 @@ type SessionRepo interface {
 	UserSessionByID(ctx context.Context, realmID, id string) (*model.UserSession, error)
 	TouchUserSession(ctx context.Context, id string, lastRefresh int64) error
 	DeleteUserSession(ctx context.Context, realmID, id string) error
+	// DeleteUserSessions removes every session a user holds, which is what
+	// POST /users/{id}/logout does. It reports no error when there are none:
+	// the endpoint was measured answering 204 for a user who is already
+	// logged out, so "nothing to delete" is a success.
+	DeleteUserSessions(ctx context.Context, realmID, userID string) error
 	CreateClientSession(ctx context.Context, s *model.ClientSession) error
 	ClientSession(ctx context.Context, userSessionID, clientID string) (*model.ClientSession, error)
 }

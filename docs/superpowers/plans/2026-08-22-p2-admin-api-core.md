@@ -689,6 +689,13 @@ rotated, which is exactly the kind of value nobody would guess correctly.
 Rotation needs a second secret column with an expiry. Add it in the same
 migration style as Task 5.
 
+**Amended after the recording, 2026-08-23: no such column was added.**
+`CLIENT_SECRET_ROTATION` is a preview feature disabled by default and
+`secret-rotation` is not a registered client-policy executor, so no client on
+this distribution can hold a rotated secret. The endpoints answer a constant
+404 and a constant 204, and that is the measured contract in full. A column
+modelling a state that cannot occur would be dead schema in both drivers.
+
 `GET .../service-account-user` returns the account P1 creates on demand as
 `service-account-<clientId>`. **This is the operation that measures whether that
 convention is right.** If the recording disagrees, P1's guess was wrong and
@@ -815,6 +822,15 @@ exactly one credential per type; the reorder endpoints only mean something once
 that constraint is relaxed. **Relaxing it changes P1's password lookup**, so
 `CredentialByUser` must keep returning a deterministic row - the
 highest-priority one - and its test must say so.
+
+**Amended after the recording, 2026-08-23: the constraint was not relaxed.**
+`reset-password` was measured *replacing* the password credential in place -
+same id, refreshed `createdDate`, `userLabel` cleared - and no admin API path
+creates a second credential of one type. Relaxing the constraint would model a
+state that cannot occur and would put P1's password lookup at risk for nothing,
+the same reasoning that dropped the rotated-secret column in Task 11.
+`CredentialByUser` orders by priority and then by id regardless, so it stays
+deterministic if a second row ever appears.
 
 Hashing on reset reuses `internal/bootstrap`'s parameters. Those are the
 creation parameters, which is correct here: this endpoint creates a password.

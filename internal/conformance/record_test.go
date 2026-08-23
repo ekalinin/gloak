@@ -44,7 +44,7 @@ func TestRecordGoldens(t *testing.T) {
 	}
 
 	var skipped []string
-	for _, c := range Catalog {
+	for _, c := range recordingOrder() {
 		if c.Fixture == "" {
 			skipped = append(skipped, c.ID)
 			continue
@@ -86,7 +86,7 @@ func TestRecordGoldens(t *testing.T) {
 			g := Golden{
 				RequestLine: c.Request.Method + " " + c.Request.Path,
 				Status:      resp.StatusCode,
-				Headers:     recordedHeaders(resp.Header, base, vars),
+				Headers:     recordedHeaders(resp.Header, base, c, vars),
 				Body:        body,
 			}
 			path := GoldenPath(goldenDir, c.ID)
@@ -105,29 +105,23 @@ func TestRecordGoldens(t *testing.T) {
 	}
 }
 
-// recordedHeaders sorts headers by name so a re-record produces no spurious
-// diff, and blanks the values that change per response. Captured values are
-// masked here too: a token can arrive in a header as easily as in a body.
-func recordedHeaders(h http.Header, base string, vars map[string]string) []Header {
-	volatile := make(map[string]bool, len(VolatileHeaders))
-	for _, name := range VolatileHeaders {
-		volatile[http.CanonicalHeaderKey(name)] = true
-	}
-	names := make([]string, 0, len(h))
-	for name := range h {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	out := make([]Header, 0, len(names))
-	for _, name := range names {
-		value := h.Get(name)
-		if volatile[name] {
-			value = volatilePlaceholder
-		} else {
-			value = string(ReplaceIssuer(ReplaceCaptured([]byte(value), vars), base))
+// recordingOrder is the catalogue with every PristineRealm case moved to the
+// front, order otherwise preserved.
+//
+// The recorder shares one container, so a case that enumerates the realm has
+// to run before any fixture has created anything in it. See
+// Case.PristineRealm.
+func recordingOrder() []Case {
+	out := make([]Case, 0, len(Catalog))
+	for _, c := range Catalog {
+		if c.PristineRealm {
+			out = append(out, c)
 		}
-		out = append(out, Header{Name: name, Value: value})
+	}
+	for _, c := range Catalog {
+		if !c.PristineRealm {
+			out = append(out, c)
+		}
 	}
 	return out
 }

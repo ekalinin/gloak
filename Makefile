@@ -1,4 +1,4 @@
-.PHONY: test build lint conformance record
+.PHONY: test build lint conformance record oracle
 
 test:
 	CGO_ENABLED=0 go test ./...
@@ -17,3 +17,10 @@ conformance:
 # an unreviewed re-record pins a regression as the new contract.
 record:
 	CGO_ENABLED=0 go test -tags docker ./internal/conformance/ -run TestRecordGoldens -v -count=1
+
+# oracle drives Gloak with kcadm.sh, the admin CLI that ships inside the
+# Keycloak image, so a real client exercises fields no golden covers. It needs
+# Docker, and a container that can reach the host, so it is not part of
+# `make test`.
+oracle:
+	CGO_ENABLED=0 go test -tags docker ./internal/admin/ -run TestKcadm -v -count=1

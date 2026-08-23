@@ -6,6 +6,7 @@ package storetest
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/ekalinin/gloak/internal/model"
@@ -155,6 +156,181 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 		if string(got.Salt) != "saltsaltsaltsalt" || string(got.HashValue) != "hashhashhashhash" {
 			t.Fatalf("secret part lost: salt=%q hash=%q", got.Salt, got.HashValue)
+		}
+	})
+
+	t.Run("client roles are separate from realm roles", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		client := &model.Client{ID: model.NewID(), RealmID: realm.ID, ClientID: "master-realm", Enabled: true}
+		if err := s.Clients().Create(ctx, client); err != nil {
+			t.Fatalf("Clients().Create: %v", err)
+		}
+		realmRole := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "admin", Composite: true}
+		if err := s.Roles().Create(ctx, realmRole); err != nil {
+			t.Fatalf("Roles().Create(realm): %v", err)
+		}
+		for _, n := range []string{"view-users", "manage-users"} {
+			r := &model.Role{ID: model.NewID(), RealmID: realm.ID, ClientID: client.ID, Name: n}
+			if err := s.Roles().Create(ctx, r); err != nil {
+				t.Fatalf("Roles().Create(%q): %v", n, err)
+			}
+		}
+
+		clientRoles, err := s.Roles().ListClientRoles(ctx, realm.ID, client.ID)
+		if err != nil {
+			t.Fatalf("ListClientRoles: %v", err)
+		}
+		if len(clientRoles) != 2 {
+			t.Fatalf("want 2 client roles, got %d", len(clientRoles))
+		}
+		// A client role leaking into the realm list would make every realm
+		// role listing wrong the moment the admin client exists.
+		realmRoles, err := s.Roles().ListRealmRoles(ctx, realm.ID)
+		if err != nil {
+			t.Fatalf("ListRealmRoles: %v", err)
+		}
+		if len(realmRoles) != 1 || realmRoles[0].Name != "admin" {
+			t.Fatalf("client roles leaked into the realm list: %+v", realmRoles)
+		}
+	})
+
+	t.Run("a role is addressable by ID", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		want := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "admin", Composite: true}
+		if err := s.Roles().Create(ctx, want); err != nil {
+			t.Fatalf("Roles().Create: %v", err)
+		}
+
+		got, err := s.Roles().ByID(ctx, realm.ID, want.ID)
+
+		if err != nil {
+			t.Fatalf("ByID: %v", err)
+		}
+		if got.Name != "admin" || !got.Composite {
+			t.Fatalf("round-trip wrong: %+v", got)
+		}
+		if _, err := s.Roles().ByID(ctx, realm.ID, model.NewID()); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("want ErrNotFound for an unknown role, got %v", err)
+		}
+	})
+
+	t.Run("role assignments round-trip", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		u := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "admin", Enabled: true}
+		if err := s.Users().Create(ctx, u); err != nil {
+			t.Fatalf("Users().Create: %v", err)
+		}
+		role := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "admin"}
+		if err := s.Roles().Create(ctx, role); err != nil {
+			t.Fatalf("Roles().Create: %v", err)
+		}
+
+		if err := s.Roles().AssignToUser(ctx, u.ID, role.ID); err != nil {
+			t.Fatalf("AssignToUser: %v", err)
+		}
+		got, err := s.Roles().ListUserRoles(ctx, u.ID)
+		if err != nil {
+			t.Fatalf("ListUserRoles: %v", err)
+		}
+		if len(got) != 1 || got[0].Name != "admin" {
+			t.Fatalf("want the admin role back, got %+v", got)
+		}
+
+		// Assigning twice is a conflict rather than a silent no-op, so a
+		// caller can tell "already had it" from "just granted it".
+		if err := s.Roles().AssignToUser(ctx, u.ID, role.ID); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("want ErrConflict on a second assignment, got %v", err)
+		}
+
+		if err := s.Roles().RemoveFromUser(ctx, u.ID, role.ID); err != nil {
+			t.Fatalf("RemoveFromUser: %v", err)
+		}
+		// Removing what is not assigned reports ErrNotFound: neither driver
+		// treats a delete affecting no row as an error on its own.
+		if err := s.Roles().RemoveFromUser(ctx, u.ID, role.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("want ErrNotFound removing an unassigned role, got %v", err)
+		}
+	})
+
+	t.Run("deleting a user takes its role assignments with it", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		u := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "doomed", Enabled: true}
+		if err := s.Users().Create(ctx, u); err != nil {
+			t.Fatalf("Users().Create: %v", err)
+		}
+		role := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "admin"}
+		if err := s.Roles().Create(ctx, role); err != nil {
+			t.Fatalf("Roles().Create: %v", err)
+		}
+		if err := s.Roles().AssignToUser(ctx, u.ID, role.ID); err != nil {
+			t.Fatalf("AssignToUser: %v", err)
+		}
+
+		if err := s.Users().Delete(ctx, realm.ID, u.ID); err != nil {
+			t.Fatalf("Users().Delete: %v", err)
+		}
+
+		// An orphaned assignment would grant a rights to a recycled user ID.
+		got, err := s.Roles().ListUserRoles(ctx, u.ID)
+		if err != nil {
+			t.Fatalf("ListUserRoles: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("assignments outlived the user: %+v", got)
+		}
+	})
+
+	t.Run("composite roles round-trip", func(t *testing.T) {
+		// The bootstrapped administrator holds no client roles directly - all
+		// its rights arrive through the admin role's composites, measured on a
+		// live Keycloak. A build that cannot expand them grants it nothing.
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		admin := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "admin", Composite: true}
+		child := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "create-realm"}
+		for _, r := range []*model.Role{admin, child} {
+			if err := s.Roles().Create(ctx, r); err != nil {
+				t.Fatalf("Roles().Create(%q): %v", r.Name, err)
+			}
+		}
+
+		if err := s.Roles().AddComposite(ctx, admin.ID, child.ID); err != nil {
+			t.Fatalf("AddComposite: %v", err)
+		}
+		got, err := s.Roles().ListComposites(ctx, admin.ID)
+
+		if err != nil {
+			t.Fatalf("ListComposites: %v", err)
+		}
+		if len(got) != 1 || got[0].Name != "create-realm" {
+			t.Fatalf("want create-realm, got %+v", got)
+		}
+		if err := s.Roles().AddComposite(ctx, admin.ID, child.ID); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("want ErrConflict adding the same composite twice, got %v", err)
 		}
 	})
 
@@ -368,6 +544,229 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 		if len(got) != 3 {
 			t.Fatalf("want 3 realm roles, got %d", len(got))
+		}
+	})
+
+	// The order is contract, not convenience: Keycloak's user listing was
+	// measured sorted by username rather than returning insertion order, and
+	// the admin API hands the store's order straight to the client. Both
+	// drivers have to agree, so this belongs here rather than in either one.
+	t.Run("users are listed sorted by username", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		for _, n := range []string{"zzz", "admin", "aaa"} {
+			u := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: n, Enabled: true}
+			if err := s.Users().Create(ctx, u); err != nil {
+				t.Fatalf("Users().Create(%q): %v", n, err)
+			}
+		}
+
+		got, err := s.Users().ListByRealm(ctx, realm.ID)
+
+		if err != nil {
+			t.Fatalf("ListByRealm: %v", err)
+		}
+		names := make([]string, 0, len(got))
+		for _, u := range got {
+			names = append(names, u.Username)
+		}
+		want := []string{"aaa", "admin", "zzz"}
+		if !slices.Equal(names, want) {
+			t.Fatalf("want %v, got %v", want, names)
+		}
+	})
+
+	// The credential endpoints need the list, the lookup by id, the delete and
+	// the label. All four are new and none is exercised by anything else, so
+	// they are held here rather than by whichever driver happens to run.
+	t.Run("credentials list, relabel and delete", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		user := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "u", Enabled: true}
+		if err := s.Users().Create(ctx, user); err != nil {
+			t.Fatalf("Users().Create: %v", err)
+		}
+		cred := &model.Credential{
+			ID: model.NewID(), UserID: user.ID, Type: "password",
+			CreatedDate: 1, Algorithm: "argon2", HashIterations: 5,
+			AdditionalParameters: map[string][]string{"memory": {"7168"}},
+			Salt:                 []byte("salt"), HashValue: []byte("hash"),
+		}
+		if err := s.Users().SetCredential(ctx, cred); err != nil {
+			t.Fatalf("SetCredential: %v", err)
+		}
+
+		listed, err := s.Users().ListCredentials(ctx, user.ID)
+		if err != nil {
+			t.Fatalf("ListCredentials: %v", err)
+		}
+		if len(listed) != 1 || listed[0].ID != cred.ID {
+			t.Fatalf("want the one credential back, got %d", len(listed))
+		}
+		if listed[0].Label != "" {
+			t.Fatalf("want no label on a fresh credential, got %q", listed[0].Label)
+		}
+
+		cred.Label = "office laptop"
+		cred.Priority = 3
+		if err := s.Users().UpdateCredential(ctx, cred); err != nil {
+			t.Fatalf("UpdateCredential: %v", err)
+		}
+		got, err := s.Users().CredentialByID(ctx, user.ID, cred.ID)
+		if err != nil {
+			t.Fatalf("CredentialByID: %v", err)
+		}
+		if got.Label != "office laptop" || got.Priority != 3 {
+			t.Fatalf("want the label and priority back, got %q / %d", got.Label, got.Priority)
+		}
+		// The hash must have survived the label write: UpdateCredential writes
+		// two columns and must not touch the rest.
+		if string(got.HashValue) != "hash" {
+			t.Fatalf("UpdateCredential disturbed the hash: %q", got.HashValue)
+		}
+
+		if err := s.Users().DeleteCredential(ctx, user.ID, cred.ID); err != nil {
+			t.Fatalf("DeleteCredential: %v", err)
+		}
+		if err := s.Users().DeleteCredential(ctx, user.ID, cred.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("want ErrNotFound deleting twice, got %v", err)
+		}
+	})
+
+	// Measured on the admin API: a reset-password replaces the credential in
+	// place - same id, refreshed createdDate - and clears the userLabel. The
+	// upsert is what has to reproduce that, and priority is deliberately not
+	// cleared, since a reset does not reorder anything.
+	t.Run("setting a credential again replaces it and clears the label", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		user := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "u", Enabled: true}
+		if err := s.Users().Create(ctx, user); err != nil {
+			t.Fatalf("Users().Create: %v", err)
+		}
+		first := &model.Credential{
+			ID: model.NewID(), UserID: user.ID, Type: "password", CreatedDate: 1,
+			Algorithm: "argon2", HashValue: []byte("old"), Label: "old label",
+		}
+		if err := s.Users().SetCredential(ctx, first); err != nil {
+			t.Fatalf("SetCredential: %v", err)
+		}
+
+		second := *first
+		second.CreatedDate = 2
+		second.HashValue = []byte("new")
+		second.Label = ""
+		if err := s.Users().SetCredential(ctx, &second); err != nil {
+			t.Fatalf("SetCredential again: %v", err)
+		}
+
+		listed, err := s.Users().ListCredentials(ctx, user.ID)
+		if err != nil {
+			t.Fatalf("ListCredentials: %v", err)
+		}
+		if len(listed) != 1 {
+			t.Fatalf("want one credential after a replace, got %d", len(listed))
+		}
+		if listed[0].ID != first.ID || listed[0].CreatedDate != 2 || listed[0].Label != "" {
+			t.Fatalf("want the id kept and the rest refreshed, got %+v", listed[0])
+		}
+		// CredentialByUser is what a login goes through, so it must see the
+		// replacement rather than a stale row.
+		byUser, err := s.Users().CredentialByUser(ctx, user.ID, "password")
+		if err != nil {
+			t.Fatalf("CredentialByUser: %v", err)
+		}
+		if string(byUser.HashValue) != "new" {
+			t.Fatalf("want the new hash, got %q", byUser.HashValue)
+		}
+	})
+
+	// POST /users/{id}/logout deletes every session the user holds and must
+	// leave everybody else's alone.
+	t.Run("deleting a user's sessions spares other users", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		mine := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "mine", Enabled: true}
+		theirs := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "theirs", Enabled: true}
+		for _, u := range []*model.User{mine, theirs} {
+			if err := s.Users().Create(ctx, u); err != nil {
+				t.Fatalf("Users().Create(%s): %v", u.Username, err)
+			}
+		}
+		var minesSessions []string
+		for range 2 {
+			id := model.NewID()
+			minesSessions = append(minesSessions, id)
+			if err := s.Sessions().CreateUserSession(ctx, &model.UserSession{
+				ID: id, RealmID: realm.ID, UserID: mine.ID, Username: mine.Username,
+			}); err != nil {
+				t.Fatalf("CreateUserSession: %v", err)
+			}
+		}
+		other := model.NewID()
+		if err := s.Sessions().CreateUserSession(ctx, &model.UserSession{
+			ID: other, RealmID: realm.ID, UserID: theirs.ID, Username: theirs.Username,
+		}); err != nil {
+			t.Fatalf("CreateUserSession: %v", err)
+		}
+
+		if err := s.Sessions().DeleteUserSessions(ctx, realm.ID, mine.ID); err != nil {
+			t.Fatalf("DeleteUserSessions: %v", err)
+		}
+
+		for _, id := range minesSessions {
+			if _, err := s.Sessions().UserSessionByID(ctx, realm.ID, id); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("session %s survived the logout: %v", id, err)
+			}
+		}
+		if _, err := s.Sessions().UserSessionByID(ctx, realm.ID, other); err != nil {
+			t.Fatalf("another user's session was taken with it: %v", err)
+		}
+		// Measured as a 204 for a user with no sessions, so a second call is
+		// a success rather than ErrNotFound.
+		if err := s.Sessions().DeleteUserSessions(ctx, realm.ID, mine.ID); err != nil {
+			t.Fatalf("want no error deleting nothing, got %v", err)
+		}
+	})
+
+	t.Run("a user is not listed from another realm", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		mine := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		theirs := &model.Realm{ID: model.NewID(), Name: "other", Enabled: true}
+		for _, r := range []*model.Realm{mine, theirs} {
+			if err := s.Realms().Create(ctx, r); err != nil {
+				t.Fatalf("Realms().Create(%q): %v", r.Name, err)
+			}
+		}
+		u := &model.User{ID: model.NewID(), RealmID: theirs.ID, Username: "elsewhere", Enabled: true}
+		if err := s.Users().Create(ctx, u); err != nil {
+			t.Fatalf("Users().Create: %v", err)
+		}
+
+		got, err := s.Users().ListByRealm(ctx, mine.ID)
+
+		if err != nil {
+			t.Fatalf("ListByRealm: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("want no users in the empty realm, got %d", len(got))
 		}
 	})
 }
