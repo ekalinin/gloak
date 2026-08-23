@@ -18,9 +18,14 @@ import "github.com/ekalinin/gloak/internal/model"
 // whose model is P5. A client with mappers cannot be reproduced yet, which is
 // why the recorded list case filters down to one that has none.
 type clientRepresentation struct {
-	ID                                 string            `json:"id"`
-	ClientID                           string            `json:"clientId"`
-	Name                               string            `json:"name"`
+	ID       string `json:"id"`
+	ClientID string `json:"clientId"`
+	Name     string `json:"name"`
+	// Measured between name and rootUrl, and carrying omitempty for the same
+	// reason those two do: none of the six bootstrapped clients has one. It
+	// was missing entirely until kcadm.sh set one and it vanished - see
+	// TestKcadmDrivesTheAdminAPI.
+	Description                        string            `json:"description,omitempty"`
 	RootURL                            string            `json:"rootUrl,omitempty"`
 	BaseURL                            string            `json:"baseUrl,omitempty"`
 	SurrogateAuthRequired              bool              `json:"surrogateAuthRequired"`
@@ -101,6 +106,7 @@ func clientRepresentationOf(m *model.Client, c *caller, realmName string) client
 		ID:                                 m.ID,
 		ClientID:                           m.ClientID,
 		Name:                               m.Name,
+		Description:                        m.Description,
 		RootURL:                            m.RootURL,
 		BaseURL:                            m.BaseURL,
 		SurrogateAuthRequired:              m.SurrogateAuthRequired,

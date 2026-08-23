@@ -199,6 +199,7 @@ func newClientFrom(rep clientRepresentation, realmID string) *model.Client {
 		RealmID:                   realmID,
 		ClientID:                  rep.ClientID,
 		Name:                      rep.Name,
+		Description:               rep.Description,
 		RootURL:                   rep.RootURL,
 		BaseURL:                   rep.BaseURL,
 		Enabled:                   rep.Enabled,

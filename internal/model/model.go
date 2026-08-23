@@ -112,6 +112,7 @@ type Client struct {
 	RealmID                   string
 	ClientID                  string
 	Name                      string
+	Description               string
 	RootURL                   string
 	BaseURL                   string
 	Enabled                   bool

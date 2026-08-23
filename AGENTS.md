@@ -202,6 +202,7 @@ The discovery document's order comes from
 make test    # CGO_ENABLED=0 go test ./...
 make lint
 make build
+make oracle  # drives Gloak with kcadm.sh; needs Docker
 ```
 
 - `make test` is clean. **Any** failure is a real regression. It was not always so:
@@ -214,6 +215,11 @@ make build
   the binary a single static file; do not swap in a cgo driver.
 - The Postgres suite (`go test -tags docker ./internal/store/postgres/`) is the only
   evidence the drivers agree. Run it after touching either.
+- **`make oracle` is the only test that is not written against a golden.** It
+  runs Keycloak's own `kcadm.sh` against Gloak, so it asks for things no case
+  asks for. It found `ClientRepresentation.description` - a field Gloak did not
+  have, because none of the six bootstrapped clients carries one and so no
+  recording ever showed it. Run it after touching a representation.
 - Adding a store interface method means implementing it in **both** drivers. The
   conformance suite in `internal/store/storetest` does not exercise every method, so
   compiling is not proof.

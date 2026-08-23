@@ -467,6 +467,36 @@ var adminCases = []Case{
 		UnorderedKeys: []string{"attributes"},
 	},
 
+	{
+		// A client with a name and a description, which the six bootstrapped
+		// clients between them do not have. Gloak had no description field at
+		// all until kcadm.sh set one and the read-back lost it - the first
+		// thing the external oracle found. Measured position: between name and
+		// rootUrl.
+		//
+		// Recorded rather than served, for the same reason
+		// admin/clients/read-created is: a created client inherits the realm's
+		// default client scopes, which is P5. See follow-up F16.
+		ID: "admin/clients/read-described",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get representation of a client with a description",
+			Retrieved: "2026-08-23",
+		},
+		Status:  Recorded,
+		Reason:  "a created client inherits the realm's default client scopes, which is P5",
+		Fixture: "admin-token-client-described",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"defaultClientScopes", "optionalClientScopes"},
+		Volatile:      []string{"id", "secret", "attributes/client.secret.creation.time"},
+		UnorderedKeys: []string{"attributes"},
+	},
+
 	// --- Users ---
 	{
 		ID: "admin/users/list",

@@ -204,6 +204,10 @@ var Fixtures = map[string]Fixture{
 	"admin-token-client-to-delete":    clientFixture("gloak-probe-delete"),
 	"admin-token-client-to-duplicate": clientFixture("gloak-probe-duplicate"),
 	"admin-token-client-to-read":      clientFixture("gloak-probe-read"),
+	// A client carrying a description, which no bootstrapped client has and
+	// which Gloak dropped entirely until kcadm.sh caught it.
+	"admin-token-client-described": clientFixtureBody(
+		`{"clientId":"gloak-probe-described","enabled":true,"name":"A name","description":"A description"}`),
 
 	// The secret endpoints need a client that has a secret, which means one
 	// created through the API: none of the six bootstrapped clients has one.

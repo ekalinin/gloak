@@ -234,14 +234,14 @@ type clientRepo struct{ db *sql.DB }
 
 func (r *clientRepo) Create(ctx context.Context, m *model.Client) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO client (id, realm_id, client_id, name, root_url, base_url, enabled, public_client, secret,
+		`INSERT INTO client (id, realm_id, client_id, name, description, root_url, base_url, enabled, public_client, secret,
 		 protocol, client_authenticator_type, surrogate_auth_required, always_display_in_console,
 		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
 		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
 		 full_scope_allowed, not_before, node_re_registration_timeout,
 		 redirect_uris, web_origins, default_client_scopes, optional_client_scopes, attributes)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.ID, m.RealmID, m.ClientID, m.Name, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.RealmID, m.ClientID, m.Name, m.Description, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
 		m.Protocol, m.ClientAuthenticatorType, m.SurrogateAuthRequired, m.AlwaysDisplayInConsole,
 		m.BearerOnly, m.ConsentRequired, m.StandardFlowEnabled, m.ImplicitFlowEnabled,
 		m.DirectAccessGrantsEnabled, m.ServiceAccountsEnabled, m.FrontchannelLogout,
@@ -253,7 +253,7 @@ func (r *clientRepo) Create(ctx context.Context, m *model.Client) error {
 
 func (r *clientRepo) ByClientID(ctx context.Context, realmID, clientID string) (*model.Client, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, realm_id, client_id, name, root_url, base_url, enabled, public_client, secret,
+		`SELECT id, realm_id, client_id, name, description, root_url, base_url, enabled, public_client, secret,
 		 protocol, client_authenticator_type, surrogate_auth_required, always_display_in_console,
 		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
 		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
@@ -265,7 +265,7 @@ func (r *clientRepo) ByClientID(ctx context.Context, realmID, clientID string) (
 
 func (r *clientRepo) ByID(ctx context.Context, realmID, id string) (*model.Client, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, realm_id, client_id, name, root_url, base_url, enabled, public_client, secret,
+		`SELECT id, realm_id, client_id, name, description, root_url, base_url, enabled, public_client, secret,
 		 protocol, client_authenticator_type, surrogate_auth_required, always_display_in_console,
 		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
 		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
@@ -277,7 +277,7 @@ func (r *clientRepo) ByID(ctx context.Context, realmID, id string) (*model.Clien
 
 func (r *clientRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.Client, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, realm_id, client_id, name, root_url, base_url, enabled, public_client, secret,
+		`SELECT id, realm_id, client_id, name, description, root_url, base_url, enabled, public_client, secret,
 		 protocol, client_authenticator_type, surrogate_auth_required, always_display_in_console,
 		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
 		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
@@ -305,7 +305,7 @@ func (r *clientRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.
 func (r *clientRepo) Update(ctx context.Context, m *model.Client) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE client SET
-			 name = ?, root_url = ?, base_url = ?, enabled = ?, public_client = ?, secret = ?,
+			 name = ?, description = ?, root_url = ?, base_url = ?, enabled = ?, public_client = ?, secret = ?,
 			 protocol = ?, client_authenticator_type = ?, surrogate_auth_required = ?,
 			 always_display_in_console = ?, bearer_only = ?, consent_required = ?,
 			 standard_flow_enabled = ?, implicit_flow_enabled = ?, direct_access_grants_enabled = ?,
@@ -314,7 +314,7 @@ func (r *clientRepo) Update(ctx context.Context, m *model.Client) error {
 			 redirect_uris = ?, web_origins = ?, default_client_scopes = ?,
 			 optional_client_scopes = ?, attributes = ?
 			 WHERE realm_id = ? AND id = ?`,
-		m.Name, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
+		m.Name, m.Description, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
 		m.Protocol, m.ClientAuthenticatorType, m.SurrogateAuthRequired,
 		m.AlwaysDisplayInConsole, m.BearerOnly, m.ConsentRequired,
 		m.StandardFlowEnabled, m.ImplicitFlowEnabled, m.DirectAccessGrantsEnabled,
@@ -341,7 +341,7 @@ func (r *clientRepo) Delete(ctx context.Context, realmID, id string) error {
 func scanClient(row scanner) (*model.Client, error) {
 	m := &model.Client{}
 	var redirectURIs, webOrigins, defaultScopes, optionalScopes, attributes string
-	err := row.Scan(&m.ID, &m.RealmID, &m.ClientID, &m.Name, &m.RootURL, &m.BaseURL,
+	err := row.Scan(&m.ID, &m.RealmID, &m.ClientID, &m.Name, &m.Description, &m.RootURL, &m.BaseURL,
 		&m.Enabled, &m.PublicClient, &m.Secret,
 		&m.Protocol, &m.ClientAuthenticatorType, &m.SurrogateAuthRequired, &m.AlwaysDisplayInConsole,
 		&m.BearerOnly, &m.ConsentRequired, &m.StandardFlowEnabled, &m.ImplicitFlowEnabled,

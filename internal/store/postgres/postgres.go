@@ -222,14 +222,14 @@ type clientRepo struct{ pool *pgxpool.Pool }
 
 func (r *clientRepo) Create(ctx context.Context, m *model.Client) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO client (id, realm_id, client_id, name, root_url, base_url, enabled, public_client, secret,
+		`INSERT INTO client (id, realm_id, client_id, name, description, root_url, base_url, enabled, public_client, secret,
 		 protocol, client_authenticator_type, surrogate_auth_required, always_display_in_console,
 		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
 		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
 		 full_scope_allowed, not_before, node_re_registration_timeout,
 		 redirect_uris, web_origins, default_client_scopes, optional_client_scopes, attributes)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)`,
-		m.ID, m.RealmID, m.ClientID, m.Name, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)`,
+		m.ID, m.RealmID, m.ClientID, m.Name, m.Description, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
 		m.Protocol, m.ClientAuthenticatorType, m.SurrogateAuthRequired, m.AlwaysDisplayInConsole,
 		m.BearerOnly, m.ConsentRequired, m.StandardFlowEnabled, m.ImplicitFlowEnabled,
 		m.DirectAccessGrantsEnabled, m.ServiceAccountsEnabled, m.FrontchannelLogout,
@@ -241,7 +241,7 @@ func (r *clientRepo) Create(ctx context.Context, m *model.Client) error {
 
 func (r *clientRepo) ByClientID(ctx context.Context, realmID, clientID string) (*model.Client, error) {
 	row := r.pool.QueryRow(ctx,
-		`SELECT id, realm_id, client_id, name, root_url, base_url, enabled, public_client, secret,
+		`SELECT id, realm_id, client_id, name, description, root_url, base_url, enabled, public_client, secret,
 		 protocol, client_authenticator_type, surrogate_auth_required, always_display_in_console,
 		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
 		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
@@ -253,7 +253,7 @@ func (r *clientRepo) ByClientID(ctx context.Context, realmID, clientID string) (
 
 func (r *clientRepo) ByID(ctx context.Context, realmID, id string) (*model.Client, error) {
 	row := r.pool.QueryRow(ctx,
-		`SELECT id, realm_id, client_id, name, root_url, base_url, enabled, public_client, secret,
+		`SELECT id, realm_id, client_id, name, description, root_url, base_url, enabled, public_client, secret,
 		 protocol, client_authenticator_type, surrogate_auth_required, always_display_in_console,
 		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
 		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
@@ -265,7 +265,7 @@ func (r *clientRepo) ByID(ctx context.Context, realmID, id string) (*model.Clien
 
 func (r *clientRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.Client, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, realm_id, client_id, name, root_url, base_url, enabled, public_client, secret,
+		`SELECT id, realm_id, client_id, name, description, root_url, base_url, enabled, public_client, secret,
 		 protocol, client_authenticator_type, surrogate_auth_required, always_display_in_console,
 		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
 		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
@@ -293,16 +293,16 @@ func (r *clientRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.
 func (r *clientRepo) Update(ctx context.Context, m *model.Client) error {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE client SET
-			 name = $1, root_url = $2, base_url = $3, enabled = $4, public_client = $5, secret = $6,
-			 protocol = $7, client_authenticator_type = $8, surrogate_auth_required = $9,
-			 always_display_in_console = $10, bearer_only = $11, consent_required = $12,
-			 standard_flow_enabled = $13, implicit_flow_enabled = $14, direct_access_grants_enabled = $15,
-			 service_accounts_enabled = $16, frontchannel_logout = $17, full_scope_allowed = $18,
-			 not_before = $19, node_re_registration_timeout = $20,
-			 redirect_uris = $21, web_origins = $22, default_client_scopes = $23,
-			 optional_client_scopes = $24, attributes = $25
-			 WHERE realm_id = $26 AND id = $27`,
-		m.Name, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
+			 name = $1, description = $2, root_url = $3, base_url = $4, enabled = $5, public_client = $6,
+			 secret = $7, protocol = $8, client_authenticator_type = $9, surrogate_auth_required = $10,
+			 always_display_in_console = $11, bearer_only = $12, consent_required = $13,
+			 standard_flow_enabled = $14, implicit_flow_enabled = $15, direct_access_grants_enabled = $16,
+			 service_accounts_enabled = $17, frontchannel_logout = $18, full_scope_allowed = $19,
+			 not_before = $20, node_re_registration_timeout = $21,
+			 redirect_uris = $22, web_origins = $23, default_client_scopes = $24,
+			 optional_client_scopes = $25, attributes = $26
+			 WHERE realm_id = $27 AND id = $28`,
+		m.Name, m.Description, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
 		m.Protocol, m.ClientAuthenticatorType, m.SurrogateAuthRequired,
 		m.AlwaysDisplayInConsole, m.BearerOnly, m.ConsentRequired,
 		m.StandardFlowEnabled, m.ImplicitFlowEnabled, m.DirectAccessGrantsEnabled,
@@ -329,7 +329,7 @@ func (r *clientRepo) Delete(ctx context.Context, realmID, id string) error {
 func scanClient(row scanner) (*model.Client, error) {
 	m := &model.Client{}
 	var redirectURIs, webOrigins, defaultScopes, optionalScopes, attributes string
-	err := row.Scan(&m.ID, &m.RealmID, &m.ClientID, &m.Name, &m.RootURL, &m.BaseURL,
+	err := row.Scan(&m.ID, &m.RealmID, &m.ClientID, &m.Name, &m.Description, &m.RootURL, &m.BaseURL,
 		&m.Enabled, &m.PublicClient, &m.Secret,
 		&m.Protocol, &m.ClientAuthenticatorType, &m.SurrogateAuthRequired, &m.AlwaysDisplayInConsole,
 		&m.BearerOnly, &m.ConsentRequired, &m.StandardFlowEnabled, &m.ImplicitFlowEnabled,
