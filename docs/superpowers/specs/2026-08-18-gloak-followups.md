@@ -9,6 +9,11 @@ recorded here so the next plan starts from them rather than rediscovering them.
 
 Each was reproduced, not theorised.
 
+**Status, 2026-08-23.** P2's first cut closed F15 and the
+`service-account-<clientId>` half of F14's neighbour, and opened F16 through
+F19. Closed entries keep their text: the reasoning that turned out to be wrong
+is worth more than a tidy list.
+
 ## F3: two shipped endpoints have no measured contract (closed)
 
 `docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md` records the token
@@ -113,7 +118,20 @@ on. Once measured, the fix is presumably to have `withKeycloakFallbacks` check
 `r.URL.Path` against its cleaned form itself, ahead of the `mux.Handler` probe,
 rather than trusting "non-empty pattern" to mean "real route".
 
-## F12: the recorder cannot capture a multi-valued header or a volatile `Location`, together
+## F12: the recorder cannot capture a multi-valued header or a volatile `Location`, together (closed)
+
+**Both halves are closed.** P2's Task 1 added `Case.VolatileHeaders` for the
+`Location` half. P2's Task 12 closed the multi-valued half, and not because
+anybody planned to: `userinfo`'s 200 was measured sending `Cache-Control`
+twice - `no-store` and then `no-cache` - so recording it through `Header.Get`
+would have committed a one-value contract. `recordedHeaders` now emits one
+golden line per value and the verifier compares the whole list, which is what
+this entry asked for. The `Set-Cookie` case it was written for has still not
+been recorded; when it is, the machinery is already there.
+
+The original text follows.
+
+## F12 (original): the recorder cannot capture a multi-valued header or a volatile `Location`, together
 
 Two gaps in `internal/conformance` block on the same future case - the first
 recorded response carrying a repeated header, most likely `Set-Cookie` on a

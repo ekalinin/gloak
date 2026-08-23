@@ -18,6 +18,22 @@ The first sub-project, P1, has its spec already:
 
 ## 2. Where the project stands
 
+**Updated 2026-08-23, after P2's first cut.** `make conformance` reports
+**55 of 485** enumerated behaviours served. P1 built the token foundation and
+P2's first cut added 24 Admin REST API operations - `admin/clients` 10 of 35,
+`admin/users` 14 of 34 - along with the six protocol bodies P1 could not reach
+without a confidential client.
+
+The denominator moved from 483 to 485 because two cases were added for
+behaviours nobody had catalogued: an access token introspected from outside its
+audience, and a refresh token whose session has been ended. Neither is a new
+operation; both are protocol-chapter cases, which is why that chapter's
+denominator is the catalogue rather than the OpenAPI description.
+
+The rest of this section is the state before P1, kept because section 3 is the
+argument that produced the reporting, and the argument reads oddly without the
+number it was arguing about.
+
 Before this document, `make conformance` reported 8 of 68 documented behaviours
 served. That number was honest about the OIDC protocol surface and silent about
 everything else, because the catalogue only covered the OIDC layer. The Admin
@@ -152,6 +168,7 @@ operations is allocated below; none is left unassigned.
 |---|---|---|---|---|
 | **P1** | Token foundation **(done)** | - | `oidc/token` 8 of 17, `userinfo` 4 of 7, `introspection` 1 of 4, `revocation` 4 of 4; closed `oidc/certs` | 17 cases |
 | **P2** | Admin API core | P1 | Users 34, Clients 35, Roles 28, Roles by ID 10, Groups 11, Role Mapper 18, Client Role Mappings 15 | 151 ops |
+| P2 first cut | Clients and Users, done 2026-08-23 | | 24 of the 69 in those two tags; the other 45 belong to P5, P6, P7, P9, P10, P13, P14 or the second cut - see §1.1 of the P2 design | 24 ops |
 | **P3** | Browser code flow | P1 | `oidc/authorization` 11, `oidc/logout` (part) | ~15 cases |
 | **P4** | Multi-realm | P2 | Realms Admin 45, Key 1 | 46 ops |
 | **P5** | Client scopes and protocol mappers | P2 | Client Scopes 10, Protocol Mappers 21, Scope Mappings 33, Client Attribute Certificate 7, Client Initial Access 3, Client Registration Policy 1 | 75 ops |
@@ -222,7 +239,10 @@ Building the hardest part of the harness immediately after P1, before the chaini
 mechanism has been shaken out on the simple case, is how it gets built twice.
 
 One caveat, so the tooling argument is not overstated: `kcadm.sh` and the Terraform
-provider will only **partly** work after P2. `kcadm` usually starts by creating a
+provider will only **partly** work after P2, which P2 confirmed: `make oracle`
+drives Gloak with `kcadm.sh` today and it works for clients and users, having
+found a missing `ClientRepresentation.description` on its first run. `kcadm`
+usually starts by creating a
 realm, which is P4, and the Terraform provider leans on client scopes, which is
 P5. They become real external oracles after P2, P4 and P5, not immediately.
 
