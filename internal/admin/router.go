@@ -3,7 +3,6 @@ package admin
 import (
 	"net/http"
 
-	"github.com/ekalinin/gloak/internal/httpx"
 	"github.com/ekalinin/gloak/internal/keys"
 	"github.com/ekalinin/gloak/internal/model"
 	"github.com/ekalinin/gloak/internal/store"
@@ -32,7 +31,12 @@ func Register(mux *http.ServeMux, s store.Store, k *keys.Manager, issuerBase str
 // route with no required role cannot be written by accident: guard takes the
 // role as a parameter, so omitting it does not compile.
 func (h *handler) register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /admin/realms/{realm}/users", h.guard("view-users", h.listUsers))
+	// Listing and counting accept query-users as well as view-users, measured:
+	// a caller holding only query-users gets 200 on both. Reading one user
+	// does not - it answers 403.
+	mux.HandleFunc("GET /admin/realms/{realm}/users", h.guardAny(usersReadRoles, h.listUsers))
+	mux.HandleFunc("GET /admin/realms/{realm}/users/count", h.guardAny(usersReadRoles, h.countUsers))
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}", h.guard("view-users", h.readUser))
 	mux.HandleFunc("GET /admin/realms/{realm}/clients", h.guard("view-clients", h.listClients))
 	// {clientUUID}, not {client-uuid}: net/http requires a wildcard name to be
 	// a Go identifier and panics on the hyphen. The OpenAPI description spells
@@ -67,6 +71,13 @@ func (h *handler) guard(role string, next func(http.ResponseWriter, *http.Reques
 	return h.guardRejecting(role, writeForbidden, next)
 }
 
+// guardAny is guard for a route that more than one role opens. The user
+// listing and count take view-users, query-users or manage-users; reading one
+// user takes only the first and third.
+func (h *handler) guardAny(roles []string, next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
+	return h.guardAnyRejecting(roles, writeForbidden, next)
+}
+
 // guardRejecting is guard with the rejection spelled out, for the one route
 // that does not answer 403.
 //
@@ -77,6 +88,13 @@ func (h *handler) guard(role string, next func(http.ResponseWriter, *http.Reques
 // hiding it in the handler, because the rejection happens before the handler
 // runs.
 func (h *handler) guardRejecting(role string, reject func(http.ResponseWriter), next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
+	return h.guardAnyRejecting([]string{role}, reject, next)
+}
+
+// guardAnyRejecting is the one implementation the three wrappers share:
+// resolve the realm, resolve the caller, admit it if it holds any of the
+// roles.
+func (h *handler) guardAnyRejecting(roles []string, reject func(http.ResponseWriter), next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		realm := h.resolveRealm(w, r)
 		if realm == nil {
@@ -86,7 +104,7 @@ func (h *handler) guardRejecting(role string, reject func(http.ResponseWriter), 
 		if c == nil {
 			return
 		}
-		if !c.has(role) {
+		if !c.hasAny(roles) {
 			reject(w)
 			return
 		}
@@ -107,9 +125,7 @@ func (h *handler) realmIssuer(realm string) string {
 	return h.issuerBase + "/realms/" + realm
 }
 
-// listUsers is a placeholder until Task 13 records the representation. It
-// exists so the authentication and authorization cases have a route to reach;
-// returning a body nobody measured would be worse than returning none.
-func (h *handler) listUsers(w http.ResponseWriter, r *http.Request, rc *reqContext) {
-	httpx.WriteJSON(w, http.StatusOK, []struct{}{})
-}
+// usersReadRoles is what the user listing and the count accept. Reading one
+// user by ID is not on this list: query-users was measured getting 403 there
+// and 200 on the other two.
+var usersReadRoles = []string{"view-users", "query-users", "manage-users"}

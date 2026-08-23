@@ -352,6 +352,13 @@ func ensureAdminUser(ctx context.Context, s store.Store, realmID, adminUser stri
 		Username:         adminUser,
 		Enabled:          true,
 		CreatedTimestamp: time.Now().UnixMilli(),
+		// Measured: the bootstrapped administrator carries this one attribute
+		// and it is visible through the Admin API, so the user listing cannot
+		// be reproduced without it. Keycloak sets it for an account created
+		// from KC_BOOTSTRAP_ADMIN_USERNAME; what it goes on to mean is not
+		// measured, only that it is there and that the value is the string
+		// "true" in a one-element array.
+		Attributes: map[string][]string{"is_temporary_admin": {"true"}},
 	}
 	err := s.Users().Create(ctx, user)
 	switch {

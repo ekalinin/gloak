@@ -467,6 +467,178 @@ var adminCases = []Case{
 		UnorderedKeys: []string{"attributes"},
 	},
 
+	// --- Users ---
+	{
+		ID: "admin/users/list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get users",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/users",
+		// The realm holds one user at this point, the bootstrapped
+		// administrator, and every other fixture creates more - so this
+		// enumerates the realm and has to record first. See
+		// Case.PristineRealm.
+		PristineRealm: true,
+		Fixture:       "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		// id and createdTimestamp are minted at bootstrap.
+		Volatile: []string{"*/id", "*/createdTimestamp"},
+	},
+	{
+		// The same listing narrowed by username, which is what makes the case
+		// reproducible once other fixtures have added users. It is also how
+		// the field set is pinned against the read below: the two differ, and
+		// only in access.
+		ID: "admin/users/list-by-username",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get users, filtered by username",
+			Retrieved: "2026-08-23",
+		},
+		Status: Implemented,
+		// No Operation: admin/users/list already claims it.
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users",
+			Query:   map[string]string{"username": "admin"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/createdTimestamp"},
+	},
+	{
+		// briefRepresentation drops four fields - totp,
+		// disableableCredentialTypes, requiredActions and notBefore - and
+		// keeps access. Their natural values are false, [], [] and 0, so
+		// nothing but a recording distinguishes "dropped" from "empty".
+		ID: "admin/users/list-brief",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get users, briefRepresentation",
+			Retrieved: "2026-08-23",
+		},
+		Status: Implemented,
+		// No Operation: admin/users/list already claims it.
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/admin/realms/master/users",
+			Query: map[string]string{
+				"username":            "admin",
+				"briefRepresentation": "true",
+			},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/createdTimestamp"},
+	},
+	{
+		// search is the loose filter: a case-insensitive substring across
+		// username, firstName, lastName and email, where username= matches
+		// only its own field.
+		ID: "admin/users/list-by-search",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get users, search",
+			Retrieved: "2026-08-23",
+		},
+		Status: Implemented,
+		// No Operation: admin/users/list already claims it.
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users",
+			Query:   map[string]string{"search": "ADMI"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/createdTimestamp"},
+	},
+	{
+		// A filter matching nothing is 200 and an empty array, not a 404.
+		ID: "admin/users/list-no-match",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get users, filter matching nothing",
+			Retrieved: "2026-08-23",
+		},
+		Status: Implemented,
+		// No Operation: admin/users/list already claims it.
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users",
+			Query:   map[string]string{"username": "nosuchuser"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// A bare JSON number, not an object.
+		ID: "admin/users/count",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get the number of users",
+			Retrieved: "2026-08-23",
+		},
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/users/count",
+		PristineRealm: true,
+		Fixture:       "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/count",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/users/read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get representation of the user",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/users/{user-id}",
+		Fixture:   "admin-token-admin-user",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"id", "createdTimestamp"},
+	},
+	{
+		ID: "admin/users/read-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get representation of the user, unknown id",
+			Retrieved: "2026-08-23",
+		},
+		Status: Implemented,
+		// No Operation: a rejection. The message is "User not found", where a
+		// missing client says "Could not find client" and a missing realm
+		// "Realm not found." - three endpoints, three spellings.
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/00000000-0000-0000-0000-000000000000",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+
 	{
 		// The 403 shape is measured - see "Admin API rejection shapes" in
 		// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md, taken

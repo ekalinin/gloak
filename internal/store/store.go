@@ -48,6 +48,13 @@ type UserRepo interface {
 	Create(ctx context.Context, u *model.User) error
 	ByUsername(ctx context.Context, realmID, username string) (*model.User, error)
 	ByID(ctx context.Context, realmID, id string) (*model.User, error)
+	// ListByRealm returns every user, ordered by username. The order is
+	// measured, not a convenience: Keycloak's listing came back
+	// aaa-user, admin, full-user, zzz-user for users created in the reverse
+	// order, so it sorts rather than returning insertion order. Filtering and
+	// paging stay in the handler, since the query parameters that drive them
+	// are the admin API's, not the store's.
+	ListByRealm(ctx context.Context, realmID string) ([]*model.User, error)
 	// Delete removes a user and, through the schema's cascades, its sessions
 	// and role assignments. It arrives here rather than with the rest of user
 	// management because the cascade is what the role-mapping tests assert:

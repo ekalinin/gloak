@@ -6,6 +6,7 @@ package storetest
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/ekalinin/gloak/internal/model"
@@ -543,6 +544,64 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 		if len(got) != 3 {
 			t.Fatalf("want 3 realm roles, got %d", len(got))
+		}
+	})
+
+	// The order is contract, not convenience: Keycloak's user listing was
+	// measured sorted by username rather than returning insertion order, and
+	// the admin API hands the store's order straight to the client. Both
+	// drivers have to agree, so this belongs here rather than in either one.
+	t.Run("users are listed sorted by username", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		for _, n := range []string{"zzz", "admin", "aaa"} {
+			u := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: n, Enabled: true}
+			if err := s.Users().Create(ctx, u); err != nil {
+				t.Fatalf("Users().Create(%q): %v", n, err)
+			}
+		}
+
+		got, err := s.Users().ListByRealm(ctx, realm.ID)
+
+		if err != nil {
+			t.Fatalf("ListByRealm: %v", err)
+		}
+		names := make([]string, 0, len(got))
+		for _, u := range got {
+			names = append(names, u.Username)
+		}
+		want := []string{"aaa", "admin", "zzz"}
+		if !slices.Equal(names, want) {
+			t.Fatalf("want %v, got %v", want, names)
+		}
+	})
+
+	t.Run("a user is not listed from another realm", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		mine := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		theirs := &model.Realm{ID: model.NewID(), Name: "other", Enabled: true}
+		for _, r := range []*model.Realm{mine, theirs} {
+			if err := s.Realms().Create(ctx, r); err != nil {
+				t.Fatalf("Realms().Create(%q): %v", r.Name, err)
+			}
+		}
+		u := &model.User{ID: model.NewID(), RealmID: theirs.ID, Username: "elsewhere", Enabled: true}
+		if err := s.Users().Create(ctx, u); err != nil {
+			t.Fatalf("Users().Create: %v", err)
+		}
+
+		got, err := s.Users().ListByRealm(ctx, mine.ID)
+
+		if err != nil {
+			t.Fatalf("ListByRealm: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("want no users in the empty realm, got %d", len(got))
 		}
 	})
 }

@@ -34,6 +34,18 @@ type caller struct {
 // naming at the call site.
 func (c *caller) has(role string) bool { return c.roles[role] }
 
+// hasAny reports whether the caller holds at least one of the roles a route
+// accepts. Some routes take more than one: the user listing admits
+// view-users, query-users or manage-users, measured.
+func (c *caller) hasAny(roles []string) bool {
+	for _, role := range roles {
+		if c.roles[role] {
+			return true
+		}
+	}
+	return false
+}
+
 // resolveCaller turns a bearer token into the administrator behind it.
 //
 // Every failure is reported as the same measured 401. A missing header and a

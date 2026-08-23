@@ -388,6 +388,29 @@ func (r *userRepo) ByID(ctx context.Context, realmID, id string) (*model.User, e
 	return scanUser(row)
 }
 
+// ListByRealm orders by username because Keycloak's listing was measured
+// sorted rather than in insertion order.
+func (r *userRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.User, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, realm_id, username, email, email_verified, enabled, first_name, last_name,
+		 created_timestamp, attributes
+		 FROM user_entity WHERE realm_id = ? ORDER BY username`, realmID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	defer rows.Close()
+
+	var out []*model.User
+	for rows.Next() {
+		m, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
 func (r *userRepo) Delete(ctx context.Context, realmID, id string) error {
 	res, err := r.db.ExecContext(ctx,
 		`DELETE FROM user_entity WHERE realm_id = ? AND id = ?`, realmID, id)

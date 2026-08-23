@@ -121,6 +121,13 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   access tokens carry a different claim set than Keycloak's.
 - **The admin role container in `master` is the `master-realm` client.**
   `realm-management` is its equivalent inside non-master realms.
+- **One user serialises three ways.** `GET /users` carries a one-key `access`
+  block, `GET /users/{id}` a six-key one, and
+  `.../clients/{uuid}/service-account-user` none at all. A shared user
+  serialiser would be wrong twice. `access` describes the **caller's**
+  permissions, never the user being read.
+- **`GET /users/count` is a bare JSON number**, and it is not filtered by what
+  the caller may see, while the listing beside it is.
 
 ## Boundaries
 

@@ -294,21 +294,33 @@ reading the recording rather than while writing the create handler.
 The golden is in the repository, so the `Recorded` alarm fires the moment all
 three line up.
 
-## F17: `GET /clients` is gated where Keycloak filters
+## F17: the listings are gated where Keycloak filters
 
-Measured 2026-08-23. A caller holding only `query-clients` gets **200 and an
-empty array** from `GET /admin/realms/master/clients`, even filtering to a
-client that exists. Keycloak returns the objects the caller may view rather
-than refusing the caller.
+Measured 2026-08-23. A caller holding only the `query-` role gets **200 and an
+empty array** from a listing, even filtering to an object that exists. Keycloak
+returns the objects the caller may view rather than refusing the caller.
 
-Gloak guards the route with `view-clients` alone, so the same caller gets 403.
-Two changes are needed: accept `query-clients` as well, and filter the list by
-`clientAccessFor(...).View` instead of returning everything.
+| Listing | Gloak accepts | Gloak returns to a `query-` caller | Keycloak |
+|---|---|---|---|
+| `GET /clients` | `view-clients` only | 403 | 200 `[]` |
+| `GET /users` | `view-users`, `query-users`, `manage-users` | every user | 200 `[]` |
+
+The users half was half-fixed on 2026-08-23: the route now admits `query-users`
+because that was measured, but nothing filters the result, so a `query-users`
+caller sees everybody. Both listings need the same thing - filter by the
+caller's own view permission, `clientAccessFor(...).View` and
+`userAccessFor(...).View` respectively - and the clients route needs
+`query-clients` admitted as well.
+
+`GET /users/count` is **not** filtered by visibility, measured: the same caller
+gets `[]` from the listing and `7` from the count. So the fix belongs in the
+listing alone, and the two endpoints disagreeing is the contract.
 
 It cannot become a conformance case until role assignment is served - that is
 the Role Mapper tag, P2's second cut - because a fixture reaching a
 narrow-role caller has to build one through the API in both the reference
-container and Gloak.
+container and Gloak. `internal/admin`'s own tests cover what they can:
+TestQueryUsersOpensTheListingButNotTheRead pins the status codes.
 
 ## F18: tokens carry no roles, so `aud` is wrong and introspection is too permissive
 

@@ -1,0 +1,12 @@
+# GET /admin/realms/master/users
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"id":"{{string}}","username":"admin","emailVerified":false,"attributes":{"is_temporary_admin":["true"]},"enabled":true,"createdTimestamp":"{{number}}","totp":false,"disableableCredentialTypes":[],"requiredActions":[],"notBefore":0,"access":{"manage":true}}]

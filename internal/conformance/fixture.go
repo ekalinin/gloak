@@ -155,6 +155,27 @@ var Fixtures = map[string]Fixture{
 		},
 	},
 
+	// admin-token-admin-user is admin-token plus the bootstrapped
+	// administrator's own user ID, found by filtering the user list. Like the
+	// client UUID it is minted at bootstrap, so it can never be a literal.
+	"admin-token-admin-user": {
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/users",
+					Query:   map[string]string{"username": "admin", "exact": "true"},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				// exact=true matches one user, so index 0 is not a bet on
+				// list order.
+				Capture: map[string]string{"user_id": "0/id"},
+			},
+		},
+	},
+
 	// One fixture per case that needs a pre-created client, each with its own
 	// clientId - see clientFixture for why sharing one would break recording.
 	"admin-token-client-to-update":    clientFixture("gloak-probe-update"),
