@@ -1,8 +1,10 @@
 package conformance
 
 import (
+	"bytes"
 	"errors"
 	"io/fs"
+	"net/http"
 	"os"
 	"regexp"
 	"testing"
@@ -76,4 +78,60 @@ func TestRecordedCaseRules(t *testing.T) {
 			t.Errorf("%q: Recorded means the golden was measured, but none exists", c.ID)
 		}
 	}
+}
+
+// TestPristineRealmGoldensAreNotPolluted checks the result of the recorder's
+// ordering rather than the ordering itself.
+//
+// A case marked PristineRealm enumerates the realm, so its golden must mention
+// no client that a fixture creates. Three did once - gloak-confidential and
+// its two siblings, created by the OIDC fixtures that run earlier - and were
+// recorded into the unfiltered client list as though Keycloak bootstrapped
+// them. Checking the bytes catches that whatever the recorder's order happens
+// to be.
+func TestPristineRealmGoldensAreNotPolluted(t *testing.T) {
+	created := fixtureClientIDs()
+	if len(created) == 0 {
+		t.Fatal("no fixture creates a client; this test has stopped checking anything")
+	}
+
+	for _, c := range Catalog {
+		if !c.PristineRealm {
+			continue
+		}
+		raw, err := os.ReadFile(GoldenPath(goldenDir, c.ID))
+		if err != nil {
+			t.Errorf("%q: %v", c.ID, err)
+			continue
+		}
+		for _, clientID := range created {
+			if bytes.Contains(raw, []byte(`"clientId":"`+clientID+`"`)) {
+				t.Errorf("%q: golden holds %q, which a fixture created - re-record with this case first",
+					c.ID, clientID)
+			}
+		}
+	}
+}
+
+// fixtureClientIDs is every clientId a fixture creates, read out of the
+// creation bodies themselves so that a new fixture is covered without anyone
+// remembering to list it here.
+func fixtureClientIDs() []string {
+	pattern := regexp.MustCompile(`"clientId":"([^"]+)"`)
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range Fixtures {
+		for _, s := range f.Steps {
+			if s.Request.Method != http.MethodPost || len(s.Request.Body) == 0 {
+				continue
+			}
+			for _, m := range pattern.FindAllSubmatch(s.Request.Body, -1) {
+				if id := string(m[1]); !seen[id] {
+					seen[id] = true
+					out = append(out, id)
+				}
+			}
+		}
+	}
+	return out
 }

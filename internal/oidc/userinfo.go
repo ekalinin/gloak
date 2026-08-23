@@ -14,14 +14,11 @@ import (
 
 // userinfoDocument is the userinfo success body.
 //
-// **This shape is unmeasured.** No client on a bootstrapped master realm can
-// produce a token userinfo accepts: admin-cli is the only one with direct
-// access grants and it issues lightweight tokens, which this endpoint refuses
-// outright. That is why oidc/userinfo/get-with-valid-token and
-// post-with-valid-token have no golden and stay Pending. The fields below are
-// the measured ID-token claim set narrowed to what userinfo is defined to
-// return; whoever first creates a confidential client - P2 - has to record the
-// real response and correct this.
+// Measured 2026-08-23 against a confidential client created through the admin
+// API, which is what P1 could not reach. P1 derived this shape from the
+// ID-token claim set and said it was a guess; the recording agrees with it
+// exactly - three keys for a user with no email address, in this order, with
+// email appearing only when there is one.
 type userinfoDocument struct {
 	Sub               string `json:"sub"`
 	EmailVerified     bool   `json:"email_verified"`
@@ -93,6 +90,16 @@ func (h *handler) userinfo(w http.ResponseWriter, r *http.Request) {
 			"invalid_token", "Token verification failed")
 		return
 	}
+	// The success leaves the rejections' header set behind in two measured
+	// ways, and neither follows from the other.
+	//
+	// It sends Cache-Control **twice**: the no-store set at the top of this
+	// handler, and then a second no-cache. Every rejection sends only the
+	// first. And it carries X-Frame-Options, which every rejection omits - so
+	// "userinfo sends four of the five security headers" is a statement about
+	// its rejections, not about the endpoint.
+	w.Header().Add("Cache-Control", "no-cache")
+	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 	httpx.WriteJSON(w, http.StatusOK, userinfoDocument{
 		Sub:               user.ID,
 		EmailVerified:     user.EmailVerified,

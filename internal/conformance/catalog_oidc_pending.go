@@ -442,20 +442,27 @@ var oidcPending = []Case{
 			Section:   "Grant types: client credentials",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the token endpoint is not implemented",
-		Fixture: "", // needs a confidential client with a service account, which no bootstrapped client has
+		Status: Implemented,
+		// Measured 2026-08-23: this grant's body is three keys short of the
+		// password grant's. No refresh_token, no session_state and no
+		// id_token, but refresh_expires_in is present and 0 - so the two
+		// absences are absences and the third is a zero, which no amount of
+		// reasoning from the password grant would have produced.
+		Fixture: "confidential-service-account",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
 			Form: map[string]string{
 				"grant_type":    "client_credentials",
-				"client_id":     "gloak-service-client",
-				"client_secret": "REPLACE-WITH-A-REAL-SECRET",
+				"client_id":     "gloak-confidential-sa",
+				"client_secret": "{{client_secret}}",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
 		Volatile:      []string{"access_token"},
+		// See password-grant-admin-cli for why scope's word order is not
+		// stable across container starts.
+		UnorderedWords: []string{"scope"},
 	},
 	{
 		ID: "oidc/token/device-code-grant",
@@ -755,25 +762,29 @@ var oidcPending = []Case{
 			Section:   "Userinfo endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
-		Reason: "userinfo is not implemented",
-		// Measured 2026-08-21: no bootstrapped client can produce a token
-		// this endpoint accepts. admin-cli is the only one of the six with
-		// direct access grants enabled, and it carries
-		// client.use.lightweight.access.token.enabled = true, which userinfo
-		// rejects outright - 401 with error="invalid_token" and
-		// error_description="Lightweight access token not allowed for
-		// userinfo endpoint", regardless of the scope requested. Reaching
-		// the success body needs either a completed browser login or a
-		// client created through the admin API. See lightweight-token below,
-		// which pins the refusal that was measured instead.
-		Fixture: "",
+		Status: Implemented,
+		// Unblocked 2026-08-23 by client management: a client created through
+		// the admin API carries no lightweight-token attribute, so its access
+		// tokens are the full set userinfo accepts. The refusal measured in
+		// its place on 2026-08-21 is kept as lightweight-token below.
+		Fixture: "confidential-user-token",
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/realms/master/protocol/openid-connect/userinfo",
-			Headers: map[string]string{"Authorization": "Bearer REPLACE-WITH-A-NON-LIGHTWEIGHT-ACCESS-TOKEN"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
-		AssertHeaders: []string{"Content-Type"},
+		// Cache-Control is asserted because this response sends it **twice** -
+		// no-store and then no-cache - where the four rejections send only
+		// no-store. Both values are compared; see the header folding in
+		// conformance_test.go.
+		//
+		// X-Frame-Options is asserted because, unlike the four rejections,
+		// this response carries it. That is what stops the four-of-five rule
+		// being applied to the endpoint as a whole.
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "X-Frame-Options"},
+		// sub is the administrator's user ID, minted at bootstrap, so it
+		// differs between the reference container and Gloak on every run.
+		Volatile: []string{"sub"},
 	},
 	{
 		// Measured while recording get-with-valid-token: userinfo refuses a
@@ -837,20 +848,20 @@ var oidcPending = []Case{
 			Section:   "Userinfo endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
-		Reason: "userinfo is not implemented",
-		// Blocked by the same measured refusal as get-with-valid-token
-		// above: the only bootstrapped client with direct access grants
-		// issues lightweight tokens, which userinfo does not accept.
-		Fixture: "",
+		Status: Implemented,
+		// The token arrives in the form rather than in a header, and the
+		// response was measured byte-identical to the GET's - same body, same
+		// doubled Cache-Control, same five security headers.
+		Fixture: "confidential-user-token",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/userinfo",
 			Form: map[string]string{
-				"access_token": "REPLACE-WITH-A-NON-LIGHTWEIGHT-ACCESS-TOKEN",
+				"access_token": "{{access_token}}",
 			},
 		},
-		AssertHeaders: []string{"Content-Type"},
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "X-Frame-Options"},
+		Volatile:      []string{"sub"},
 	},
 	{
 		ID: "oidc/userinfo/expired-token",
@@ -859,15 +870,23 @@ var oidcPending = []Case{
 			Section:   "Userinfo endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "userinfo is not implemented",
-		Fixture: "", // needs a real access token allowed to expire, which a bootstrap fixture cannot wait out
+		Status: Implemented,
+		// The fixture shortens the client's access token to one second
+		// through the access.token.lifespan attribute and then waits two.
+		// Three routes to a token born expired were tried and measured
+		// first: "0" yields expires_in 0 with a token the server still
+		// accepts, "-1" falls back to 36000 rather than to the realm's 60,
+		// and there is no other knob. Waiting is the only one that works,
+		// which is why Fixture.Delay exists and why it has one user.
+		Fixture: "confidential-expired-token",
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/realms/master/protocol/openid-connect/userinfo",
-			Headers: map[string]string{"Authorization": "Bearer REPLACE-WITH-A-REAL-EXPIRED-ACCESS-TOKEN"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "WWW-Authenticate"},
+		// A rejection, so back to four of the five security headers.
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
 	},
 	{
 		ID: "oidc/userinfo/missing-authorization-header",
@@ -1009,23 +1028,57 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-20",
 		},
 		Status: Pending,
-		Reason: "the introspection endpoint is not implemented",
-		// A live access token is now obtainable - the admin-token fixture
-		// has one - but that is not what blocks this case. Introspecting
-		// with client_id "admin-cli" was measured returning 403
-		// {"error":"invalid_request","error_description":"Client not
-		// allowed."}: admin-cli is public, and Keycloak refuses
-		// introspection to public clients outright, so the response never
-		// reaches the shape this case names. See inactive-token below, where
-		// that was measured. Getting there needs a confidential client with
-		// a known secret, which arrives with client management.
+		Reason: "no fixture can put the introspecting client in an access token's audience",
+		// The confidential client that P1's note was waiting for now exists,
+		// and it is still not enough. Measured 2026-08-23: introspecting a
+		// freshly minted, unexpired access token answers 200
+		// {"active":false}, and the server log gives the reason - `reason=
+		// "Client 'gloak-confidential' is not in the token audience"`. An
+		// access token's aud holds the clients the *user* has roles on, never
+		// the issuing client, so a client cannot introspect its own token.
+		//
+		// Reaching an active body therefore needs the caller inside that aud,
+		// which needs either a role on the caller assigned to the user - the
+		// Role Mapper tag, P2's second cut - or an audience protocol mapper,
+		// which is P5. Recording it now would put {"active":false} in a file
+		// named active-access-token, which is worse than leaving it Pending.
+		//
+		// The refusal itself is measured and recorded, as
+		// access-token-outside-audience below.
 		Fixture: "",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token/introspect",
 			Form: map[string]string{
-				"client_id": "admin-cli",
-				"token":     "REPLACE-WITH-A-REAL-ACCESS-TOKEN",
+				"client_id":     "gloak-confidential",
+				"client_secret": "REPLACE-WITH-A-REAL-SECRET",
+				"token":         "REPLACE-WITH-AN-ACCESS-TOKEN-NAMING-THIS-CLIENT-IN-AUD",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The refusal measured while trying to record active-access-token,
+		// kept because the bytes are already known and because Gloak gets
+		// this wrong today: its access tokens name their own client in aud,
+		// so it would answer active where Keycloak answers inactive. See
+		// follow-up F18.
+		ID: "oidc/introspection/access-token-outside-audience",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Introspection endpoint: caller outside the token audience",
+			Retrieved: "2026-08-23",
+		},
+		Status:  Recorded,
+		Reason:  "Gloak's access tokens name their own client in aud, so it answers active - see F18",
+		Fixture: "confidential-user-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token/introspect",
+			Form: map[string]string{
+				"client_id":     "gloak-confidential",
+				"client_secret": "{{client_secret}}",
+				"token":         "{{access_token}}",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
@@ -1037,23 +1090,35 @@ var oidcPending = []Case{
 			Section:   "Introspection endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
-		Reason: "the introspection endpoint is not implemented",
-		// Blocked by the same measured refusal as active-access-token above:
-		// admin-cli is public and Keycloak does not let public clients
-		// introspect. A confidential client is what unblocks it, not a
-		// token.
-		Fixture: "",
+		Status: Recorded,
+		Reason: "the active body is the full claim set, which needs role resolution at issuance - see F18",
+		// A refresh token introspects active where an access token does not:
+		// the audience check that refuses the access token is not applied
+		// here. Measured 2026-08-23.
+		//
+		// The body is not RFC 7662's small set. It is the *access* token's
+		// claim set rebuilt from the refresh token - realm_access,
+		// resource_access, acr, preferred_username and all - with client_id,
+		// username, token_type and active appended. Gloak cannot produce it
+		// until roles are resolved at issuance, so this is Recorded: the
+		// contract is in the repository and the alarm fires when it matches.
+		Fixture: "confidential-user-token",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token/introspect",
 			Form: map[string]string{
-				"client_id":       "admin-cli",
-				"token":           "REPLACE-WITH-A-REAL-REFRESH-TOKEN",
+				"client_id":       "gloak-confidential",
+				"client_secret":   "{{client_secret}}",
+				"token":           "{{refresh_token}}",
 				"token_type_hint": "refresh_token",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
+		Volatile:      []string{"exp", "iat", "jti", "sub", "sid"},
+		// Java sets again: the two role lists and aud have no fixed order.
+		Unordered: []string{"aud", "realm_access/roles", "resource_access/*/roles"},
+		// scope is a space-separated list from the same kind of set.
+		UnorderedWords: []string{"scope"},
 	},
 	{
 		ID: "oidc/introspection/inactive-token",
@@ -1062,23 +1127,20 @@ var oidcPending = []Case{
 			Section:   "Introspection endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
-		Reason: "the introspection endpoint is not implemented",
-		// Measured: recording this with Fixture: "bootstrap" and client_id:
-		// "admin-cli" returned 403 {"error":"invalid_request",
-		// "error_description":"Client not allowed."} - admin-cli is public
-		// and Keycloak refuses introspection to public clients outright, so
-		// the response never reaches the {"active":false} shape this case
-		// names. Getting there needs a confidential client with a known
-		// secret, which no bootstrapped client has (see wrong-client-secret
-		// above for why broker's real secret is unknown).
-		Fixture: "",
+		Status: Implemented,
+		// Unblocked by client management. The earlier attempt used admin-cli
+		// and never got past the public-client refusal - 403 {"error":
+		// "invalid_request","error_description":"Client not allowed."} - so
+		// the {"active":false} shape this case names was never reached. A
+		// confidential client reaches it.
+		Fixture: "confidential-user-token",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token/introspect",
 			Form: map[string]string{
-				"client_id": "admin-cli",
-				"token":     "not-a-token",
+				"client_id":     "gloak-confidential",
+				"client_secret": "{{client_secret}}",
+				"token":         "not-a-token",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},

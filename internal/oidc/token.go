@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,15 +46,20 @@ const passwordCredentialType = "password"
 // not-before-policy is spelled with hyphens. IDToken is omitted rather than
 // emitted empty when the openid scope was not granted: the measured admin-cli
 // password grant has no id_token key at all.
+//
+// refresh_token and session_state carry omitempty for the same reason, added
+// once the client_credentials grant was measured: that grant's body has
+// neither key. **refresh_expires_in does not**, because that grant sends it
+// as 0 rather than dropping it - two absences and a zero, in one body.
 type tokenResponse struct {
 	AccessToken      string `json:"access_token"`
 	ExpiresIn        int64  `json:"expires_in"`
 	RefreshExpiresIn int64  `json:"refresh_expires_in"`
-	RefreshToken     string `json:"refresh_token"`
+	RefreshToken     string `json:"refresh_token,omitempty"`
 	TokenType        string `json:"token_type"`
 	IDToken          string `json:"id_token,omitempty"`
 	NotBeforePolicy  int    `json:"not-before-policy"`
-	SessionState     string `json:"session_state"`
+	SessionState     string `json:"session_state,omitempty"`
 	Scope            string `json:"scope"`
 }
 
@@ -167,7 +173,7 @@ func (h *handler) passwordGrant(w http.ResponseWriter, r *http.Request, realm *m
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	h.writeTokens(w, realm, client, user, session, scope, k)
+	h.writeTokens(w, realm, client, user, session, scope, k, false)
 }
 
 // refreshTokenGrant exchanges a refresh token for a fresh set.
@@ -228,7 +234,7 @@ func (h *handler) refreshTokenGrant(w http.ResponseWriter, r *http.Request, real
 	// the "Token endpoint response" section of the observed-behaviour document
 	// as the weakest of the unmasked duration values. The recorded golden
 	// agrees with the configured 1800 because the session is seconds old there.
-	h.writeTokens(w, realm, client, user, session, clientSession.Scope, k)
+	h.writeTokens(w, realm, client, user, session, clientSession.Scope, k, false)
 }
 
 func writeInvalidRefreshToken(w http.ResponseWriter) {
@@ -237,12 +243,10 @@ func writeInvalidRefreshToken(w http.ResponseWriter) {
 
 // clientCredentialsGrant issues a token for a client acting on its own behalf.
 //
-// **The response shape here is unmeasured.** No client on a bootstrapped
-// master realm has a service account, so oidc/token/client-credentials-grant
-// has no golden and stays Pending; whoever first creates such a client -
-// which is P2, where client management lives - has to record it and correct
-// this. What is asserted today is only who may use the grant, in
-// internal/oidc/token_test.go.
+// Measured 2026-08-23, once client management made a service-account client
+// creatable: the response is three keys short of the other grants - no
+// refresh_token, no session_state, no id_token - while refresh_expires_in is
+// present and 0. See writeTokens, and the client-credentials-grant golden.
 func (h *handler) clientCredentialsGrant(w http.ResponseWriter, r *http.Request, realm *model.Realm, client *model.Client, k *keys.RealmKeys) {
 	if client.PublicClient || !client.ServiceAccountsEnabled {
 		httpx.WriteOAuthError(w, http.StatusBadRequest,
@@ -260,7 +264,7 @@ func (h *handler) clientCredentialsGrant(w http.ResponseWriter, r *http.Request,
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	h.writeTokens(w, realm, client, user, session, scope, k)
+	h.writeTokens(w, realm, client, user, session, scope, k, true)
 }
 
 // serviceAccountUser returns the account a client acts as, creating it on
@@ -336,14 +340,21 @@ func (h *handler) startSession(ctx context.Context, realm *model.Realm, client *
 
 // writeTokens issues a set for an established session and writes the measured
 // response body.
-func (h *handler) writeTokens(w http.ResponseWriter, realm *model.Realm, client *model.Client, user *model.User, session *model.UserSession, scope string, k *keys.RealmKeys) {
+//
+// serviceAccount selects the client_credentials shape, which is measurably
+// different in three places: no refresh_token, no session_state, and
+// refresh_expires_in 0 rather than the realm's lifespan. The refresh token is
+// not merely left out of the body - none is issued, so a service account
+// session cannot be refreshed.
+func (h *handler) writeTokens(w http.ResponseWriter, realm *model.Realm, client *model.Client, user *model.User, session *model.UserSession, scope string, k *keys.RealmKeys, serviceAccount bool) {
+	accessLife := accessLifespan(realm, client)
 	issuer := &token.Issuer{Keys: k, Issuer: h.realmIssuer(realm.Name)}
 	set, err := issuer.Issue(token.Request{
 		Client:         client,
 		User:           user,
 		UserSession:    session,
 		Scope:          scope,
-		AccessLife:     realm.AccessTokenLifespan,
+		AccessLife:     accessLife,
 		RefreshLife:    realm.RefreshTokenLifespan,
 		IncludeIDToken: hasScope(scope, "openid"),
 	})
@@ -351,9 +362,10 @@ func (h *handler) writeTokens(w http.ResponseWriter, realm *model.Realm, client 
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, tokenResponse{
+
+	body := tokenResponse{
 		AccessToken:      set.AccessToken,
-		ExpiresIn:        int64(realm.AccessTokenLifespan.Seconds()),
+		ExpiresIn:        int64(accessLife.Seconds()),
 		RefreshExpiresIn: int64(realm.RefreshTokenLifespan.Seconds()),
 		RefreshToken:     set.RefreshToken,
 		TokenType:        "Bearer",
@@ -361,7 +373,30 @@ func (h *handler) writeTokens(w http.ResponseWriter, realm *model.Realm, client 
 		NotBeforePolicy:  0,
 		SessionState:     session.ID,
 		Scope:            scope,
-	})
+	}
+	if serviceAccount {
+		body.RefreshToken = ""
+		body.RefreshExpiresIn = 0
+		body.SessionState = ""
+	}
+	httpx.WriteJSON(w, http.StatusOK, body)
+}
+
+// accessLifespan is the realm's access token lifespan unless the client
+// shortens it.
+//
+// Measured 2026-08-23: setting the client attribute access.token.lifespan to
+// "1" makes expires_in 1 and the token verifiably rejected a second later.
+// Two neighbouring values were measured too and neither is reproduced here,
+// because neither is a lifespan: "0" yields expires_in 0 with a token the
+// server still accepts, and "-1" falls back to 36000 rather than to this
+// realm's 60. See follow-up F19.
+func accessLifespan(realm *model.Realm, c *model.Client) time.Duration {
+	seconds, err := strconv.Atoi(c.Attributes["access.token.lifespan"])
+	if err != nil || seconds <= 0 {
+		return realm.AccessTokenLifespan
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // realmIssuer is the iss claim and the audience of a refresh token.

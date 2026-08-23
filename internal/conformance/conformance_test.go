@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"testing"
 )
 
@@ -172,17 +173,14 @@ func diff(c Case, want Golden, got *httptest.ResponseRecorder, vars map[string]s
 		out = append(out, fmt.Sprintf("status: want %d, got %d\nbody: %s", want.Status, got.Code, got.Body))
 	}
 
-	// Keep the first value for a repeated header name, matching what
-	// gotByName below also does: it is also first-value. A map built by
-	// letting a later entry overwrite an earlier one would compare the
-	// golden's last value against the response's first, disagreeing on any
-	// golden with a duplicated header name.
-	byName := make(map[string]string, len(want.Headers))
+	// A repeated header name keeps every value, in order, on both sides. The
+	// measured case is userinfo's 200, which sends Cache-Control twice -
+	// no-store and then no-cache - and comparing first values alone would let
+	// an implementation drop the second and pass.
+	byName := make(map[string][]string, len(want.Headers))
 	for _, h := range want.Headers {
 		canonical := http.CanonicalHeaderKey(h.Name)
-		if _, seen := byName[canonical]; !seen {
-			byName[canonical] = h.Value
-		}
+		byName[canonical] = append(byName[canonical], h.Value)
 	}
 
 	// Fold the response's headers into a canonicalised map too, rather than
@@ -194,15 +192,13 @@ func diff(c Case, want Golden, got *httptest.ResponseRecorder, vars map[string]s
 	// comment). Folding both sides the same way, with the same
 	// canonicalisation, makes a literal "WWW-Authenticate" map key and a
 	// canonical "Www-Authenticate" golden entry land in the same bucket.
-	gotByName := make(map[string]string, len(got.Header()))
+	gotByName := make(map[string][]string, len(got.Header()))
 	for name, values := range got.Header() {
 		if len(values) == 0 {
 			continue
 		}
 		canonical := http.CanonicalHeaderKey(name)
-		if _, seen := gotByName[canonical]; !seen {
-			gotByName[canonical] = values[0]
-		}
+		gotByName[canonical] = append(gotByName[canonical], values...)
 	}
 
 	volatile := make(map[string]bool, len(c.VolatileHeaders))
@@ -223,12 +219,12 @@ func diff(c Case, want Golden, got *httptest.ResponseRecorder, vars map[string]s
 		// still asserted, so an implementation that stopped sending it is
 		// caught here rather than passing quietly.
 		if volatile[canonical] {
-			if !present || actual == "" {
+			if !present || len(actual) == 0 || actual[0] == "" {
 				out = append(out, fmt.Sprintf("header %s: want a value, got none", name))
 			}
 			continue
 		}
-		if actual != expected {
+		if !slices.Equal(actual, expected) {
 			out = append(out, fmt.Sprintf("header %s: want %q, got %q", name, expected, actual))
 		}
 	}

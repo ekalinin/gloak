@@ -9,6 +9,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Step is one request run before a case's own, whose response contributes
@@ -38,6 +39,17 @@ type Fixture struct {
 	// and is the only one today.
 	State string
 	Steps []Step
+	// Delay is waited out after the last step and before the case's own
+	// request. It exists for one measured behaviour: a token that has to be
+	// expired when the case asks about it.
+	//
+	// Nothing else in the harness sleeps, and this should stay the exception.
+	// It is here because the alternative was not available: a client attribute
+	// can shorten an access token's life to one second, but "-1" was measured
+	// falling back to 36000 rather than producing a token born expired, and
+	// "0" produced expires_in 0 with a token the server still accepted. So the
+	// only way to reach an expired token is to wait for one.
+	Delay time.Duration
 }
 
 // Fixtures is every setup a case may name. One declaration, executed twice:
@@ -159,6 +171,120 @@ var Fixtures = map[string]Fixture{
 
 	"admin-token-client-service-account": clientFixtureBody(
 		`{"clientId":"gloak-probe-service-account","enabled":true,"serviceAccountsEnabled":true}`),
+
+	// The fixtures P1 could not write. Everything the six bodies in follow-up
+	// F15 need is one confidential client with a known secret, which is what
+	// Tasks 10 and 11 made reachable.
+	//
+	// gloak-confidential is shared by four cases, which is why
+	// confidentialClientFixture looks its UUID up rather than reading Location
+	// - see there.
+	"confidential-user-token": confidentialClientFixture(
+		"gloak-confidential",
+		`{"clientId":"gloak-confidential","enabled":true,"directAccessGrantsEnabled":true}`,
+		Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "/realms/master/protocol/openid-connect/token",
+				Form: map[string]string{
+					"grant_type":    "password",
+					"client_id":     "gloak-confidential",
+					"client_secret": "{{client_secret}}",
+					"username":      "admin",
+					"password":      "admin",
+					"scope":         "openid",
+				},
+			},
+			Capture: map[string]string{
+				"access_token":  "access_token",
+				"refresh_token": "refresh_token",
+			},
+		},
+	),
+
+	"confidential-service-account": confidentialClientFixture(
+		"gloak-confidential-sa",
+		`{"clientId":"gloak-confidential-sa","enabled":true,"serviceAccountsEnabled":true}`,
+	),
+
+	// access.token.lifespan is measured: "1" makes expires_in 1 and the token
+	// verifiably expired a second later. The delay is what makes the case
+	// deterministic rather than a race against the recorder's own latency.
+	"confidential-expired-token": expiredTokenFixture(),
+}
+
+// confidentialClientFixture creates a confidential client, then captures its
+// UUID and the secret the server generated for it.
+//
+// It finds the UUID by filtering the client list rather than by reading
+// Location, and that is the difference from clientFixture. A fixture named by
+// more than one case runs once per case against the recorder's single shared
+// container, so the second create answers 409 with no Location at all. A
+// lookup finds the client either way, which makes the whole fixture idempotent
+// and therefore shareable. The create's own response is not captured from, so
+// its 409 passes harmlessly; if it failed for any other reason the lookup
+// returns an empty array and the capture fails loudly.
+func confidentialClientFixture(clientID, body string, extra ...Step) Fixture {
+	steps := []Step{
+		adminTokenStep(),
+		{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(body),
+			},
+		},
+		{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/clients",
+				Query:   map[string]string{"clientId": clientID},
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"client_uuid": "0/id"},
+		},
+		{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/clients/{{client_uuid}}/client-secret",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"client_secret": "value"},
+		},
+	}
+	return Fixture{State: "bootstrap", Steps: append(steps, extra...)}
+}
+
+// expiredTokenFixture obtains an access token that is already expired when the
+// case asks about it.
+//
+// The client carries access.token.lifespan "1", measured to make expires_in 1,
+// and the fixture then waits two seconds. See Fixture.Delay for why waiting is
+// the only route: neither "0" nor "-1" produces a token born expired.
+func expiredTokenFixture() Fixture {
+	f := confidentialClientFixture(
+		"gloak-confidential-expiring",
+		`{"clientId":"gloak-confidential-expiring","enabled":true,"directAccessGrantsEnabled":true,`+
+			`"attributes":{"access.token.lifespan":"1"}}`,
+		Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "/realms/master/protocol/openid-connect/token",
+				Form: map[string]string{
+					"grant_type":    "password",
+					"client_id":     "gloak-confidential-expiring",
+					"client_secret": "{{client_secret}}",
+					"username":      "admin",
+					"password":      "admin",
+					"scope":         "openid",
+				},
+			},
+			Capture: map[string]string{"access_token": "access_token"},
+		},
+	)
+	f.Delay = 2 * time.Second
+	return f
 }
 
 // adminTokenStep is the first step of every admin fixture: the password grant
@@ -259,6 +385,9 @@ func RunFixture(f Fixture, base string, do Do) (map[string]string, error) {
 			}
 			vars[name] = value
 		}
+	}
+	if f.Delay > 0 {
+		time.Sleep(f.Delay)
 	}
 	return vars, nil
 }

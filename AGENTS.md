@@ -60,9 +60,11 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   and a known path hit with the wrong method both get `Referrer-Policy`,
   `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`
   and `X-Robots-Tag`. A path matching no route at all gets none of them,
-  because that request never reaches Keycloak's filter chain. **`userinfo`
-  sends four of the five, omitting `X-Frame-Options`** - it does reach the
-  filter chain, so this one is not explained by routing. And **a successful
+  because that request never reaches Keycloak's filter chain. **`userinfo`'s
+  rejections send four of the five, omitting `X-Frame-Options`** - they do
+  reach the filter chain, so this one is not explained by routing, and its
+  own 200 sends all five, so it is not explained by the endpoint either. And
+  **a successful
   `DELETE`'s 204 omits `X-Frame-Options`**: measured on clients, users, realm
   roles and the rotated client secret, while `PUT`'s 204 sends all five and the
   same `DELETE` answering 404 or 500 sends all five too. `httpx` has one
@@ -101,6 +103,16 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **A public client may revoke but may not introspect.** `admin-cli` revoking
   succeeds; `admin-cli` introspecting is refused with 403
   `{"error":"invalid_request","error_description":"Client not allowed."}`.
+- **A client cannot introspect its own access token.** An access token's `aud`
+  holds the clients the *user* has roles on, never the issuing client, and
+  Keycloak answers `{"active":false}` with 200 when the caller is outside it.
+  A refresh token from the same client introspects active, so the check is on
+  access tokens alone. Gloak does not do this yet - see F18.
+- **`userinfo`'s 200 sends `Cache-Control` twice**, `no-store` then
+  `no-cache`. Every rejection sends only `no-store`. The conformance harness
+  compares every value of a repeated header because of this one response.
+- **A refresh token introspects into the access token's claim set**, nineteen
+  keys with `active` last, not RFC 7662's small set.
 - **`not-before-policy`** in the token response is spelled with hyphens.
 - **Refresh tokens are signed HS512**, access and ID tokens RS256. That is why a
   realm holds two keys.

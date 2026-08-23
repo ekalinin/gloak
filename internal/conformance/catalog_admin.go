@@ -116,7 +116,12 @@ var adminCases = []Case{
 		Status: Recorded,
 		Reason: "two bootstrapped clients carry protocolMappers, which is P5",
 		// No Operation: admin/clients/list already claims this one.
-		Fixture: "admin-token",
+		//
+		// The one case in the catalogue that enumerates the realm, so it has
+		// to be recorded before any fixture creates a client. See
+		// Case.PristineRealm.
+		PristineRealm: true,
+		Fixture:       "admin-token",
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/admin/realms/master/clients",

@@ -44,7 +44,7 @@ func TestRecordGoldens(t *testing.T) {
 	}
 
 	var skipped []string
-	for _, c := range Catalog {
+	for _, c := range recordingOrder() {
 		if c.Fixture == "" {
 			skipped = append(skipped, c.ID)
 			continue
@@ -103,6 +103,27 @@ func TestRecordGoldens(t *testing.T) {
 		sort.Strings(skipped)
 		t.Logf("skipped %d cases with no fixture yet: %v", len(skipped), skipped)
 	}
+}
+
+// recordingOrder is the catalogue with every PristineRealm case moved to the
+// front, order otherwise preserved.
+//
+// The recorder shares one container, so a case that enumerates the realm has
+// to run before any fixture has created anything in it. See
+// Case.PristineRealm.
+func recordingOrder() []Case {
+	out := make([]Case, 0, len(Catalog))
+	for _, c := range Catalog {
+		if c.PristineRealm {
+			out = append(out, c)
+		}
+	}
+	for _, c := range Catalog {
+		if !c.PristineRealm {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // startKeycloak runs the reference server and returns its base URL. The image

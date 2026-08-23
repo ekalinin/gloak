@@ -96,6 +96,20 @@ type Case struct {
 	// operation, and forgetting to undercounts rather than inflates.
 	Operation string
 
+	// PristineRealm marks a case whose golden describes the realm as a whole
+	// rather than one object in it. The recorder records these before every
+	// other case.
+	//
+	// One container is shared across the whole recording, so state
+	// accumulates in catalogue order. That is harmless for a case addressing
+	// one object by UUID and destructive for one enumerating them: the three
+	// clients the OIDC fixtures create turned up inside the unfiltered client
+	// list golden and would have been committed as the contract. Nothing
+	// resets the realm between cases, so recording first is the whole
+	// guarantee - which is why TestPristineRealmGoldensAreNotPolluted checks
+	// the result rather than trusting the ordering.
+	PristineRealm bool
+
 	Request Request
 
 	// AssertHeaders lists the response headers compared exactly. Every header

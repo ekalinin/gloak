@@ -117,13 +117,17 @@ func recordedHeaders(h http.Header, base string, c Case, vars map[string]string)
 
 	out := make([]Header, 0, len(names))
 	for _, name := range names {
-		value := h.Get(name)
-		if volatile[http.CanonicalHeaderKey(name)] {
-			value = volatilePlaceholder
-		} else {
-			value = string(ReplaceIssuer(ReplaceCaptured([]byte(value), vars), base))
+		// Every value, not just the first. userinfo's 200 sends Cache-Control
+		// twice - no-store, then no-cache - and recording one of them would
+		// commit a contract Keycloak does not have.
+		for _, value := range h.Values(name) {
+			if volatile[http.CanonicalHeaderKey(name)] {
+				value = volatilePlaceholder
+			} else {
+				value = string(ReplaceIssuer(ReplaceCaptured([]byte(value), vars), base))
+			}
+			out = append(out, Header{Name: name, Value: value})
 		}
-		out = append(out, Header{Name: name, Value: value})
 	}
 	return out
 }

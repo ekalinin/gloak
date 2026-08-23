@@ -10,16 +10,20 @@ import (
 
 // introspectionDocument is the RFC 7662 response.
 //
-// **This shape is unmeasured.** Introspection refuses public clients, and no
-// bootstrapped client is confidential with a known secret, so no active or
-// inactive body can be recorded yet - which is why
-// oidc/introspection/active-access-token, active-refresh-token and
-// inactive-token all stay Pending with no golden. P2, where client management
-// lives, is what unblocks recording them.
+// The inactive body is measured and matches: `{"active":false}` alone. **The
+// active body does not.** Keycloak was measured rebuilding the *access* token's
+// whole claim set - realm_access, resource_access, acr, preferred_username -
+// and appending client_id, username, token_type and active, nineteen keys with
+// active last. This is nine keys with active first.
 //
-// The `active` field is the one part RFC 7662 makes mandatory; everything else
-// here is omitted when empty so that an inactive response is `{"active":false}`
-// alone, which is what the catalogue's inactive-token case names.
+// Gloak cannot produce the measured shape until roles are resolved at
+// issuance, which is follow-up F18; oidc/introspection/active-refresh-token is
+// Recorded so the contract sits in the repository and the alarm fires when it
+// starts matching.
+//
+// Also unimplemented and measured: Keycloak answers `{"active":false}` for an
+// access token whose aud excludes the caller, which is every token a client
+// asked for itself. Same follow-up.
 type introspectionDocument struct {
 	Active    bool   `json:"active"`
 	Scope     string `json:"scope,omitempty"`

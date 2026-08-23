@@ -229,7 +229,26 @@ yet (F15).
 Closing it needs the prefix measured across several container starts, which is
 cheap to do the next time a reference container is running.
 
-## F15: two P1 response bodies are served but unmeasured
+## F15: two P1 response bodies are served but unmeasured (closed)
+
+**Closed 2026-08-23** by Task 12 of P2. Four of the six bodies were recorded
+and now match; the remaining two moved to F18 with a measured reason that is
+not the one this entry gives.
+
+- `oidc/userinfo/get-with-valid-token`, `post-with-valid-token` - recorded.
+  P1's guessed shape was right in every detail.
+- `oidc/token/client-credentials-grant` - recorded. P1's shape was **wrong**:
+  the body carries no `refresh_token` and no `session_state`, while
+  `refresh_expires_in` is present and 0.
+- `oidc/introspection/inactive-token` - recorded.
+- `oidc/userinfo/expired-token`, listed in the plan as a candidate rather than
+  a deliverable, is recorded too.
+- `oidc/introspection/active-access-token` and `active-refresh-token` are in
+  F18.
+
+The original text follows.
+
+## F15 (original): two P1 response bodies are served but unmeasured
 
 `userinfo`'s success body and introspection's active/inactive bodies are
 emitted from shapes derived from the measured ID-token claim set and RFC 7662,
@@ -290,3 +309,55 @@ It cannot become a conformance case until role assignment is served - that is
 the Role Mapper tag, P2's second cut - because a fixture reaching a
 narrow-role caller has to build one through the API in both the reference
 container and Gloak.
+
+## F18: tokens carry no roles, so `aud` is wrong and introspection is too permissive
+
+Measured 2026-08-23 while recording the introspection bodies.
+
+**Gloak resolves no roles at token issuance.** `token.Request.RealmRoles` and
+`ClientRoles` have no caller that sets them, so `realm_access.roles` is empty
+and `resource_access` is `{}`. Keycloak's administrator token carries five
+realm roles and twenty-four client roles across two clients.
+
+**`audience()` returns the issuing client**, which is measurably wrong: an
+access token's `aud` holds the clients the *user* has roles on and never the
+issuer. For the administrator that is `["master-realm","account"]`. The value
+is also a **string when there is one audience and an array when there are
+several**.
+
+Two things follow, and both are observable:
+
+1. `oidc/introspection/active-refresh-token` is `Recorded`. Its body is the
+   access token's whole claim set rebuilt from the refresh token, which needs
+   the roles.
+2. **Gloak reports an access token active where Keycloak reports it
+   inactive.** Keycloak refuses to introspect an access token whose `aud`
+   excludes the caller; Gloak puts the caller in `aud`, so its own check would
+   pass. `oidc/introspection/access-token-outside-audience` is `Recorded` for
+   exactly this.
+
+Fixing it needs role resolution at issuance - the machinery exists,
+`RoleRepo.ListUserRoles` plus composite expansion, and `internal/admin` already
+does it - plus bootstrap creating the `account` client's three roles and the
+`default-roles-master` composite that grants them. `aud` then falls out of
+`resource_access`, and the introspection audience check can be added with it.
+
+`oidc/introspection/active-access-token` stays `Pending` throughout: even with
+all of that, no fixture can put the introspecting client inside an access
+token's audience without assigning the user a role on it (P2's second cut) or
+an audience protocol mapper (P5).
+
+## F19: two access.token.lifespan values are measured and not reproduced
+
+Gloak honours the client attribute `access.token.lifespan` when it is a
+positive integer, which is what the expired-token case needs. Two neighbouring
+values were measured and are not reproduced:
+
+| Attribute | Keycloak | Gloak |
+|---|---|---|
+| `"0"` | `expires_in` 0, token still accepted | falls back to the realm's 60 |
+| `"-1"` | `expires_in` 36000 | falls back to the realm's 60 |
+
+36000 is ten hours and matches no value this realm models, so reproducing it
+would mean copying a number without knowing what it is. Both are corner cases
+no client sets deliberately, and both are wrong today.
