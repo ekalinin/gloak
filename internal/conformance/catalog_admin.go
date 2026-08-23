@@ -640,6 +640,286 @@ var adminCases = []Case{
 	},
 
 	{
+		// search is a prefix, not a substring - which is what this case is
+		// here to pin, because Task 13 shipped it as a substring on the
+		// strength of four measurements that were all prefixes by accident.
+		// "user" is inside "full-user" and finds nothing.
+		ID: "admin/users/list-search-is-a-prefix",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get users, search matching mid-string",
+			Retrieved: "2026-08-23",
+		},
+		Status: Implemented,
+		// No Operation: admin/users/list already claims it.
+		Fixture: "admin-token-created-user",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users",
+			Query:   map[string]string{"search": "loak-probe"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The same term with wildcards does match, which is what makes the
+		// case above a statement about prefixes rather than about the term.
+		ID: "admin/users/list-search-wildcard",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get users, search with a wildcard",
+			Retrieved: "2026-08-23",
+		},
+		Status: Implemented,
+		// No Operation: admin/users/list already claims it.
+		Fixture: "admin-token-created-user",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users",
+			Query:   map[string]string{"search": "*loak-probe*"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/createdTimestamp"},
+	},
+	{
+		ID: "admin/users/create",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/users",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"username":"gloak-probe-create","enabled":true}`),
+		},
+		// Unlike the client create, which sends no Content-Length at all, this
+		// 201 sends content-length: 0. Both send no Content-Type.
+		AssertHeaders:       []string{"Location"},
+		VolatileHeaders:     []string{"Location"},
+		AssertAbsentHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/users/create-duplicate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, duplicate username",
+			Retrieved: "2026-08-23",
+		},
+		Status: Implemented,
+		// No Operation: a rejection. The message names no username, unlike
+		// the client conflict's "Client <id> already exists".
+		Fixture: "admin-token-created-user",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"username":"gloak-probe-user","enabled":true}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/users/create-without-username",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, no username",
+			Retrieved: "2026-08-23",
+		},
+		Status: Implemented,
+		// No Operation: a rejection. errorMessage, where a malformed body on
+		// the same endpoint answers the OAuth shape - two error families on
+		// one route.
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"enabled":true}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/users/create-malformed",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, malformed body",
+			Retrieved: "2026-08-23",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{not json`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// A body of exactly "null" answers 500, where a body that is merely
+		// malformed answers 400. Keycloak's defect, reproduced - see
+		// decodeInto. An empty body does the same, but the recorder cannot
+		// send one: Request.Body is used only when non-empty.
+		ID: "admin/users/create-null-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, null body",
+			Retrieved: "2026-08-23",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`null`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// An unrecognised field is a 400 carrying Jackson's own message, with
+		// the offending name and the line and column it sat at. Recorded
+		// rather than served: Go's decoder reports the field name and no
+		// position, and reconstructing Jackson's column - which points past
+		// the *value*, not the name - is a lot of fragile arithmetic for one
+		// error string.
+		ID: "admin/users/create-unknown-field",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, unrecognised field",
+			Retrieved: "2026-08-23",
+		},
+		Status:  Recorded,
+		Reason:  "the message carries Jackson's line and column, which Go's decoder does not report",
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"username":"gloak-probe-unknown","nosuchfield":1}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/users/update",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: update the user",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/users/{user-id}",
+		Fixture:   "admin-token-user-to-update",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"firstName":"Grace"}`),
+		},
+	},
+	{
+		// The body merged: firstName changed and lastName survived, from a
+		// request that named only the first. This is the case that would
+		// catch a wholesale replace.
+		ID: "admin/users/update-merges",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: update the user, reading back a partial update",
+			Retrieved: "2026-08-23",
+		},
+		Status: Implemented,
+		// No Operation: admin/users/read already claims this one.
+		Fixture: "admin-token-user-updated",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"id", "createdTimestamp"},
+	},
+	{
+		ID: "admin/users/update-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: update the user, unknown id",
+			Retrieved: "2026-08-23",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/users/00000000-0000-0000-0000-000000000000",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"firstName":"x"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/users/delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: delete the user",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/users/{user-id}",
+		Fixture:   "admin-token-user-to-delete",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "admin/users/delete-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: delete the user, unknown id",
+			Retrieved: "2026-08-23",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/users/00000000-0000-0000-0000-000000000000",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+
+	{
 		// The 403 shape is measured - see "Admin API rejection shapes" in
 		// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md, taken
 		// from a live caller holding view-users and nothing else - and it is

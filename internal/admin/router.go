@@ -37,6 +37,9 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/realms/{realm}/users", h.guardAny(usersReadRoles, h.listUsers))
 	mux.HandleFunc("GET /admin/realms/{realm}/users/count", h.guardAny(usersReadRoles, h.countUsers))
 	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}", h.guard("view-users", h.readUser))
+	mux.HandleFunc("POST /admin/realms/{realm}/users", h.guard("manage-users", h.createUser))
+	mux.HandleFunc("PUT /admin/realms/{realm}/users/{userID}", h.guard("manage-users", h.updateUser))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/users/{userID}", h.guard("manage-users", h.deleteUser))
 	mux.HandleFunc("GET /admin/realms/{realm}/clients", h.guard("view-clients", h.listClients))
 	// {clientUUID}, not {client-uuid}: net/http requires a wildcard name to be
 	// a Go identifier and panics on the hyphen. The OpenAPI description spells

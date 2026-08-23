@@ -2,7 +2,9 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -83,12 +85,14 @@ func userAccessFor(c *caller) userAccess {
 
 // listUsers serves GET /admin/realms/{realm}/users.
 //
-// Everything a caller can narrow the list with is a query parameter, and their
-// semantics are measured rather than guessed: search matches username,
-// firstName, lastName and email as a case-insensitive substring; username,
-// email, firstName and lastName each match their own field the same way; and
-// exact=true turns those four into equality. A filter matching nothing answers
-// 200 with [], never 404.
+// Everything a caller can narrow the list with is a query parameter, and the
+// two families do not behave the same way. username, email, firstName and
+// lastName are case-insensitive **substrings**, which exact=true turns into
+// equality. search is a case-insensitive **prefix** across all four fields,
+// takes * as a wildcard and "quotes" as equality, and ignores exact
+// altogether. See matches and matchesSearch, which carry the recordings.
+//
+// A filter matching nothing answers 200 with [], never 404.
 func (h *handler) listUsers(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 	users, err := h.matchingUsers(r, rc)
 	if err != nil {
@@ -136,7 +140,7 @@ func (h *handler) readUser(w http.ResponseWriter, r *http.Request, rc *reqContex
 	user, err := h.store.Users().ByID(r.Context(), rc.realm.ID, r.PathValue("userID"))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			httpx.WriteMessageError(w, http.StatusNotFound, "User not found")
+			writeUserNotFound(w)
 			return
 		}
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
@@ -145,6 +149,168 @@ func (h *handler) readUser(w http.ResponseWriter, r *http.Request, rc *reqContex
 	rep := userRepresentationOf(user, false)
 	rep.Access = userAccessFor(rc.caller)
 	writeAdminJSON(w, rep)
+}
+
+// createUser serves POST /admin/realms/{realm}/users.
+//
+// Measured: 201 with an empty body, the new object's absolute URL in Location
+// and content-length 0 - unlike the client create, which sends no
+// Content-Length header at all.
+//
+// **The username is lowercased.** A create naming Probe-UPPER answers 201 and
+// the user reads back as probe-upper.
+func (h *handler) createUser(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	rep, ok := decodeUser(w, r)
+	if !ok {
+		return
+	}
+	if rep.Username == "" {
+		httpx.WriteAdminError(w, http.StatusBadRequest, "User name is missing")
+		return
+	}
+
+	m := &model.User{
+		ID:               model.NewID(),
+		RealmID:          rc.realm.ID,
+		Username:         strings.ToLower(rep.Username),
+		Email:            rep.Email,
+		EmailVerified:    rep.EmailVerified,
+		Enabled:          rep.Enabled,
+		FirstName:        rep.FirstName,
+		LastName:         rep.LastName,
+		CreatedTimestamp: time.Now().UnixMilli(),
+		// Attributes are deliberately dropped. Measured: a create carrying
+		// {"dept":["eng"]} answers 201 and the user reads back with no
+		// attributes at all, because unmanaged attributes are off by default
+		// in the declarative user profile. Storing them would make Gloak
+		// remember what Keycloak forgets.
+	}
+	if err := h.store.Users().Create(r.Context(), m); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			writeUsernameConflict(w)
+			return
+		}
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+
+	w.Header().Set("Location", h.issuerBase+"/admin/realms/"+rc.realm.Name+"/users/"+m.ID)
+	w.Header().Set("Content-Length", "0")
+	w.WriteHeader(http.StatusCreated)
+}
+
+// updateUser serves PUT /admin/realms/{realm}/users/{user-id}.
+//
+// Measured: 204 with no body and no Cache-Control, and the body **merges** -
+// a request carrying only firstName leaves lastName and email alone.
+//
+// **The username does not change.** A PUT naming a free username answers 204
+// and leaves the stored one as it was, because the master realm has username
+// editing switched off. A PUT naming a username somebody else holds still
+// answers 409, so the conflict check runs before the change is discarded -
+// which is why this reads the request's username even though it never applies
+// it.
+func (h *handler) updateUser(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	current, err := h.store.Users().ByID(r.Context(), rc.realm.ID, r.PathValue("userID"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeUserNotFound(w)
+			return
+		}
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+
+	merged := userRepresentationOf(current, true)
+	if !decodeInto(w, r, &merged) {
+		return
+	}
+
+	if wanted := strings.ToLower(merged.Username); wanted != current.Username {
+		taken, err := h.store.Users().ByUsername(r.Context(), rc.realm.ID, wanted)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		if taken != nil {
+			writeUsernameConflict(w)
+			return
+		}
+	}
+
+	updated := *current
+	updated.Email = merged.Email
+	updated.EmailVerified = merged.EmailVerified
+	updated.Enabled = merged.Enabled
+	updated.FirstName = merged.FirstName
+	updated.LastName = merged.LastName
+	if err := h.store.Users().Update(r.Context(), &updated); err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteUser serves DELETE /admin/realms/{realm}/users/{user-id}.
+//
+// Measured: 204 carrying Cache-Control: no-cache and omitting X-Frame-Options,
+// the same pair the client delete has and the same one every successful DELETE
+// was measured with.
+func (h *handler) deleteUser(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	err := h.store.Users().Delete(r.Context(), rc.realm.ID, r.PathValue("userID"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeUserNotFound(w)
+			return
+		}
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+	httpx.WriteNoContentAfterDelete(w)
+}
+
+// decodeUser reads a UserRepresentation from the request body.
+func decodeUser(w http.ResponseWriter, r *http.Request) (userRepresentation, bool) {
+	var rep userRepresentation
+	ok := decodeInto(w, r, &rep)
+	return rep, ok
+}
+
+// decodeInto reads the body over an existing representation, which is what
+// makes PUT a merge, and writes the two measured failures.
+//
+// The empty-body case is the odd one and it is copied on purpose: Keycloak
+// answers 500 with the unknown_error body for a request whose body is empty or
+// the literal null, where a body that is merely malformed gets a 400. Same
+// class of defect as DELETE .../client-secret/rotated, and reproduced for the
+// same reason.
+func decodeInto(w http.ResponseWriter, r *http.Request, rep *userRepresentation) bool {
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return false
+	}
+	if trimmed := strings.TrimSpace(string(raw)); trimmed == "" || trimmed == "null" {
+		httpx.WriteOAuthError(w, http.StatusInternalServerError, "unknown_error",
+			"For more on this error consult the server log.")
+		return false
+	}
+	if err := json.Unmarshal(raw, rep); err != nil {
+		httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_request", "Cannot parse the JSON")
+		return false
+	}
+	return true
+}
+
+// writeUsernameConflict emits the measured 409. The message names no username,
+// unlike the client conflict's "Client <id> already exists".
+func writeUsernameConflict(w http.ResponseWriter) {
+	httpx.WriteAdminError(w, http.StatusConflict, "User exists with same username")
+}
+
+func writeUserNotFound(w http.ResponseWriter) {
+	httpx.WriteMessageError(w, http.StatusNotFound, "User not found")
 }
 
 // matchingUsers reads the realm's users and applies the request's filters.
@@ -188,12 +354,13 @@ func matchesFilters(u *model.User, q map[string][]string, exact bool) bool {
 			return false
 		}
 	}
-	// search is the loose one: any of the four fields matching is enough, and
-	// exact does not apply to it.
+	// search is the loose one: any of the four fields matching is enough. It
+	// is also the one exact does not apply to - measured,
+	// search=full&exact=true still finds full-user by prefix.
 	if term := get("search"); term != "" {
 		any := false
 		for _, f := range fields {
-			if matches(f.value, term, false) {
+			if matchesSearch(f.value, term) {
 				any = true
 				break
 			}
@@ -205,14 +372,74 @@ func matchesFilters(u *model.User, q map[string][]string, exact bool) bool {
 	return true
 }
 
-// matches is case-insensitive, and a substring unless exact was asked for.
-// Measured: username=full finds full-user, username=FULL-USER finds it too,
-// and username=full&exact=true finds nothing.
+// matches is how the four named filters compare: case-insensitive, and a
+// substring unless exact was asked for.
+//
+// Measured: username=ull finds full-user, so it really is a substring and not
+// a prefix; username=FULL-USER finds it too; username=full&exact=true finds
+// nothing while username=FULL-USER&exact=true does. A * here is a literal -
+// username=*user finds nothing.
 func matches(value, want string, exact bool) bool {
 	if exact {
 		return strings.EqualFold(value, want)
 	}
 	return strings.Contains(strings.ToLower(value), strings.ToLower(want))
+}
+
+// matchesSearch is how search compares, and it is **not** how the named
+// filters do.
+//
+// Measured 2026-08-23, correcting what Task 13 recorded as a substring:
+//
+//	search=full      matches full-user        a bare term is a prefix
+//	search=user      matches nothing          which is why it is not a substring
+//	search=ovelace   matches nothing          nor a suffix
+//	search=user*     matches nothing          an explicit * is the whole pattern
+//	search=*user     matches full-user
+//	search=*ull*     matches full-user
+//	search="full-user" matches full-user      quotes mean equality
+//
+// The rule those six agree on: a quoted term is equality; a term containing *
+// is that pattern with * standing for any run of characters; anything else
+// gets an implied trailing *. Case-insensitive throughout.
+//
+// Whether a term with spaces splits into several is not measured, so a term is
+// taken whole.
+func matchesSearch(value, term string) bool {
+	value = strings.ToLower(value)
+	term = strings.ToLower(term)
+
+	if len(term) >= 2 && strings.HasPrefix(term, `"`) && strings.HasSuffix(term, `"`) {
+		return value == strings.Trim(term, `"`)
+	}
+	if !strings.Contains(term, "*") {
+		return strings.HasPrefix(value, term)
+	}
+
+	// Walk the literal runs between the wildcards in order. The first run must
+	// sit at the start unless the term opens with *, and the last must end the
+	// value unless it closes with one.
+	parts := strings.Split(term, "*")
+	if head := parts[0]; head != "" {
+		if !strings.HasPrefix(value, head) {
+			return false
+		}
+		value = value[len(head):]
+	}
+	if tail := parts[len(parts)-1]; tail != "" {
+		if !strings.HasSuffix(value, tail) {
+			return false
+		}
+		value = value[:len(value)-len(tail)]
+	}
+	for _, part := range parts[1 : len(parts)-1] {
+		i := strings.Index(value, part)
+		if i < 0 {
+			return false
+		}
+		value = value[i+len(part):]
+	}
+	return true
 }
 
 // page applies first and max. Both are ignored when absent or unparseable,

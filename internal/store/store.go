@@ -55,6 +55,7 @@ type UserRepo interface {
 	// paging stay in the handler, since the query parameters that drive them
 	// are the admin API's, not the store's.
 	ListByRealm(ctx context.Context, realmID string) ([]*model.User, error)
+	Update(ctx context.Context, u *model.User) error
 	// Delete removes a user and, through the schema's cascades, its sessions
 	// and role assignments. It arrives here rather than with the rest of user
 	// management because the cascade is what the role-mapping tests assert:

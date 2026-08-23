@@ -399,6 +399,19 @@ func (r *userRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.Us
 	return out, classify(rows.Err())
 }
 
+func (r *userRepo) Update(ctx context.Context, m *model.User) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE user_entity SET username = $1, email = $2, email_verified = $3, enabled = $4,
+		 first_name = $5, last_name = $6, attributes = $7
+		 WHERE realm_id = $8 AND id = $9`,
+		m.Username, m.Email, m.EmailVerified, m.Enabled,
+		m.FirstName, m.LastName, encode(m.Attributes), m.RealmID, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(tag.RowsAffected())
+}
+
 func (r *userRepo) Delete(ctx context.Context, realmID, id string) error {
 	tag, err := r.pool.Exec(ctx,
 		`DELETE FROM user_entity WHERE realm_id = $1 AND id = $2`, realmID, id)

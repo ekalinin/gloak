@@ -176,6 +176,17 @@ var Fixtures = map[string]Fixture{
 		},
 	},
 
+	// One fixture per case that needs a pre-created user, each with its own
+	// username - the same uniqueness requirement clientFixture carries, for
+	// the same reason.
+	"admin-token-created-user":   userFixture("gloak-probe-user"),
+	"admin-token-user-to-update": userFixture("gloak-probe-update-user"),
+	"admin-token-user-to-delete": userFixture("gloak-probe-delete-user"),
+
+	// A user that has been through a partial update, so a case can read back
+	// what merging left behind.
+	"admin-token-user-updated": updatedUserFixture(),
+
 	// One fixture per case that needs a pre-created client, each with its own
 	// clientId - see clientFixture for why sharing one would break recording.
 	"admin-token-client-to-update":    clientFixture("gloak-probe-update"),
@@ -359,6 +370,57 @@ func clientFixtureBody(body string) Fixture {
 			},
 		},
 	}
+}
+
+// userFixture creates one user and captures its server-minted ID.
+//
+// It looks the ID up by username rather than reading Location, for the reason
+// confidentialClientFixture spells out: the recorder shares one container, so
+// a fixture named by two cases runs twice and the second create answers 409
+// with no Location. The lookup finds the user either way.
+//
+// The user carries a first and last name because the cases that read it back
+// need something for a partial update to leave alone.
+func userFixture(username string) Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/users",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"username":"` + username + `","enabled":true,` +
+						`"firstName":"Ada","lastName":"Lovelace","email":"` + username + `@example.com"}`),
+				},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/users",
+					Query:   map[string]string{"username": username, "exact": "true"},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"user_id": "0/id"},
+			},
+		},
+	}
+}
+
+// updatedUserFixture creates a user and then sends a partial update, so the
+// case that follows can read back what merging did.
+func updatedUserFixture() Fixture {
+	f := userFixture("gloak-probe-merged-user")
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`{"firstName":"Grace"}`),
+		},
+	})
+	return f
 }
 
 // Do performs one request. The recorder's implementation talks to the

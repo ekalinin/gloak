@@ -128,6 +128,16 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   permissions, never the user being read.
 - **`GET /users/count` is a bare JSON number**, and it is not filtered by what
   the caller may see, while the listing beside it is.
+- **The user listing's two filter families do not agree.** `username`, `email`,
+  `firstName` and `lastName` are case-insensitive **substrings** where `*` is a
+  literal; `search` is a case-insensitive **prefix** where `*` is a wildcard
+  and `"quotes"` mean equality, and `exact=true` does not reach it. Writing one
+  comparison for both is the mistake this project already made once.
+- **A user's username is lowercased on create and immutable on update.** A
+  `PUT` naming a free username answers 204 and changes nothing; naming a taken
+  one still answers 409.
+- **An empty or `null` request body on `POST /users` is a 500**, not a 400.
+  Another of Keycloak's own defects, reproduced.
 
 ## Boundaries
 
