@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/ekalinin/gloak/internal/httpx"
 	"github.com/ekalinin/gloak/internal/model"
@@ -35,16 +37,30 @@ func (h *handler) listClients(w http.ResponseWriter, r *http.Request, rc *reqCon
 
 // readClient serves GET /admin/realms/{realm}/clients/{client-uuid}.
 func (h *handler) readClient(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	client, ok := h.clientFromPath(w, r, rc)
+	if !ok {
+		return
+	}
+	writeAdminJSON(w, clientRepresentationOf(client, rc.caller, rc.realm.Name))
+}
+
+// clientFromPath resolves the {client-uuid} segment, writing the measured 404
+// and returning false when there is no such client.
+//
+// Every operation nested under a client answers that same 404 for an unknown
+// UUID - the secret endpoints and service-account-user were measured doing so -
+// so the lookup is shared rather than repeated per handler.
+func (h *handler) clientFromPath(w http.ResponseWriter, r *http.Request, rc *reqContext) (*model.Client, bool) {
 	client, err := h.store.Clients().ByID(r.Context(), rc.realm.ID, r.PathValue("clientUUID"))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeClientNotFound(w)
-			return
+			return nil, false
 		}
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
-		return
+		return nil, false
 	}
-	writeAdminJSON(w, clientRepresentationOf(client, rc.caller, rc.realm.Name))
+	return client, true
 }
 
 // createClient serves POST /admin/realms/{realm}/clients.
@@ -63,6 +79,16 @@ func (h *handler) createClient(w http.ResponseWriter, r *http.Request, rc *reqCo
 	}
 
 	m := newClientFrom(rep, rc.realm.ID)
+	// Measured: every client created through this endpoint gains both
+	// attributes, public or not, but only a non-public one gains a secret. A
+	// public client ends up with a creation time and nothing created, which is
+	// why the two are not set together.
+	m.Attributes["realm_client"] = "false"
+	m.Attributes["client.secret.creation.time"] = strconv.FormatInt(time.Now().Unix(), 10)
+	if !m.PublicClient {
+		m.Secret = model.NewSecret()
+	}
+
 	if err := h.store.Clients().Create(r.Context(), m); err != nil {
 		if errors.Is(err, store.ErrConflict) {
 			httpx.WriteAdminError(w, http.StatusConflict,
@@ -71,6 +97,12 @@ func (h *handler) createClient(w http.ResponseWriter, r *http.Request, rc *reqCo
 		}
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
+	}
+	if m.ServiceAccountsEnabled {
+		if _, err := h.ensureServiceAccount(r.Context(), rc.realm.ID, m); err != nil {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
 	}
 
 	// Absolute, including the host the request arrived on, which is what the
@@ -116,15 +148,24 @@ func (h *handler) updateClient(w http.ResponseWriter, r *http.Request, rc *reqCo
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
+	// Measured: switching serviceAccountsEnabled on through this endpoint
+	// creates the account, so the next read of service-account-user finds one.
+	if updated.ServiceAccountsEnabled {
+		if _, err := h.ensureServiceAccount(r.Context(), rc.realm.ID, updated); err != nil {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // deleteClient serves DELETE /admin/realms/{realm}/clients/{client-uuid}.
 //
-// Measured: 204 carrying Cache-Control: no-cache and **omitting
-// X-Frame-Options**, which makes it the third exception to the five security
-// headers, after the unmatched-path 404 and userinfo. Update's 204 next door
-// has neither peculiarity, so this is not a "204 on the admin API" rule.
+// Measured: 204 carrying Cache-Control: no-cache and omitting X-Frame-Options.
+// Update's 204 next door has neither peculiarity. The omission turned out to
+// belong to every successful DELETE rather than to this response - see
+// httpx.WriteNoContentAfterDelete - while the Cache-Control does not: three of
+// the four measured DELETEs carry it and one does not.
 func (h *handler) deleteClient(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 	err := h.store.Clients().Delete(r.Context(), rc.realm.ID, r.PathValue("clientUUID"))
 	if err != nil {
@@ -136,8 +177,7 @@ func (h *handler) deleteClient(w http.ResponseWriter, r *http.Request, rc *reqCo
 		return
 	}
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Del("X-Frame-Options")
-	w.WriteHeader(http.StatusNoContent)
+	httpx.WriteNoContentAfterDelete(w)
 }
 
 // decodeClient reads a ClientRepresentation from the request body, writing the

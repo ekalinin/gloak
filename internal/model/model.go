@@ -32,6 +32,58 @@ func NewID() string {
 	return string(out[:])
 }
 
+// secretAlphabet is the character set Keycloak draws a generated client secret
+// from, and secretLength is how many it draws.
+//
+// Both are measured, over 25 secrets regenerated through
+// POST /admin/realms/master/clients/{uuid}/client-secret on 2026-08-23: every
+// one was 86 characters, and the 2150 characters between them covered these 62
+// and nothing else. Base64url would have shown '-' and '_' about three times
+// per secret, so the encoding is alphanumeric rather than base64 - which is the
+// sort of thing that is invisible until somebody parses a secret.
+const (
+	secretAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	secretLength   = 86
+)
+
+// NewSecret returns a client secret in Keycloak's measured shape.
+//
+// Bytes at or above 248 are drawn again rather than folded in: 248 is 4*62, so
+// keeping them would make the first eight characters of the alphabet slightly
+// likelier than the rest. The bias would be small and permanent, and rejecting
+// costs one extra byte in thirty.
+func NewSecret() string {
+	out := make([]byte, 0, secretLength)
+	buf := make([]byte, secretLength)
+	for len(out) < secretLength {
+		if _, err := rand.Read(buf); err != nil {
+			panic("model: entropy source failed: " + err.Error())
+		}
+		for _, b := range buf {
+			if b >= 248 {
+				continue
+			}
+			out = append(out, secretAlphabet[b%62])
+			if len(out) == secretLength {
+				break
+			}
+		}
+	}
+	return string(out)
+}
+
+// ServiceAccountUsername is the account a client with service accounts enabled
+// acts as.
+//
+// P1 guessed this convention when it created the account on demand during a
+// client_credentials grant, and said so. P2 measured it through
+// GET /admin/realms/{realm}/clients/{uuid}/service-account-user, which returned
+// username "service-account-probe-secret" for clientId "probe-secret". The
+// guess was right; this function is where it stops being one.
+func ServiceAccountUsername(clientID string) string {
+	return "service-account-" + clientID
+}
+
 // Realm is a tenant. Lifespans are stored as durations but are emitted as
 // whole seconds in token responses.
 type Realm struct {

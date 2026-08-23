@@ -43,6 +43,17 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/realms/{realm}/clients", h.guard("manage-clients", h.createClient))
 	mux.HandleFunc("PUT /admin/realms/{realm}/clients/{clientUUID}", h.guard("manage-clients", h.updateClient))
 	mux.HandleFunc("DELETE /admin/realms/{realm}/clients/{clientUUID}", h.guard("manage-clients", h.deleteClient))
+
+	// Reading a secret needs view-clients and regenerating one needs
+	// manage-clients. That split is measured, not read off the names: three
+	// users were given exactly one master-realm role each and every operation
+	// called with a token for them.
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/client-secret", h.guard("view-clients", h.readClientSecret))
+	mux.HandleFunc("POST /admin/realms/{realm}/clients/{clientUUID}/client-secret", h.guard("manage-clients", h.regenerateClientSecret))
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/client-secret/rotated", h.guard("view-clients", h.readRotatedSecret))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/clients/{clientUUID}/client-secret/rotated",
+		h.guardRejecting("manage-clients", deleteRotatedSecretRejection, h.deleteRotatedSecret))
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/service-account-user", h.guard("view-clients", h.readServiceAccountUser))
 }
 
 // guard is the authorization filter every admin route goes through: resolve
@@ -53,6 +64,19 @@ func (h *handler) register(mux *http.ServeMux) {
 // that is what was measured: a caller holding view-users and nothing else gets
 // 200 listing users and 403 creating one.
 func (h *handler) guard(role string, next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
+	return h.guardRejecting(role, writeForbidden, next)
+}
+
+// guardRejecting is guard with the rejection spelled out, for the one route
+// that does not answer 403.
+//
+// DELETE .../client-secret/rotated answers 500 to a caller lacking its role -
+// Keycloak's own error handler raises a NullPointerException while formatting
+// the ForbiddenException. Measured, reproducible, and copied on purpose. A
+// route with a different rejection has to say so at the call site rather than
+// hiding it in the handler, because the rejection happens before the handler
+// runs.
+func (h *handler) guardRejecting(role string, reject func(http.ResponseWriter), next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		realm := h.resolveRealm(w, r)
 		if realm == nil {
@@ -63,7 +87,7 @@ func (h *handler) guard(role string, next func(http.ResponseWriter, *http.Reques
 			return
 		}
 		if !c.has(role) {
-			writeForbidden(w)
+			reject(w)
 			return
 		}
 		next(w, r, &reqContext{realm: realm, caller: c})

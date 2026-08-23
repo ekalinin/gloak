@@ -60,13 +60,26 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   and a known path hit with the wrong method both get `Referrer-Policy`,
   `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`
   and `X-Robots-Tag`. A path matching no route at all gets none of them,
-  because that request never reaches Keycloak's filter chain. And
-  **`userinfo` sends four of the five, omitting `X-Frame-Options`** - it does
-  reach the filter chain, so this one is not explained by routing. So does the
-  admin API's **client-delete 204**, which also omits `X-Frame-Options` while
-  the client-update 204 beside it sends all five - so it is not a rule about
-  204s either. Applying them uniformly "for consistency" is the fix that would
-  break all three.
+  because that request never reaches Keycloak's filter chain. **`userinfo`
+  sends four of the five, omitting `X-Frame-Options`** - it does reach the
+  filter chain, so this one is not explained by routing. And **a successful
+  `DELETE`'s 204 omits `X-Frame-Options`**: measured on clients, users, realm
+  roles and the rotated client secret, while `PUT`'s 204 sends all five and the
+  same `DELETE` answering 404 or 500 sends all five too. `httpx` has one
+  helper for it. Applying them uniformly "for consistency" is the fix that
+  would break all three.
+- **`Cache-Control` on a 204 does not follow the method.** Three of the four
+  measured `DELETE`s carry `no-cache` and `DELETE .../client-secret/rotated`
+  does not; neither `PUT` carries it. It is pinned per endpoint.
+- **A client with no secret answers `GET .../client-secret` with 200 and no
+  `value` key**, not 404 - and none of the six bootstrapped clients has one.
+  `POST` mints a secret even for a public client, whose representation then
+  still omits it: `secret` in `ClientRepresentation` follows `publicClient`,
+  not what is stored.
+- **A rotated client secret cannot exist on a default 26.7.1.**
+  `CLIENT_SECRET_ROTATION` is a disabled preview feature and `secret-rotation`
+  is not a registered executor, so `GET .../client-secret/rotated` is always
+  404 and `DELETE` always 204. Those constants are the contract, not stubs.
 - **`attributes` key order is the one thing the conformance suite does not
   compare.** It is a Java `Map` in hash order and Go sorts map keys; matching it
   would mean emulating `java.util.HashMap` in Go. `Case.UnorderedKeys` sorts

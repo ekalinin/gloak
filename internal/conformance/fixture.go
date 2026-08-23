@@ -148,6 +148,17 @@ var Fixtures = map[string]Fixture{
 	"admin-token-client-to-update":    clientFixture("gloak-probe-update"),
 	"admin-token-client-to-delete":    clientFixture("gloak-probe-delete"),
 	"admin-token-client-to-duplicate": clientFixture("gloak-probe-duplicate"),
+	"admin-token-client-to-read":      clientFixture("gloak-probe-read"),
+
+	// The secret endpoints need a client that has a secret, which means one
+	// created through the API: none of the six bootstrapped clients has one.
+	"admin-token-client-secret":         clientFixture("gloak-probe-secret"),
+	"admin-token-client-secret-rotate":  clientFixture("gloak-probe-rotate"),
+	"admin-token-client-secret-rotated": clientFixture("gloak-probe-rotated"),
+	"admin-token-client-secret-drop":    clientFixture("gloak-probe-drop"),
+
+	"admin-token-client-service-account": clientFixtureBody(
+		`{"clientId":"gloak-probe-service-account","enabled":true,"serviceAccountsEnabled":true}`),
 }
 
 // adminTokenStep is the first step of every admin fixture: the password grant
@@ -179,6 +190,13 @@ func adminTokenStep() Step {
 // bootstrapped store per case - which is exactly why the asymmetry is easy to
 // miss and worth stating here.
 func clientFixture(clientID string) Fixture {
+	return clientFixtureBody(`{"clientId":"` + clientID + `","enabled":true}`)
+}
+
+// clientFixtureBody is clientFixture with the creation body spelled out, for a
+// client that needs more than a clientId - service accounts switched on, say.
+// The clientId inside the body carries the same uniqueness requirement.
+func clientFixtureBody(body string) Fixture {
 	return Fixture{
 		State: "bootstrap",
 		Steps: []Step{
@@ -188,7 +206,7 @@ func clientFixture(clientID string) Fixture {
 					Method:  http.MethodPost,
 					Path:    "/admin/realms/master/clients",
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
-					Body:    []byte(`{"clientId":"` + clientID + `","enabled":true}`),
+					Body:    []byte(body),
 				},
 				CaptureHeader: map[string]string{"client_uuid": "Location"},
 			},

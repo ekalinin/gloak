@@ -266,6 +266,202 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type"},
 	},
 
+	// --- Client secrets ---
+	{
+		ID: "admin/clients/secret-read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get the client secret",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/client-secret",
+		Fixture:   "admin-token-client-secret",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/client-secret",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		// Cache-Control is asserted because the POST on this same path was
+		// measured without one. The pair is the finding, so each has to pin
+		// its own half.
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"value"},
+	},
+	{
+		// A client with no secret. Every one of the six bootstrapped clients
+		// is like this, so the empty answer is the common case rather than an
+		// edge, and it is a 200 with the key absent rather than a 404.
+		ID: "admin/clients/secret-read-none",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get the client secret, client without one",
+			Retrieved: "2026-08-23",
+		},
+		Status: Implemented,
+		// No Operation: admin/clients/secret-read already claims it.
+		Fixture: "admin-token-account-client",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/client-secret",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/clients/secret-regenerate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: generate a new secret for the client",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/clients/{client-uuid}/client-secret",
+		Fixture:   "admin-token-client-secret-rotate",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/client-secret",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+		// The half of the finding that only an absence can pin: the GET beside
+		// this one carries Cache-Control and this does not.
+		AssertAbsentHeaders: []string{"Cache-Control"},
+		Volatile:            []string{"value"},
+	},
+	{
+		// The rotated secret is a constant 404 on this distribution:
+		// CLIENT_SECRET_ROTATION is a disabled preview feature and
+		// secret-rotation is not a registered executor, so nothing can ever
+		// put a client into the other state. The 404 is the contract.
+		ID: "admin/clients/secret-rotated-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get the rotated client secret",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/client-secret/rotated",
+		Fixture:   "admin-token-client-secret-rotated",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/client-secret/rotated",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/clients/secret-rotated-delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: invalidate the rotated secret for the client",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/clients/{client-uuid}/client-secret/rotated",
+		Fixture:   "admin-token-client-secret-drop",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/client-secret/rotated",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		// One of the four security headers is asserted present so that the two
+		// asserted absent read as omissions rather than as "this response
+		// carries no headers".
+		AssertHeaders: []string{"X-Content-Type-Options"},
+		// X-Frame-Options is the third exception to the five, and this 204 is
+		// one of four DELETEs measured omitting it. Cache-Control separates it
+		// from the client delete, which does send one.
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Cache-Control"},
+	},
+	{
+		ID: "admin/clients/secret-unknown-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get the client secret, unknown client",
+			Retrieved: "2026-08-23",
+		},
+		Status: Implemented,
+		// No Operation: a rejection, not a demonstration that reading works.
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/00000000-0000-0000-0000-000000000000/client-secret",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+
+	// --- The service account user ---
+	{
+		ID: "admin/clients/service-account-user",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get a user dedicated to the service account",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/service-account-user",
+		Fixture:   "admin-token-client-service-account",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/service-account-user",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		// The account is minted per run, so both its id and the millisecond it
+		// was created differ between the container and Gloak. The absence of
+		// an access block - which the same user carries through GET /users -
+		// stays asserted, because that is the finding here.
+		Volatile: []string{"id", "createdTimestamp"},
+	},
+	{
+		ID: "admin/clients/service-account-user-disabled",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get a user dedicated to the service account, client without one",
+			Retrieved: "2026-08-23",
+		},
+		Status: Implemented,
+		// No Operation: a rejection. It is a 400 rather than the 404 an
+		// unknown client gets, and the message names the clientId in single
+		// quotes rather than the UUID the request used.
+		Fixture: "admin-token-account-client",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/service-account-user",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// Reading back a client created through the API, which is the only way
+		// to see a representation carrying a secret. It cannot pass yet:
+		// Keycloak fills the two client-scope name lists from the realm's
+		// defaults on create, and Gloak leaves them empty because the realm
+		// does not model a default set - that is P5. Recorded so the shape is
+		// in the repository and the alarm fires when P5 makes it reproducible.
+		ID: "admin/clients/read-created",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get representation of a client created through the API",
+			Retrieved: "2026-08-23",
+		},
+		Status: Recorded,
+		Reason: "a created client inherits the realm's default client scopes, which is P5",
+		// No Operation: admin/clients/read already claims it.
+		Fixture: "admin-token-client-to-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"defaultClientScopes", "optionalClientScopes"},
+		Volatile:      []string{"id", "secret", "attributes/client.secret.creation.time"},
+		UnorderedKeys: []string{"attributes"},
+	},
+
 	{
 		// The 403 shape is measured - see "Admin API rejection shapes" in
 		// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md, taken

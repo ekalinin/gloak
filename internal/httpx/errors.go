@@ -86,6 +86,23 @@ func SetUserinfoSecurityHeaders(w http.ResponseWriter) {
 	w.Header().Del("X-Frame-Options")
 }
 
+// WriteNoContentAfterDelete writes the 204 a successful DELETE answers.
+//
+// It omits X-Frame-Options, which is the third exception to the five security
+// headers reaching every response. Measured 2026-08-23 on four DELETEs across
+// three resource trees - clients, users, realm roles and the rotated client
+// secret - against two PUTs whose 204s carry all five. It is the 204 that
+// omits it rather than the method: the same routes answering 404 or 500 send
+// all five.
+//
+// Cache-Control is not set here. Three of the four measured DELETEs carry
+// no-cache and DELETE .../client-secret/rotated does not, so it stays with the
+// caller.
+func WriteNoContentAfterDelete(w http.ResponseWriter) {
+	w.Header().Del("X-Frame-Options")
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // WriteBearerChallenge writes the userinfo rejection: text/plain, an empty
 // body, and the error carried entirely in WWW-Authenticate.
 //

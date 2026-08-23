@@ -27,6 +27,7 @@ type clientRepresentation struct {
 	Enabled                            bool              `json:"enabled"`
 	AlwaysDisplayInConsole             bool              `json:"alwaysDisplayInConsole"`
 	ClientAuthenticatorType            string            `json:"clientAuthenticatorType"`
+	Secret                             string            `json:"secret,omitempty"`
 	RedirectURIs                       []string          `json:"redirectUris"`
 	WebOrigins                         []string          `json:"webOrigins"`
 	NotBefore                          int               `json:"notBefore"`
@@ -86,10 +87,16 @@ func clientAccessFor(c *caller, m *model.Client, realmName string) accessClaim {
 
 // clientRepresentationOf converts a stored client for the wire.
 //
-// The secret is deliberately absent: it is not in the measured representation
-// of any of the six bootstrapped clients, and the admin API has a dedicated
-// endpoint for reading it.
+// The secret follows publicClient rather than what is stored, which is
+// measured and not obvious. A public client given a secret through
+// POST .../client-secret goes on showing none here, while a bearer-only
+// client shows its. And none of the six bootstrapped clients has a secret at
+// all, which is why the field never appeared in the earlier recordings.
 func clientRepresentationOf(m *model.Client, c *caller, realmName string) clientRepresentation {
+	secret := m.Secret
+	if m.PublicClient {
+		secret = ""
+	}
 	return clientRepresentation{
 		ID:                                 m.ID,
 		ClientID:                           m.ClientID,
@@ -100,6 +107,7 @@ func clientRepresentationOf(m *model.Client, c *caller, realmName string) client
 		Enabled:                            m.Enabled,
 		AlwaysDisplayInConsole:             m.AlwaysDisplayInConsole,
 		ClientAuthenticatorType:            m.ClientAuthenticatorType,
+		Secret:                             secret,
 		RedirectURIs:                       nonNil(m.RedirectURIs),
 		WebOrigins:                         nonNil(m.WebOrigins),
 		NotBefore:                          m.NotBefore,

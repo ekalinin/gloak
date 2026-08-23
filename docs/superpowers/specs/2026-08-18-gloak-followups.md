@@ -248,6 +248,45 @@ correct the code, rather than assuming the shapes were verified because the
 endpoints work.
 
 Same class, already noted where it lives: `client_credentials` returns the same
-body shape as the password grant, which is also unmeasured, and the
-`service-account-<clientId>` username `internal/oidc` creates on demand follows
-Keycloak's convention without having been measured.
+body shape as the password grant, which is also unmeasured.
+
+The `service-account-<clientId>` username was the third item here. **Closed
+2026-08-23** by Task 11 of P2, which measured it through
+`GET .../clients/{uuid}/service-account-user`: the guess was right, and it now
+lives in `model.ServiceAccountUsername` with the recording cited.
+
+## F16: a client created through the admin API differs from Keycloak's in three ways
+
+Measured 2026-08-23 by reading back a client created with
+`{"clientId":"...","enabled":true}`, and recorded as
+`admin/clients/read-created`, which is `Recorded` rather than `Implemented`
+because of exactly this:
+
+| Field | Keycloak | Gloak |
+|---|---|---|
+| `defaultClientScopes` | six names from the realm's defaults | `[]` |
+| `optionalClientScopes` | five names from the realm's defaults | `[]` |
+| `nodeReRegistrationTimeout` | `-1` | `0` |
+
+The two scope lists need the realm to model a default set, which is P5. The
+`-1` does not need anything and is simply not applied yet; it was noticed while
+reading the recording rather than while writing the create handler.
+
+The golden is in the repository, so the `Recorded` alarm fires the moment all
+three line up.
+
+## F17: `GET /clients` is gated where Keycloak filters
+
+Measured 2026-08-23. A caller holding only `query-clients` gets **200 and an
+empty array** from `GET /admin/realms/master/clients`, even filtering to a
+client that exists. Keycloak returns the objects the caller may view rather
+than refusing the caller.
+
+Gloak guards the route with `view-clients` alone, so the same caller gets 403.
+Two changes are needed: accept `query-clients` as well, and filter the list by
+`clientAccessFor(...).View` instead of returning everything.
+
+It cannot become a conformance case until role assignment is served - that is
+the Role Mapper tag, P2's second cut - because a fixture reaching a
+narrow-role caller has to build one through the API in both the reference
+container and Gloak.

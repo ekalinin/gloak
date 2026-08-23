@@ -264,15 +264,19 @@ func (h *handler) clientCredentialsGrant(w http.ResponseWriter, r *http.Request,
 }
 
 // serviceAccountUser returns the account a client acts as, creating it on
-// first use. Keycloak provisions it when service accounts are switched on,
-// which is a client-management operation and therefore P2; until then this
-// converges the same way bootstrap does.
+// first use.
 //
-// The service-account-<clientId> username follows Keycloak's convention and is
-// not measured. It only becomes observable through the Admin API or through a
-// non-lightweight token's preferred_username, so P2 must confirm it.
+// The username was P1's guess and P2 measured it - see
+// model.ServiceAccountUsername - so the convention is now contract rather than
+// convention. What P2 also measured is that Keycloak provisions the account
+// when the client is created, not when the first grant arrives, so
+// internal/admin does that eagerly.
+//
+// This path stays because it covers every client that was never created
+// through the admin API: the six bootstrap makes, and every client a test
+// builds straight through the store.
 func (h *handler) serviceAccountUser(ctx context.Context, realm *model.Realm, client *model.Client) (*model.User, error) {
-	username := "service-account-" + client.ClientID
+	username := model.ServiceAccountUsername(client.ClientID)
 	user, err := h.store.Users().ByUsername(ctx, realm.ID, username)
 	if err == nil {
 		return user, nil

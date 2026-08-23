@@ -689,6 +689,13 @@ rotated, which is exactly the kind of value nobody would guess correctly.
 Rotation needs a second secret column with an expiry. Add it in the same
 migration style as Task 5.
 
+**Amended after the recording, 2026-08-23: no such column was added.**
+`CLIENT_SECRET_ROTATION` is a preview feature disabled by default and
+`secret-rotation` is not a registered client-policy executor, so no client on
+this distribution can hold a rotated secret. The endpoints answer a constant
+404 and a constant 204, and that is the measured contract in full. A column
+modelling a state that cannot occur would be dead schema in both drivers.
+
 `GET .../service-account-user` returns the account P1 creates on demand as
 `service-account-<clientId>`. **This is the operation that measures whether that
 convention is right.** If the recording disagrees, P1's guess was wrong and
