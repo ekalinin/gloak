@@ -122,6 +122,26 @@ func (h *handler) register(mux *http.ServeMux) {
 		h.guard("manage-clients", h.addComposites(h.clientRoleLocator)))
 	mux.HandleFunc("DELETE /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}/composites",
 		h.guard("manage-clients", h.removeComposites(h.clientRoleLocator)))
+
+	// The holders of a role. .../groups takes the same view/manage pair as the
+	// plain role reads and the composites above it - measured the same way, not
+	// assumed from that sibling.
+	//
+	// .../users does not: measured against a live 26.7.1 with every single
+	// master-realm role tried alone and in combination, it 403s a caller
+	// holding only view-realm/manage-realm/view-clients/manage-clients *and*
+	// one holding only view-users/manage-users/query-users, and 200s only a
+	// caller holding one of each pair together. That is a conjunction of two
+	// role families neither guard nor guardAny expresses, so it gets its own
+	// combinator rather than a third slice bolted onto guardAny's contract.
+	mux.HandleFunc("GET /admin/realms/{realm}/roles/{roleName}/users",
+		h.guardAnyAndAny(realmRolesReadRoles, usersReadRoles, h.roleUsers(h.realmRole)))
+	mux.HandleFunc("GET /admin/realms/{realm}/roles/{roleName}/groups",
+		h.guardAny(realmRolesReadRoles, h.roleGroups(h.realmRole)))
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}/users",
+		h.guardAnyAndAny(clientRolesReadRoles, usersReadRoles, h.roleUsers(h.clientRoleLocator)))
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}/groups",
+		h.guardAny(clientRolesReadRoles, h.roleGroups(h.clientRoleLocator)))
 }
 
 // guard is the authorization filter every admin route goes through: resolve
@@ -153,6 +173,24 @@ func (h *handler) guardAny(roles []string, next func(http.ResponseWriter, *http.
 // runs.
 func (h *handler) guardRejecting(role string, reject func(http.ResponseWriter), next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
 	return h.guardAnyRejecting([]string{role}, reject, next)
+}
+
+// guardAnyAndAny is guard for the one route in this file that needs a role
+// from each of two families rather than any of one: .../roles/{name}/users
+// needs a role-management role (a: realmRolesReadRoles or
+// clientRolesReadRoles) together with a user-read role (b: usersReadRoles) -
+// measured, not assumed from guardAny's single-family siblings. It is built
+// from guardAnyRejecting rather than duplicated: that call resolves the
+// realm and the caller and checks the first family, and the wrapped next
+// adds the second check before running the handler.
+func (h *handler) guardAnyAndAny(a, b []string, next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
+	return h.guardAnyRejecting(a, writeForbidden, func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+		if !rc.caller.hasAny(b) {
+			writeForbidden(w)
+			return
+		}
+		next(w, r, rc)
+	})
 }
 
 // guardAnyRejecting is the one implementation the three wrappers share:

@@ -498,6 +498,51 @@ func (h *handler) syncCompositeFlag(ctx context.Context, role *model.Role) error
 	return h.store.Roles().Update(ctx, &updated)
 }
 
+// roleUsers serves GET .../roles/{role-name}/users.
+//
+// Direct holders only - it must not go through internal/roles.Effective.
+// Measured: the administrator appears for `admin` and not for `create-realm`,
+// which `admin` is composite over.
+//
+// The user representation here carries **no access block**, which is the
+// fourth serialisation of a user in this API and matches the service-account
+// read.
+func (h *handler) roleUsers(locate roleLocator) func(http.ResponseWriter, *http.Request, *reqContext) {
+	return func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+		role, ok := locate(w, r, rc)
+		if !ok {
+			return
+		}
+		users, err := h.store.Roles().ListUsersWithRole(r.Context(), rc.realm.ID, role.ID)
+		if err != nil {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		out := make([]userRepresentation, 0, len(users))
+		for _, u := range users {
+			// No Access assigned: absent is the measured shape here.
+			out = append(out, userRepresentationOf(u, false))
+		}
+		w.Header().Set("Cache-Control", "no-cache")
+		httpx.WriteJSONCharset(w, http.StatusOK, out)
+	}
+}
+
+// roleGroups serves GET .../roles/{role-name}/groups.
+//
+// Always empty, and correct: the realm has no groups until P2's third cut, and
+// a realm with no groups answers [] - measured. When groups arrive this gains
+// a body and needs no new route.
+func (h *handler) roleGroups(locate roleLocator) func(http.ResponseWriter, *http.Request, *reqContext) {
+	return func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+		if _, ok := locate(w, r, rc); !ok {
+			return
+		}
+		w.Header().Set("Cache-Control", "no-cache")
+		httpx.WriteJSONCharset(w, http.StatusOK, []struct{}{})
+	}
+}
+
 // decodeRoleList reads the array body the composite and role-mapping writes
 // take. A body that is not an array answers the measured 400.
 func decodeRoleList(w http.ResponseWriter, r *http.Request) ([]roleRepresentation, bool) {

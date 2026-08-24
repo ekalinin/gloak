@@ -671,3 +671,149 @@ func TestCompositeWritesNeedManageAlone(t *testing.T) {
 		})
 	}
 }
+
+// Direct holders only. The administrator holds `admin`, which is composite
+// over `create-realm`; measured, /roles/admin/users lists the administrator
+// and /roles/create-realm/users lists nobody.
+func TestRoleUsersIsDirectHoldersOnly(t *testing.T) {
+	h, _, _ := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+
+	holders := get(t, h, "/admin/realms/master/roles/admin/users", admin)
+	if holders.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", holders.Code, holders.Body)
+	}
+	var users []struct {
+		Username string          `json:"username"`
+		Access   json.RawMessage `json:"access"`
+	}
+	if err := json.Unmarshal(holders.Body.Bytes(), &users); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(users) != 1 || users[0].Username != "admin" {
+		t.Fatalf("want the administrator alone, got %v", users)
+	}
+	// A fourth serialisation of a user: no access block, matching the
+	// service-account read.
+	if users[0].Access != nil {
+		t.Fatalf("this listing must carry no access block, got %s", users[0].Access)
+	}
+
+	indirect := get(t, h, "/admin/realms/master/roles/create-realm/users", admin)
+	var none []json.RawMessage
+	if err := json.Unmarshal(indirect.Body.Bytes(), &none); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("a composite child reported %d holders; it must report none", len(none))
+	}
+}
+
+// Groups are the third cut. Until then this is [] - which is also what
+// Keycloak answers on a realm with no groups, so it is correct rather than a
+// stub.
+func TestRoleGroupsIsEmptyUntilGroupsExist(t *testing.T) {
+	h, _, _ := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+
+	w := get(t, h, "/admin/realms/master/roles/admin/groups", admin)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+	if body := w.Body.String(); body != "[]" {
+		t.Fatalf("want [], got %s", body)
+	}
+}
+
+// TestRoleGroupsAdmitViewOrManage measures the guard on .../groups: it is the
+// plain realmRolesReadRoles/clientRolesReadRoles pair, exactly like the
+// composite reads next door and unlike .../users below. Measured against a
+// live 26.7.1 with four single-role callers, each checked against both the
+// realm and the client route - one token per role, since tokenForRole mints a
+// user named for the role and a second call with the same name would collide.
+func TestRoleGroupsAdmitViewOrManage(t *testing.T) {
+	h, s, realm := newServer(t)
+	mrUUID := clientUUID(t, s, realm, "master-realm")
+	cases := map[string]struct{ wantRealm, wantClient int }{
+		"view-realm":     {http.StatusOK, http.StatusForbidden},
+		"manage-realm":   {http.StatusOK, http.StatusForbidden},
+		"view-clients":   {http.StatusForbidden, http.StatusOK},
+		"manage-clients": {http.StatusForbidden, http.StatusOK},
+	}
+	for role, want := range cases {
+		t.Run(role, func(t *testing.T) {
+			tok := tokenForRole(t, h, s, realm, role)
+			if got := get(t, h, "/admin/realms/master/roles/admin/groups", tok).Code; got != want.wantRealm {
+				t.Fatalf("realm route: want %d, got %d", want.wantRealm, got)
+			}
+			path := "/admin/realms/master/clients/" + mrUUID + "/roles/view-users/groups"
+			if got := get(t, h, path, tok).Code; got != want.wantClient {
+				t.Fatalf("client route: want %d, got %d", want.wantClient, got)
+			}
+		})
+	}
+}
+
+// TestRoleUsersNeedsRoleManagementAndUserRead measures the one guard in this
+// plan that is neither a single role nor a plain view/manage pair: unlike
+// every sibling next door, .../users needs a role-management role (the same
+// pair .../groups takes) **and** a user-read role (view-users, manage-users
+// or query-users) together. Measured directly against a live 26.7.1: a caller
+// holding only view-realm gets 403, one holding only view-users gets 403 too,
+// and only the pair together gets 200. Confirmed on both the realm and the
+// client form, each against its own management pair.
+func TestRoleUsersNeedsRoleManagementAndUserRead(t *testing.T) {
+	h, s, realm := newServer(t)
+	ctx := context.Background()
+	container, err := s.Clients().ByClientID(ctx, realm.ID, "master-realm")
+	if err != nil {
+		t.Fatalf("ByClientID: %v", err)
+	}
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"holders-probe","enabled":true}`, admin)
+	probeUUID := clientUUID(t, s, realm, "holders-probe")
+	postJSON(t, h, "/admin/realms/master/clients/"+probeUUID+"/roles", `{"name":"probe-role"}`, admin)
+
+	// grant assigns the named master-realm roles to a fresh user and returns a
+	// token for it.
+	grant := func(t *testing.T, username string, roleNames ...string) string {
+		t.Helper()
+		u := createUserWithPassword(t, s, realm, username, "pw")
+		for _, name := range roleNames {
+			r, err := s.Roles().ByName(ctx, realm.ID, container.ID, name)
+			if err != nil {
+				t.Fatalf("ByName(%s): %v", name, err)
+			}
+			if err := s.Roles().AssignToUser(ctx, u.ID, r.ID); err != nil {
+				t.Fatalf("AssignToUser(%s): %v", name, err)
+			}
+		}
+		return tokenFor(t, h, username, "pw")
+	}
+
+	cases := []struct {
+		name       string
+		username   string
+		roles      []string
+		wantRealm  int
+		wantClient int
+	}{
+		{"role management alone", "holders-rm-only", []string{"view-realm"}, http.StatusForbidden, http.StatusForbidden},
+		{"user read alone", "holders-ur-only", []string{"view-users"}, http.StatusForbidden, http.StatusForbidden},
+		{"realm pair + view-users", "holders-realm-vu", []string{"view-realm", "view-users"}, http.StatusOK, http.StatusForbidden},
+		{"realm pair (manage) + query-users", "holders-realm-qu", []string{"manage-realm", "query-users"}, http.StatusOK, http.StatusForbidden},
+		{"client pair + view-users", "holders-client-vu", []string{"view-clients", "view-users"}, http.StatusForbidden, http.StatusOK},
+		{"client pair (manage) + manage-users", "holders-client-mu", []string{"manage-clients", "manage-users"}, http.StatusForbidden, http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tok := grant(t, tc.username, tc.roles...)
+			if got := get(t, h, "/admin/realms/master/roles/admin/users", tok).Code; got != tc.wantRealm {
+				t.Fatalf("realm route: want %d, got %d", tc.wantRealm, got)
+			}
+			if got := get(t, h, "/admin/realms/master/clients/"+probeUUID+"/roles/probe-role/users", tok).Code; got != tc.wantClient {
+				t.Fatalf("client route: want %d, got %d", tc.wantClient, got)
+			}
+		})
+	}
+}
