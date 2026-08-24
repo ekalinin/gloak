@@ -402,23 +402,7 @@ func (h *handler) addComposites(locate roleLocator) func(http.ResponseWriter, *h
 			return nil
 		}
 		return err
-	}, h.markComposite)
-}
-
-// markComposite flips the parent's own composite flag to true once it has
-// gained a child. Measured on a live Keycloak: reading the parent back after
-// POST .../composites shows composite:true without being asked for it.
-// Neither store driver's AddComposite does this itself - both round-trip a
-// composite parent only because storetest's conformance cases build it with
-// the flag already set by hand - so it is done here instead, once per write
-// rather than once per child.
-func (h *handler) markComposite(ctx context.Context, role *model.Role) error {
-	if role.Composite {
-		return nil
-	}
-	updated := *role
-	updated.Composite = true
-	return h.store.Roles().Update(ctx, &updated)
+	})
 }
 
 // removeComposites serves DELETE .../composites. Removing one that is not
@@ -426,14 +410,13 @@ func (h *handler) markComposite(ctx context.Context, role *model.Role) error {
 func (h *handler) removeComposites(locate roleLocator) func(http.ResponseWriter, *http.Request, *reqContext) {
 	return h.eachComposite(locate, func(ctx context.Context, roleID, childID string) error {
 		return h.store.Roles().RemoveComposite(ctx, roleID, childID)
-	}, nil)
+	})
 }
 
-// eachComposite is what addComposites and removeComposites share: resolve the
-// role, decode the body, apply the per-child operation to each entry, then
-// run the optional whole-role step once before answering. after is nil for
-// removeComposites, which has nothing whole-role to do.
-func (h *handler) eachComposite(locate roleLocator, apply func(context.Context, string, string) error, after func(context.Context, *model.Role) error) func(http.ResponseWriter, *http.Request, *reqContext) {
+// eachComposite is what addComposites and removeComposites share: resolve
+// the role, decode the body, apply the per-child operation to each entry,
+// then resync the parent's own composite flag once before answering.
+func (h *handler) eachComposite(locate roleLocator, apply func(context.Context, string, string) error) func(http.ResponseWriter, *http.Request, *reqContext) {
 	return func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 		role, ok := locate(w, r, rc)
 		if !ok {
@@ -457,14 +440,35 @@ func (h *handler) eachComposite(locate roleLocator, apply func(context.Context, 
 				return
 			}
 		}
-		if after != nil {
-			if err := after(r.Context(), role); err != nil {
-				httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
-				return
-			}
+		if err := h.syncCompositeFlag(r.Context(), role); err != nil {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
 		}
 		httpx.WriteNoContent(w, r)
 	}
+}
+
+// syncCompositeFlag keeps the role's own composite flag derived from whether
+// it currently has any children at all: true when it has at least one, false
+// when it has none. Measured on a live Keycloak in both directions on the
+// same role - composite flips to true when the first child is added, and
+// back to false when the last one is removed - so this recomputes it fresh
+// after every composite write rather than only setting it on add. Neither
+// store driver's AddComposite/RemoveComposite touches the flag itself, so
+// this runs once per write, after the loop in eachComposite, rather than
+// once per child.
+func (h *handler) syncCompositeFlag(ctx context.Context, role *model.Role) error {
+	children, err := h.store.Roles().ListComposites(ctx, role.ID)
+	if err != nil {
+		return err
+	}
+	has := len(children) > 0
+	if role.Composite == has {
+		return nil
+	}
+	updated := *role
+	updated.Composite = has
+	return h.store.Roles().Update(ctx, &updated)
 }
 
 // decodeRoleList reads the array body the composite and role-mapping writes

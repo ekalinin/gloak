@@ -471,6 +471,35 @@ func TestComposites(t *testing.T) {
 	}
 }
 
+// TestCompositeFlagFollowsChildCount measures the direction TestComposites
+// does not: composite is derived from whether the role currently has any
+// children, not latched true once set. Measured directly on a live Keycloak,
+// on the very role whose last child is removed: it reads composite:false
+// again immediately afterward.
+func TestCompositeFlagFollowsChildCount(t *testing.T) {
+	h, _, _ := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/roles", `{"name":"flag-parent"}`, admin)
+	postJSON(t, h, "/admin/realms/master/roles", `{"name":"flag-child"}`, admin)
+	child := readRole(t, h, "/admin/realms/master/roles/flag-child", admin)
+
+	body := `[{"id":"` + child.ID + `","name":"flag-child"}]`
+	if got := postJSON(t, h, "/admin/realms/master/roles/flag-parent/composites", body, admin).Code; got != http.StatusNoContent {
+		t.Fatalf("add: want 204, got %d", got)
+	}
+	if !readRole(t, h, "/admin/realms/master/roles/flag-parent", admin).Composite {
+		t.Fatal("the parent is not marked composite after gaining its only child")
+	}
+
+	if got := sendJSON(t, h, http.MethodDelete,
+		"/admin/realms/master/roles/flag-parent/composites", body, admin).Code; got != http.StatusNoContent {
+		t.Fatalf("remove: want 204, got %d", got)
+	}
+	if readRole(t, h, "/admin/realms/master/roles/flag-parent", admin).Composite {
+		t.Fatal("the parent is still marked composite after losing its last child")
+	}
+}
+
 func TestClientRoleCompositesUseTheSameRoutes(t *testing.T) {
 	h, s, realm := newServer(t)
 	admin := tokenFor(t, h, "admin", "admin")
