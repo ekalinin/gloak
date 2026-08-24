@@ -334,6 +334,117 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	t.Run("role update, delete and attributes", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		r := &model.Role{
+			ID: model.NewID(), RealmID: realm.ID, Name: "probe",
+			Description: "before",
+			Attributes:  map[string][]string{"k": {"v"}},
+		}
+		if err := s.Roles().Create(ctx, r); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+
+		// Attributes round-trip. Measured on Keycloak: a role keeps them where
+		// a user's are dropped by the declarative user profile.
+		got, err := s.Roles().ByName(ctx, realm.ID, "", "probe")
+		if err != nil {
+			t.Fatalf("ByName: %v", err)
+		}
+		if len(got.Attributes["k"]) != 1 || got.Attributes["k"][0] != "v" {
+			t.Fatalf("attributes did not round-trip: %v", got.Attributes)
+		}
+
+		// Update replaces rather than merging, including the rename, because
+		// that is what the endpoint above it does.
+		r.Name = "probe-renamed"
+		r.Description = ""
+		r.Attributes = nil
+		if err := s.Roles().Update(ctx, r); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if _, err := s.Roles().ByName(ctx, realm.ID, "", "probe"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("the old name still resolves: %v", err)
+		}
+		got, err = s.Roles().ByName(ctx, realm.ID, "", "probe-renamed")
+		if err != nil {
+			t.Fatalf("ByName after rename: %v", err)
+		}
+		if got.ID != r.ID {
+			t.Fatalf("the rename minted a new id: %s then %s", r.ID, got.ID)
+		}
+		if got.Description != "" || len(got.Attributes) != 0 {
+			t.Fatalf("Update did not replace: %q %v", got.Description, got.Attributes)
+		}
+
+		if err := s.Roles().Delete(ctx, realm.ID, r.ID); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		if err := s.Roles().Delete(ctx, realm.ID, r.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("deleting twice: want ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("composite removal and role holders", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		parent := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "parent", Composite: true}
+		child := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "child"}
+		for _, r := range []*model.Role{parent, child} {
+			if err := s.Roles().Create(ctx, r); err != nil {
+				t.Fatalf("Create %s: %v", r.Name, err)
+			}
+		}
+		if err := s.Roles().AddComposite(ctx, parent.ID, child.ID); err != nil {
+			t.Fatalf("AddComposite: %v", err)
+		}
+		if err := s.Roles().RemoveComposite(ctx, parent.ID, child.ID); err != nil {
+			t.Fatalf("RemoveComposite: %v", err)
+		}
+		kids, err := s.Roles().ListComposites(ctx, parent.ID)
+		if err != nil {
+			t.Fatalf("ListComposites: %v", err)
+		}
+		if len(kids) != 0 {
+			t.Fatalf("want no composites left, got %d", len(kids))
+		}
+
+		u := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "holder", Enabled: true}
+		if err := s.Users().Create(ctx, u); err != nil {
+			t.Fatalf("Users().Create: %v", err)
+		}
+		if err := s.Roles().AssignToUser(ctx, u.ID, parent.ID); err != nil {
+			t.Fatalf("AssignToUser: %v", err)
+		}
+
+		// Direct holders only. Measured: /roles/{name}/users lists the
+		// administrator for `admin` and nobody for `create-realm`, which admin
+		// is composite over.
+		holders, err := s.Roles().ListUsersWithRole(ctx, realm.ID, parent.ID)
+		if err != nil {
+			t.Fatalf("ListUsersWithRole: %v", err)
+		}
+		if len(holders) != 1 || holders[0].ID != u.ID {
+			t.Fatalf("want the one direct holder, got %d", len(holders))
+		}
+		childHolders, err := s.Roles().ListUsersWithRole(ctx, realm.ID, child.ID)
+		if err != nil {
+			t.Fatalf("ListUsersWithRole(child): %v", err)
+		}
+		if len(childHolders) != 0 {
+			t.Fatalf("a composite child reported %d holders; it must report none", len(childHolders))
+		}
+	})
+
 	t.Run("sessions round-trip and cascade", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

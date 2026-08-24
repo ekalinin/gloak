@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/ekalinin/gloak/internal/model"
@@ -396,8 +397,13 @@ func (r *userRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.Us
 	if err != nil {
 		return nil, classify(err)
 	}
-	defer rows.Close()
+	return scanUsers(rows)
+}
 
+// scanUsers drains a user query. ListByRealm and RoleRepo.ListUsersWithRole
+// select the same row, so the loop lives once.
+func scanUsers(rows pgx.Rows) ([]*model.User, error) {
+	defer rows.Close()
 	var out []*model.User
 	for rows.Next() {
 		m, err := scanUser(rows)
@@ -538,19 +544,39 @@ func scanCredential(row scanner) (*model.Credential, error) {
 
 type roleRepo struct{ pool *pgxpool.Pool }
 
+// Create writes the role row and its attributes in one transaction, so a
+// role with attributes never exists half-written.
 func (r *roleRepo) Create(ctx context.Context, m *model.Role) error {
-	_, err := r.pool.Exec(ctx,
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx,
 		`INSERT INTO keycloak_role (id, realm_id, client_id, name, description, composite)
 		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		m.ID, m.RealmID, m.ClientID, m.Name, m.Description, m.Composite)
-	return classify(err)
+		m.ID, m.RealmID, m.ClientID, m.Name, m.Description, m.Composite); err != nil {
+		return classify(err)
+	}
+	if err := insertRoleAttributes(ctx, tx, m); err != nil {
+		return classify(err)
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *roleRepo) ByName(ctx context.Context, realmID, clientID, name string) (*model.Role, error) {
 	row := r.pool.QueryRow(ctx,
 		`SELECT id, realm_id, client_id, name, description, composite
 		 FROM keycloak_role WHERE realm_id = $1 AND client_id = $2 AND name = $3`, realmID, clientID, name)
-	return scanRole(row)
+	m, err := scanRole(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadRoleAttributes(ctx, []*model.Role{m}); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // ListRealmRoles returns realm-level roles, which are stored with an empty
@@ -562,24 +588,28 @@ func (r *roleRepo) ListRealmRoles(ctx context.Context, realmID string) ([]*model
 	if err != nil {
 		return nil, classify(err)
 	}
-	defer rows.Close()
-
-	var out []*model.Role
-	for rows.Next() {
-		m, err := scanRole(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, m)
+	out, err := collectRoles(rows)
+	if err != nil {
+		return nil, err
 	}
-	return out, classify(rows.Err())
+	if err := r.loadRoleAttributes(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (r *roleRepo) ByID(ctx context.Context, realmID, id string) (*model.Role, error) {
 	row := r.pool.QueryRow(ctx,
 		`SELECT id, realm_id, client_id, name, description, composite
 		 FROM keycloak_role WHERE realm_id = $1 AND id = $2`, realmID, id)
-	return scanRole(row)
+	m, err := scanRole(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadRoleAttributes(ctx, []*model.Role{m}); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // ListClientRoles returns the roles a client owns, the counterpart of
@@ -591,7 +621,52 @@ func (r *roleRepo) ListClientRoles(ctx context.Context, realmID, clientID string
 	if err != nil {
 		return nil, classify(err)
 	}
-	return collectRoles(rows)
+	out, err := collectRoles(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadRoleAttributes(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Update writes the role back whole. Attributes are deleted and re-inserted
+// rather than merged, in the same transaction as the row, because PUT on a
+// role replaces - see the endpoint above it.
+func (r *roleRepo) Update(ctx context.Context, m *model.Role) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx,
+		`UPDATE keycloak_role SET name = $1, description = $2, composite = $3
+		 WHERE id = $4`,
+		m.Name, m.Description, m.Composite, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	if err := affectedOne(tag.RowsAffected()); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM role_attribute WHERE role_id = $1`, m.ID); err != nil {
+		return classify(err)
+	}
+	if err := insertRoleAttributes(ctx, tx, m); err != nil {
+		return classify(err)
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *roleRepo) Delete(ctx context.Context, realmID, id string) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM keycloak_role WHERE realm_id = $1 AND id = $2`, realmID, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(tag.RowsAffected())
 }
 
 func (r *roleRepo) AddComposite(ctx context.Context, roleID, childRoleID string) error {
@@ -609,7 +684,23 @@ func (r *roleRepo) ListComposites(ctx context.Context, roleID string) ([]*model.
 	if err != nil {
 		return nil, classify(err)
 	}
-	return collectRoles(rows)
+	out, err := collectRoles(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadRoleAttributes(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// RemoveComposite reports no error when the pair is not there: DELETE
+// .../composites was measured answering 204 for a role that was never a child.
+func (r *roleRepo) RemoveComposite(ctx context.Context, roleID, childRoleID string) error {
+	_, err := r.pool.Exec(ctx,
+		`DELETE FROM composite_role WHERE composite = $1 AND child_role = $2`,
+		roleID, childRoleID)
+	return classify(err)
 }
 
 func (r *roleRepo) AssignToUser(ctx context.Context, userID, roleID string) error {
@@ -636,7 +727,86 @@ func (r *roleRepo) ListUserRoles(ctx context.Context, userID string) ([]*model.R
 	if err != nil {
 		return nil, classify(err)
 	}
-	return collectRoles(rows)
+	out, err := collectRoles(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadRoleAttributes(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ListUsersWithRole is the **direct** holders, ordered by username so a
+// listing is deterministic. It must not expand composites: measured,
+// /roles/create-realm/users is empty even though the administrator reaches
+// that role through `admin`.
+func (r *roleRepo) ListUsersWithRole(ctx context.Context, realmID, roleID string) ([]*model.User, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT u.id, u.realm_id, u.username, u.email, u.email_verified, u.enabled,
+		        u.first_name, u.last_name, u.created_timestamp, u.attributes, u.required_actions, u.not_before
+		 FROM user_entity u
+		 JOIN user_role_mapping m ON m.user_id = u.id
+		 WHERE u.realm_id = $1 AND m.role_id = $2
+		 ORDER BY u.username`, realmID, roleID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return scanUsers(rows)
+}
+
+// insertRoleAttributes writes every value of every attribute, ordinal by
+// position in the slice, so the order the caller gave them in round-trips.
+func insertRoleAttributes(ctx context.Context, tx pgx.Tx, m *model.Role) error {
+	for name, values := range m.Attributes {
+		for i, v := range values {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO role_attribute (role_id, name, value, ordinal) VALUES ($1, $2, $3, $4)`,
+				m.ID, name, v, i); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// loadRoleAttributes fills Attributes on roles already scanned. It runs one
+// query for the whole set rather than one per role: ListClientRoles returns 21
+// on the admin container alone. The IN list's placeholders are numbered from
+// scratch here rather than reused from elsewhere, since $n numbering is
+// statement-local.
+func (r *roleRepo) loadRoleAttributes(ctx context.Context, roles []*model.Role) error {
+	if len(roles) == 0 {
+		return nil
+	}
+	byID := make(map[string]*model.Role, len(roles))
+	args := make([]any, 0, len(roles))
+	placeholders := make([]string, 0, len(roles))
+	for i, role := range roles {
+		byID[role.ID] = role
+		args = append(args, role.ID)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", i+1))
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT role_id, name, value FROM role_attribute
+		 WHERE role_id IN (`+strings.Join(placeholders, ",")+`)
+		 ORDER BY role_id, name, ordinal`, args...)
+	if err != nil {
+		return classify(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var roleID, name, value string
+		if err := rows.Scan(&roleID, &name, &value); err != nil {
+			return err
+		}
+		role := byID[roleID]
+		if role.Attributes == nil {
+			role.Attributes = map[string][]string{}
+		}
+		role.Attributes[name] = append(role.Attributes[name], value)
+	}
+	return rows.Err()
 }
 
 // collectRoles drains a role query. Every role listing scans the same six
