@@ -346,15 +346,18 @@ yet.
 **F17** - the listings are gated where Keycloak filters. A caller holding only
 a `query-` role gets 200 and an empty array from Keycloak and either 403 or
 everything from Gloak. Fixing it needs the second cut's role assignment before
-a conformance case can reach it.
+a conformance case can reach it. The second cut is specced as
+`2026-08-23-p2-roles-and-role-mappings-design.md`, and unblocking this is one
+of its two stated reasons for going before groups.
 
-**F18** - Gloak resolves no roles at token issuance, so `realm_access` is
-empty, `resource_access` is `{}` and `aud` names the issuing client, which is
-measurably wrong. Two introspection cases wait on it, and so does the
-audience check that makes Gloak refuse an access token the way Keycloak does.
-The machinery exists - `RoleRepo.ListUserRoles` plus composite expansion, which
-`internal/admin` already uses - but bootstrap also has to create the `account`
-client's three roles and the `default-roles-master` composite that grants them.
+**F18** - **closed 2026-08-23.** Gloak resolved no roles at token issuance, so
+`realm_access` was empty, `resource_access` was `{}` and `aud` named the issuing
+client, which is measurably wrong. Both introspection cases that waited on it
+now serve, and the audience check with them. The `account` client's roles turned
+out to be eight rather than the three this entry named, `aud` excludes the
+issuing client rather than merely not being it, and `resource_access`'s key
+order needed a Java `HashMap` reproduced in Go. See the closed entry in the
+follow-ups document.
 
 **F19** - two `access.token.lifespan` values are measured and not reproduced.
 
