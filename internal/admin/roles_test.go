@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/ekalinin/gloak/internal/model"
+	"github.com/ekalinin/gloak/internal/store"
 )
 
 // Two serialisations, measured. A listing carries six keys and a single read
@@ -326,4 +328,95 @@ func readRole(t *testing.T, h http.Handler, path, token string) roleRepresentati
 		t.Fatalf("parse %s: %v", path, err)
 	}
 	return rep
+}
+
+func TestClientRolesMirrorRealmRolesWithTheirOwnGuards(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"probe-app","enabled":true}`, admin)
+	uuid := clientUUID(t, s, realm, "probe-app")
+	base := "/admin/realms/master/clients/" + uuid + "/roles"
+
+	if got := postJSON(t, h, base, `{"name":"app-role"}`, admin).Code; got != http.StatusCreated {
+		t.Fatalf("create: want 201, got %d", got)
+	}
+
+	// clientRole is true and containerId is the client's UUID, not the realm's.
+	rep := readRole(t, h, base+"/app-role", admin)
+	if !rep.ClientRole {
+		t.Fatal("clientRole is false on a client role")
+	}
+	if rep.ContainerID != uuid {
+		t.Fatalf("containerId: want the client uuid %s, got %s", uuid, rep.ContainerID)
+	}
+
+	if got := putJSON(t, h, base+"/app-role", `{"name":"app-role"}`, admin).Code; got != http.StatusNoContent {
+		t.Fatalf("update: want 204, got %d", got)
+	}
+	if got := do(t, h, http.MethodDelete, base+"/app-role", admin).Code; got != http.StatusNoContent {
+		t.Fatalf("delete: want 204, got %d", got)
+	}
+
+	// A missing client answers the client's 404, not the role's.
+	missing := get(t, h, "/admin/realms/master/clients/00000000-0000-0000-0000-000000000000/roles", admin)
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("want 404 for a missing client, got %d", missing.Code)
+	}
+}
+
+func TestClientRolesUseTheClientsRoles(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"probe-app","enabled":true}`, admin)
+	base := "/admin/realms/master/clients/" + clientUUID(t, s, realm, "probe-app") + "/roles"
+
+	// The view-clients token is kept for the write check below rather than
+	// re-derived: tokenForRole mints a user named for the role, and asking for
+	// "view-clients" a second time collides with the one the loop already made.
+	var writer string
+	for role, want := range map[string]int{
+		"view-clients":   http.StatusOK,
+		"manage-clients": http.StatusOK,
+		"view-realm":     http.StatusForbidden,
+		"manage-realm":   http.StatusForbidden,
+	} {
+		t.Run("read/"+role, func(t *testing.T) {
+			tok := tokenForRole(t, h, s, realm, role)
+			if role == "view-clients" {
+				writer = tok
+			}
+			if got := get(t, h, base, tok).Code; got != want {
+				t.Fatalf("%s: want %d, got %d", role, want, got)
+			}
+		})
+	}
+	if got := postJSON(t, h, base, `{"name":"x"}`, writer).Code; got != http.StatusForbidden {
+		t.Fatalf("view-clients created a client role: %d", got)
+	}
+}
+
+// **The realm's own client takes no new roles from anybody**, measured with a
+// full administrator. Same rule as "the realm's own client is never
+// configurable".
+func TestTheRealmsOwnClientRefusesNewRoles(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	base := "/admin/realms/master/clients/" + clientUUID(t, s, realm, "master-realm") + "/roles"
+
+	if got := postJSON(t, h, base, `{"name":"admin-made-this"}`, admin).Code; got != http.StatusForbidden {
+		t.Fatalf("want 403 from a full administrator, got %d", got)
+	}
+	// Reading them is still allowed - all 21 come back.
+	if got := get(t, h, base, admin).Code; got != http.StatusOK {
+		t.Fatalf("reading the realm client's roles: want 200, got %d", got)
+	}
+}
+
+func clientUUID(t *testing.T, s store.Store, realm *model.Realm, clientID string) string {
+	t.Helper()
+	c, err := s.Clients().ByClientID(context.Background(), realm.ID, clientID)
+	if err != nil {
+		t.Fatalf("ByClientID(%s): %v", clientID, err)
+	}
+	return c.ID
 }

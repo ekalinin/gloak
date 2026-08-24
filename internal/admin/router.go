@@ -82,6 +82,14 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/realms/{realm}/roles", h.guard("manage-realm", h.createRealmRole))
 	mux.HandleFunc("PUT /admin/realms/{realm}/roles/{roleName}", h.guard("manage-realm", h.updateRealmRole))
 	mux.HandleFunc("DELETE /admin/realms/{realm}/roles/{roleName}", h.guard("manage-realm", h.deleteRealmRole))
+
+	// Client roles: the same split as the realm roles above - reading admits
+	// view-clients or manage-clients, and writing needs manage-clients alone.
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/roles", h.guardAny(clientRolesReadRoles, h.listClientRoles))
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}", h.guardAny(clientRolesReadRoles, h.readClientRole))
+	mux.HandleFunc("POST /admin/realms/{realm}/clients/{clientUUID}/roles", h.guard("manage-clients", h.createClientRole))
+	mux.HandleFunc("PUT /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}", h.guard("manage-clients", h.updateClientRole))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}", h.guard("manage-clients", h.deleteClientRole))
 }
 
 // guard is the authorization filter every admin route goes through: resolve
@@ -157,3 +165,8 @@ var usersReadRoles = []string{"view-users", "query-users", "manage-users"}
 // realmRolesReadRoles is what both realm-role reads accept: view-realm or
 // manage-realm, measured across eight single-role callers.
 var realmRolesReadRoles = []string{"view-realm", "manage-realm"}
+
+// clientRolesReadRoles is what both client-role reads accept: view-clients or
+// manage-clients - measured the same way as the realm-role pair above, on an
+// ordinary client. GET .../roles answered 200 for both roles.
+var clientRolesReadRoles = []string{"view-clients", "manage-clients"}

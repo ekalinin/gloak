@@ -211,3 +211,127 @@ func writeRoleHasNoName(w http.ResponseWriter) {
 func writeRoleConflict(w http.ResponseWriter, name string) {
 	httpx.WriteAdminError(w, http.StatusConflict, "Role with name "+name+" already exists")
 }
+
+// clientRoleContainer resolves {client-uuid}, writing the client's own
+// measured 404 - "Could not find client", not the role's message - and
+// returning false when there is none.
+func (h *handler) clientRoleContainer(w http.ResponseWriter, r *http.Request, rc *reqContext) (*model.Client, bool) {
+	c, err := h.store.Clients().ByID(r.Context(), rc.realm.ID, r.PathValue("clientUUID"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeClientNotFound(w)
+			return nil, false
+		}
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return nil, false
+	}
+	return c, true
+}
+
+// listClientRoles serves GET /admin/realms/{realm}/clients/{client-uuid}/roles.
+func (h *handler) listClientRoles(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	c, ok := h.clientRoleContainer(w, r, rc)
+	if !ok {
+		return
+	}
+	roles, err := h.store.Roles().ListClientRoles(r.Context(), rc.realm.ID, c.ID)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	h.writeRoleList(w, r, filterRoles(roles, r.URL.Query().Get("search")), c.ID)
+}
+
+// readClientRole serves GET /admin/realms/{realm}/clients/{client-uuid}/roles/{role-name}.
+func (h *handler) readClientRole(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	c, role, ok := h.clientRole(w, r, rc)
+	if !ok {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+	httpx.WriteJSONCharset(w, http.StatusOK, roleRepresentationOf(role, c.ID, false))
+}
+
+// clientRole resolves both {client-uuid} and {role-name}.
+func (h *handler) clientRole(w http.ResponseWriter, r *http.Request, rc *reqContext) (*model.Client, *model.Role, bool) {
+	c, ok := h.clientRoleContainer(w, r, rc)
+	if !ok {
+		return nil, nil, false
+	}
+	role, err := h.store.Roles().ByName(r.Context(), rc.realm.ID, c.ID, r.PathValue("roleName"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeRoleNotFound(w)
+			return nil, nil, false
+		}
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return nil, nil, false
+	}
+	return c, role, true
+}
+
+// createClientRole serves POST /admin/realms/{realm}/clients/{client-uuid}/roles.
+func (h *handler) createClientRole(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	c, ok := h.clientRoleContainer(w, r, rc)
+	if !ok {
+		return
+	}
+	// Measured: the realm's own client refuses a new role even to a full
+	// administrator. Reading its 21 is still allowed, so this is on the create
+	// alone. internal/bootstrap names that client "{realm}-realm" -
+	// adminRoleContainer there, unexported - so it is rebuilt here.
+	if c.ClientID == rc.realm.Name+"-realm" {
+		writeForbidden(w)
+		return
+	}
+	rep, ok := decodeRole(w, r)
+	if !ok {
+		return
+	}
+	if rep.Name == "" {
+		writeRoleHasNoName(w)
+		return
+	}
+	m := &model.Role{
+		ID: model.NewID(), RealmID: rc.realm.ID, ClientID: c.ID,
+		Name: rep.Name, Description: rep.Description,
+	}
+	if rep.Attributes != nil {
+		m.Attributes = *rep.Attributes
+	}
+	if err := h.store.Roles().Create(r.Context(), m); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			writeRoleConflict(w, rep.Name)
+			return
+		}
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	w.Header().Set("Location",
+		h.issuerBase+"/admin/realms/"+rc.realm.Name+"/clients/"+c.ID+"/roles/"+m.Name)
+	w.Header().Set("Content-Length", "0")
+	w.WriteHeader(http.StatusCreated)
+}
+
+// updateClientRole serves PUT /admin/realms/{realm}/clients/{client-uuid}/roles/{role-name}.
+func (h *handler) updateClientRole(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	_, role, ok := h.clientRole(w, r, rc)
+	if !ok {
+		return
+	}
+	h.applyRoleUpdate(w, r, role)
+}
+
+// deleteClientRole serves DELETE /admin/realms/{realm}/clients/{client-uuid}/roles/{role-name}.
+func (h *handler) deleteClientRole(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	_, role, ok := h.clientRole(w, r, rc)
+	if !ok {
+		return
+	}
+	if err := h.store.Roles().Delete(r.Context(), rc.realm.ID, role.ID); err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+	httpx.WriteNoContent(w, r)
+}
