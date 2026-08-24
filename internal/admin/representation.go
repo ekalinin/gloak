@@ -1,6 +1,10 @@
 package admin
 
-import "github.com/ekalinin/gloak/internal/model"
+import (
+	"net/url"
+
+	"github.com/ekalinin/gloak/internal/model"
+)
 
 // clientRepresentation is Keycloak's ClientRepresentation, in the field order
 // measured on a live instance and transcribed from
@@ -150,4 +154,53 @@ func nonNilMap(m map[string]string) map[string]string {
 		return map[string]string{}
 	}
 	return m
+}
+
+// roleRepresentation is Keycloak's RoleRepresentation in the measured key
+// order.
+//
+// Attributes is a pointer because the key's presence is what distinguishes the
+// two measured shapes, and its natural value - an empty map - is exactly what
+// omitempty would drop. A listing sends six keys, a single read seven. See
+// briefRoles for the flag that picks, and note that it defaults the opposite
+// way from the user listing's.
+//
+// containerId is the realm's UUID for a realm role and the client's UUID for a
+// client role. Not the realm name.
+type roleRepresentation struct {
+	ID          string               `json:"id"`
+	Name        string               `json:"name"`
+	Description string               `json:"description,omitempty"`
+	Composite   bool                 `json:"composite"`
+	ClientRole  bool                 `json:"clientRole"`
+	ContainerID string               `json:"containerId"`
+	Attributes  *map[string][]string `json:"attributes,omitempty"`
+}
+
+func roleRepresentationOf(r *model.Role, containerID string, brief bool) roleRepresentation {
+	rep := roleRepresentation{
+		ID:          r.ID,
+		Name:        r.Name,
+		Description: r.Description,
+		Composite:   r.Composite,
+		ClientRole:  r.ClientID != "",
+		ContainerID: containerID,
+	}
+	if !brief {
+		attrs := r.Attributes
+		if attrs == nil {
+			// Measured: a role with no attributes reads back {} rather than
+			// null, so the map has to exist even when the role's does not.
+			attrs = map[string][]string{}
+		}
+		rep.Attributes = &attrs
+	}
+	return rep
+}
+
+// briefRoles reads briefRepresentation for a role listing, where it **defaults
+// to true**. The user listing's version of this parameter defaults to false,
+// measured on both, which is why the two do not share a helper.
+func briefRoles(q url.Values) bool {
+	return q.Get("briefRepresentation") != "false"
 }
