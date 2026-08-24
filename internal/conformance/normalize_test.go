@@ -252,3 +252,32 @@ func TestSortUnorderedWordsRejectsNonString(t *testing.T) {
 		t.Fatal("want an error for an array at the path, got nil")
 	}
 }
+
+// The role listings are bare arrays at the root of the body and their order is
+// not stable across container starts, so the suite has to be able to sort a
+// value that is not under any key.
+func TestSortUnorderedReachesTheDocumentRoot(t *testing.T) {
+	in := []byte(`[{"name":"zeta"},{"name":"alpha"},{"name":"mu"}]`)
+
+	got, err := SortUnordered(in, []string{"."})
+	if err != nil {
+		t.Fatalf("SortUnordered: %v", err)
+	}
+
+	want := `[{"name":"alpha"},{"name":"mu"},{"name":"zeta"}]`
+	if string(got) != want {
+		t.Fatalf("want %s, got %s", want, got)
+	}
+}
+
+// "." addresses the root and nothing else. A key that happens to be spelled
+// "." is not something Keycloak emits, but the pattern language has to be
+// unambiguous or a later reader will assume the wrong one.
+func TestRootPathDoesNotMatchANestedKey(t *testing.T) {
+	in := []byte(`{".":[2,1]}`)
+
+	got, err := SortUnordered(in, []string{"."})
+	if err == nil {
+		t.Fatalf("want an error for a root path over an object, got %s", got)
+	}
+}
