@@ -71,6 +71,14 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /admin/realms/{realm}/clients/{clientUUID}/client-secret/rotated",
 		h.guardRejecting("manage-clients", deleteRotatedSecretRejection, h.deleteRotatedSecret))
 	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/service-account-user", h.guard("view-clients", h.readServiceAccountUser))
+
+	// Realm roles: reading admits view-realm or manage-realm and writing needs
+	// manage-realm - measured across eight single-role callers, none of the
+	// users or clients roles opens any of them. manage-realm reading too is
+	// not a composite - it is its own role with no children - so it has to be
+	// admitted here rather than reached through view-realm.
+	mux.HandleFunc("GET /admin/realms/{realm}/roles", h.guardAny(realmRolesReadRoles, h.listRealmRoles))
+	mux.HandleFunc("GET /admin/realms/{realm}/roles/{roleName}", h.guardAny(realmRolesReadRoles, h.readRealmRole))
 }
 
 // guard is the authorization filter every admin route goes through: resolve
@@ -142,3 +150,7 @@ func (h *handler) realmIssuer(realm string) string {
 // user by ID is not on this list: query-users was measured getting 403 there
 // and 200 on the other two.
 var usersReadRoles = []string{"view-users", "query-users", "manage-users"}
+
+// realmRolesReadRoles is what both realm-role reads accept: view-realm or
+// manage-realm, measured across eight single-role callers.
+var realmRolesReadRoles = []string{"view-realm", "manage-realm"}
