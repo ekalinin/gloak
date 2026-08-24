@@ -90,6 +90,38 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/realms/{realm}/clients/{clientUUID}/roles", h.guard("manage-clients", h.createClientRole))
 	mux.HandleFunc("PUT /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}", h.guard("manage-clients", h.updateClientRole))
 	mux.HandleFunc("DELETE /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}", h.guard("manage-clients", h.deleteClientRole))
+
+	// Composites, for both realm roles and client roles. The five shapes are
+	// the same either side; only the locator differs. Reads take the same
+	// guardAny pair as the plain role reads next door - measured directly
+	// rather than assumed from that sibling, since two earlier tasks had to
+	// correct exactly this assumption: a caller holding only view-realm and
+	// one holding only manage-realm both get 200 on GET .../composites, and
+	// the client side mirrors it with view-clients/manage-clients. Writes
+	// (POST and DELETE) admit only the manage role on either side - measured
+	// the same way, with the view role and the other side's manage role both
+	// 403.
+	mux.HandleFunc("GET /admin/realms/{realm}/roles/{roleName}/composites",
+		h.guardAny(realmRolesReadRoles, h.listComposites(h.realmRole, nil)))
+	mux.HandleFunc("GET /admin/realms/{realm}/roles/{roleName}/composites/realm",
+		h.guardAny(realmRolesReadRoles, h.listComposites(h.realmRole, onlyRealmRoles)))
+	mux.HandleFunc("GET /admin/realms/{realm}/roles/{roleName}/composites/clients/{targetClientUUID}",
+		h.guardAny(realmRolesReadRoles, h.listComposites(h.realmRole, onlyThisClientsRoles)))
+	mux.HandleFunc("POST /admin/realms/{realm}/roles/{roleName}/composites",
+		h.guard("manage-realm", h.addComposites(h.realmRole)))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/roles/{roleName}/composites",
+		h.guard("manage-realm", h.removeComposites(h.realmRole)))
+
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}/composites",
+		h.guardAny(clientRolesReadRoles, h.listComposites(h.clientRoleLocator, nil)))
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}/composites/realm",
+		h.guardAny(clientRolesReadRoles, h.listComposites(h.clientRoleLocator, onlyRealmRoles)))
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}/composites/clients/{targetClientUUID}",
+		h.guardAny(clientRolesReadRoles, h.listComposites(h.clientRoleLocator, onlyThisClientsRoles)))
+	mux.HandleFunc("POST /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}/composites",
+		h.guard("manage-clients", h.addComposites(h.clientRoleLocator)))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}/composites",
+		h.guard("manage-clients", h.removeComposites(h.clientRoleLocator)))
 }
 
 // guard is the authorization filter every admin route goes through: resolve

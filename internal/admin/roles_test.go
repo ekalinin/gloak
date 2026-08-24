@@ -420,3 +420,165 @@ func clientUUID(t *testing.T, s store.Store, realm *model.Realm, clientID string
 	}
 	return c.ID
 }
+
+func TestComposites(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/roles", `{"name":"probe-parent"}`, admin)
+	postJSON(t, h, "/admin/realms/master/roles", `{"name":"probe-child"}`, admin)
+	child := readRole(t, h, "/admin/realms/master/roles/probe-child", admin)
+	mrUUID := clientUUID(t, s, realm, "master-realm")
+	viewUsers := readRole(t, h, "/admin/realms/master/clients/"+mrUUID+"/roles/view-users", admin)
+
+	body := `[{"id":"` + child.ID + `","name":"probe-child"},{"id":"` + viewUsers.ID + `","name":"view-users"}]`
+	if got := postJSON(t, h, "/admin/realms/master/roles/probe-parent/composites", body, admin).Code; got != http.StatusNoContent {
+		t.Fatalf("add: want 204, got %d", got)
+	}
+
+	// The parent's own composite flag flips without being asked to.
+	if !readRole(t, h, "/admin/realms/master/roles/probe-parent", admin).Composite {
+		t.Fatal("the parent is not marked composite after gaining a child")
+	}
+
+	all := listRoleNames(t, h, "/admin/realms/master/roles/probe-parent/composites", admin)
+	if !slices.Equal(all, []string{"probe-child", "view-users"}) {
+		t.Fatalf("composites: want both children, got %v", all)
+	}
+	realmOnly := listRoleNames(t, h, "/admin/realms/master/roles/probe-parent/composites/realm", admin)
+	if !slices.Equal(realmOnly, []string{"probe-child"}) {
+		t.Fatalf("composites/realm: want the realm child only, got %v", realmOnly)
+	}
+	clientOnly := listRoleNames(t, h,
+		"/admin/realms/master/roles/probe-parent/composites/clients/"+mrUUID, admin)
+	if !slices.Equal(clientOnly, []string{"view-users"}) {
+		t.Fatalf("composites/clients: want the client child only, got %v", clientOnly)
+	}
+
+	rm := `[{"id":"` + viewUsers.ID + `","name":"view-users"}]`
+	if got := sendJSON(t, h, http.MethodDelete,
+		"/admin/realms/master/roles/probe-parent/composites", rm, admin).Code; got != http.StatusNoContent {
+		t.Fatalf("remove: want 204, got %d", got)
+	}
+	left := listRoleNames(t, h, "/admin/realms/master/roles/probe-parent/composites", admin)
+	if !slices.Equal(left, []string{"probe-child"}) {
+		t.Fatalf("after removal: want the realm child only, got %v", left)
+	}
+
+	// Removing one that is not there is still 204. Measured.
+	if got := sendJSON(t, h, http.MethodDelete,
+		"/admin/realms/master/roles/probe-parent/composites", rm, admin).Code; got != http.StatusNoContent {
+		t.Fatalf("removing an absent composite: want 204, got %d", got)
+	}
+}
+
+func TestClientRoleCompositesUseTheSameRoutes(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"probe-app","enabled":true}`, admin)
+	uuid := clientUUID(t, s, realm, "probe-app")
+	base := "/admin/realms/master/clients/" + uuid + "/roles"
+	postJSON(t, h, base, `{"name":"app-parent"}`, admin)
+	postJSON(t, h, base, `{"name":"app-child"}`, admin)
+	child := readRole(t, h, base+"/app-child", admin)
+
+	body := `[{"id":"` + child.ID + `","name":"app-child"}]`
+	if got := postJSON(t, h, base+"/app-parent/composites", body, admin).Code; got != http.StatusNoContent {
+		t.Fatalf("add: want 204, got %d", got)
+	}
+	got := listRoleNames(t, h, base+"/app-parent/composites/clients/"+uuid, admin)
+	if !slices.Equal(got, []string{"app-child"}) {
+		t.Fatalf("want the client child, got %v", got)
+	}
+}
+
+// listRoleNames reads a composite listing (or any role listing) and returns
+// the names, sorted for a deterministic comparison. ListComposites already
+// orders by name in both drivers, so this sort is belt and braces, not a
+// correction.
+func listRoleNames(t *testing.T, h http.Handler, path, token string) []string {
+	t.Helper()
+	w := get(t, h, path, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("%s: %d %s", path, w.Code, w.Body)
+	}
+	var reps []roleRepresentation
+	if err := json.Unmarshal(w.Body.Bytes(), &reps); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	names := make([]string, 0, len(reps))
+	for _, r := range reps {
+		names = append(names, r.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// TestRealmRoleCompositeReadsAdmitViewOrManage measures what the brief could
+// not: composite reads follow the same rule as the plain role reads next
+// door, admitting either half of the pair rather than only the one the
+// route's name suggests. Measured against a live 26.7.1: a caller holding
+// only view-realm and one holding only manage-realm both get 200 on
+// GET /roles/admin/composites; view-clients and manage-clients both get 403
+// there. The client side mirrors it with view-clients/manage-clients.
+func TestRealmRoleCompositeReadsAdmitViewOrManage(t *testing.T) {
+	h, s, realm := newServer(t)
+	for role, want := range map[string]int{
+		"view-realm":     http.StatusOK,
+		"manage-realm":   http.StatusOK,
+		"view-clients":   http.StatusForbidden,
+		"manage-clients": http.StatusForbidden,
+	} {
+		t.Run(role, func(t *testing.T) {
+			tok := tokenForRole(t, h, s, realm, role)
+			if got := get(t, h, "/admin/realms/master/roles/admin/composites", tok).Code; got != want {
+				t.Fatalf("%s: want %d, got %d", role, want, got)
+			}
+		})
+	}
+}
+
+func TestClientRoleCompositeReadsAdmitViewOrManage(t *testing.T) {
+	h, s, realm := newServer(t)
+	mrUUID := clientUUID(t, s, realm, "master-realm")
+	for role, want := range map[string]int{
+		"view-clients":   http.StatusOK,
+		"manage-clients": http.StatusOK,
+		"view-realm":     http.StatusForbidden,
+		"manage-realm":   http.StatusForbidden,
+	} {
+		t.Run(role, func(t *testing.T) {
+			tok := tokenForRole(t, h, s, realm, role)
+			path := "/admin/realms/master/clients/" + mrUUID + "/roles/view-users/composites"
+			if got := get(t, h, path, tok).Code; got != want {
+				t.Fatalf("%s: want %d, got %d", role, want, got)
+			}
+		})
+	}
+}
+
+// TestCompositeWritesNeedManageAlone measures the write side: unlike the
+// reads above, POST and DELETE .../composites admit only the manage role on
+// either side, not view-realm/view-clients too. Measured against a live
+// 26.7.1 the same way.
+func TestCompositeWritesNeedManageAlone(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/roles", `{"name":"write-probe-parent"}`, admin)
+	postJSON(t, h, "/admin/realms/master/roles", `{"name":"write-probe-child"}`, admin)
+	child := readRole(t, h, "/admin/realms/master/roles/write-probe-child", admin)
+	body := `[{"id":"` + child.ID + `","name":"write-probe-child"}]`
+
+	for role, want := range map[string]int{
+		"view-realm":     http.StatusForbidden,
+		"view-clients":   http.StatusForbidden,
+		"manage-clients": http.StatusForbidden,
+		"manage-realm":   http.StatusNoContent,
+	} {
+		t.Run(role, func(t *testing.T) {
+			tok := tokenForRole(t, h, s, realm, role)
+			if got := postJSON(t, h, "/admin/realms/master/roles/write-probe-parent/composites", body, tok).Code; got != want {
+				t.Fatalf("%s: want %d, got %d", role, want, got)
+			}
+		})
+	}
+}

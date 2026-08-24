@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -334,4 +335,145 @@ func (h *handler) deleteClientRole(w http.ResponseWriter, r *http.Request, rc *r
 	}
 	w.Header().Set("Cache-Control", "no-cache")
 	httpx.WriteNoContent(w, r)
+}
+
+// roleLocator finds the role a composite route acts on. The realm and client
+// forms of every composite endpoint differ in nothing else, so this is the
+// whole of the difference between the ten routes.
+type roleLocator func(w http.ResponseWriter, r *http.Request, rc *reqContext) (*model.Role, bool)
+
+// h.realmRole already has this signature, so it is a roleLocator as it stands
+// and is passed directly at the call sites in router.go.
+// h.clientRole returns the client too, so it needs this wrapper.
+func (h *handler) clientRoleLocator(w http.ResponseWriter, r *http.Request, rc *reqContext) (*model.Role, bool) {
+	_, role, ok := h.clientRole(w, r, rc)
+	return role, ok
+}
+
+// listComposites serves GET .../composites and its two filtered forms. filter
+// decides which children survive; nil keeps them all.
+func (h *handler) listComposites(locate roleLocator, filter func(*model.Role, *http.Request) bool) func(http.ResponseWriter, *http.Request, *reqContext) {
+	return func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+		role, ok := locate(w, r, rc)
+		if !ok {
+			return
+		}
+		children, err := h.store.Roles().ListComposites(r.Context(), role.ID)
+		if err != nil {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		out := make([]roleRepresentation, 0, len(children))
+		for _, c := range children {
+			if filter != nil && !filter(c, r) {
+				continue
+			}
+			container := rc.realm.ID
+			if c.ClientID != "" {
+				container = c.ClientID
+			}
+			// Measured directly against briefRepresentation=false: a composite
+			// listing still carries no "attributes" key, so it stays brief
+			// regardless of the parameter. Passing true rather than
+			// briefRoles(...) is deliberate, not an oversight.
+			out = append(out, roleRepresentationOf(c, container, true))
+		}
+		// No sort here: ListComposites already orders by name in both drivers,
+		// and filtering a sorted slice keeps it sorted.
+		w.Header().Set("Cache-Control", "no-cache")
+		httpx.WriteJSONCharset(w, http.StatusOK, out)
+	}
+}
+
+// onlyRealmRoles and onlyThisClientsRoles are the two filters.
+func onlyRealmRoles(c *model.Role, _ *http.Request) bool { return c.ClientID == "" }
+
+func onlyThisClientsRoles(c *model.Role, r *http.Request) bool {
+	return c.ClientID == r.PathValue("targetClientUUID")
+}
+
+// addComposites serves POST .../composites. The body is an array of role
+// representations and only their ids are acted on.
+func (h *handler) addComposites(locate roleLocator) func(http.ResponseWriter, *http.Request, *reqContext) {
+	return h.eachComposite(locate, func(ctx context.Context, roleID, childID string) error {
+		err := h.store.Roles().AddComposite(ctx, roleID, childID)
+		if errors.Is(err, store.ErrConflict) {
+			// Already a child. Measured 204, not 409.
+			return nil
+		}
+		return err
+	}, h.markComposite)
+}
+
+// markComposite flips the parent's own composite flag to true once it has
+// gained a child. Measured on a live Keycloak: reading the parent back after
+// POST .../composites shows composite:true without being asked for it.
+// Neither store driver's AddComposite does this itself - both round-trip a
+// composite parent only because storetest's conformance cases build it with
+// the flag already set by hand - so it is done here instead, once per write
+// rather than once per child.
+func (h *handler) markComposite(ctx context.Context, role *model.Role) error {
+	if role.Composite {
+		return nil
+	}
+	updated := *role
+	updated.Composite = true
+	return h.store.Roles().Update(ctx, &updated)
+}
+
+// removeComposites serves DELETE .../composites. Removing one that is not
+// there is 204, measured.
+func (h *handler) removeComposites(locate roleLocator) func(http.ResponseWriter, *http.Request, *reqContext) {
+	return h.eachComposite(locate, func(ctx context.Context, roleID, childID string) error {
+		return h.store.Roles().RemoveComposite(ctx, roleID, childID)
+	}, nil)
+}
+
+// eachComposite is what addComposites and removeComposites share: resolve the
+// role, decode the body, apply the per-child operation to each entry, then
+// run the optional whole-role step once before answering. after is nil for
+// removeComposites, which has nothing whole-role to do.
+func (h *handler) eachComposite(locate roleLocator, apply func(context.Context, string, string) error, after func(context.Context, *model.Role) error) func(http.ResponseWriter, *http.Request, *reqContext) {
+	return func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+		role, ok := locate(w, r, rc)
+		if !ok {
+			return
+		}
+		reps, ok := decodeRoleList(w, r)
+		if !ok {
+			return
+		}
+		for _, rep := range reps {
+			if _, err := h.store.Roles().ByID(r.Context(), rc.realm.ID, rep.ID); err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					writeRoleNotFound(w)
+					return
+				}
+				httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+				return
+			}
+			if err := apply(r.Context(), role.ID, rep.ID); err != nil {
+				httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+				return
+			}
+		}
+		if after != nil {
+			if err := after(r.Context(), role); err != nil {
+				httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+				return
+			}
+		}
+		httpx.WriteNoContent(w, r)
+	}
+}
+
+// decodeRoleList reads the array body the composite and role-mapping writes
+// take. A body that is not an array answers the measured 400.
+func decodeRoleList(w http.ResponseWriter, r *http.Request) ([]roleRepresentation, bool) {
+	var reps []roleRepresentation
+	if err := json.NewDecoder(r.Body).Decode(&reps); err != nil {
+		httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_request", "Cannot parse the JSON")
+		return nil, false
+	}
+	return reps, true
 }
