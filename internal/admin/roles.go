@@ -416,35 +416,62 @@ func (h *handler) removeComposites(locate roleLocator) func(http.ResponseWriter,
 // eachComposite is what addComposites and removeComposites share: resolve
 // the role, decode the body, apply the per-child operation to each entry,
 // then resync the parent's own composite flag once before answering.
+//
+// The resync runs through a defer so it happens on **every** exit path once
+// the role is known, not only the all-succeeded one. A batch body can apply
+// its first entry and then fail on its second - a bad id 404s the loop
+// midway, after `apply` already ran for the one before it - and the flag
+// must reflect that partial application rather than go stale until some
+// later write on the same role happens to fix it. Whether Keycloak itself
+// applies a partial batch or rolls the whole request back on one bad entry
+// is unmeasured; this keeps Gloak's existing partial-apply behaviour and
+// only makes the flag honest about whatever was actually applied.
 func (h *handler) eachComposite(locate roleLocator, apply func(context.Context, string, string) error) func(http.ResponseWriter, *http.Request, *reqContext) {
 	return func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 		role, ok := locate(w, r, rc)
 		if !ok {
 			return
 		}
+		// responded tracks whether some earlier step already wrote the
+		// response, so the deferred resync below never writes a second
+		// status: on a path that already answered 404/400/500, a resync
+		// failure is swallowed rather than attempted a second write, and a
+		// resync success answers nothing more - the earlier write stands.
+		responded := false
+		defer func() {
+			err := h.syncCompositeFlag(r.Context(), role)
+			if responded {
+				return
+			}
+			if err != nil {
+				httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+				return
+			}
+			httpx.WriteNoContent(w, r)
+		}()
+
 		reps, ok := decodeRoleList(w, r)
 		if !ok {
+			responded = true
 			return
 		}
 		for _, rep := range reps {
 			if _, err := h.store.Roles().ByID(r.Context(), rc.realm.ID, rep.ID); err != nil {
 				if errors.Is(err, store.ErrNotFound) {
 					writeRoleNotFound(w)
+					responded = true
 					return
 				}
 				httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+				responded = true
 				return
 			}
 			if err := apply(r.Context(), role.ID, rep.ID); err != nil {
 				httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+				responded = true
 				return
 			}
 		}
-		if err := h.syncCompositeFlag(r.Context(), role); err != nil {
-			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
-			return
-		}
-		httpx.WriteNoContent(w, r)
 	}
 }
 
