@@ -206,3 +206,124 @@ func TestRealmRoleReadNeedsViewRealm(t *testing.T) {
 		})
 	}
 }
+
+func TestCreateRealmRole(t *testing.T) {
+	h, _, _ := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+
+	w := postJSON(t, h, "/admin/realms/master/roles", `{"name":"probe-role"}`, admin)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("want 201, got %d: %s", w.Code, w.Body)
+	}
+	// Measured: Location names the role by **name**, where the client and user
+	// creates both put a UUID there.
+	if loc := w.Header().Get("Location"); loc != testIssuer+"/admin/realms/master/roles/probe-role" {
+		t.Fatalf("unexpected Location: %q", loc)
+	}
+	if cl := w.Header().Get("Content-Length"); cl != "0" {
+		t.Fatalf("want Content-Length 0, got %q", cl)
+	}
+	if w.Body.Len() != 0 {
+		t.Fatalf("want an empty body, got %q", w.Body)
+	}
+
+	dup := postJSON(t, h, "/admin/realms/master/roles", `{"name":"probe-role"}`, admin)
+	if dup.Code != http.StatusConflict {
+		t.Fatalf("want 409, got %d", dup.Code)
+	}
+	if body := dup.Body.String(); body != `{"errorMessage":"Role with name probe-role already exists"}` {
+		t.Fatalf("unexpected 409 body: %s", body)
+	}
+
+	// Three error families on one endpoint, all measured: errorMessage for the
+	// conflict, a bare lowercase error for the missing name.
+	noName := postJSON(t, h, "/admin/realms/master/roles", `{}`, admin)
+	if noName.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", noName.Code)
+	}
+	if body := noName.Body.String(); body != `{"error":"role has no name"}` {
+		t.Fatalf("unexpected 400 body: %s", body)
+	}
+}
+
+// **PUT replaces.** A body carrying only a name clears an existing
+// description, which is the opposite of PUT on a client and PUT on a user.
+// Measured directly.
+func TestUpdateRealmRoleReplacesAndRenames(t *testing.T) {
+	h, _, _ := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/roles",
+		`{"name":"probe-role","description":"before"}`, admin)
+	before := readRole(t, h, "/admin/realms/master/roles/probe-role", admin)
+
+	w := putJSON(t, h, "/admin/realms/master/roles/probe-role", `{"name":"probe-renamed"}`, admin)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("want 204, got %d: %s", w.Code, w.Body)
+	}
+
+	if got := get(t, h, "/admin/realms/master/roles/probe-role", admin).Code; got != http.StatusNotFound {
+		t.Fatalf("the old name still resolves: %d", got)
+	}
+	after := readRole(t, h, "/admin/realms/master/roles/probe-renamed", admin)
+	if after.ID != before.ID {
+		t.Fatalf("the rename minted a new id: %s then %s", before.ID, after.ID)
+	}
+	if after.Description != "" {
+		t.Fatalf("PUT merged instead of replacing: description is still %q", after.Description)
+	}
+
+	noName := putJSON(t, h, "/admin/realms/master/roles/probe-renamed", `{"description":"x"}`, admin)
+	if noName.Code != http.StatusBadRequest || noName.Body.String() != `{"error":"role has no name"}` {
+		t.Fatalf("want 400 role has no name, got %d %s", noName.Code, noName.Body)
+	}
+
+	missing := putJSON(t, h, "/admin/realms/master/roles/no-such", `{"name":"no-such"}`, admin)
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d", missing.Code)
+	}
+}
+
+func TestDeleteRealmRole(t *testing.T) {
+	h, _, _ := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/roles", `{"name":"probe-role"}`, admin)
+
+	w := do(t, h, http.MethodDelete, "/admin/realms/master/roles/probe-role", admin)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("want 204, got %d: %s", w.Code, w.Body)
+	}
+	if cc := w.Header().Get("Cache-Control"); cc != "no-cache" {
+		t.Fatalf("want Cache-Control no-cache, got %q", cc)
+	}
+
+	again := do(t, h, http.MethodDelete, "/admin/realms/master/roles/probe-role", admin)
+	if again.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d", again.Code)
+	}
+}
+
+func TestRealmRoleWritesNeedManageRealm(t *testing.T) {
+	h, s, realm := newServer(t)
+	tok := tokenForRole(t, h, s, realm, "view-realm")
+
+	if got := postJSON(t, h, "/admin/realms/master/roles", `{"name":"x"}`, tok).Code; got != http.StatusForbidden {
+		t.Fatalf("view-realm created a role: %d", got)
+	}
+	if got := putJSON(t, h, "/admin/realms/master/roles/admin", `{"name":"admin"}`, tok).Code; got != http.StatusForbidden {
+		t.Fatalf("view-realm updated a role: %d", got)
+	}
+}
+
+// readRole is a typed read for the assertions above.
+func readRole(t *testing.T, h http.Handler, path, token string) roleRepresentation {
+	t.Helper()
+	w := get(t, h, path, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("read %s: %d %s", path, w.Code, w.Body)
+	}
+	var rep roleRepresentation
+	if err := json.Unmarshal(w.Body.Bytes(), &rep); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	return rep
+}
