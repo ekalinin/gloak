@@ -283,7 +283,8 @@ var Fixtures = map[string]Fixture{
 
 	// Three realm roles sharing one search prefix, for the cases that
 	// exercise first and max on a narrowed listing.
-	"admin-token-paged-roles": pagedRolesFixture(),
+	"admin-token-paged-roles":          pagedRolesFixture(),
+	"admin-token-role-with-attributes": attributedRoleFixture(),
 
 	// A client carrying one role, for the cases that read a client's own
 	// roles back. Read-only cases only - see realmRoleFixture's doc for why a
@@ -350,6 +351,25 @@ func pagedRolesFixture() Fixture {
 		})
 	}
 	return Fixture{State: "bootstrap", Steps: steps}
+}
+
+// attributedRoleFixture creates one realm role carrying attributes, so the
+// listing's briefRepresentation can be measured against something that has
+// something to hide. Exactly one role matches the search prefix, so the
+// resulting body is a one-element array and the realm's unstable role order
+// cannot reach it.
+func attributedRoleFixture() Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{adminTokenStep(), {
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/roles",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"name":"gloak-probe-attrs","attributes":{"attribute1":["value1","value2"]}}`),
+			},
+		}},
+	}
 }
 
 // clientRoleFixture creates one client and one role on it, addressed by name

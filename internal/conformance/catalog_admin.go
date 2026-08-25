@@ -1411,6 +1411,46 @@ var adminCases = []Case{
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
+		ID: "admin/roles/list-realm-brief",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get all roles for the realm, briefRepresentation=true over a role with attributes; mined from RealmRolesSearchTest.getRolesWithBriefRepresentation",
+			Retrieved: "2026-08-25",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-role-with-attributes",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles",
+			Query:   map[string]string{"search": "gloak-probe-attrs", "briefRepresentation": "true"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/roles/list-realm-full",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get all roles for the realm, briefRepresentation=false over a role with attributes; mined from RealmRolesSearchTest.getRolesWithFullRepresentation",
+			Retrieved: "2026-08-25",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-role-with-attributes",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles",
+			Query:   map[string]string{"search": "gloak-probe-attrs", "briefRepresentation": "false"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/containerId"},
+		// attributes is a Java Map in hash order and Go sorts map keys. This is
+		// the suite's one documented retreat from byte-exactness; see the
+		// UnorderedKeys note in case.go.
+		UnorderedKeys: []string{"*/attributes"},
+	},
+	{
 		ID: "admin/roles/read-realm",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
