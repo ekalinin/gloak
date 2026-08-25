@@ -94,8 +94,8 @@ func requiresChildManageRole(c *caller, child *model.Role) bool {
 }
 
 // writeRoleList is the body every role listing in this file sends: sorted by
-// name, in the shape briefRepresentation asks for, with the measured
-// Cache-Control and charset Content-Type.
+// name, paged by pageRoles, in the shape briefRepresentation asks for, with
+// the measured Cache-Control and charset Content-Type.
 func (h *handler) writeRoleList(w http.ResponseWriter, r *http.Request, roles []*model.Role, containerID string) {
 	brief := briefRoles(r.URL.Query())
 	roles = pageRoles(roles, r.URL.Query())
@@ -130,21 +130,29 @@ func filterRoles(roles []*model.Role, search string) []*model.Role {
 }
 
 // pageRoles applies the listing's first and max parameters to roles, which
-// has already been through filterRoles.
+// has already been through filterRoles. writeRoleList is shared by the realm
+// listing (listRealmRoles) and the client listing (listClientRoles), and both
+// were measured on a live 26.7.1 to follow the same rule - see the "Role
+// listing: first and max" section of
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
 //
 // **Measured, not predicted: pagination only takes effect when the request
 // carries a search term.** With no search, a live 26.7.1 returns every role
-// unpaginated and ignores first and max entirely - max=2, first=1 and the
-// admin client's own no-paging convention first=-1&max=-1 are all
-// indistinguishable in effect. See the "Role listing: first and max" section
-// of docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+// unpaginated on both listings and ignores first and max entirely - max=2,
+// first=1 and the admin client's own no-paging convention first=-1&max=-1
+// are all indistinguishable in effect.
 //
 // When search is non-empty, first is a zero-based offset and max is a page
-// size, both counted over search's own order; an absent, negative or
-// unparseable value means no bound. A negative bound was measured to mean
+// size, both counted over search's own order; an absent or negative value
+// means no bound, on both listings. A negative bound was measured to mean
 // "no bound" even with a search term present - the same shape the Java admin
 // client puts on the wire for "no paging", since it sends first=-1&max=-1
 // rather than omitting them.
+//
+// An unparseable value (first=abc) is also treated as no bound, but that is
+// Gloak's own choice, not something measured: the real admin client always
+// sends a well-formed integer or omits the parameter, so a live 26.7.1's
+// behaviour on a malformed one was never probed.
 func pageRoles(roles []*model.Role, q url.Values) []*model.Role {
 	if q.Get("search") == "" {
 		return roles

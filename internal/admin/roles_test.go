@@ -188,10 +188,13 @@ func TestPageRoles(t *testing.T) {
 		{"search with no first or max is unbounded", "search=x", []string{"a", "b", "c"}},
 		{"search: max zero is an empty page", "search=x&max=0", []string{}},
 		{"search: max bounds the page", "search=x&max=2", []string{"a", "b"}},
+		{"search: first zero is a no-op offset", "search=x&first=0", []string{"a", "b", "c"}},
 		{"search: first offsets from zero", "search=x&first=1", []string{"b", "c"}},
 		{"search: first past the end", "search=x&first=3", []string{}},
 		{"search: first and max compose", "search=x&first=1&max=1", []string{"b"}},
-		{"search: negative means absent", "search=x&first=-1&max=-1", []string{"a", "b", "c"}},
+		{"search: negative max alone means absent", "search=x&max=-1", []string{"a", "b", "c"}},
+		{"search: negative first alone means absent", "search=x&first=-1", []string{"a", "b", "c"}},
+		{"search: negative first and max together means absent", "search=x&first=-1&max=-1", []string{"a", "b", "c"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			q, err := url.ParseQuery(tc.query)
