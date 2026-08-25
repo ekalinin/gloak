@@ -281,6 +281,10 @@ var Fixtures = map[string]Fixture{
 	"admin-token-role-to-update": realmRoleFixture("gloak-probe-role-update"),
 	"admin-token-role-to-delete": realmRoleFixture("gloak-probe-role-delete"),
 
+	// Three realm roles sharing one search prefix, for the cases that
+	// exercise first and max on a narrowed listing.
+	"admin-token-paged-roles": pagedRolesFixture(),
+
 	// A client carrying one role, for the cases that read a client's own
 	// roles back. Read-only cases only - see realmRoleFixture's doc for why a
 	// case that writes needs its own name instead.
@@ -323,6 +327,29 @@ func realmRoleFixture(name string) Fixture {
 			},
 		}},
 	}
+}
+
+// pagedRolesFixture creates three realm roles sharing one search prefix, so a
+// listing can be narrowed to a set of known size before first and max are
+// applied to it.
+//
+// Narrowing first is what makes the goldens recordable at all. A page taken
+// out of the whole realm is a subset chosen by Keycloak's own role order,
+// which AGENTS.md records as differing between container starts, and
+// Case.Unordered cannot repair a difference in membership - only in order.
+func pagedRolesFixture() Fixture {
+	steps := []Step{adminTokenStep()}
+	for _, suffix := range []string{"a", "b", "c"} {
+		steps = append(steps, Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/roles",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"name":"gloak-probe-page-` + suffix + `"}`),
+			},
+		})
+	}
+	return Fixture{State: "bootstrap", Steps: steps}
 }
 
 // clientRoleFixture creates one client and one role on it, addressed by name

@@ -1349,6 +1349,71 @@ var adminCases = []Case{
 		Volatile:  []string{"*/id", "*/containerId"},
 	},
 	{
+		ID: "admin/roles/list-realm-page-empty",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get all roles for the realm, max=0; mined from RealmRolesSearchTest.testPaginationRoles",
+			Retrieved: "2026-08-25",
+		},
+		Status: Recorded,
+		Reason: "the role listings read only search and briefRepresentation; max is accepted and ignored",
+		// No Operation: GET /admin/realms/{realm}/roles is already claimed by
+		// admin/roles/list-realm, and an operation is counted once.
+		Fixture: "admin-token-paged-roles",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles",
+			Query:   map[string]string{"search": "gloak-probe-page", "max": "0"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/roles/list-realm-page-past-end",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get all roles for the realm, first past the end of the match set; mined from RealmRolesSearchTest.testPaginationRoles",
+			Retrieved: "2026-08-25",
+		},
+		Status:  Recorded,
+		Reason:  "the role listings read only search and briefRepresentation; first is accepted and ignored",
+		Fixture: "admin-token-paged-roles",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles",
+			Query:   map[string]string{"search": "gloak-probe-page", "first": "3"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		// Recordable, unlike a plain max=2 page, because Task 2 measured this
+		// exact page - search=gloak-probe-page&first=1&max=1 - reproducible in
+		// both membership and order across two separate container starts.
+		ID: "admin/roles/list-realm-page-first",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get all roles for the realm, one role taken out of the middle of the match set; mined from RealmRolesSearchTest.testSearchForRoles",
+			Retrieved: "2026-08-25",
+		},
+		Status:  Recorded,
+		Reason:  "the role listings read only search and briefRepresentation; first and max are accepted and ignored",
+		Fixture: "admin-token-paged-roles",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles",
+			Query:   map[string]string{"search": "gloak-probe-page", "first": "1", "max": "1"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
 		ID: "admin/roles/read-realm",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
