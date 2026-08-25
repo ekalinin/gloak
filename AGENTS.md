@@ -224,6 +224,14 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **The realm's own client refuses a new role even to a full administrator.**
   `POST /clients/{master-realm uuid}/roles` is 403 for everybody; reading its
   21 roles is not.
+- **`first` and `max` on a role listing take effect only when `search` is
+  non-empty.** With no `search` term both are accepted and ignored, and the
+  whole set comes back regardless of what they ask for. Measured on both the
+  realm listing and the client listing, which agree. A negative bound behaves
+  as absent, with or without `search`, which is what the Java admin client
+  sends for "no paging". It contradicts upstream's own
+  `RealmRolesSearchTest.testPaginationRoles`, which expects the no-search call
+  to page - the measurement is what Gloak reproduces.
 - **Role listings have no stable order across container starts.** Every one of
   them is a bare array at the root of the body, which is why `Case.Unordered`
   learned the root path spelling `"."`.
@@ -295,6 +303,35 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
 - Adding a store interface method means implementing it in **both** drivers. The
   conformance suite in `internal/store/storetest` does not exercise every method, so
   compiling is not proof.
+
+## Where a new case can come from
+
+Three sources, in order of how much they cost:
+
+1. **The vendored OpenAPI description.** It says which operations exist. It
+   never says what one answers.
+2. **A live 26.7.1.** Every expected value comes from here. This is the rule
+   at the top of this file.
+3. **Keycloak's own test suite.** `make kcsrc` materialises a read-only
+   checkout of `tests/` and `test-framework/` at the pinned tag under
+   `.kc-testsuite/`. Its 2643 assertions are claims somebody upstream thought
+   worth guarding; the ones about surface Gloak already serves are cases this
+   catalogue may be missing.
+
+A mined case goes: read the upstream assertion, measure the same thing against
+a live 26.7.1, add the `Case` as `Recorded`, `make record`, read the diff, then
+flip it to `Implemented` when Gloak serves it. Cite the upstream file and test
+method in `Case.Doc.Section`. Nothing is copied out of `.kc-testsuite/`:
+upstream is Apache-2.0 and this repository carries no upstream source.
+
+**Most mined cases pass on the first run, and that is the expected outcome.**
+An already-correct behaviour with a golden under it is one the next refactor
+cannot break silently. The ones that fail are the finds: `first` and `max` on
+the role listings were accepted and ignored until
+`RealmRolesSearchTest.testPaginationRoles` was read.
+
+Do not mine `testsuite/`. `testsuite/DEPRECATED.md` freezes it, and
+`make kcsrc` does not check it out.
 
 ## Conventions
 
