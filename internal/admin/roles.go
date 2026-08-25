@@ -76,14 +76,19 @@ func writeCompositeRoleNotFound(w http.ResponseWriter) {
 
 // manageRoleForContainer is the manage role a role's own container needs:
 // manage-realm for a realm role, manage-clients for a client role. Used by
-// eachComposite's per-child check below - the route-level guard only ever
-// sees the parent, so this is the only place that can check a child's own
-// container.
+// requiresChildManageRole below.
 func manageRoleForContainer(role *model.Role) string {
 	if role.ClientID != "" {
 		return "manage-clients"
 	}
 	return "manage-realm"
+}
+
+// requiresChildManageRole is eachComposite's extra per-child check on the
+// **add** path only - see addComposites and the asymmetry note on
+// eachComposite below for why removeComposites passes nil instead of this.
+func requiresChildManageRole(c *caller, child *model.Role) bool {
+	return c.has(manageRoleForContainer(child))
 }
 
 // writeRoleList is the body every role listing in this file sends: sorted by
@@ -416,8 +421,14 @@ func onlyThisClientsRoles(c *model.Role, r *http.Request) bool {
 
 // addComposites serves POST .../composites. The body is an array of role
 // representations and only their ids are acted on.
+//
+// Passes requiresChildManageRole to eachComposite: measured on a live 26.7.1,
+// attaching a child needs the manage role matching *that child's own*
+// container, in addition to the parent-side manage role the route guard
+// already checked. removeComposites below does not carry this - measured
+// separately, and the two do not match.
 func (h *handler) addComposites(locate roleLocator) func(http.ResponseWriter, *http.Request, *reqContext) {
-	return h.eachComposite(locate, func(ctx context.Context, roleID, childID string) error {
+	return h.eachComposite(locate, requiresChildManageRole, func(ctx context.Context, roleID, childID string) error {
 		err := h.store.Roles().AddComposite(ctx, roleID, childID)
 		if errors.Is(err, store.ErrConflict) {
 			// Already a child. Measured 204, not 409.
@@ -429,8 +440,19 @@ func (h *handler) addComposites(locate roleLocator) func(http.ResponseWriter, *h
 
 // removeComposites serves DELETE .../composites. Removing one that is not
 // there is 204, measured.
+//
+// Passes nil where addComposites passes requiresChildManageRole: measured on
+// a live 26.7.1 (both directions - a client-role child removed from a
+// realm-role parent, and the mirror), a caller holding only the parent-side
+// manage role can remove a cross-family child with no check on the child's
+// own container at all. Gloak used to apply the same per-child check to both
+// verbs, on the reasoning that they should stay consistent absent a
+// measurement showing otherwise; that measurement now exists and shows they
+// differ, so this no longer runs it. Nobody knows why Keycloak draws this
+// line only on the add side - it is recorded as measured and asymmetric, not
+// rationalised.
 func (h *handler) removeComposites(locate roleLocator) func(http.ResponseWriter, *http.Request, *reqContext) {
-	return h.eachComposite(locate, func(ctx context.Context, roleID, childID string) error {
+	return h.eachComposite(locate, nil, func(ctx context.Context, roleID, childID string) error {
 		return h.store.Roles().RemoveComposite(ctx, roleID, childID)
 	})
 }
@@ -449,19 +471,25 @@ func (h *handler) removeComposites(locate roleLocator) func(http.ResponseWriter,
 // resolving every id before the second writes any of them, and nothing is
 // applied unless every id resolves.
 //
-// **Every child's own container needs its own manage role, independent of
-// the parent's.** The route-level guard (guard or guardByRoleContainer)
-// only ever checks the parent's container, because that is all it can see -
-// it runs before the body is decoded. Measured directly on a live 26.7.1,
-// this turns out not to be the whole story: a caller holding only
-// manage-clients can add a client-role child to a client-role parent (204),
-// but the identical caller is refused (403) adding a *realm*-role child to
-// that same parent, and only succeeds once it also holds manage-realm. The
-// mirror holds on the realm side with a client-role child. So this loop
-// checks each child's own manage role as it resolves it, in addition to
-// (not instead of) the route-level check on the parent - which is why the
-// check lives here rather than in a route-level guard: guardByRoleContainer
-// cannot see the children, and this loop is the first place that can.
+// checkChild is an extra per-child check run in that same first loop,
+// immediately after a child resolves - addComposites passes
+// requiresChildManageRole, removeComposites passes nil. It is a parameter
+// rather than something the two verbs' shared loop always runs, because a
+// live 26.7.1 was measured doing this asymmetrically: `POST .../composites`
+// needs the manage role matching *each child's own* container in addition to
+// the parent-side manage role the route guard already checked, but `DELETE
+// .../composites` does not - a caller holding only the parent-side manage
+// role can remove a cross-family child outright. Nobody knows why Keycloak
+// only enforces this going one direction; it is implemented as measured, not
+// as a guess at the reason. Threading the check through as a parameter,
+// rather than duplicating this loop once per verb, keeps that one
+// asymmetric fact in one place instead of two copies that could drift.
+//
+// checkChild runs in the same loop as the existence check, not a separate
+// pass, so the two interleave per entry exactly as Keycloak's own validation
+// does: measured with a batch mixing a nonexistent id and a cross-family id
+// in both orders, whichever comes first in the array decides whether the
+// batch answers 404 or 403.
 //
 // Because of that split, the store is only ever written on the path that
 // goes on to answer 204 (or, in the rare case of a genuine store failure
@@ -471,7 +499,7 @@ func (h *handler) removeComposites(locate roleLocator) func(http.ResponseWriter,
 // replaces an earlier version that applied entries as it validated them and
 // had to defer the resync to cover a partial-apply exit; once nothing partial
 // can be applied, that defer was no longer needed.
-func (h *handler) eachComposite(locate roleLocator, apply func(context.Context, string, string) error) func(http.ResponseWriter, *http.Request, *reqContext) {
+func (h *handler) eachComposite(locate roleLocator, checkChild func(*caller, *model.Role) bool, apply func(context.Context, string, string) error) func(http.ResponseWriter, *http.Request, *reqContext) {
 	return func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 		role, ok := locate(w, r, rc)
 		if !ok {
@@ -491,7 +519,7 @@ func (h *handler) eachComposite(locate roleLocator, apply func(context.Context, 
 				httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 				return
 			}
-			if !rc.caller.has(manageRoleForContainer(child)) {
+			if checkChild != nil && !checkChild(rc.caller, child) {
 				writeForbidden(w)
 				return
 			}

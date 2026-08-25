@@ -1009,29 +1009,36 @@ func TestRolesByIDCompositesWriteNeedsManageAlone(t *testing.T) {
 	}
 }
 
-// TestRolesByIDCompositesWriteAcrossFamiliesNeedsBothManageRoles measures a
-// case neither the plan's brief nor the previously recorded composites-write
+// TestRolesByIDCompositesCrossFamilyChildNeedsBothOnlyOnAdd measures a case
+// neither the plan's brief nor the previously recorded composites-write
 // table considered: the composite **child**'s own container matters too, not
-// only the parent's. Measured directly against a live 26.7.1 - manage-clients
-// alone (which opens POST .../composites for a client-role parent when the
-// child is also a client role, per the test above) is refused when the child
-// is a realm role instead, and the mirror holds for manage-realm with a
-// client-role child on a realm-role parent. Only holding both together opens
-// either route in that case. The by-name composite routes were spot-checked
-// too (POST /roles/{name}/composites with a client-role child, manage-realm
-// alone: 403; the same request with manage-realm + manage-clients: 204) and
-// match this exactly, since they run through the same eachComposite.
+// only the parent's - and it matters on `POST` only, not on `DELETE`.
 //
-// guardByRoleContainer, like the route-level guard on the by-name routes,
+// Add side, measured directly against a live 26.7.1: `manage-clients` alone
+// (which opens `POST .../composites` for a client-role parent when the child
+// is also a client role, per the test above) is refused when the child is a
+// realm role instead, and the mirror holds for `manage-realm` with a
+// client-role child on a realm-role parent. Only holding both opens either
+// route in that case. The by-name composite routes were spot-checked too
+// (`POST /roles/{name}/composites` with a client-role child, `manage-realm`
+// alone: 403; the same request with `manage-realm` + `manage-clients`: 204)
+// and match this exactly, since they run through the same `eachComposite`.
+//
+// Remove side, also measured directly (both directions): the identical
+// caller holding only the parent-side manage role removes the identical
+// cross-family child with a plain 204 - no second check at all. This is
+// asymmetric and there is no known reason for it beyond "that is what
+// Keycloak does" - see the observed-behaviour document.
+//
+// `guardByRoleContainer`, like the route-level guard on the by-name routes,
 // decides from the parent's container alone and cannot see the body - it
-// runs before the body is decoded. eachComposite closes the gap instead:
-// after resolving each child id (roles.go, in the same pass that answers the
-// composite 404), it checks the caller against that child's own container -
-// manage-realm for a realm child, manage-clients for a client child - in
-// addition to the route-level guard's check on the parent. So a caller
-// holding only the parent-side manage role is refused here exactly as it is
-// on a live Keycloak; this test is what pins that.
-func TestRolesByIDCompositesWriteAcrossFamiliesNeedsBothManageRoles(t *testing.T) {
+// runs before the body is decoded, on both verbs equally. The asymmetry
+// lives one level in, in `eachComposite`'s `checkChild` parameter:
+// `addComposites` passes `requiresChildManageRole`, `removeComposites`
+// passes `nil`. This test is what pins that difference - the POST 403 and
+// the DELETE 204 below act on the exact same (parent, child, caller) triple,
+// so the only thing that changed between them is the verb.
+func TestRolesByIDCompositesCrossFamilyChildNeedsBothOnlyOnAdd(t *testing.T) {
 	h, s, realm := newServer(t)
 	admin := tokenFor(t, h, "admin", "admin")
 	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"probe-app","enabled":true}`, admin)
@@ -1087,6 +1094,24 @@ func TestRolesByIDCompositesWriteAcrossFamiliesNeedsBothManageRoles(t *testing.T
 	}
 	if got := postJSON(t, h, "/admin/realms/master/roles-by-id/"+clientParentID+"/composites", realmChildOnClientParent, both).Code; got != http.StatusNoContent {
 		t.Fatalf("both roles, realm child on a client parent: want 204, got %d", got)
+	}
+
+	// DELETE does not carry the requirement above, and this is where that
+	// shows up: measured directly (both directions), a caller holding only
+	// the parent-side manage role removes a cross-family child outright, no
+	// check on the child's own container at all. Both children are already
+	// attached - the `both` assertions just above put them there - so this
+	// is a real detach, not a no-op on something never linked. Kept right
+	// next to the POST 403s above on purpose: the same caller is refused
+	// adding and allowed removing the identical pair, and that asymmetry is
+	// the whole point of this test.
+	mrOnlyDelete := grant(t, "cross-family-mr-only-delete", "manage-realm")
+	if got := sendJSON(t, h, http.MethodDelete, "/admin/realms/master/roles-by-id/"+realmParentID+"/composites", clientChildOnRealmParent, mrOnlyDelete).Code; got != http.StatusNoContent {
+		t.Fatalf("DELETE, manage-realm alone, client child on a realm parent: want 204, got %d", got)
+	}
+	mcOnlyDelete := grant(t, "cross-family-mc-only-delete", "manage-clients")
+	if got := sendJSON(t, h, http.MethodDelete, "/admin/realms/master/roles-by-id/"+clientParentID+"/composites", realmChildOnClientParent, mcOnlyDelete).Code; got != http.StatusNoContent {
+		t.Fatalf("DELETE, manage-clients alone, realm child on a client parent: want 204, got %d", got)
 	}
 
 	// By name, not just by id: eachComposite is shared between the two, and
