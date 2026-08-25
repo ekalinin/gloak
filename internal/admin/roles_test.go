@@ -500,16 +500,15 @@ func TestCompositeFlagFollowsChildCount(t *testing.T) {
 	}
 }
 
-// TestCompositeFlagStaysCorrectOnAPartialAdd covers the case
-// TestCompositeFlagFollowsChildCount does not: a batch body whose first
-// entry is a real id and whose second is not. eachComposite applies the
-// first before the second's existence check 404s the request, so the flag
-// must reflect the one child that *was* applied rather than go stale until
-// some later write on the same role happens to fix it. Gloak's own
-// partial-apply behaviour is not changed here - only asserted against, since
-// whether Keycloak itself applies partially or rolls the batch back on one
-// bad entry is unmeasured.
-func TestCompositeFlagStaysCorrectOnAPartialAdd(t *testing.T) {
+// TestCompositeAddRollsBackOnABadID measures the batch behaviour
+// TestCompositeFlagFollowsChildCount does not exercise: a body with one real
+// role id and one that does not exist. Measured on a live Keycloak, in both
+// id orders, this answers 404 `{"error":"Could not find composite role"}`
+// and applies **nothing** - not even the valid entry ahead of the bad one.
+// eachComposite validates every id before applying any of them for exactly
+// this reason, so the parent must come back unchanged: still not composite,
+// and with no children at all.
+func TestCompositeAddRollsBackOnABadID(t *testing.T) {
 	h, _, _ := newServer(t)
 	admin := tokenFor(t, h, "admin", "admin")
 	postJSON(t, h, "/admin/realms/master/roles", `{"name":"partial-parent"}`, admin)
@@ -521,19 +520,29 @@ func TestCompositeFlagStaysCorrectOnAPartialAdd(t *testing.T) {
 
 	body := `[{"id":"` + child.ID + `","name":"partial-child"},` +
 		`{"id":"00000000-0000-0000-0000-000000000000","name":"no-such-role"}]`
-	if got := postJSON(t, h, "/admin/realms/master/roles/partial-parent/composites", body, admin).Code; got != http.StatusNotFound {
-		t.Fatalf("add with one bad id: want 404, got %d", got)
+	w := postJSON(t, h, "/admin/realms/master/roles/partial-parent/composites", body, admin)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("add with one bad id: want 404, got %d", w.Code)
+	}
+	if got := w.Body.String(); got != `{"error":"Could not find composite role"}` {
+		t.Fatalf("unexpected 404 body: %s", got)
 	}
 
-	if !readRole(t, h, "/admin/realms/master/roles/partial-parent", admin).Composite {
-		t.Fatal("the valid child was applied before the bad one 404ed, so the parent must read composite:true")
+	if readRole(t, h, "/admin/realms/master/roles/partial-parent", admin).Composite {
+		t.Fatal("the whole batch should have rolled back, but the parent reads composite:true")
+	}
+	if left := listRoleNames(t, h, "/admin/realms/master/roles/partial-parent/composites", admin); len(left) != 0 {
+		t.Fatalf("the whole batch should have rolled back, but the parent has children: %v", left)
 	}
 }
 
-// TestCompositeFlagStaysCorrectOnAPartialRemove is the mirror: removing a
-// role's last child in a batch whose second entry is bad must still leave
-// composite:false, not stuck true from before the (successful) removal.
-func TestCompositeFlagStaysCorrectOnAPartialRemove(t *testing.T) {
+// TestCompositeRemoveRollsBackOnABadID is the mirror on DELETE, kept
+// consistent with POST absent a measurement showing the two endpoints
+// differ: a batch removing a role's only child, with a second entry that
+// does not exist, must leave the role exactly as it was - still composite,
+// still holding that child - rather than applying the valid removal ahead of
+// the 404.
+func TestCompositeRemoveRollsBackOnABadID(t *testing.T) {
 	h, _, _ := newServer(t)
 	admin := tokenFor(t, h, "admin", "admin")
 	postJSON(t, h, "/admin/realms/master/roles", `{"name":"partial-remove-parent"}`, admin)
@@ -550,13 +559,20 @@ func TestCompositeFlagStaysCorrectOnAPartialRemove(t *testing.T) {
 
 	body := `[{"id":"` + child.ID + `","name":"partial-remove-child"},` +
 		`{"id":"00000000-0000-0000-0000-000000000000","name":"no-such-role"}]`
-	if got := sendJSON(t, h, http.MethodDelete,
-		"/admin/realms/master/roles/partial-remove-parent/composites", body, admin).Code; got != http.StatusNotFound {
-		t.Fatalf("remove with one bad id: want 404, got %d", got)
+	w := sendJSON(t, h, http.MethodDelete,
+		"/admin/realms/master/roles/partial-remove-parent/composites", body, admin)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("remove with one bad id: want 404, got %d", w.Code)
+	}
+	if got := w.Body.String(); got != `{"error":"Could not find composite role"}` {
+		t.Fatalf("unexpected 404 body: %s", got)
 	}
 
-	if readRole(t, h, "/admin/realms/master/roles/partial-remove-parent", admin).Composite {
-		t.Fatal("the only child was removed before the bad id 404ed, so the parent must read composite:false")
+	if !readRole(t, h, "/admin/realms/master/roles/partial-remove-parent", admin).Composite {
+		t.Fatal("the whole batch should have rolled back, but the parent reads composite:false")
+	}
+	if left := listRoleNames(t, h, "/admin/realms/master/roles/partial-remove-parent/composites", admin); !slices.Equal(left, []string{"partial-remove-child"}) {
+		t.Fatalf("the whole batch should have rolled back, so the child must still be there: got %v", left)
 	}
 }
 

@@ -64,6 +64,16 @@ func writeRoleNotFound(w http.ResponseWriter) {
 	httpx.WriteMessageError(w, http.StatusNotFound, "Could not find role")
 }
 
+// writeCompositeRoleNotFound is the measured 404 for POST/DELETE
+// .../composites when one of the body's ids does not resolve to a role -
+// "Could not find composite role", not writeRoleNotFound's "Could not find
+// role". A resource addressed by name, by id and now by a bad entry in a
+// composite batch each get their own spelling; see eachComposite for why
+// this one specifically means nothing in the batch was applied.
+func writeCompositeRoleNotFound(w http.ResponseWriter) {
+	httpx.WriteMessageError(w, http.StatusNotFound, "Could not find composite role")
+}
+
 // writeRoleList is the body every role listing in this file sends: sorted by
 // name, in the shape briefRepresentation asks for, with the measured
 // Cache-Control and charset Content-Type.
@@ -414,64 +424,65 @@ func (h *handler) removeComposites(locate roleLocator) func(http.ResponseWriter,
 }
 
 // eachComposite is what addComposites and removeComposites share: resolve
-// the role, decode the body, apply the per-child operation to each entry,
-// then resync the parent's own composite flag once before answering.
+// the role, decode the body, validate every entry, apply each only once they
+// all validate, then resync the parent's own composite flag before
+// answering.
 //
-// The resync runs through a defer so it happens on **every** exit path once
-// the role is known, not only the all-succeeded one. A batch body can apply
-// its first entry and then fail on its second - a bad id 404s the loop
-// midway, after `apply` already ran for the one before it - and the flag
-// must reflect that partial application rather than go stale until some
-// later write on the same role happens to fix it. Whether Keycloak itself
-// applies a partial batch or rolls the whole request back on one bad entry
-// is unmeasured; this keeps Gloak's existing partial-apply behaviour and
-// only makes the flag honest about whatever was actually applied.
+// **The batch validates in full before anything is applied.** Measured on a
+// live Keycloak, in both id orders: a body of one real role id and one that
+// does not exist applies neither and answers 404
+// `{"error":"Could not find composite role"}` - a message of its own, not
+// writeRoleNotFound's "Could not find role". So the two loops below are
+// deliberately separate rather than merged into one: the first only reads,
+// resolving every id before the second writes any of them, and nothing is
+// applied unless every id resolves.
+//
+// Because of that split, the store is only ever written on the path that
+// goes on to answer 204 (or, in the rare case of a genuine store failure
+// partway through an already-validated batch, the 500 in the apply loop
+// below) - a decode failure and a validation failure both leave the role's
+// children untouched, so neither of those needs to resync the flag. This
+// replaces an earlier version that applied entries as it validated them and
+// had to defer the resync to cover a partial-apply exit; once nothing partial
+// can be applied, that defer was no longer needed.
 func (h *handler) eachComposite(locate roleLocator, apply func(context.Context, string, string) error) func(http.ResponseWriter, *http.Request, *reqContext) {
 	return func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 		role, ok := locate(w, r, rc)
 		if !ok {
 			return
 		}
-		// responded tracks whether some earlier step already wrote the
-		// response, so the deferred resync below never writes a second
-		// status: on a path that already answered 404/400/500, a resync
-		// failure is swallowed rather than attempted a second write, and a
-		// resync success answers nothing more - the earlier write stands.
-		responded := false
-		defer func() {
-			err := h.syncCompositeFlag(r.Context(), role)
-			if responded {
-				return
-			}
-			if err != nil {
-				httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
-				return
-			}
-			httpx.WriteNoContent(w, r)
-		}()
-
 		reps, ok := decodeRoleList(w, r)
 		if !ok {
-			responded = true
 			return
 		}
 		for _, rep := range reps {
 			if _, err := h.store.Roles().ByID(r.Context(), rc.realm.ID, rep.ID); err != nil {
 				if errors.Is(err, store.ErrNotFound) {
-					writeRoleNotFound(w)
-					responded = true
+					writeCompositeRoleNotFound(w)
 					return
 				}
 				httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
-				responded = true
-				return
-			}
-			if err := apply(r.Context(), role.ID, rep.ID); err != nil {
-				httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
-				responded = true
 				return
 			}
 		}
+		for _, rep := range reps {
+			if err := apply(r.Context(), role.ID, rep.ID); err != nil {
+				// Every id was already confirmed to exist above, so this can
+				// only be a genuine store failure, not a bad id - and it may
+				// have applied some of the batch before hitting it. Best-effort
+				// resync so the flag does not go stale; its own error is
+				// swallowed rather than risking a second write on top of the
+				// 500 below.
+				_ = h.syncCompositeFlag(r.Context(), role)
+				httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+				return
+			}
+		}
+		if err := h.syncCompositeFlag(r.Context(), role); err != nil {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		httpx.WriteNoContent(w, r)
 	}
 }
 
