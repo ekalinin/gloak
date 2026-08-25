@@ -412,6 +412,77 @@ func TestTheRealmsOwnClientRefusesNewRoles(t *testing.T) {
 	}
 }
 
+// **The refusal extends past creating a role: a composite write on a role the
+// realm's own client already has is refused too**, to the full administrator
+// and on both verbs. Measured against a live 26.7.1 on `master-realm`'s own
+// `query-groups` role - `POST .../composites` 403, `DELETE .../composites`
+// 403, `GET .../composites` 200.
+//
+// Both route families are exercised, and that is the point of the test rather
+// than thoroughness for its own sake: the by-name routes reach the check
+// through clientRoleLocator, the roles-by-id routes never touch
+// clientRoleContainer at all - guardByRoleContainer resolves the role itself
+// and hands it to byIDLocator - so a check placed in clientRoleContainer would
+// pass the first half of this test and fail the second.
+func TestTheRealmsOwnClientRefusesCompositeWrites(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	mrUUID := clientUUID(t, s, realm, "master-realm")
+
+	postJSON(t, h, "/admin/realms/master/roles", `{"name":"escalation-child"}`, admin)
+	child := readRole(t, h, "/admin/realms/master/roles/escalation-child", admin)
+	body := `[{"id":"` + child.ID + `","name":"escalation-child"}]`
+
+	byName := "/admin/realms/master/clients/" + mrUUID + "/roles/query-groups/composites"
+	victim := readRole(t, h, "/admin/realms/master/clients/"+mrUUID+"/roles/query-groups", admin)
+	byID := "/admin/realms/master/roles-by-id/" + victim.ID + "/composites"
+
+	for _, tc := range []struct{ name, path string }{
+		{"by name", byName},
+		{"by id", byID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := postJSON(t, h, tc.path, body, admin).Code; got != http.StatusForbidden {
+				t.Fatalf("POST %s: want 403 from a full administrator, got %d", tc.path, got)
+			}
+			if got := sendJSON(t, h, http.MethodDelete, tc.path, body, admin).Code; got != http.StatusForbidden {
+				t.Fatalf("DELETE %s: want 403 from a full administrator, got %d", tc.path, got)
+			}
+			// Reading the same role's composites is not refused - measured 200.
+			if got := get(t, h, tc.path, admin).Code; got != http.StatusOK {
+				t.Fatalf("GET %s: want 200, got %d", tc.path, got)
+			}
+		})
+	}
+
+	// The escalation this closes: a manage-clients-only caller naming a
+	// *realm* management role as the child. Every other check passes - the
+	// route guard wants manage-clients, and requiresChildManageRole would want
+	// manage-clients too if the child were a client role - so without the
+	// container check this is the whole path from manage-clients to
+	// manage-realm.
+	manageRealm := readRole(t, h, "/admin/realms/master/clients/"+mrUUID+"/roles/manage-realm", admin)
+	escalate := `[{"id":"` + manageRealm.ID + `","name":"manage-realm"}]`
+	writer := tokenForRole(t, h, s, realm, "manage-clients")
+	target := "/admin/realms/master/clients/" + mrUUID + "/roles/manage-clients/composites"
+	if got := postJSON(t, h, target, escalate, writer).Code; got != http.StatusForbidden {
+		t.Fatalf("manage-clients escalating to manage-realm: want 403, got %d", got)
+	}
+	if got := listRoleNames(t, h, target, admin); len(got) != 0 {
+		t.Fatalf("manage-clients gained composites: %v", got)
+	}
+
+	// An ordinary client's roles are untouched by any of this.
+	postJSON(t, h, "/admin/realms/master/clients",
+		`{"clientId":"ordinary-client"}`, admin)
+	ordinary := clientUUID(t, s, realm, "ordinary-client")
+	postJSON(t, h, "/admin/realms/master/clients/"+ordinary+"/roles", `{"name":"ordinary-role"}`, admin)
+	ok := "/admin/realms/master/clients/" + ordinary + "/roles/ordinary-role/composites"
+	if got := postJSON(t, h, ok, body, admin).Code; got != http.StatusNoContent {
+		t.Fatalf("an ordinary client's role: want 204, got %d", got)
+	}
+}
+
 func clientUUID(t *testing.T, s store.Store, realm *model.Realm, clientID string) string {
 	t.Helper()
 	c, err := s.Clients().ByClientID(context.Background(), realm.ID, clientID)
@@ -497,6 +568,79 @@ func TestCompositeFlagFollowsChildCount(t *testing.T) {
 	}
 	if readRole(t, h, "/admin/realms/master/roles/flag-parent", admin).Composite {
 		t.Fatal("the parent is still marked composite after losing its last child")
+	}
+}
+
+// TestCompositeFlagSurvivesDeletingTheChild is the third way a role can lose
+// its last child, after the two TestCompositeFlagFollowsChildCount covers:
+// deleting the child role outright. The composite_role row cascades away, but
+// `composite` is a column on the *parent*, so nothing on the delete path would
+// resync it - the parent would answer `"composite":true` beside an empty
+// composites listing, contradicting the derived-flag rule this cut measured.
+//
+// All three delete routes are exercised because all three used to be able to
+// leave the flag stale; they are all fixed by one resync inside
+// store.RoleRepo.Delete rather than by three edits here.
+func TestCompositeFlagSurvivesDeletingTheChild(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"delete-probe-client"}`, admin)
+	ordinary := clientUUID(t, s, realm, "delete-probe-client")
+
+	for _, tc := range []struct {
+		name       string
+		createPath string
+		deletePath func(name, id string) string
+	}{
+		{
+			name:       "realm role by name",
+			createPath: "/admin/realms/master/roles",
+			deletePath: func(name, _ string) string { return "/admin/realms/master/roles/" + name },
+		},
+		{
+			name:       "client role by name",
+			createPath: "/admin/realms/master/clients/" + ordinary + "/roles",
+			deletePath: func(name, _ string) string {
+				return "/admin/realms/master/clients/" + ordinary + "/roles/" + name
+			},
+		},
+		{
+			name:       "role by id",
+			createPath: "/admin/realms/master/roles",
+			deletePath: func(_, id string) string { return "/admin/realms/master/roles-by-id/" + id },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := "dp-" + strings.ReplaceAll(tc.name, " ", "-")
+			child := parent + "-child"
+			postJSON(t, h, "/admin/realms/master/roles", `{"name":"`+parent+`"}`, admin)
+			postJSON(t, h, tc.createPath, `{"name":"`+child+`"}`, admin)
+
+			readChild := tc.createPath + "/" + child
+			if tc.createPath == "/admin/realms/master/roles" {
+				readChild = "/admin/realms/master/roles/" + child
+			}
+			kid := readRole(t, h, readChild, admin)
+			body := `[{"id":"` + kid.ID + `","name":"` + child + `"}]`
+			if got := postJSON(t, h, "/admin/realms/master/roles/"+parent+"/composites", body, admin).Code; got != http.StatusNoContent {
+				t.Fatalf("add: want 204, got %d", got)
+			}
+			if !readRole(t, h, "/admin/realms/master/roles/"+parent, admin).Composite {
+				t.Fatal("precondition: the parent is not composite after gaining its only child")
+			}
+
+			if got := sendJSON(t, h, http.MethodDelete, tc.deletePath(child, kid.ID), "", admin).Code; got != http.StatusNoContent {
+				t.Fatalf("delete the child: want 204, got %d", got)
+			}
+			// The two answers have to agree. Before the resync in Delete, the
+			// first said true and the second said [].
+			if readRole(t, h, "/admin/realms/master/roles/"+parent, admin).Composite {
+				t.Fatal("the parent is still marked composite after its last child was deleted")
+			}
+			if got := listRoleNames(t, h, "/admin/realms/master/roles/"+parent+"/composites", admin); len(got) != 0 {
+				t.Fatalf("want no composites left, got %v", got)
+			}
+		})
 	}
 }
 

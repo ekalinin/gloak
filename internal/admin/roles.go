@@ -256,6 +256,24 @@ func (h *handler) clientRoleContainer(w http.ResponseWriter, r *http.Request, rc
 	return c, true
 }
 
+// ownedByRealmOwnClient reports whether role belongs to the realm's own
+// "{realm}-realm" client - the container Keycloak refuses to reconfigure.
+//
+// internal/bootstrap names that client, in an unexported adminRoleContainer,
+// so the name is rebuilt here the same way createClientRole rebuilds it. A
+// realm role can never be owned by a client, so it answers false without a
+// lookup.
+func (h *handler) ownedByRealmOwnClient(ctx context.Context, realm *model.Realm, role *model.Role) (bool, error) {
+	if role.ClientID == "" {
+		return false, nil
+	}
+	c, err := h.store.Clients().ByID(ctx, realm.ID, role.ClientID)
+	if err != nil {
+		return false, err
+	}
+	return c.ClientID == realm.Name+"-realm", nil
+}
+
 // listClientRoles serves GET /admin/realms/{realm}/clients/{client-uuid}/roles.
 func (h *handler) listClientRoles(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 	c, ok := h.clientRoleContainer(w, r, rc)
@@ -503,6 +521,32 @@ func (h *handler) eachComposite(locate roleLocator, checkChild func(*caller, *mo
 	return func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 		role, ok := locate(w, r, rc)
 		if !ok {
+			return
+		}
+		// A composite write on a role the realm's own client owns is refused
+		// to **everybody**, the full administrator included - measured on a
+		// live 26.7.1 on both verbs, POST and DELETE, against
+		// `master-realm`'s own `query-groups`. Reading the same role's
+		// composites stays 200, so this is on the two writes alone and must
+		// not move up into a locator, which the reads share.
+		//
+		// It sits here rather than in clientRoleContainer because
+		// clientRoleContainer is not on every path that gets here: the
+		// roles-by-id routes resolve their role in guardByRoleContainer and
+		// reach eachComposite through byIDLocator, never touching it. This is
+		// the one place both route families meet.
+		//
+		// The refusal is decided after locate, so a role that does not exist
+		// still answers its 404 rather than this 403 - the same
+		// existence-before-authorization order guardByRoleContainer was
+		// measured taking.
+		refused, err := h.ownedByRealmOwnClient(r.Context(), rc.realm, role)
+		if err != nil {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		if refused {
+			writeForbidden(w)
 			return
 		}
 		reps, ok := decodeRoleList(w, r)
