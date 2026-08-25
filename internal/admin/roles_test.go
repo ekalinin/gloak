@@ -944,6 +944,17 @@ func TestRolesByIDWritesNeedManageAlone(t *testing.T) {
 			if got := putJSON(t, h, "/admin/realms/master/roles-by-id/"+clientID, `{"name":"write-guard-client-`+role+`"}`, tok).Code; got != want.wantClient {
 				t.Fatalf("PUT a client role: want %d, got %d", want.wantClient, got)
 			}
+			// The PUT above only ever renames a role to its own name, so the
+			// role is still there either way (rejected untouched, or accepted
+			// and unchanged) - DELETE runs against the same id next, with the
+			// same expectation, since a role that PUT could reach is exactly
+			// the one DELETE should reach too.
+			if got := do(t, h, http.MethodDelete, "/admin/realms/master/roles-by-id/"+realmID, tok).Code; got != want.wantRealm {
+				t.Fatalf("DELETE a realm role: want %d, got %d", want.wantRealm, got)
+			}
+			if got := do(t, h, http.MethodDelete, "/admin/realms/master/roles-by-id/"+clientID, tok).Code; got != want.wantClient {
+				t.Fatalf("DELETE a client role: want %d, got %d", want.wantClient, got)
+			}
 		})
 	}
 }
@@ -985,6 +996,15 @@ func TestRolesByIDCompositesWriteNeedsManageAlone(t *testing.T) {
 			if got := postJSON(t, h, "/admin/realms/master/roles-by-id/"+clientParentID+"/composites", clientBody, tok).Code; got != want.wantClient {
 				t.Fatalf("POST composites, client parent + client child: want %d, got %d", want.wantClient, got)
 			}
+			// Removing one that was never added is still 204 (measured
+			// elsewhere in this file), so DELETE lands on the same want as
+			// POST regardless of whether POST above actually attached it.
+			if got := sendJSON(t, h, http.MethodDelete, "/admin/realms/master/roles-by-id/"+realmParentID+"/composites", realmBody, tok).Code; got != want.wantRealm {
+				t.Fatalf("DELETE composites, realm parent + realm child: want %d, got %d", want.wantRealm, got)
+			}
+			if got := sendJSON(t, h, http.MethodDelete, "/admin/realms/master/roles-by-id/"+clientParentID+"/composites", clientBody, tok).Code; got != want.wantClient {
+				t.Fatalf("DELETE composites, client parent + client child: want %d, got %d", want.wantClient, got)
+			}
 		})
 	}
 }
@@ -997,17 +1017,20 @@ func TestRolesByIDCompositesWriteNeedsManageAlone(t *testing.T) {
 // child is also a client role, per the test above) is refused when the child
 // is a realm role instead, and the mirror holds for manage-realm with a
 // client-role child on a realm-role parent. Only holding both together opens
-// either route in that case.
+// either route in that case. The by-name composite routes were spot-checked
+// too (POST /roles/{name}/composites with a client-role child, manage-realm
+// alone: 403; the same request with manage-realm + manage-clients: 204) and
+// match this exactly, since they run through the same eachComposite.
 //
-// This is a real gap: guardByRoleContainer, like eachComposite underneath it,
-// decides from the parent's container alone and cannot see the body, so a
-// caller holding only the parent-side manage role is - by this measurement -
-// let through by Gloak where a live Keycloak would refuse it. Fixing that
-// would mean checking every child's own container inside eachComposite,
-// after decoding the body and before applying anything, which is out of this
-// task's scope (it would also change the by-name composite writes from
-// Tasks 5-7). Recorded here, and in the observed-behaviour document, as a
-// known gap rather than silently accepted.
+// guardByRoleContainer, like the route-level guard on the by-name routes,
+// decides from the parent's container alone and cannot see the body - it
+// runs before the body is decoded. eachComposite closes the gap instead:
+// after resolving each child id (roles.go, in the same pass that answers the
+// composite 404), it checks the caller against that child's own container -
+// manage-realm for a realm child, manage-clients for a client child - in
+// addition to the route-level guard's check on the parent. So a caller
+// holding only the parent-side manage role is refused here exactly as it is
+// on a live Keycloak; this test is what pins that.
 func TestRolesByIDCompositesWriteAcrossFamiliesNeedsBothManageRoles(t *testing.T) {
 	h, s, realm := newServer(t)
 	admin := tokenFor(t, h, "admin", "admin")
@@ -1065,11 +1088,31 @@ func TestRolesByIDCompositesWriteAcrossFamiliesNeedsBothManageRoles(t *testing.T
 	if got := postJSON(t, h, "/admin/realms/master/roles-by-id/"+clientParentID+"/composites", realmChildOnClientParent, both).Code; got != http.StatusNoContent {
 		t.Fatalf("both roles, realm child on a client parent: want 204, got %d", got)
 	}
+
+	// By name, not just by id: eachComposite is shared between the two, and
+	// the guard that decides which manage role the *parent* needs is not -
+	// guard("manage-realm", ...) here versus guardByRoleContainer above - so
+	// this is not implied by the by-id cases and was measured on its own
+	// against a live 26.7.1. A second realm parent is used so the mrOnly
+	// grant above (already spent on the roles-by-id case) does not collide.
+	postJSON(t, h, "/admin/realms/master/roles", `{"name":"cross-family-byname-parent"}`, admin)
+	bynameParent := "/admin/realms/master/roles/cross-family-byname-parent/composites"
+	mrOnlyByName := grant(t, "cross-family-byname-mr-only", "manage-realm")
+	if got := postJSON(t, h, bynameParent, clientChildOnRealmParent, mrOnlyByName).Code; got != http.StatusForbidden {
+		t.Fatalf("by name, manage-realm alone, client child on a realm parent: want 403, got %d", got)
+	}
+	bothByName := grant(t, "cross-family-byname-both", "manage-realm", "manage-clients")
+	if got := postJSON(t, h, bynameParent, clientChildOnRealmParent, bothByName).Code; got != http.StatusNoContent {
+		t.Fatalf("by name, both roles, client child on a realm parent: want 204, got %d", got)
+	}
 }
 
 // TestRolesByIDReportsMissingBeforeForbidden measures the ordering: a missing
-// role answers 404 whatever the caller holds, so this endpoint never becomes
-// a probe for which role ids exist. The message is its own -
+// role answers 404 whatever the caller holds. This is Keycloak's own
+// behaviour, kept because it is measured - not because it is the safer
+// choice. It does leak existence to a caller who is not authorized to touch
+// the role: a missing id reads 404 and an existing-but-forbidden id reads
+// 403, so the two are distinguishable. The message is its own -
 // "Could not find role with id" - not writeRoleNotFound's "Could not find
 // role".
 func TestRolesByIDReportsMissingBeforeForbidden(t *testing.T) {

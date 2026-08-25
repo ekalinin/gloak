@@ -234,9 +234,14 @@ func (h *handler) guardAnyAndAny(a, b []string, next func(http.ResponseWriter, *
 // like a lone role, and manage-realm/manage-clients opening it too was found
 // on the second pass.
 //
-// The order matters and is measured too. The role is resolved first, so a
-// missing role answers 404 whatever the caller holds; deciding the 403 first
-// would turn this into a probe for which role ids exist.
+// The order matters and is measured too: the role is resolved first, so a
+// missing role answers 404 whatever the caller holds. That is Keycloak's own
+// behaviour, not a defensive choice - and it is not a safe one. Answering the
+// existence question before the authorization question means an
+// unauthorized caller can tell a missing id (404) apart from one that exists
+// but it may not touch (403), which is exactly the ordering an access-control
+// design would normally avoid. It is kept here because it is what was
+// measured, not because it is the safer order.
 func (h *handler) guardByRoleContainer(realmRoles, clientRoles []string, next func(http.ResponseWriter, *http.Request, *reqContext, *model.Role)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		realm := h.resolveRealm(w, r)
