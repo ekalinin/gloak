@@ -719,3 +719,54 @@ The same check governs assigning a role to a user
 want one task between them rather than a bolt-on here. That task needs one
 more measurement pass first: the sweep above is two callers' rows, and what is
 wanted is the rule for an arbitrary caller.
+
+## F29: deleting a client leaves its roles behind, and Keycloak deletes them
+
+Found and measured 2026-08-25 while verifying F-nothing in particular - it
+turned up on the way to checking whether the composite-flag resync that this
+branch added to `RoleRepo.Delete` also covered a client deletion. It does not,
+because nothing deletes the roles at all.
+
+Measured against a live 26.7.1 with the full administrator token: create a
+client, give it a role, make that role the only child of a realm role, then
+delete the client.
+
+```
+create client cascade-client: 201
+create client role:           201
+create realm parent:          201
+add composite:                204
+parent before: composite= True
+delete the client:            204
+
+the client role by id after the client is gone: 404
+parent after:  composite= False
+parent composites after: []
+```
+
+**Keycloak deletes a client's roles with the client**, and resyncs the
+composite flag of anything that had one of them as its last child - the same
+derived-flag rule this branch measured and implemented for a role deletion.
+
+**Gloak does neither.** `keycloak_role.client_id` is a plain `TEXT NOT NULL
+DEFAULT ''` column with no foreign key (`0001_init.sql`, both drivers), so the
+role row survives its client. Run against Gloak, the identical sequence leaves
+the parent reading `"composite":true` with `cascade-role` still in its
+composites listing, carrying a `containerId` that names a client which no
+longer exists. The role is also still assignable and still resolves through
+`roles-by-id`.
+
+Two pieces, and the second depends on the first:
+
+1. A client deletion has to take its roles with it. That is a schema change -
+   a foreign key with `ON DELETE CASCADE`, matching the one `realm_id` already
+   has - plus a migration.
+2. Once it cascades at the database level, `RoleRepo.Delete` is no longer on
+   the path, so the composite resync this branch put there would be bypassed.
+   Whoever does (1) has to carry the resync into the client deletion too, or
+   move it somewhere both reach. The resync statement itself is reusable; only
+   its `WHERE` changes, from one role id to every role the client owns.
+
+Not fixed here: it is a client-lifecycle concern that predates the roles cut,
+it needs a migration, and the roles half of this cut had no business changing
+the client schema on the way past.
