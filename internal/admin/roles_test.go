@@ -163,6 +163,49 @@ func TestRealmRoleSearchIsASubstringOverNameAndDescription(t *testing.T) {
 	}
 }
 
+// TestPageRoles pins pageRoles's measured contract: first and max page a
+// listing only when search is non-empty, and with no search they are
+// accepted and entirely ignored - see the "Role listing: first and max"
+// section of docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+func TestPageRoles(t *testing.T) {
+	roles := []*model.Role{{Name: "a"}, {Name: "b"}, {Name: "c"}}
+	names := func(in []*model.Role) []string {
+		out := make([]string, 0, len(in))
+		for _, r := range in {
+			out = append(out, r.Name)
+		}
+		return out
+	}
+
+	for _, tc := range []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{"no search: max is ignored", "max=2", []string{"a", "b", "c"}},
+		{"no search: first is ignored", "first=1", []string{"a", "b", "c"}},
+		{"no search: the admin client's no-paging convention is ignored too", "first=-1&max=-1", []string{"a", "b", "c"}},
+		{"search with no first or max is unbounded", "search=x", []string{"a", "b", "c"}},
+		{"search: max zero is an empty page", "search=x&max=0", []string{}},
+		{"search: max bounds the page", "search=x&max=2", []string{"a", "b"}},
+		{"search: first offsets from zero", "search=x&first=1", []string{"b", "c"}},
+		{"search: first past the end", "search=x&first=3", []string{}},
+		{"search: first and max compose", "search=x&first=1&max=1", []string{"b"}},
+		{"search: negative means absent", "search=x&first=-1&max=-1", []string{"a", "b", "c"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q, err := url.ParseQuery(tc.query)
+			if err != nil {
+				t.Fatalf("bad query: %v", err)
+			}
+			got := names(pageRoles(roles, q))
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("pageRoles(%q) = %v, want %v", tc.query, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestReadRealmRole(t *testing.T) {
 	h, _, _ := newServer(t)
 	admin := tokenFor(t, h, "admin", "admin")

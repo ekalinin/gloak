@@ -1355,8 +1355,7 @@ var adminCases = []Case{
 			Section:   "Roles: get all roles for the realm, max=0; mined from RealmRolesSearchTest.testPaginationRoles",
 			Retrieved: "2026-08-25",
 		},
-		Status: Recorded,
-		Reason: "the role listings read only search and briefRepresentation; max is accepted and ignored",
+		Status: Implemented,
 		// No Operation: GET /admin/realms/{realm}/roles is already claimed by
 		// admin/roles/list-realm, and an operation is counted once.
 		Fixture: "admin-token-paged-roles",
@@ -1377,8 +1376,7 @@ var adminCases = []Case{
 			Section:   "Roles: get all roles for the realm, first past the end of the match set; mined from RealmRolesSearchTest.testPaginationRoles",
 			Retrieved: "2026-08-25",
 		},
-		Status:  Recorded,
-		Reason:  "the role listings read only search and briefRepresentation; first is accepted and ignored",
+		Status:  Implemented,
 		Fixture: "admin-token-paged-roles",
 		Request: Request{
 			Method:  http.MethodGet,
@@ -1400,8 +1398,7 @@ var adminCases = []Case{
 			Section:   "Roles: get all roles for the realm, one role taken out of the middle of the match set; mined from RealmRolesSearchTest.testSearchForRoles",
 			Retrieved: "2026-08-25",
 		},
-		Status:  Recorded,
-		Reason:  "the role listings read only search and briefRepresentation; first and max are accepted and ignored",
+		Status:  Implemented,
 		Fixture: "admin-token-paged-roles",
 		Request: Request{
 			Method:  http.MethodGet,

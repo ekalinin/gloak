@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/ekalinin/gloak/internal/httpx"
@@ -96,6 +98,7 @@ func requiresChildManageRole(c *caller, child *model.Role) bool {
 // Cache-Control and charset Content-Type.
 func (h *handler) writeRoleList(w http.ResponseWriter, r *http.Request, roles []*model.Role, containerID string) {
 	brief := briefRoles(r.URL.Query())
+	roles = pageRoles(roles, r.URL.Query())
 	out := make([]roleRepresentation, 0, len(roles))
 	for _, role := range roles {
 		out = append(out, roleRepresentationOf(role, containerID, brief))
@@ -122,6 +125,48 @@ func filterRoles(roles []*model.Role, search string) []*model.Role {
 			strings.Contains(strings.ToLower(r.Description), needle) {
 			out = append(out, r)
 		}
+	}
+	return out
+}
+
+// pageRoles applies the listing's first and max parameters to roles, which
+// has already been through filterRoles.
+//
+// **Measured, not predicted: pagination only takes effect when the request
+// carries a search term.** With no search, a live 26.7.1 returns every role
+// unpaginated and ignores first and max entirely - max=2, first=1 and the
+// admin client's own no-paging convention first=-1&max=-1 are all
+// indistinguishable in effect. See the "Role listing: first and max" section
+// of docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+//
+// When search is non-empty, first is a zero-based offset and max is a page
+// size, both counted over search's own order; an absent, negative or
+// unparseable value means no bound. A negative bound was measured to mean
+// "no bound" even with a search term present - the same shape the Java admin
+// client puts on the wire for "no paging", since it sends first=-1&max=-1
+// rather than omitting them.
+func pageRoles(roles []*model.Role, q url.Values) []*model.Role {
+	if q.Get("search") == "" {
+		return roles
+	}
+
+	bound := func(name string) int {
+		v, err := strconv.Atoi(q.Get(name))
+		if err != nil || v < 0 {
+			return -1
+		}
+		return v
+	}
+
+	out := roles
+	if first := bound("first"); first >= 0 {
+		if first >= len(out) {
+			return []*model.Role{}
+		}
+		out = out[first:]
+	}
+	if max := bound("max"); max >= 0 && max < len(out) {
+		out = out[:max]
 	}
 	return out
 }
