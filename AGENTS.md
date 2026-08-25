@@ -190,8 +190,47 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   whatever it is told, replacing the credential in place: same id, refreshed
   `createdDate`, `userLabel` cleared.
 - **`PUT .../userLabel` consumes `text/plain`.** Sending JSON answers 415.
-- **"Credential not found" is a fourth not-found spelling**, after "Could not
-  find client", "User not found" and "Realm not found." with its full stop.
+- **`PUT` on a role replaces; `PUT` on a client or a user merges.** A role
+  updated with a body carrying only `name` loses its description. A role can
+  also be renamed through it, where a username cannot. Copying `updateClient`'s
+  shape into `updateRealmRole` is the mistake this warns about.
+- **`briefRepresentation` defaults to true on a role listing and false on the
+  user listing.** Same parameter, two endpoints, opposite defaults, both
+  measured. One shared helper would get one of them wrong.
+- **Reads accept the manage role, not just the view role.** `view-realm` or
+  `manage-realm` for realm roles, `view-clients` or `manage-clients` for
+  client roles, on the plain reads and the composite listings alike. The plan
+  assumed single-role guards four separate times and was wrong every time.
+- **`roles-by-id`'s required role comes from the resolved role's container**,
+  and its 404 precedes its 403 - which does leak which role ids exist. That is
+  Keycloak's measured order, and the reason previously written down for it was
+  backwards.
+- **`/roles/{name}/users` needs a conjunction**: a role-management role
+  **and** a user-read role (`view-users`/`manage-users`/`query-users`) held
+  together. Neither family alone opens it, and two roles from the same family
+  do not either. It is the only endpoint in the group that works this way -
+  the three siblings that look identical do not.
+- **A composite write needs the manage role of every child's own container,
+  and only on the add path.** Attaching a client-role child to a realm-role
+  parent needs `manage-realm` and `manage-clients` together; removing the
+  same child needs only the parent's. Measured on both verbs in both
+  directions. Nobody knows why they differ.
+- **A composite batch validates before it applies**, so one bad id leaves the
+  store untouched, and the answer to a batch mixing a bad id with a forbidden
+  child depends on array order.
+- **The composite flag is derived, not stored intent**: it is true exactly
+  when the role has children, and Keycloak flips it off when the last child is
+  removed.
+- **The realm's own client refuses a new role even to a full administrator.**
+  `POST /clients/{master-realm uuid}/roles` is 403 for everybody; reading its
+  21 roles is not.
+- **Role listings have no stable order across container starts.** Every one of
+  them is a bare array at the root of the body, which is why `Case.Unordered`
+  learned the root path spelling `"."`.
+- **Eight spellings of not-found now**, including three for one resource:
+  `Could not find client`, `User not found`, `Realm not found.` with its full
+  stop, `Credential not found`, `Could not find role`, `Role not found`,
+  `Could not find role with id`, `Could not find composite role`.
 
 ## Boundaries
 

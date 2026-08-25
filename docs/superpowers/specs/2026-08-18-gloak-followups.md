@@ -15,6 +15,10 @@ F19. F18 was then closed the same day and opened F20 through F23. Closed
 entries keep their text: the reasoning that turned out to be wrong is worth
 more than a tidy list.
 
+**Status, 2026-08-25.** The roles half of P2's second cut opened F24: a
+measured divergence between Gloak and Keycloak, left unfixed on purpose and
+scoped to its own task.
+
 ## F3: two shipped endpoints have no measured contract (closed)
 
 `docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md` records the token
@@ -341,6 +345,12 @@ narrow-role caller has to build one through the API in both the reference
 container and Gloak. `internal/admin`'s own tests cover what they can:
 TestQueryUsersOpensTheListingButNotTheRead pins the status codes.
 
+Role assignment does not arrive with the roles half of the second cut, the
+work this entry's own measurements came out of - `Role Mapper` and `Client
+Role Mappings`' user halves are the second half of that cut, still to be
+built. So this stays open, and its conformance case with it, until that half
+lands.
+
 ## F18: tokens carry no roles, so `aud` is wrong and introspection is too permissive (closed)
 
 **Closed 2026-08-23.** Roles are resolved at issuance, `aud` is derived from
@@ -508,3 +518,37 @@ diff, which is how a recorder's output stops being read.
 All three are `Pending`, so nothing compares them and nothing is at risk yet.
 The fix is a normalisation pass replacing the resource version, and it belongs
 with P3, which is when these bodies start being served and compared.
+
+## F24: a composite write onto the realm's own client's role diverges from Keycloak
+
+Measured while building `roles-by-id` (P2's second cut, Task 9). Keycloak
+refuses `POST /clients/{master-realm uuid}/roles` outright - the realm's own
+client takes no new role from anybody, and that much Gloak already matches.
+The same refusal turns out to extend further than a create: writing a
+composite onto a role the realm's own client **already has** is refused too,
+even to the full administrator:
+
+```
+POST /admin/realms/master/clients/{master-realm uuid}/roles/query-groups/composites
+Authorization: Bearer <full administrator token>
+Body: [{"id":"...","name":"byname-child-role"}]
+
+HTTP/1.1 403 Forbidden
+{"error":"HTTP 403 Forbidden"}
+```
+
+**Gloak answers 204 to the identical request.** `clientRoleContainer` in
+`internal/admin/roles.go`, which every client-role-composite route reaches
+through `clientRoleLocator`, has no check for `c.ClientID ==
+rc.realm.Name+"-realm"` - only `createClientRole` carries it. Confirmed
+directly against Gloak, not only reasoned from the source.
+
+Left unfixed on purpose. The fix belongs in `clientRoleContainer`, which
+`readClientRole`, `updateClientRole`, `deleteClientRole`, the composite
+routes and `roles-by-id` (through `clientRoleLocator`) all already share -
+several of them shipped in earlier tasks of this same cut. Deciding which of
+those should gain the check, and whether it belongs in `clientRoleContainer`
+itself or only at the composite call sites, needs its own deliberate task
+rather than a fold-in here. Full transcript and reasoning: the "Roles" section
+of `2026-08-18-keycloak-26.7.1-observed.md`, under "Which role each role
+operation needs".

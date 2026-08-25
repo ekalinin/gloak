@@ -1887,7 +1887,7 @@ var adminCases = []Case{
 
 	// --- Roles by id ---
 	{
-		ID: "admin/roles/by-id-not-found",
+		ID: "admin/roles-by-id/not-found",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Roles (by ID): get a specific role",

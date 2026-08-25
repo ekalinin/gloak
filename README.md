@@ -38,20 +38,23 @@ Working today:
 - the Admin REST API for clients and users: 24 operations, each guarded by the
   `master-realm` client role Keycloak guards it with, resolved from the session
   behind the token because an `admin-cli` token carries no roles to read
+- realm roles and client roles: CRUD, composites, `roles-by-id`, and the direct
+  holders of a role - 32 operations, guarded by the pair of roles (view or
+  manage) Keycloak guards each with, not the single role either name suggests
 - client secrets, service accounts, user credentials and user logout
 - a documentation-derived conformance suite (`internal/conformance`) that checks
   Gloak's responses byte-for-byte against bytes recorded from a live
   Keycloak 26.7.1
 - a parity meter whose denominator comes from Keycloak's own OpenAPI description
-  rather than from a hand-kept list: **57 of 485 enumerated behaviours served**,
+  rather than from a hand-kept list: **89 of 485 enumerated behaviours served**,
   plus four chapters whose surface has not been counted
 - an external oracle: `make oracle` drives Gloak with `kcadm.sh`, Keycloak's own
   admin CLI, which asks for things no recorded case asks for
 
 Not implemented yet: the browser login flow and the authorization code grant,
-logout endpoints, roles and groups on the admin API, multi-realm, client scopes
-and protocol mappers, SAML, user federation, identity brokering, authorization
-services, the admin console.
+logout endpoints, assigning a role to a user and groups on the admin API,
+multi-realm, client scopes and protocol mappers, SAML, user federation,
+identity brokering, authorization services, the admin console.
 
 Where this is going is `docs/superpowers/specs/2026-08-21-gloak-parity-roadmap.md`:
 fourteen sub-projects with their dependencies and what each closes.
@@ -162,7 +165,7 @@ and stay out of the total rather than being dropped from it silently, which
 would inflate the percentage by hiding the parts nobody has counted. It reads:
 
 ```
-total: 57 of 485 enumerated behaviours served; 4 chapters not enumerated
+total: 89 of 485 enumerated behaviours served; 4 chapters not enumerated
 ```
 
 A case has one of three statuses. `Implemented` is served and compared, and a
