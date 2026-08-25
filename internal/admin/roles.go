@@ -74,6 +74,18 @@ func writeCompositeRoleNotFound(w http.ResponseWriter) {
 	httpx.WriteMessageError(w, http.StatusNotFound, "Could not find composite role")
 }
 
+// manageRoleForContainer is the manage role a role's own container needs:
+// manage-realm for a realm role, manage-clients for a client role. Used by
+// eachComposite's per-child check below - the route-level guard only ever
+// sees the parent, so this is the only place that can check a child's own
+// container.
+func manageRoleForContainer(role *model.Role) string {
+	if role.ClientID != "" {
+		return "manage-clients"
+	}
+	return "manage-realm"
+}
+
 // writeRoleList is the body every role listing in this file sends: sorted by
 // name, in the shape briefRepresentation asks for, with the measured
 // Cache-Control and charset Content-Type.
@@ -437,6 +449,20 @@ func (h *handler) removeComposites(locate roleLocator) func(http.ResponseWriter,
 // resolving every id before the second writes any of them, and nothing is
 // applied unless every id resolves.
 //
+// **Every child's own container needs its own manage role, independent of
+// the parent's.** The route-level guard (guard or guardByRoleContainer)
+// only ever checks the parent's container, because that is all it can see -
+// it runs before the body is decoded. Measured directly on a live 26.7.1,
+// this turns out not to be the whole story: a caller holding only
+// manage-clients can add a client-role child to a client-role parent (204),
+// but the identical caller is refused (403) adding a *realm*-role child to
+// that same parent, and only succeeds once it also holds manage-realm. The
+// mirror holds on the realm side with a client-role child. So this loop
+// checks each child's own manage role as it resolves it, in addition to
+// (not instead of) the route-level check on the parent - which is why the
+// check lives here rather than in a route-level guard: guardByRoleContainer
+// cannot see the children, and this loop is the first place that can.
+//
 // Because of that split, the store is only ever written on the path that
 // goes on to answer 204 (or, in the rare case of a genuine store failure
 // partway through an already-validated batch, the 500 in the apply loop
@@ -456,12 +482,17 @@ func (h *handler) eachComposite(locate roleLocator, apply func(context.Context, 
 			return
 		}
 		for _, rep := range reps {
-			if _, err := h.store.Roles().ByID(r.Context(), rc.realm.ID, rep.ID); err != nil {
+			child, err := h.store.Roles().ByID(r.Context(), rc.realm.ID, rep.ID)
+			if err != nil {
 				if errors.Is(err, store.ErrNotFound) {
 					writeCompositeRoleNotFound(w)
 					return
 				}
 				httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+				return
+			}
+			if !rc.caller.has(manageRoleForContainer(child)) {
+				writeForbidden(w)
 				return
 			}
 		}
@@ -563,4 +594,66 @@ func decodeRoleList(w http.ResponseWriter, r *http.Request) ([]roleRepresentatio
 		return nil, false
 	}
 	return reps, true
+}
+
+// writeRoleIDNotFound is the measured 404 for a role addressed by id. The
+// by-name endpoints say "Could not find role" and a bad id in a composite
+// batch says "Could not find composite role"; this is a third spelling for
+// the same resource, measured on its own.
+func writeRoleIDNotFound(w http.ResponseWriter) {
+	httpx.WriteMessageError(w, http.StatusNotFound, "Could not find role with id")
+}
+
+// byIDLocator adapts a role already resolved by guardByRoleContainer to the
+// roleLocator the composite handlers take. guardByRoleContainer has already
+// done the lookup - and the 404 that goes with it - so this only hands the
+// result on; it cannot fail.
+func byIDLocator(role *model.Role) roleLocator {
+	return func(http.ResponseWriter, *http.Request, *reqContext) (*model.Role, bool) {
+		return role, true
+	}
+}
+
+// readRoleByID serves GET /admin/realms/{realm}/roles-by-id/{role-id}.
+func (h *handler) readRoleByID(w http.ResponseWriter, r *http.Request, rc *reqContext, role *model.Role) {
+	container := rc.realm.ID
+	if role.ClientID != "" {
+		container = role.ClientID
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+	httpx.WriteJSONCharset(w, http.StatusOK, roleRepresentationOf(role, container, false))
+}
+
+// updateRoleByID serves PUT /admin/realms/{realm}/roles-by-id/{role-id}. It
+// shares applyRoleUpdate with the by-name update, so it replaces rather than
+// merges the same way.
+func (h *handler) updateRoleByID(w http.ResponseWriter, r *http.Request, rc *reqContext, role *model.Role) {
+	h.applyRoleUpdate(w, r, role)
+}
+
+// deleteRoleByID serves DELETE /admin/realms/{realm}/roles-by-id/{role-id}.
+func (h *handler) deleteRoleByID(w http.ResponseWriter, r *http.Request, rc *reqContext, role *model.Role) {
+	if err := h.store.Roles().Delete(r.Context(), rc.realm.ID, role.ID); err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+	httpx.WriteNoContent(w, r)
+}
+
+// compositesByID, addCompositesByID and removeCompositesByID wrap the Task 7
+// composite handlers with byIDLocator: guardByRoleContainer has already
+// resolved the role, so there is nothing left for these to locate.
+func (h *handler) compositesByID(filter func(*model.Role, *http.Request) bool) func(http.ResponseWriter, *http.Request, *reqContext, *model.Role) {
+	return func(w http.ResponseWriter, r *http.Request, rc *reqContext, role *model.Role) {
+		h.listComposites(byIDLocator(role), filter)(w, r, rc)
+	}
+}
+
+func (h *handler) addCompositesByID(w http.ResponseWriter, r *http.Request, rc *reqContext, role *model.Role) {
+	h.addComposites(byIDLocator(role))(w, r, rc)
+}
+
+func (h *handler) removeCompositesByID(w http.ResponseWriter, r *http.Request, rc *reqContext, role *model.Role) {
+	h.removeComposites(byIDLocator(role))(w, r, rc)
 }

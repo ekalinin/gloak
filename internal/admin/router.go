@@ -1,8 +1,10 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 
+	"github.com/ekalinin/gloak/internal/httpx"
 	"github.com/ekalinin/gloak/internal/keys"
 	"github.com/ekalinin/gloak/internal/model"
 	"github.com/ekalinin/gloak/internal/store"
@@ -142,6 +144,35 @@ func (h *handler) register(mux *http.ServeMux) {
 		h.guardAnyAndAny(clientRolesReadRoles, usersReadRoles, h.roleUsers(h.clientRoleLocator)))
 	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}/groups",
 		h.guardAny(clientRolesReadRoles, h.roleGroups(h.clientRoleLocator)))
+
+	// roles-by-id: the same eight operations, addressed by the role's own id
+	// rather than by name/container path. The required role is decided by the
+	// role's own container once it is resolved, not by the route - measured
+	// against a live 26.7.1 for both a realm role and a client role id, across
+	// every plain master-realm role. Reads take the same view/manage pair as
+	// the by-name reads next door (a single measurement of view-realm and
+	// view-clients alone had this wrong as a single role; manage-realm and
+	// manage-clients were checked too and both open it). Writes - PUT, DELETE
+	// and POST/DELETE .../composites - take only the manage role on the
+	// resolved role's own side, measured the same way. See
+	// guardByRoleContainer and the "roles-by-id" section of
+	// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+	mux.HandleFunc("GET /admin/realms/{realm}/roles-by-id/{roleID}",
+		h.guardByRoleContainer(realmRolesReadRoles, clientRolesReadRoles, h.readRoleByID))
+	mux.HandleFunc("PUT /admin/realms/{realm}/roles-by-id/{roleID}",
+		h.guardByRoleContainer([]string{"manage-realm"}, []string{"manage-clients"}, h.updateRoleByID))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/roles-by-id/{roleID}",
+		h.guardByRoleContainer([]string{"manage-realm"}, []string{"manage-clients"}, h.deleteRoleByID))
+	mux.HandleFunc("GET /admin/realms/{realm}/roles-by-id/{roleID}/composites",
+		h.guardByRoleContainer(realmRolesReadRoles, clientRolesReadRoles, h.compositesByID(nil)))
+	mux.HandleFunc("GET /admin/realms/{realm}/roles-by-id/{roleID}/composites/realm",
+		h.guardByRoleContainer(realmRolesReadRoles, clientRolesReadRoles, h.compositesByID(onlyRealmRoles)))
+	mux.HandleFunc("GET /admin/realms/{realm}/roles-by-id/{roleID}/composites/clients/{targetClientUUID}",
+		h.guardByRoleContainer(realmRolesReadRoles, clientRolesReadRoles, h.compositesByID(onlyThisClientsRoles)))
+	mux.HandleFunc("POST /admin/realms/{realm}/roles-by-id/{roleID}/composites",
+		h.guardByRoleContainer([]string{"manage-realm"}, []string{"manage-clients"}, h.addCompositesByID))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/roles-by-id/{roleID}/composites",
+		h.guardByRoleContainer([]string{"manage-realm"}, []string{"manage-clients"}, h.removeCompositesByID))
 }
 
 // guard is the authorization filter every admin route goes through: resolve
@@ -191,6 +222,50 @@ func (h *handler) guardAnyAndAny(a, b []string, next func(http.ResponseWriter, *
 		}
 		next(w, r, rc)
 	})
+}
+
+// guardByRoleContainer is guard for the roles-by-id routes, whose required
+// role is decided by the **data** rather than by the route: the role has to
+// be resolved before the caller can be judged, because the same path takes
+// realmRoles for a realm role and clientRoles for a client role. Both take a
+// slice rather than a single role, mirroring guardAny's contract - measured
+// directly rather than assumed from the by-name reads next door: a single
+// earlier measurement of view-realm and view-clients alone made this look
+// like a lone role, and manage-realm/manage-clients opening it too was found
+// on the second pass.
+//
+// The order matters and is measured too. The role is resolved first, so a
+// missing role answers 404 whatever the caller holds; deciding the 403 first
+// would turn this into a probe for which role ids exist.
+func (h *handler) guardByRoleContainer(realmRoles, clientRoles []string, next func(http.ResponseWriter, *http.Request, *reqContext, *model.Role)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		realm := h.resolveRealm(w, r)
+		if realm == nil {
+			return
+		}
+		c := h.resolveCaller(w, r, realm)
+		if c == nil {
+			return
+		}
+		role, err := h.store.Roles().ByID(r.Context(), realm.ID, r.PathValue("roleID"))
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeRoleIDNotFound(w)
+				return
+			}
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		required := realmRoles
+		if role.ClientID != "" {
+			required = clientRoles
+		}
+		if !c.hasAny(required) {
+			writeForbidden(w)
+			return
+		}
+		next(w, r, &reqContext{realm: realm, caller: c}, role)
+	}
 }
 
 // guardAnyRejecting is the one implementation the three wrappers share:

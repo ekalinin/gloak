@@ -833,3 +833,271 @@ func TestRoleUsersNeedsRoleManagementAndUserRead(t *testing.T) {
 		})
 	}
 }
+
+// TestRolesByIDGuardFollowsTheRolesContainer measures the rule that makes
+// roles-by-id its own task: the required role comes from the role that is
+// addressed, not from the route. Measured on a live 26.7.1 across all four
+// master-realm roles that could plausibly apply.
+//
+// **This corrects the plan's own brief.** The brief tried only view-realm and
+// view-clients and read that as a lone required role each. Trying
+// manage-realm and manage-clients too shows the read side is the same
+// view/manage pair the by-name reads take next door, just picked by the
+// resolved role's container rather than by the route: manage-realm alone
+// also opens a realm role by id, and manage-clients alone also opens a
+// client role by id. view-users opens neither.
+func TestRolesByIDGuardFollowsTheRolesContainer(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"probe-app","enabled":true}`, admin)
+	appBase := "/admin/realms/master/clients/" + clientUUID(t, s, realm, "probe-app") + "/roles"
+	postJSON(t, h, appBase, `{"name":"app-role"}`, admin)
+	clientRoleID := readRole(t, h, appBase+"/app-role", admin).ID
+	realmRoleID := readRole(t, h, "/admin/realms/master/roles/admin", admin).ID
+
+	// One token per role: tokenForRole mints a user named for the role, so
+	// asking for the same role twice (once per target below) would collide.
+	cases := map[string]struct{ wantRealm, wantClient int }{
+		"view-realm":     {http.StatusOK, http.StatusForbidden},
+		"manage-realm":   {http.StatusOK, http.StatusForbidden},
+		"view-clients":   {http.StatusForbidden, http.StatusOK},
+		"manage-clients": {http.StatusForbidden, http.StatusOK},
+		"view-users":     {http.StatusForbidden, http.StatusForbidden},
+	}
+	for role, want := range cases {
+		t.Run(role, func(t *testing.T) {
+			tok := tokenForRole(t, h, s, realm, role)
+			if got := get(t, h, "/admin/realms/master/roles-by-id/"+realmRoleID, tok).Code; got != want.wantRealm {
+				t.Fatalf("on a realm role: want %d, got %d", want.wantRealm, got)
+			}
+			if got := get(t, h, "/admin/realms/master/roles-by-id/"+clientRoleID, tok).Code; got != want.wantClient {
+				t.Fatalf("on a client role: want %d, got %d", want.wantClient, got)
+			}
+		})
+	}
+}
+
+// TestRolesByIDCompositesReadFollowsTheRolesContainer measures the same
+// view/manage pair on the three composite reads, checked separately rather
+// than assumed from the plain read above - the plan's own composites table
+// needed exactly that correction twice already for the by-name routes.
+func TestRolesByIDCompositesReadFollowsTheRolesContainer(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"probe-app","enabled":true}`, admin)
+	appBase := "/admin/realms/master/clients/" + clientUUID(t, s, realm, "probe-app") + "/roles"
+	postJSON(t, h, appBase, `{"name":"app-role"}`, admin)
+	clientRoleID := readRole(t, h, appBase+"/app-role", admin).ID
+	realmRoleID := readRole(t, h, "/admin/realms/master/roles/admin", admin).ID
+	mrUUID := clientUUID(t, s, realm, "master-realm")
+
+	cases := map[string]struct{ wantRealm, wantClient int }{
+		"view-realm":     {http.StatusOK, http.StatusForbidden},
+		"manage-realm":   {http.StatusOK, http.StatusForbidden},
+		"view-clients":   {http.StatusForbidden, http.StatusOK},
+		"manage-clients": {http.StatusForbidden, http.StatusOK},
+	}
+	for role, want := range cases {
+		t.Run(role, func(t *testing.T) {
+			tok := tokenForRole(t, h, s, realm, role)
+			for _, suffix := range []string{"/composites", "/composites/realm", "/composites/clients/" + mrUUID} {
+				if got := get(t, h, "/admin/realms/master/roles-by-id/"+realmRoleID+suffix, tok).Code; got != want.wantRealm {
+					t.Fatalf("%s on a realm role: want %d, got %d", suffix, want.wantRealm, got)
+				}
+				if got := get(t, h, "/admin/realms/master/roles-by-id/"+clientRoleID+suffix, tok).Code; got != want.wantClient {
+					t.Fatalf("%s on a client role: want %d, got %d", suffix, want.wantClient, got)
+				}
+			}
+		})
+	}
+}
+
+// TestRolesByIDWritesNeedManageAlone measures the write side: unlike the
+// reads above, PUT and DELETE admit only the manage role on the resolved
+// role's own side - view-realm/view-clients are refused, matching the
+// by-name writes next door.
+func TestRolesByIDWritesNeedManageAlone(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"probe-app","enabled":true}`, admin)
+	appBase := "/admin/realms/master/clients/" + clientUUID(t, s, realm, "probe-app") + "/roles"
+
+	// One token per role, checked against both a realm role and a client role,
+	// since tokenForRole mints a user named for the role and a second call
+	// with the same name would collide.
+	cases := map[string]struct{ wantRealm, wantClient int }{
+		"view-realm":     {http.StatusForbidden, http.StatusForbidden},
+		"view-clients":   {http.StatusForbidden, http.StatusForbidden},
+		"manage-realm":   {http.StatusNoContent, http.StatusForbidden},
+		"manage-clients": {http.StatusForbidden, http.StatusNoContent},
+	}
+	for role, want := range cases {
+		t.Run(role, func(t *testing.T) {
+			postJSON(t, h, "/admin/realms/master/roles", `{"name":"write-guard-realm-`+role+`"}`, admin)
+			postJSON(t, h, appBase, `{"name":"write-guard-client-`+role+`"}`, admin)
+			realmID := readRole(t, h, "/admin/realms/master/roles/write-guard-realm-"+role, admin).ID
+			clientID := readRole(t, h, appBase+"/write-guard-client-"+role, admin).ID
+			tok := tokenForRole(t, h, s, realm, role)
+			if got := putJSON(t, h, "/admin/realms/master/roles-by-id/"+realmID, `{"name":"write-guard-realm-`+role+`"}`, tok).Code; got != want.wantRealm {
+				t.Fatalf("PUT a realm role: want %d, got %d", want.wantRealm, got)
+			}
+			if got := putJSON(t, h, "/admin/realms/master/roles-by-id/"+clientID, `{"name":"write-guard-client-`+role+`"}`, tok).Code; got != want.wantClient {
+				t.Fatalf("PUT a client role: want %d, got %d", want.wantClient, got)
+			}
+		})
+	}
+}
+
+// TestRolesByIDCompositesWriteNeedsManageAlone measures POST and DELETE
+// .../composites the same way, with a child from the same family as the
+// parent - the case eachComposite exercises through this guard. Matches the
+// by-name composite writes' rule exactly: only the manage role on the
+// resolved role's own side, not the pair.
+func TestRolesByIDCompositesWriteNeedsManageAlone(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"probe-app","enabled":true}`, admin)
+	appBase := "/admin/realms/master/clients/" + clientUUID(t, s, realm, "probe-app") + "/roles"
+
+	cases := map[string]struct{ wantRealm, wantClient int }{
+		"view-realm":     {http.StatusForbidden, http.StatusForbidden},
+		"view-clients":   {http.StatusForbidden, http.StatusForbidden},
+		"manage-realm":   {http.StatusNoContent, http.StatusForbidden},
+		"manage-clients": {http.StatusForbidden, http.StatusNoContent},
+	}
+	for role, want := range cases {
+		t.Run(role, func(t *testing.T) {
+			postJSON(t, h, "/admin/realms/master/roles", `{"name":"composite-guard-realm-parent-`+role+`"}`, admin)
+			postJSON(t, h, "/admin/realms/master/roles", `{"name":"composite-guard-realm-child-`+role+`"}`, admin)
+			postJSON(t, h, appBase, `{"name":"composite-guard-client-parent-`+role+`"}`, admin)
+			postJSON(t, h, appBase, `{"name":"composite-guard-client-child-`+role+`"}`, admin)
+			realmParentID := readRole(t, h, "/admin/realms/master/roles/composite-guard-realm-parent-"+role, admin).ID
+			realmChild := readRole(t, h, "/admin/realms/master/roles/composite-guard-realm-child-"+role, admin)
+			clientParentID := readRole(t, h, appBase+"/composite-guard-client-parent-"+role, admin).ID
+			clientChild := readRole(t, h, appBase+"/composite-guard-client-child-"+role, admin)
+			tok := tokenForRole(t, h, s, realm, role)
+
+			realmBody := `[{"id":"` + realmChild.ID + `","name":"` + realmChild.Name + `"}]`
+			if got := postJSON(t, h, "/admin/realms/master/roles-by-id/"+realmParentID+"/composites", realmBody, tok).Code; got != want.wantRealm {
+				t.Fatalf("POST composites, realm parent + realm child: want %d, got %d", want.wantRealm, got)
+			}
+			clientBody := `[{"id":"` + clientChild.ID + `","name":"` + clientChild.Name + `"}]`
+			if got := postJSON(t, h, "/admin/realms/master/roles-by-id/"+clientParentID+"/composites", clientBody, tok).Code; got != want.wantClient {
+				t.Fatalf("POST composites, client parent + client child: want %d, got %d", want.wantClient, got)
+			}
+		})
+	}
+}
+
+// TestRolesByIDCompositesWriteAcrossFamiliesNeedsBothManageRoles measures a
+// case neither the plan's brief nor the previously recorded composites-write
+// table considered: the composite **child**'s own container matters too, not
+// only the parent's. Measured directly against a live 26.7.1 - manage-clients
+// alone (which opens POST .../composites for a client-role parent when the
+// child is also a client role, per the test above) is refused when the child
+// is a realm role instead, and the mirror holds for manage-realm with a
+// client-role child on a realm-role parent. Only holding both together opens
+// either route in that case.
+//
+// This is a real gap: guardByRoleContainer, like eachComposite underneath it,
+// decides from the parent's container alone and cannot see the body, so a
+// caller holding only the parent-side manage role is - by this measurement -
+// let through by Gloak where a live Keycloak would refuse it. Fixing that
+// would mean checking every child's own container inside eachComposite,
+// after decoding the body and before applying anything, which is out of this
+// task's scope (it would also change the by-name composite writes from
+// Tasks 5-7). Recorded here, and in the observed-behaviour document, as a
+// known gap rather than silently accepted.
+func TestRolesByIDCompositesWriteAcrossFamiliesNeedsBothManageRoles(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"probe-app","enabled":true}`, admin)
+	appBase := "/admin/realms/master/clients/" + clientUUID(t, s, realm, "probe-app") + "/roles"
+
+	postJSON(t, h, "/admin/realms/master/roles", `{"name":"cross-family-realm-parent"}`, admin)
+	postJSON(t, h, "/admin/realms/master/roles", `{"name":"cross-family-realm-child"}`, admin)
+	postJSON(t, h, appBase, `{"name":"cross-family-client-parent"}`, admin)
+	postJSON(t, h, appBase, `{"name":"cross-family-client-child"}`, admin)
+	realmParentID := readRole(t, h, "/admin/realms/master/roles/cross-family-realm-parent", admin).ID
+	realmChild := readRole(t, h, "/admin/realms/master/roles/cross-family-realm-child", admin)
+	clientParentID := readRole(t, h, appBase+"/cross-family-client-parent", admin).ID
+	clientChild := readRole(t, h, appBase+"/cross-family-client-child", admin)
+
+	// grant assigns the named master-realm roles to a fresh user and returns a
+	// token for it - tokenForRole cannot express more than one role per user.
+	grant := func(t *testing.T, username string, roleNames ...string) string {
+		t.Helper()
+		ctx := context.Background()
+		container, err := s.Clients().ByClientID(ctx, realm.ID, "master-realm")
+		if err != nil {
+			t.Fatalf("ByClientID: %v", err)
+		}
+		u := createUserWithPassword(t, s, realm, username, "pw")
+		for _, name := range roleNames {
+			r, err := s.Roles().ByName(ctx, realm.ID, container.ID, name)
+			if err != nil {
+				t.Fatalf("ByName(%s): %v", name, err)
+			}
+			if err := s.Roles().AssignToUser(ctx, u.ID, r.ID); err != nil {
+				t.Fatalf("AssignToUser(%s): %v", name, err)
+			}
+		}
+		return tokenFor(t, h, username, "pw")
+	}
+
+	clientChildOnRealmParent := `[{"id":"` + clientChild.ID + `","name":"` + clientChild.Name + `"}]`
+	realmChildOnClientParent := `[{"id":"` + realmChild.ID + `","name":"` + realmChild.Name + `"}]`
+
+	mrOnly := grant(t, "cross-family-mr-only", "manage-realm")
+	if got := postJSON(t, h, "/admin/realms/master/roles-by-id/"+realmParentID+"/composites", clientChildOnRealmParent, mrOnly).Code; got != http.StatusForbidden {
+		t.Fatalf("manage-realm alone, client child on a realm parent: want 403, got %d", got)
+	}
+
+	mcOnly := grant(t, "cross-family-mc-only", "manage-clients")
+	if got := postJSON(t, h, "/admin/realms/master/roles-by-id/"+clientParentID+"/composites", realmChildOnClientParent, mcOnly).Code; got != http.StatusForbidden {
+		t.Fatalf("manage-clients alone, realm child on a client parent: want 403, got %d", got)
+	}
+
+	both := grant(t, "cross-family-both", "manage-realm", "manage-clients")
+	if got := postJSON(t, h, "/admin/realms/master/roles-by-id/"+realmParentID+"/composites", clientChildOnRealmParent, both).Code; got != http.StatusNoContent {
+		t.Fatalf("both roles, client child on a realm parent: want 204, got %d", got)
+	}
+	if got := postJSON(t, h, "/admin/realms/master/roles-by-id/"+clientParentID+"/composites", realmChildOnClientParent, both).Code; got != http.StatusNoContent {
+		t.Fatalf("both roles, realm child on a client parent: want 204, got %d", got)
+	}
+}
+
+// TestRolesByIDReportsMissingBeforeForbidden measures the ordering: a missing
+// role answers 404 whatever the caller holds, so this endpoint never becomes
+// a probe for which role ids exist. The message is its own -
+// "Could not find role with id" - not writeRoleNotFound's "Could not find
+// role".
+func TestRolesByIDReportsMissingBeforeForbidden(t *testing.T) {
+	h, s, realm := newServer(t)
+	tok := tokenForRole(t, h, s, realm, "view-users") // opens nothing here
+
+	w := get(t, h, "/admin/realms/master/roles-by-id/00000000-0000-0000-0000-000000000000", tok)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d: %s", w.Code, w.Body)
+	}
+	if body := w.Body.String(); body != `{"error":"Could not find role with id"}` {
+		t.Fatalf("unexpected body: %s", body)
+	}
+}
+
+func TestRolesByIDUpdatesAndDeletes(t *testing.T) {
+	h, _, _ := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/roles", `{"name":"probe-role","description":"before"}`, admin)
+	id := readRole(t, h, "/admin/realms/master/roles/probe-role", admin).ID
+
+	if got := putJSON(t, h, "/admin/realms/master/roles-by-id/"+id, `{"name":"probe-role"}`, admin).Code; got != http.StatusNoContent {
+		t.Fatalf("update: want 204, got %d", got)
+	}
+	if d := readRole(t, h, "/admin/realms/master/roles/probe-role", admin).Description; d != "" {
+		t.Fatalf("roles-by-id PUT merged instead of replacing: %q", d)
+	}
+	if got := do(t, h, http.MethodDelete, "/admin/realms/master/roles-by-id/"+id, admin).Code; got != http.StatusNoContent {
+		t.Fatalf("delete: want 204, got %d", got)
+	}
+}
