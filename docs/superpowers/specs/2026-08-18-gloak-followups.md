@@ -19,7 +19,7 @@ more than a tidy list.
 measured divergence between Gloak and Keycloak, left unfixed on purpose and
 scoped to its own task. Its final whole-branch review then **closed F24** -
 the divergence turned out to be a privilege-escalation path, and its recorded
-fix location turned out to be wrong - and opened F25 through F28. **F28 is the
+fix location turned out to be wrong - and opened F25 through F29. **F28 is the
 one to read first**: it is a second escalation path, measured on the same day,
 and left open because the naive fix is falsified by the measurement.
 
