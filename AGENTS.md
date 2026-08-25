@@ -320,13 +320,14 @@ Three sources, in order of how much they cost:
 
 A mined case goes: read the upstream assertion, measure the same thing against
 a live 26.7.1, then add the `Case` under the status the measurement earns. One
-Gloak does not serve yet goes in as `Recorded` with a `Reason`, and
-`make record`'s passing diff is what promotes it to `Implemented`; one Gloak
-already serves goes in as `Implemented` directly, with no `Reason`, because a
-`Recorded` case that matches its golden is a hard failure - see `case.go`'s
-`Recorded` doc comment. Cite the upstream file and test method in
-`Case.Doc.Section`. Nothing is copied out of `.kc-testsuite/`: upstream is
-Apache-2.0 and this repository carries no upstream source.
+Gloak does not serve yet goes in as `Recorded` with a `Reason`, and it is
+`make test`'s `TestConformance` failing with "already matches" that tells you
+to promote it to `Implemented`; one Gloak already serves goes in as
+`Implemented` directly, with no `Reason`, because a `Recorded` case that
+matches its golden is a hard failure - see `case.go`'s `Recorded` doc comment.
+Cite the upstream file and test method in `Case.Doc.Section`. Nothing is
+copied out of `.kc-testsuite/`: upstream is Apache-2.0 and this repository
+carries no upstream source.
 
 **Most mined cases pass on the first run, and that is the expected outcome.**
 An already-correct behaviour with a golden under it is one the next refactor
