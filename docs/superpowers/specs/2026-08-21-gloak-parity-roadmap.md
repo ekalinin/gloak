@@ -198,10 +198,12 @@ operations is allocated below; none is left unassigned.
 | **P13** | Themes, i18n, account console, admin console | P5 | - | not in OpenAPI |
 | **P14** | Operational parity | P4 | events and audit, SMTP, health and metrics, clustering | not in OpenAPI |
 
-Denominator today: **413 Admin API operations plus 70 protocol behaviours, 483
+Denominator today: **413 Admin API operations plus 72 protocol behaviours, 485
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **25** after
-P1, up from 8.
+surface is not counted and which the report says so about. Served: **89** after
+the roles half of P2's second cut, up from 8 before P1 and 25 after it. Section
+2 records how the denominator moved from 483 to 485 and where each step of the
+numerator came from.
 
 P1 did not close its four chapters outright, and the remainder is worth naming
 rather than leaving as a subtraction. Nine `oidc/token` cases need the
