@@ -243,4 +243,9 @@ type Role struct {
 	Name        string
 	Description string
 	Composite   bool
+	// Attributes are stored and read back verbatim. Measured: a role keeps
+	// them, where a user's are dropped because the declarative user profile
+	// rejects unmanaged attributes. Nothing here reads one; Keycloak gives
+	// some of them meaning and that is P5's problem.
+	Attributes map[string][]string
 }

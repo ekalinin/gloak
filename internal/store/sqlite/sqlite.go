@@ -408,8 +408,13 @@ func (r *userRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.Us
 	if err != nil {
 		return nil, classify(err)
 	}
-	defer rows.Close()
+	return scanUsers(rows)
+}
 
+// scanUsers drains a user query. ListByRealm and RoleRepo.ListUsersWithRole
+// select the same row, so the loop lives once.
+func scanUsers(rows *sql.Rows) ([]*model.User, error) {
+	defer rows.Close()
 	var out []*model.User
 	for rows.Next() {
 		m, err := scanUser(rows)
@@ -550,19 +555,39 @@ func scanCredential(row scanner) (*model.Credential, error) {
 
 type roleRepo struct{ db *sql.DB }
 
+// Create writes the role row and its attributes in one transaction, so a
+// role with attributes never exists half-written.
 func (r *roleRepo) Create(ctx context.Context, m *model.Role) error {
-	_, err := r.db.ExecContext(ctx,
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO keycloak_role (id, realm_id, client_id, name, description, composite)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
-		m.ID, m.RealmID, m.ClientID, m.Name, m.Description, m.Composite)
-	return classify(err)
+		m.ID, m.RealmID, m.ClientID, m.Name, m.Description, m.Composite); err != nil {
+		return classify(err)
+	}
+	if err := insertRoleAttributes(ctx, tx, m); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *roleRepo) ByName(ctx context.Context, realmID, clientID, name string) (*model.Role, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT id, realm_id, client_id, name, description, composite
 		 FROM keycloak_role WHERE realm_id = ? AND client_id = ? AND name = ?`, realmID, clientID, name)
-	return scanRole(row)
+	m, err := scanRole(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadRoleAttributes(ctx, []*model.Role{m}); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // ListRealmRoles returns realm-level roles, which are stored with an empty
@@ -574,24 +599,28 @@ func (r *roleRepo) ListRealmRoles(ctx context.Context, realmID string) ([]*model
 	if err != nil {
 		return nil, classify(err)
 	}
-	defer rows.Close()
-
-	var out []*model.Role
-	for rows.Next() {
-		m, err := scanRole(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, m)
+	out, err := collectRoles(rows)
+	if err != nil {
+		return nil, err
 	}
-	return out, classify(rows.Err())
+	if err := r.loadRoleAttributes(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (r *roleRepo) ByID(ctx context.Context, realmID, id string) (*model.Role, error) {
 	row := r.db.QueryRowContext(ctx,
 		`SELECT id, realm_id, client_id, name, description, composite
 		 FROM keycloak_role WHERE realm_id = ? AND id = ?`, realmID, id)
-	return scanRole(row)
+	m, err := scanRole(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadRoleAttributes(ctx, []*model.Role{m}); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // ListClientRoles returns the roles a client owns, the counterpart of
@@ -603,7 +632,85 @@ func (r *roleRepo) ListClientRoles(ctx context.Context, realmID, clientID string
 	if err != nil {
 		return nil, classify(err)
 	}
-	return collectRoles(rows)
+	out, err := collectRoles(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadRoleAttributes(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Update writes the role back whole. Attributes are deleted and re-inserted
+// rather than merged, in the same transaction as the row, because PUT on a
+// role replaces - see the endpoint above it.
+func (r *roleRepo) Update(ctx context.Context, m *model.Role) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE keycloak_role SET name = ?, description = ?, composite = ?
+		 WHERE id = ?`,
+		m.Name, m.Description, m.Composite, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	if err := affectedOne(res); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM role_attribute WHERE role_id = ?`, m.ID); err != nil {
+		return err
+	}
+	if err := insertRoleAttributes(ctx, tx, m); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Delete removes the role and, in the same transaction, clears the composite
+// flag on any parent whose last remaining child this was.
+//
+// The composite_role rows cascade away with the role, but `composite` is a
+// column on the *parent*, and the parent is not the row being deleted, so
+// nothing else would resync it: the parent would keep answering
+// `"composite":true` while its composites listing answered `[]`. The flag is
+// derived - true exactly when the role has children, measured in both
+// directions - so it cannot be allowed to outlive the last child.
+//
+// This is in the driver rather than in the three handlers that delete a role
+// (deleteRealmRole, deleteClientRole, deleteRoleByID) so that staleness is
+// impossible by construction: any future caller of Delete gets it too, without
+// having to know the rule exists.
+func (r *roleRepo) Delete(ctx context.Context, realmID, id string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE keycloak_role SET composite = 0
+		 WHERE id IN (SELECT composite FROM composite_role WHERE child_role = ?)
+		   AND NOT EXISTS (SELECT 1 FROM composite_role c
+		                   WHERE c.composite = keycloak_role.id AND c.child_role <> ?)`,
+		id, id); err != nil {
+		return classify(err)
+	}
+	res, err := tx.ExecContext(ctx,
+		`DELETE FROM keycloak_role WHERE realm_id = ? AND id = ?`, realmID, id)
+	if err != nil {
+		return classify(err)
+	}
+	// Before the commit on purpose: a role that is not there must leave the
+	// flags it never touched alone, so the rollback takes the UPDATE with it.
+	if err := affectedOne(res); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *roleRepo) AddComposite(ctx context.Context, roleID, childRoleID string) error {
@@ -621,7 +728,23 @@ func (r *roleRepo) ListComposites(ctx context.Context, roleID string) ([]*model.
 	if err != nil {
 		return nil, classify(err)
 	}
-	return collectRoles(rows)
+	out, err := collectRoles(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadRoleAttributes(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// RemoveComposite reports no error when the pair is not there: DELETE
+// .../composites was measured answering 204 for a role that was never a child.
+func (r *roleRepo) RemoveComposite(ctx context.Context, roleID, childRoleID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM composite_role WHERE composite = ? AND child_role = ?`,
+		roleID, childRoleID)
+	return classify(err)
 }
 
 func (r *roleRepo) AssignToUser(ctx context.Context, userID, roleID string) error {
@@ -648,7 +771,84 @@ func (r *roleRepo) ListUserRoles(ctx context.Context, userID string) ([]*model.R
 	if err != nil {
 		return nil, classify(err)
 	}
-	return collectRoles(rows)
+	out, err := collectRoles(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadRoleAttributes(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ListUsersWithRole is the **direct** holders, ordered by username so a
+// listing is deterministic. It must not expand composites: measured,
+// /roles/create-realm/users is empty even though the administrator reaches
+// that role through `admin`.
+func (r *roleRepo) ListUsersWithRole(ctx context.Context, realmID, roleID string) ([]*model.User, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT u.id, u.realm_id, u.username, u.email, u.email_verified, u.enabled,
+		        u.first_name, u.last_name, u.created_timestamp, u.attributes, u.required_actions, u.not_before
+		 FROM user_entity u
+		 JOIN user_role_mapping m ON m.user_id = u.id
+		 WHERE u.realm_id = ? AND m.role_id = ?
+		 ORDER BY u.username`, realmID, roleID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return scanUsers(rows)
+}
+
+// insertRoleAttributes writes every value of every attribute, ordinal by
+// position in the slice, so the order the caller gave them in round-trips.
+func insertRoleAttributes(ctx context.Context, tx *sql.Tx, m *model.Role) error {
+	for name, values := range m.Attributes {
+		for i, v := range values {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO role_attribute (role_id, name, value, ordinal) VALUES (?, ?, ?, ?)`,
+				m.ID, name, v, i); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// loadRoleAttributes fills Attributes on roles already scanned. It runs one
+// query for the whole set rather than one per role: ListClientRoles returns 21
+// on the admin container alone.
+func (r *roleRepo) loadRoleAttributes(ctx context.Context, roles []*model.Role) error {
+	if len(roles) == 0 {
+		return nil
+	}
+	byID := make(map[string]*model.Role, len(roles))
+	ids := make([]any, 0, len(roles))
+	placeholders := make([]string, 0, len(roles))
+	for _, role := range roles {
+		byID[role.ID] = role
+		ids = append(ids, role.ID)
+		placeholders = append(placeholders, "?")
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT role_id, name, value FROM role_attribute
+		 WHERE role_id IN (`+strings.Join(placeholders, ",")+`)
+		 ORDER BY role_id, name, ordinal`, ids...)
+	if err != nil {
+		return classify(err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var roleID, name, value string
+		if err := rows.Scan(&roleID, &name, &value); err != nil {
+			return err
+		}
+		role := byID[roleID]
+		if role.Attributes == nil {
+			role.Attributes = map[string][]string{}
+		}
+		role.Attributes[name] = append(role.Attributes[name], value)
+	}
+	return rows.Err()
 }
 
 // collectRoles drains a role query. Every role listing scans the same six

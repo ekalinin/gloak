@@ -1321,4 +1321,744 @@ var adminCases = []Case{
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},
+
+	// --- Roles ---
+	{
+		ID: "admin/roles/list-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get all roles for the realm or client",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/roles",
+		// The realm's five roles and nothing else, so it has to run before any
+		// fixture has created one. See Case.PristineRealm.
+		PristineRealm: true,
+		Fixture:       "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		// The order is a Java set's and was measured differing on three
+		// consecutive container starts. "." is the document root - this is the
+		// case Task 1 exists for.
+		Unordered: []string{"."},
+		Volatile:  []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/roles/read-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get a role by name",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/roles/{role-name}",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles/admin",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"id", "containerId"},
+	},
+	{
+		// A role created through the API, read back by the name it was given -
+		// the round trip Location alone cannot prove.
+		ID: "admin/roles/read-created",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get a role by name",
+			Retrieved: "2026-08-23",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-realm-role",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles/gloak-probe-role",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+		Volatile:      []string{"id", "containerId"},
+	},
+	{
+		ID: "admin/roles/not-found",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get a role by name",
+			Retrieved: "2026-08-23",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles/no-such-role",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/roles/create",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: create a new role for the realm or client",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/roles",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/roles",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-role-create","description":"a probe"}`),
+		},
+		// Measured: 201, empty body, Location naming the role by name rather
+		// than by id. Still masked - see clientFixture's Location for why: the
+		// recorder and the verifier serve from different hosts, and only the
+		// body passes through ReplaceIssuer, not a header compared raw.
+		AssertHeaders:       []string{"Location"},
+		VolatileHeaders:     []string{"Location"},
+		AssertAbsentHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/roles/create-duplicate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: create a new role, conflicting name",
+			Retrieved: "2026-08-23",
+		},
+		Status: Implemented,
+		// No Operation: a rejection, not a demonstration that create works.
+		Fixture: "admin-token-realm-role",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/roles",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-role"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/roles/create-without-name",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: create a new role, no name",
+			Retrieved: "2026-08-23",
+		},
+		Status: Implemented,
+		// No Operation: a rejection. Lowercase "role has no name", where the
+		// 404 two cases up is sentence case and the 409 above is a third shape
+		// again - three error families on one endpoint.
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/roles",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"description":"no name"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/roles/update",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: update a role by name",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/roles/{role-name}",
+		Fixture:   "admin-token-role-to-update",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/roles/gloak-probe-role-update",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-role-update","description":"renamed"}`),
+		},
+		// A JSON request body, so this 204 carries X-Frame-Options - see
+		// httpx.WriteNoContent.
+		AssertHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "admin/roles/delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: delete a role by name",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/roles/{role-name}",
+		Fixture:   "admin-token-role-to-delete",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/roles/gloak-probe-role-delete",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		// Direct holders only - the administrator holds admin directly. See
+		// "/roles/{name}/users is direct holders only" in the observed doc.
+		ID: "admin/roles/users",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get the users that have the specified role name",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/roles/{role-name}/users",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles/admin/users",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/createdTimestamp"},
+	},
+	{
+		// Always [] - the realm has no groups until P2's third cut. See
+		// roleGroups in internal/admin/roles.go.
+		ID: "admin/roles/groups",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get the groups that have the specified role name",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/roles/{role-name}/groups",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles/admin/groups",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/roles/composites-list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get composites of the role",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/roles/{role-name}/composites",
+		Fixture:   "admin-token-composite-parent",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles/gloak-probe-composite-parent/composites",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		// Two children, realm and client family mixed - order not measured
+		// stable, same family as the plain listing above.
+		Unordered: []string{"."},
+		Volatile:  []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/roles/composites-realm-filter",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get realm-level roles of the role's composite",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/roles/{role-name}/composites/realm",
+		Fixture:   "admin-token-composite-parent",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles/gloak-probe-composite-parent/composites/realm",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/roles/composites-clients-filter",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get client-level roles for the client that are in the role's composite",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/roles/{role-name}/composites/clients/{targetClientUuid}",
+		Fixture:   "admin-token-composite-parent",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles/gloak-probe-composite-parent/composites/clients/{{client_uuid}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/roles/composites-add",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: add a composite to the role",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/roles/{role-name}/composites",
+		Fixture:   "admin-token-composite-parent",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/roles/gloak-probe-composite-parent/composites",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			// Already a child by the time this runs - the fixture links it.
+			// Measured idempotent: 204, not 409. See compositeParentFixture.
+			Body: []byte(`[{"id":"{{child_realm_id}}"}]`),
+		},
+		AssertHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "admin/roles/composites-remove",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: remove roles from the role's composite",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/roles/{role-name}/composites",
+		Fixture:   "admin-token-composite-parent",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path:   "/admin/realms/master/roles/gloak-probe-composite-parent/composites",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{child_realm_id}}"}]`),
+		},
+		AssertHeaders: []string{"X-Frame-Options"},
+	},
+
+	// --- Client roles ---
+	{
+		ID: "admin/roles/list-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get all roles for the realm or client, client roles",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/roles",
+		Fixture:   "admin-token-client-role-container",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/roles",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/roles/read-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get a role by name, client role",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/roles/{role-name}",
+		Fixture:   "admin-token-client-role-container",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/roles/gloak-probe-client-role",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"id", "containerId"},
+	},
+	{
+		ID: "admin/roles/create-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: create a new role for the realm or client, client role",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/clients/{client-uuid}/roles",
+		Fixture:   "admin-token-role-create-container",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/roles",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-client-role-created"}`),
+		},
+		AssertHeaders:       []string{"Location"},
+		VolatileHeaders:     []string{"Location"},
+		AssertAbsentHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/roles/update-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: update a role by name, client role",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/clients/{client-uuid}/roles/{role-name}",
+		Fixture:   "admin-token-client-role-to-update",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/roles/gloak-probe-client-role-update",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-client-role-update","description":"renamed"}`),
+		},
+		AssertHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "admin/roles/delete-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: delete a role by name, client role",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/clients/{client-uuid}/roles/{role-name}",
+		Fixture:   "admin-token-client-role-to-delete",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/roles/gloak-probe-client-role-delete",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "admin/roles/users-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get the users that have the specified role name, client role",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/roles/{role-name}/users",
+		Fixture:   "admin-token-client-role-container",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/roles/gloak-probe-client-role/users",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/roles/groups-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get the groups that have the specified role name, client role",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/roles/{role-name}/groups",
+		Fixture:   "admin-token-client-role-container",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/roles/gloak-probe-client-role/groups",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/roles/composites-list-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get composites of the role, client role",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/roles/{role-name}/composites",
+		Fixture:   "admin-token-composite-parent-client",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/roles/gloak-probe-composite-client-role-parent/composites",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/roles/composites-realm-filter-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get realm-level roles of the role's composite, client role",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/roles/{role-name}/composites/realm",
+		Fixture:   "admin-token-composite-parent-client",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/roles/gloak-probe-composite-client-role-parent/composites/realm",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/roles/composites-clients-filter-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get client-level roles for the client that are in the role's composite, client role",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/roles/{role-name}/composites/clients/{targetClientUuid}",
+		Fixture:   "admin-token-composite-parent-client",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/roles/gloak-probe-composite-client-role-parent/composites/clients/{{client_uuid}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/roles/composites-add-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: add a composite to the role, client role",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/clients/{client-uuid}/roles/{role-name}/composites",
+		Fixture:   "admin-token-composite-parent-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/roles/gloak-probe-composite-client-role-parent/composites",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{child_realm_id}}"}]`),
+		},
+		AssertHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "admin/roles/composites-remove-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: remove roles from the role's composite, client role",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/clients/{client-uuid}/roles/{role-name}/composites",
+		Fixture:   "admin-token-composite-parent-client",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/roles/gloak-probe-composite-client-role-parent/composites",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{child_realm_id}}"}]`),
+		},
+		AssertHeaders: []string{"X-Frame-Options"},
+	},
+
+	// --- Roles by id ---
+	{
+		ID: "admin/roles-by-id/not-found",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles (by ID): get a specific role",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/roles-by-id/{role-id}",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles-by-id/00000000-0000-0000-0000-000000000000",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The successful read the case above's 404 does not demonstrate: the
+		// full seven-key representation, addressed by id.
+		ID: "admin/roles-by-id/read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles (by ID): get a specific role's representation",
+			Retrieved: "2026-08-23",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-composite-parent",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles-by-id/{{parent_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"id", "containerId"},
+	},
+	{
+		ID: "admin/roles-by-id/update",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles (by ID): update the role",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/roles-by-id/{role-id}",
+		Fixture:   "admin-token-composite-parent",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/roles-by-id/{{parent_id}}",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			// Same name, so this stays a no-op on content: other cases share
+			// this fixture's parent and must still see it unchanged. See
+			// compositeParentFixture.
+			Body: []byte(`{"name":"gloak-probe-composite-parent"}`),
+		},
+		AssertHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "admin/roles-by-id/delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles (by ID): delete the role",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/roles-by-id/{role-id}",
+		Fixture:   "admin-token-composite-parent",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/roles-by-id/{{parent_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "admin/roles-by-id/composites-list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles (by ID): get role's children",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/roles-by-id/{role-id}/composites",
+		Fixture:   "admin-token-composite-parent",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles-by-id/{{parent_id}}/composites",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/roles-by-id/composites-realm-filter",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles (by ID): get realm-level roles that are in the role's composite",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/roles-by-id/{role-id}/composites/realm",
+		Fixture:   "admin-token-composite-parent",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles-by-id/{{parent_id}}/composites/realm",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/roles-by-id/composites-clients-filter",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles (by ID): get client-level roles for the client that are in the role's composite",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/roles-by-id/{role-id}/composites/clients/{clientUuid}",
+		Fixture:   "admin-token-composite-parent",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles-by-id/{{parent_id}}/composites/clients/{{client_uuid}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/roles-by-id/composites-add",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles (by ID): make the role a composite role by associating some child roles",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/roles-by-id/{role-id}/composites",
+		Fixture:   "admin-token-composite-parent",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/roles-by-id/{{parent_id}}/composites",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{child_realm_id}}"}]`),
+		},
+		AssertHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "admin/roles-by-id/composites-remove",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles (by ID): remove a set of roles from the role's composite",
+			Retrieved: "2026-08-23",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/roles-by-id/{role-id}/composites",
+		Fixture:   "admin-token-composite-parent",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path:   "/admin/realms/master/roles-by-id/{{parent_id}}/composites",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{child_realm_id}}"}]`),
+		},
+		AssertHeaders: []string{"X-Frame-Options"},
+	},
 }

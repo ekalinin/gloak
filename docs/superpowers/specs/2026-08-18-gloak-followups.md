@@ -15,6 +15,14 @@ F19. F18 was then closed the same day and opened F20 through F23. Closed
 entries keep their text: the reasoning that turned out to be wrong is worth
 more than a tidy list.
 
+**Status, 2026-08-25.** The roles half of P2's second cut opened F24: a
+measured divergence between Gloak and Keycloak, left unfixed on purpose and
+scoped to its own task. Its final whole-branch review then **closed F24** -
+the divergence turned out to be a privilege-escalation path, and its recorded
+fix location turned out to be wrong - and opened F25 through F29. **F28 is the
+one to read first**: it is a second escalation path, measured on the same day,
+and left open because the naive fix is falsified by the measurement.
+
 ## F3: two shipped endpoints have no measured contract (closed)
 
 `docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md` records the token
@@ -341,6 +349,12 @@ narrow-role caller has to build one through the API in both the reference
 container and Gloak. `internal/admin`'s own tests cover what they can:
 TestQueryUsersOpensTheListingButNotTheRead pins the status codes.
 
+Role assignment does not arrive with the roles half of the second cut, the
+work this entry's own measurements came out of - `Role Mapper` and `Client
+Role Mappings`' user halves are the second half of that cut, still to be
+built. So this stays open, and its conformance case with it, until that half
+lands.
+
 ## F18: tokens carry no roles, so `aud` is wrong and introspection is too permissive (closed)
 
 **Closed 2026-08-23.** Roles are resolved at issuance, `aud` is derived from
@@ -508,3 +522,251 @@ diff, which is how a recorder's output stops being read.
 All three are `Pending`, so nothing compares them and nothing is at risk yet.
 The fix is a normalisation pass replacing the resource version, and it belongs
 with P3, which is when these bodies start being served and compared.
+
+## F24: a composite write onto the realm's own client's role diverges from Keycloak (closed)
+
+**Closed 2026-08-25** by the final fix wave of `feat/p2-roles`, commit
+"fix(admin): refuse composite writes on the realm's own client's roles".
+Closed in full: `POST` and `DELETE .../composites` on a role the
+`{realm}-realm` client owns now answer 403 on both the by-name and the
+`roles-by-id` routes, matching the measurement, and `GET .../composites` still
+answers 200. Nothing of F24 remains open. The neighbouring question it raised
+but did not itself cover - `PUT` and `DELETE` of those roles - is **F26**, and
+it is not a leftover of F24 but an unmeasured behaviour of its own.
+
+**The fix location recorded below was wrong**, and is corrected here rather
+than deleted, because the reasoning that was wrong is the point. It said the
+fix belonged in `clientRoleContainer`, "which `roles-by-id` already shares"
+through `clientRoleLocator`. `roles-by-id` shares no such thing: the
+`roles-by-id` routes are registered with `guardByRoleContainer`
+(`internal/admin/router.go`), which resolves the role itself with
+`Roles().ByID` and hands it to `byIDLocator`, so `clientRoleContainer` never
+runs on them. A task obeying the text below would have closed
+`POST /clients/{uuid}/roles/{name}/composites` and left
+`POST /roles-by-id/{master-realm client role id}/composites` wide open - the
+same escalation by a different path.
+
+The check went into `eachComposite` instead, which is the one place the
+by-name and by-id families meet, and `TestTheRealmsOwnClientRefusesCompositeWrites`
+exercises both so the two cannot drift apart again.
+
+It was also more serious than the 204-vs-403 the text below describes. A
+caller holding only `manage-clients` could `POST` a composite onto
+`master-realm`'s own `manage-clients` role naming **`manage-realm`** as the
+child: the route guard wants `manage-clients`, and the per-child
+`requiresChildManageRole` wants `manage-clients` too, because `manage-realm`
+is itself a client role on that same client. Every check passed, and
+`roles.Effective` returned `manage-realm` on the next request. Nothing outside
+could mint a narrow-role admin while it was open.
+
+The original entry, unedited:
+
+Measured while building `roles-by-id` (P2's second cut, Task 9). Keycloak
+refuses `POST /clients/{master-realm uuid}/roles` outright - the realm's own
+client takes no new role from anybody, and that much Gloak already matches.
+The same refusal turns out to extend further than a create: writing a
+composite onto a role the realm's own client **already has** is refused too,
+even to the full administrator:
+
+```
+POST /admin/realms/master/clients/{master-realm uuid}/roles/query-groups/composites
+Authorization: Bearer <full administrator token>
+Body: [{"id":"...","name":"byname-child-role"}]
+
+HTTP/1.1 403 Forbidden
+{"error":"HTTP 403 Forbidden"}
+```
+
+**Gloak answers 204 to the identical request.** `clientRoleContainer` in
+`internal/admin/roles.go`, which every client-role-composite route reaches
+through `clientRoleLocator`, has no check for `c.ClientID ==
+rc.realm.Name+"-realm"` - only `createClientRole` carries it. Confirmed
+directly against Gloak, not only reasoned from the source.
+
+Left unfixed on purpose. The fix belongs in `clientRoleContainer`, which
+`readClientRole`, `updateClientRole`, `deleteClientRole`, the composite
+routes and `roles-by-id` (through `clientRoleLocator`) all already share -
+several of them shipped in earlier tasks of this same cut. Deciding which of
+those should gain the check, and whether it belongs in `clientRoleContainer`
+itself or only at the composite call sites, needs its own deliberate task
+rather than a fold-in here. Full transcript and reasoning: the "Roles" section
+of `2026-08-18-keycloak-26.7.1-observed.md`, under "Which role each role
+operation needs".
+
+## F25: `first` and `max` are ignored on every role listing
+
+Opened by the final whole-branch review of `feat/p2-roles`, 2026-08-25.
+
+Every role listing this cut shipped reads only `search` and
+`briefRepresentation` off the query string. `first` and `max` are accepted and
+silently dropped. That covers `GET /roles`, `GET /clients/{uuid}/roles`, and
+the composite listings - `filterRoles` and `writeRoleList` in
+`internal/admin/roles.go` are the whole of the parameter handling.
+
+The user listing next door implements both (`internal/admin/users.go`), so
+this is an inconsistency inside Gloak as well as a divergence: two listings in
+the same API, one of which pages.
+
+Keycloak pages these. The "The realm role listing is not sorted" section of
+`2026-08-18-keycloak-26.7.1-observed.md` already records that `first`/`max`
+page in the listing's own order, so the parameters were observed working -
+what is unmeasured is the detail: what a `first` past the end answers, whether
+`max=0` is an empty list or ignored, whether they apply before or after
+`search`, and whether the composite listings take them at all.
+
+**These operations are marked `Implemented` in `internal/conformance` and
+counted in the meter**, so the published number overstates what is served.
+Whatever fixes this should decide whether "implemented" needs to mean "every
+query parameter", or whether the catalog needs a way to say "implemented
+except for these parameters" - the second is probably right, and is a change
+to the conformance model rather than to the roles code.
+
+## F26: `PUT` and `DELETE` on the realm's own client's roles are not refused
+
+Opened by the final whole-branch review of `feat/p2-roles`, 2026-08-25.
+Neighbour of F24, and deliberately not folded into it.
+
+`createClientRole` refuses `POST /clients/{{realm}-realm uuid}/roles`, and as
+of F24's fix `eachComposite` refuses both composite writes on those roles.
+`updateClientRole` and `deleteClientRole` refuse neither, and neither does
+`roles-by-id`. So a caller holding `manage-clients` can `DELETE` the
+`master-realm` client's `view-users` role outright, which cascades its
+`user_role_mapping` rows away with it and silently strips the right from every
+user that held it.
+
+**Keycloak's behaviour here is unmeasured.** F24 is evidence that the "the
+realm's own client is never configurable" rule extends past create - it turned
+out to cover both composite verbs - so the likely answer is 403, but likely is
+not measured and this repository does not ship likely. Two `curl`s against a
+live 26.7.1 with the full administrator token settle it:
+
+```
+PUT    /admin/realms/master/clients/{master-realm uuid}/roles/query-groups
+DELETE /admin/realms/master/clients/{master-realm uuid}/roles/query-groups
+```
+
+and the `roles-by-id` forms of the same two, since F24 showed the two route
+families have to be checked separately. If they are 403, the check already
+written for F24 - `ownedByRealmOwnClient` in `internal/admin/roles.go` - is
+the piece to reuse; the only decision is where it goes so that both families
+reach it, which for these two is not `eachComposite`.
+
+## F27: `make oracle` exercises no role commands
+
+Opened by the final whole-branch review of `feat/p2-roles`, 2026-08-25; first
+raised by Task 11's implementer.
+
+`internal/admin/kcadm_docker_test.go` is deliberately client-scoped and
+user-scoped. It drives a real `kcadm.sh` against Gloak and asserts the CLI is
+satisfied, which is the only check in the repository that a real Keycloak
+client - rather than the project's own idea of one - accepts what Gloak
+serves.
+
+**Thirty role endpoints shipped in this cut with no external-oracle
+coverage.** The conformance suite compares against recorded goldens, which is
+a different guarantee: goldens confirm Gloak reproduces what was recorded, not
+that a client which was never used during recording can drive it.
+
+Four `kcadm` invocations would cover most of it:
+
+```
+kcadm create roles -r master -s name=probe-role
+kcadm get roles -r master
+kcadm add-roles --uusername ... --rolename probe-role
+kcadm delete roles/probe-role -r master
+```
+
+The `add-roles` one belongs with the role-mapping cut rather than here. The
+other three are available now and would have caught anything that made the
+role representation unparseable to a real client.
+
+## F28: composite writes do not apply Keycloak's caller-relative admin-role rule
+
+Opened by the final whole-branch review of `feat/p2-roles`, 2026-08-25. **This
+one is a privilege-escalation path, not a cosmetic divergence.**
+
+Keycloak judges *who is asking* before letting an admin role become a
+composite child: a caller may attach an admin role only if it already has the
+administrative power that role confers. The full transcript - three tables,
+27 children swept against two callers, plus a re-run after granting the caller
+one more role - is in the "Adding an admin role as a composite is judged
+against the caller, not the role" section of
+`2026-08-18-keycloak-26.7.1-observed.md`. In short:
+
+- full administrator, `POST /roles/default-roles-master/composites` naming
+  `admin`: **204**
+- a caller holding only `manage-realm`, the identical request: **403**
+- the same caller naming an ordinary realm role instead: **204**
+
+**Gloak answers 204 to all three.** A `manage-realm`-only caller can therefore
+put `admin` onto `default-roles-master`, which every user in the realm holds,
+and hand full administration to the entire realm. Not reachable from outside
+today - nothing can mint a narrow-role admin until role assignment ships - and
+reachable the moment it does.
+
+Not fixed in the fix wave that measured it, on purpose. The naive rule
+("refuse when the caller does not hold the child") is **falsified** by the
+measurement: fourteen of the swept children are 204 for a caller that does not
+hold them. Implementing it that way would diverge in the too-restrictive
+direction, which is the mistake this branch already made once with the
+`DELETE .../composites` cross-family rule and had to undo. The real rule is a
+mapping from each admin role name to the administrative power it confers, and
+Gloak's `caller` today is a flat effective-role set with nothing to hang that
+on.
+
+The same check governs assigning a role to a user
+(`POST /users/{id}/role-mappings/realm`), which is a later cut, so the two
+want one task between them rather than a bolt-on here. That task needs one
+more measurement pass first: the sweep above is two callers' rows, and what is
+wanted is the rule for an arbitrary caller.
+
+## F29: deleting a client leaves its roles behind, and Keycloak deletes them
+
+Found and measured 2026-08-25 while verifying F-nothing in particular - it
+turned up on the way to checking whether the composite-flag resync that this
+branch added to `RoleRepo.Delete` also covered a client deletion. It does not,
+because nothing deletes the roles at all.
+
+Measured against a live 26.7.1 with the full administrator token: create a
+client, give it a role, make that role the only child of a realm role, then
+delete the client.
+
+```
+create client cascade-client: 201
+create client role:           201
+create realm parent:          201
+add composite:                204
+parent before: composite= True
+delete the client:            204
+
+the client role by id after the client is gone: 404
+parent after:  composite= False
+parent composites after: []
+```
+
+**Keycloak deletes a client's roles with the client**, and resyncs the
+composite flag of anything that had one of them as its last child - the same
+derived-flag rule this branch measured and implemented for a role deletion.
+
+**Gloak does neither.** `keycloak_role.client_id` is a plain `TEXT NOT NULL
+DEFAULT ''` column with no foreign key (`0001_init.sql`, both drivers), so the
+role row survives its client. Run against Gloak, the identical sequence leaves
+the parent reading `"composite":true` with `cascade-role` still in its
+composites listing, carrying a `containerId` that names a client which no
+longer exists. The role is also still assignable and still resolves through
+`roles-by-id`.
+
+Two pieces, and the second depends on the first:
+
+1. A client deletion has to take its roles with it. That is a schema change -
+   a foreign key with `ON DELETE CASCADE`, matching the one `realm_id` already
+   has - plus a migration.
+2. Once it cascades at the database level, `RoleRepo.Delete` is no longer on
+   the path, so the composite resync this branch put there would be bypassed.
+   Whoever does (1) has to carry the resync into the client deletion too, or
+   move it somewhere both reach. The resync statement itself is reusable; only
+   its `WHERE` changes, from one role id to every role the client owns.
+
+Not fixed here: it is a client-lifecycle concern that predates the roles cut,
+it needs a migration, and the roles half of this cut had no business changing
+the client schema on the way past.

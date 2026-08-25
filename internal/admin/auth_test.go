@@ -122,6 +122,28 @@ func createUserWithPassword(t *testing.T, s store.Store, realm *model.Realm, use
 	return user
 }
 
+// tokenForRole creates a user holding exactly one master-realm role and
+// returns an access token for it. It writes to the store rather than going
+// through the API because role assignment is part two of this cut.
+func tokenForRole(t *testing.T, h http.Handler, s store.Store, realm *model.Realm, role string) string {
+	t.Helper()
+	ctx := context.Background()
+	username := "only-" + role
+	u := createUserWithPassword(t, s, realm, username, "pw")
+	container, err := s.Clients().ByClientID(ctx, realm.ID, "master-realm")
+	if err != nil {
+		t.Fatalf("ByClientID: %v", err)
+	}
+	r, err := s.Roles().ByName(ctx, realm.ID, container.ID, role)
+	if err != nil {
+		t.Fatalf("ByName(%s): %v", role, err)
+	}
+	if err := s.Roles().AssignToUser(ctx, u.ID, r.ID); err != nil {
+		t.Fatalf("AssignToUser: %v", err)
+	}
+	return tokenFor(t, h, username, "pw")
+}
+
 // sessionIDOf reads sid out of an access token without verifying it. A test
 // wanting the session behind a token does not need the signature checked - the
 // handler under test is what does that.

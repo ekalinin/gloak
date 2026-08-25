@@ -96,10 +96,34 @@ type RoleRepo interface {
 	// does not expand these transitively sees an administrator with nothing.
 	AddComposite(ctx context.Context, roleID, childRoleID string) error
 	ListComposites(ctx context.Context, roleID string) ([]*model.Role, error)
+	// RemoveComposite is AddComposite's inverse. Removing one that is not
+	// there reports no error: DELETE .../composites was measured answering
+	// 204 for a role that was never a child.
+	RemoveComposite(ctx context.Context, roleID, childRoleID string) error
 
 	AssignToUser(ctx context.Context, userID, roleID string) error
 	RemoveFromUser(ctx context.Context, userID, roleID string) error
 	ListUserRoles(ctx context.Context, userID string) ([]*model.Role, error)
+	// ListUsersWithRole returns the users holding this role **directly**.
+	// Measured: /roles/{name}/users lists the administrator for `admin` and
+	// nobody for `create-realm`, which `admin` is composite over, so this must
+	// not expand composites the way internal/roles.Effective does.
+	ListUsersWithRole(ctx context.Context, realmID, roleID string) ([]*model.User, error)
+
+	// Update writes a role back whole: name, description and attributes are
+	// all replaced by what the caller holds. It replaces rather than merging
+	// because PUT on a role does - measured, and the opposite of PUT on a
+	// client or a user. Renaming through it is legitimate; the id does not
+	// change.
+	Update(ctx context.Context, r *model.Role) error
+	// Delete removes the role **and resyncs the composite flag of any parent
+	// whose last child it was**. The composite_role rows cascade, but the flag
+	// is a column on the parent, so without this a deleted child leaves its
+	// parent answering `"composite":true` beside an empty composites listing.
+	// The flag is derived - true exactly when the role has children - and
+	// putting the resync here rather than in the three handlers that delete a
+	// role makes staleness impossible for every caller.
+	Delete(ctx context.Context, realmID, id string) error
 }
 
 // SessionRepo stores SSO sessions. A user session is addressed by realm as

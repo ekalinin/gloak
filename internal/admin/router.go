@@ -1,8 +1,10 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 
+	"github.com/ekalinin/gloak/internal/httpx"
 	"github.com/ekalinin/gloak/internal/keys"
 	"github.com/ekalinin/gloak/internal/model"
 	"github.com/ekalinin/gloak/internal/store"
@@ -71,6 +73,106 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /admin/realms/{realm}/clients/{clientUUID}/client-secret/rotated",
 		h.guardRejecting("manage-clients", deleteRotatedSecretRejection, h.deleteRotatedSecret))
 	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/service-account-user", h.guard("view-clients", h.readServiceAccountUser))
+
+	// Realm roles: reading admits view-realm or manage-realm and writing needs
+	// manage-realm - measured across eight single-role callers, none of the
+	// users or clients roles opens any of them. manage-realm reading too is
+	// not a composite - it is its own role with no children - so it has to be
+	// admitted here rather than reached through view-realm.
+	mux.HandleFunc("GET /admin/realms/{realm}/roles", h.guardAny(realmRolesReadRoles, h.listRealmRoles))
+	mux.HandleFunc("GET /admin/realms/{realm}/roles/{roleName}", h.guardAny(realmRolesReadRoles, h.readRealmRole))
+	mux.HandleFunc("POST /admin/realms/{realm}/roles", h.guard("manage-realm", h.createRealmRole))
+	mux.HandleFunc("PUT /admin/realms/{realm}/roles/{roleName}", h.guard("manage-realm", h.updateRealmRole))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/roles/{roleName}", h.guard("manage-realm", h.deleteRealmRole))
+
+	// Client roles: the same split as the realm roles above - reading admits
+	// view-clients or manage-clients, and writing needs manage-clients alone.
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/roles", h.guardAny(clientRolesReadRoles, h.listClientRoles))
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}", h.guardAny(clientRolesReadRoles, h.readClientRole))
+	mux.HandleFunc("POST /admin/realms/{realm}/clients/{clientUUID}/roles", h.guard("manage-clients", h.createClientRole))
+	mux.HandleFunc("PUT /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}", h.guard("manage-clients", h.updateClientRole))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}", h.guard("manage-clients", h.deleteClientRole))
+
+	// Composites, for both realm roles and client roles. The five shapes are
+	// the same either side; only the locator differs. Reads take the same
+	// guardAny pair as the plain role reads next door - measured directly
+	// rather than assumed from that sibling, since two earlier tasks had to
+	// correct exactly this assumption: a caller holding only view-realm and
+	// one holding only manage-realm both get 200 on GET .../composites, and
+	// the client side mirrors it with view-clients/manage-clients. Writes
+	// (POST and DELETE) admit only the manage role on either side - measured
+	// the same way, with the view role and the other side's manage role both
+	// 403.
+	mux.HandleFunc("GET /admin/realms/{realm}/roles/{roleName}/composites",
+		h.guardAny(realmRolesReadRoles, h.listComposites(h.realmRole, nil)))
+	mux.HandleFunc("GET /admin/realms/{realm}/roles/{roleName}/composites/realm",
+		h.guardAny(realmRolesReadRoles, h.listComposites(h.realmRole, onlyRealmRoles)))
+	mux.HandleFunc("GET /admin/realms/{realm}/roles/{roleName}/composites/clients/{targetClientUUID}",
+		h.guardAny(realmRolesReadRoles, h.listComposites(h.realmRole, onlyThisClientsRoles)))
+	mux.HandleFunc("POST /admin/realms/{realm}/roles/{roleName}/composites",
+		h.guard("manage-realm", h.addComposites(h.realmRole)))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/roles/{roleName}/composites",
+		h.guard("manage-realm", h.removeComposites(h.realmRole)))
+
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}/composites",
+		h.guardAny(clientRolesReadRoles, h.listComposites(h.clientRoleLocator, nil)))
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}/composites/realm",
+		h.guardAny(clientRolesReadRoles, h.listComposites(h.clientRoleLocator, onlyRealmRoles)))
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}/composites/clients/{targetClientUUID}",
+		h.guardAny(clientRolesReadRoles, h.listComposites(h.clientRoleLocator, onlyThisClientsRoles)))
+	mux.HandleFunc("POST /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}/composites",
+		h.guard("manage-clients", h.addComposites(h.clientRoleLocator)))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}/composites",
+		h.guard("manage-clients", h.removeComposites(h.clientRoleLocator)))
+
+	// The holders of a role. .../groups takes the same view/manage pair as the
+	// plain role reads and the composites above it - measured the same way, not
+	// assumed from that sibling.
+	//
+	// .../users does not: measured against a live 26.7.1 with every single
+	// master-realm role tried alone and in combination, it 403s a caller
+	// holding only view-realm/manage-realm/view-clients/manage-clients *and*
+	// one holding only view-users/manage-users/query-users, and 200s only a
+	// caller holding one of each pair together. That is a conjunction of two
+	// role families neither guard nor guardAny expresses, so it gets its own
+	// combinator rather than a third slice bolted onto guardAny's contract.
+	mux.HandleFunc("GET /admin/realms/{realm}/roles/{roleName}/users",
+		h.guardAnyAndAny(realmRolesReadRoles, usersReadRoles, h.roleUsers(h.realmRole)))
+	mux.HandleFunc("GET /admin/realms/{realm}/roles/{roleName}/groups",
+		h.guardAny(realmRolesReadRoles, h.roleGroups(h.realmRole)))
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}/users",
+		h.guardAnyAndAny(clientRolesReadRoles, usersReadRoles, h.roleUsers(h.clientRoleLocator)))
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}/groups",
+		h.guardAny(clientRolesReadRoles, h.roleGroups(h.clientRoleLocator)))
+
+	// roles-by-id: the same eight operations, addressed by the role's own id
+	// rather than by name/container path. The required role is decided by the
+	// role's own container once it is resolved, not by the route - measured
+	// against a live 26.7.1 for both a realm role and a client role id, across
+	// every plain master-realm role. Reads take the same view/manage pair as
+	// the by-name reads next door (a single measurement of view-realm and
+	// view-clients alone had this wrong as a single role; manage-realm and
+	// manage-clients were checked too and both open it). Writes - PUT, DELETE
+	// and POST/DELETE .../composites - take only the manage role on the
+	// resolved role's own side, measured the same way. See
+	// guardByRoleContainer and the "roles-by-id" section of
+	// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+	mux.HandleFunc("GET /admin/realms/{realm}/roles-by-id/{roleID}",
+		h.guardByRoleContainer(realmRolesReadRoles, clientRolesReadRoles, h.readRoleByID))
+	mux.HandleFunc("PUT /admin/realms/{realm}/roles-by-id/{roleID}",
+		h.guardByRoleContainer([]string{"manage-realm"}, []string{"manage-clients"}, h.updateRoleByID))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/roles-by-id/{roleID}",
+		h.guardByRoleContainer([]string{"manage-realm"}, []string{"manage-clients"}, h.deleteRoleByID))
+	mux.HandleFunc("GET /admin/realms/{realm}/roles-by-id/{roleID}/composites",
+		h.guardByRoleContainer(realmRolesReadRoles, clientRolesReadRoles, h.compositesByID(nil)))
+	mux.HandleFunc("GET /admin/realms/{realm}/roles-by-id/{roleID}/composites/realm",
+		h.guardByRoleContainer(realmRolesReadRoles, clientRolesReadRoles, h.compositesByID(onlyRealmRoles)))
+	mux.HandleFunc("GET /admin/realms/{realm}/roles-by-id/{roleID}/composites/clients/{targetClientUUID}",
+		h.guardByRoleContainer(realmRolesReadRoles, clientRolesReadRoles, h.compositesByID(onlyThisClientsRoles)))
+	mux.HandleFunc("POST /admin/realms/{realm}/roles-by-id/{roleID}/composites",
+		h.guardByRoleContainer([]string{"manage-realm"}, []string{"manage-clients"}, h.addCompositesByID))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/roles-by-id/{roleID}/composites",
+		h.guardByRoleContainer([]string{"manage-realm"}, []string{"manage-clients"}, h.removeCompositesByID))
 }
 
 // guard is the authorization filter every admin route goes through: resolve
@@ -102,6 +204,73 @@ func (h *handler) guardAny(roles []string, next func(http.ResponseWriter, *http.
 // runs.
 func (h *handler) guardRejecting(role string, reject func(http.ResponseWriter), next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
 	return h.guardAnyRejecting([]string{role}, reject, next)
+}
+
+// guardAnyAndAny is guard for the one route in this file that needs a role
+// from each of two families rather than any of one: .../roles/{name}/users
+// needs a role-management role (a: realmRolesReadRoles or
+// clientRolesReadRoles) together with a user-read role (b: usersReadRoles) -
+// measured, not assumed from guardAny's single-family siblings. It is built
+// from guardAnyRejecting rather than duplicated: that call resolves the
+// realm and the caller and checks the first family, and the wrapped next
+// adds the second check before running the handler.
+func (h *handler) guardAnyAndAny(a, b []string, next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
+	return h.guardAnyRejecting(a, writeForbidden, func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+		if !rc.caller.hasAny(b) {
+			writeForbidden(w)
+			return
+		}
+		next(w, r, rc)
+	})
+}
+
+// guardByRoleContainer is guard for the roles-by-id routes, whose required
+// role is decided by the **data** rather than by the route: the role has to
+// be resolved before the caller can be judged, because the same path takes
+// realmRoles for a realm role and clientRoles for a client role. Both take a
+// slice rather than a single role, mirroring guardAny's contract - measured
+// directly rather than assumed from the by-name reads next door: a single
+// earlier measurement of view-realm and view-clients alone made this look
+// like a lone role, and manage-realm/manage-clients opening it too was found
+// on the second pass.
+//
+// The order matters and is measured too: the role is resolved first, so a
+// missing role answers 404 whatever the caller holds. That is Keycloak's own
+// behaviour, not a defensive choice - and it is not a safe one. Answering the
+// existence question before the authorization question means an
+// unauthorized caller can tell a missing id (404) apart from one that exists
+// but it may not touch (403), which is exactly the ordering an access-control
+// design would normally avoid. It is kept here because it is what was
+// measured, not because it is the safer order.
+func (h *handler) guardByRoleContainer(realmRoles, clientRoles []string, next func(http.ResponseWriter, *http.Request, *reqContext, *model.Role)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		realm := h.resolveRealm(w, r)
+		if realm == nil {
+			return
+		}
+		c := h.resolveCaller(w, r, realm)
+		if c == nil {
+			return
+		}
+		role, err := h.store.Roles().ByID(r.Context(), realm.ID, r.PathValue("roleID"))
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeRoleIDNotFound(w)
+				return
+			}
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		required := realmRoles
+		if role.ClientID != "" {
+			required = clientRoles
+		}
+		if !c.hasAny(required) {
+			writeForbidden(w)
+			return
+		}
+		next(w, r, &reqContext{realm: realm, caller: c}, role)
+	}
 }
 
 // guardAnyRejecting is the one implementation the three wrappers share:
@@ -142,3 +311,12 @@ func (h *handler) realmIssuer(realm string) string {
 // user by ID is not on this list: query-users was measured getting 403 there
 // and 200 on the other two.
 var usersReadRoles = []string{"view-users", "query-users", "manage-users"}
+
+// realmRolesReadRoles is what both realm-role reads accept: view-realm or
+// manage-realm, measured across eight single-role callers.
+var realmRolesReadRoles = []string{"view-realm", "manage-realm"}
+
+// clientRolesReadRoles is what both client-role reads accept: view-clients or
+// manage-clients - measured the same way as the realm-role pair above, on an
+// ordinary client. GET .../roles answered 200 for both roles.
+var clientRolesReadRoles = []string{"view-clients", "manage-clients"}

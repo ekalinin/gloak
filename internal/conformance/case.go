@@ -142,9 +142,11 @@ type Case struct {
 	// their presence and position stay asserted. "*" matches one segment.
 	Volatile []string
 
-	// Unordered lists paths pointing at JSON arrays Keycloak emits in no
-	// stable order. Their elements are sorted before comparison, so membership
-	// and length stay asserted while order does not.
+	// Unordered names JSON arrays whose element order is not stable, sorted on
+	// both sides before comparison so membership stays asserted and order does
+	// not. Paths are slash-separated from the root with "*" matching one
+	// segment, and "." names the root itself - which is what a bare array
+	// response needs, and every role listing is one.
 	Unordered []string
 
 	// UnorderedKeys lists paths pointing at JSON objects whose key order is

@@ -15,6 +15,29 @@ import (
 // server on http://localhost:8080, so without this every absolute URL differs.
 const issuerPlaceholder = "{{issuer}}"
 
+// rootPath is how a Case names the value at the root of the body, which has no
+// key to be addressed by. It exists because Keycloak returns bare arrays whose
+// order is not stable - every role listing is one - and Case.Unordered has to
+// be able to say so.
+const rootPath = "."
+
+// compilePaths turns the slash-separated path spellings a Case carries into
+// the segment patterns the editor matches against. The root compiles to the
+// empty pattern, which is the one thing strings.Split cannot produce: it
+// returns [""] for an empty string, a one-segment pattern matching a key whose
+// name is empty.
+func compilePaths(paths []string) [][]string {
+	patterns := make([][]string, 0, len(paths))
+	for _, p := range paths {
+		if p == rootPath {
+			patterns = append(patterns, []string{})
+			continue
+		}
+		patterns = append(patterns, strings.Split(p, "/"))
+	}
+	return patterns
+}
+
 // ReplaceIssuer swaps a server's base URL for the placeholder.
 func ReplaceIssuer(raw []byte, base string) []byte {
 	if base == "" {
@@ -44,10 +67,7 @@ func Normalize(raw []byte, paths []string) ([]byte, error) {
 	if len(paths) == 0 || len(bytes.TrimSpace(raw)) == 0 {
 		return raw, nil
 	}
-	patterns := make([][]string, 0, len(paths))
-	for _, p := range paths {
-		patterns = append(patterns, strings.Split(p, "/"))
-	}
+	patterns := compilePaths(paths)
 
 	e := &editor{dec: json.NewDecoder(bytes.NewReader(raw)), patterns: patterns}
 	e.onMatch = e.replace
@@ -75,10 +95,7 @@ func SortUnordered(raw []byte, paths []string) ([]byte, error) {
 	if len(paths) == 0 || len(bytes.TrimSpace(raw)) == 0 {
 		return raw, nil
 	}
-	patterns := make([][]string, 0, len(paths))
-	for _, p := range paths {
-		patterns = append(patterns, strings.Split(p, "/"))
-	}
+	patterns := compilePaths(paths)
 
 	e := &editor{dec: json.NewDecoder(bytes.NewReader(raw)), patterns: patterns}
 	e.onMatch = e.sortArray
@@ -101,10 +118,7 @@ func SortUnorderedKeys(raw []byte, paths []string) ([]byte, error) {
 	if len(paths) == 0 || len(bytes.TrimSpace(raw)) == 0 {
 		return raw, nil
 	}
-	patterns := make([][]string, 0, len(paths))
-	for _, p := range paths {
-		patterns = append(patterns, strings.Split(p, "/"))
-	}
+	patterns := compilePaths(paths)
 
 	e := &editor{dec: json.NewDecoder(bytes.NewReader(raw)), patterns: patterns}
 	e.onMatch = e.sortKeys
@@ -134,10 +148,7 @@ func SortUnorderedWords(raw []byte, paths []string) ([]byte, error) {
 	if len(paths) == 0 || len(bytes.TrimSpace(raw)) == 0 {
 		return raw, nil
 	}
-	patterns := make([][]string, 0, len(paths))
-	for _, p := range paths {
-		patterns = append(patterns, strings.Split(p, "/"))
-	}
+	patterns := compilePaths(paths)
 
 	e := &editor{dec: json.NewDecoder(bytes.NewReader(raw)), patterns: patterns}
 	e.onMatch = e.sortWords
@@ -371,10 +382,10 @@ func (e *editor) descend(path []string) error {
 	return err
 }
 
+// matchesAny reports whether path is addressed by any pattern. A zero-length
+// path is the document root, and only the empty pattern - which compilePaths
+// produces for "." and strings.Split can never produce - matches it.
 func matchesAny(path []string, patterns [][]string) bool {
-	if len(path) == 0 {
-		return false
-	}
 	for _, p := range patterns {
 		if len(p) == len(path) && segmentsMatch(path, p) {
 			return true
