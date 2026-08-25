@@ -1,0 +1,8 @@
+# DELETE /admin/realms/master/roles/gloak-probe-composite-parent/composites
+HTTP/1.1 204 No Content
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+

@@ -258,6 +258,295 @@ var Fixtures = map[string]Fixture{
 	// verifiably expired a second later. The delay is what makes the case
 	// deterministic rather than a race against the recorder's own latency.
 	"confidential-expired-token": expiredTokenFixture(),
+
+	// A realm role created through the API, for the cases that read one back.
+	// Location names it by name rather than by id, so nothing needs capturing:
+	// the case can address it by the name it asked for.
+	"admin-token-realm-role": {
+		State: "bootstrap",
+		Steps: []Step{adminTokenStep(), {
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/roles",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"name":"gloak-probe-role","description":"a probe"}`),
+			},
+		}},
+	},
+
+	// One realm role per case that writes to it, each with its own name -
+	// the same uniqueness clientFixture and userFixture carry, for the same
+	// reason: sharing a name with a case that mutates it would make the
+	// mutation visible to every other case addressing that name.
+	"admin-token-role-to-update": realmRoleFixture("gloak-probe-role-update"),
+	"admin-token-role-to-delete": realmRoleFixture("gloak-probe-role-delete"),
+
+	// A client carrying one role, for the cases that read a client's own
+	// roles back. Read-only cases only - see realmRoleFixture's doc for why a
+	// case that writes needs its own name instead.
+	"admin-token-client-role-container": clientRoleFixture("gloak-probe-role-client", "gloak-probe-client-role"),
+	"admin-token-client-role-to-update": clientRoleFixture("gloak-probe-role-client-update", "gloak-probe-client-role-update"),
+	"admin-token-client-role-to-delete": clientRoleFixture("gloak-probe-role-client-delete", "gloak-probe-client-role-delete"),
+
+	// A client with no role of its own yet, for the case that creates one.
+	"admin-token-role-create-container": clientFixture("gloak-probe-role-create-client"),
+
+	// A realm-role parent composite over one realm-family child and one
+	// client-family child, everything linked. Backs every read on the realm
+	// side of the composite endpoints, both by name and by id (roles-by-id
+	// addresses the identical role through {{parent_id}}), and the write
+	// endpoints too: POST .../composites is measured idempotent - "already a
+	// child" answers 204, not 409 - so a case's own add repeats what this
+	// fixture already did, and a case's own remove is undone the next time
+	// this fixture runs, since its last step re-links both children before
+	// every case that names it.
+	"admin-token-composite-parent": compositeParentFixture(),
+
+	// compositeParentFixture's mirror with a client role as the parent, for
+	// the client side of the same endpoints.
+	"admin-token-composite-parent-client": compositeParentClientFixture(),
+}
+
+// realmRoleFixture creates one realm role and nothing else. Unlike
+// clientFixture and userFixture, nothing needs to be captured: a role's
+// Location names it by name, not by a server-minted id, so a case addresses
+// the name it asked for directly.
+func realmRoleFixture(name string) Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{adminTokenStep(), {
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/roles",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"name":"` + name + `"}`),
+			},
+		}},
+	}
+}
+
+// clientRoleFixture creates one client and one role on it, addressed by name
+// like realmRoleFixture - only the client's own UUID needs capturing, since
+// the admin API addresses a client by id but a role on it by name.
+//
+// The client is looked up rather than trusted from Location, unlike plain
+// clientFixture: this fixture backs four read-only cases (list, read, users,
+// groups), so the recorder runs its creates four times against the shared
+// container, and every run after the first answers 409 with no Location -
+// the same reason confidentialClientFixture gives.
+func clientRoleFixture(clientID, roleName string) Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"clientId":"` + clientID + `","enabled":true}`),
+				},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients",
+					Query:   map[string]string{"clientId": clientID},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"client_uuid": "0/id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients/{{client_uuid}}/roles",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"name":"` + roleName + `"}`),
+				},
+			},
+		},
+	}
+}
+
+// compositeParentFixture creates a realm role, a realm-family child role, a
+// client, and a client-family child role on that client, then links both
+// children onto the realm role - so a case can read the composite back
+// filtered and unfiltered, or write to the same link, addressing the parent
+// either by name or (through parent_id) by id.
+//
+// Every create is looked up rather than trusted from Location, for the
+// reason confidentialClientFixture gives: the recorder shares one container,
+// so a fixture more than one case names runs its creates more than once, and
+// a repeat create answers 409 with nothing useful in Location. A role's
+// lookup is a read by name, since that survives a 409 just as well as a 201.
+func compositeParentFixture() Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/roles",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"name":"gloak-probe-composite-parent"}`),
+				},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/roles/gloak-probe-composite-parent",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"parent_id": "id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/roles",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"name":"gloak-probe-composite-child-realm"}`),
+				},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/roles/gloak-probe-composite-child-realm",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"child_realm_id": "id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"clientId":"gloak-probe-composite-client","enabled":true}`),
+				},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients",
+					Query:   map[string]string{"clientId": "gloak-probe-composite-client"},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"client_uuid": "0/id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients/{{client_uuid}}/roles",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"name":"gloak-probe-composite-child-client"}`),
+				},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients/{{client_uuid}}/roles/gloak-probe-composite-child-client",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"child_client_id": "id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/roles/gloak-probe-composite-parent/composites",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`[{"id":"{{child_realm_id}}"},{"id":"{{child_client_id}}"}]`),
+				},
+			},
+		},
+	}
+}
+
+// compositeParentClientFixture is compositeParentFixture's mirror with a
+// client role as the parent instead of a realm role, so the client side of
+// the composite endpoints has something real to read and write too. The
+// parent and both children sit on the same client, which is enough to
+// exercise the composites/clients filter - it only checks the child's own
+// container, not whether that happens to be the parent's container as well.
+func compositeParentClientFixture() Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"clientId":"gloak-probe-composite-client-parent","enabled":true}`),
+				},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients",
+					Query:   map[string]string{"clientId": "gloak-probe-composite-client-parent"},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"client_uuid": "0/id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients/{{client_uuid}}/roles",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"name":"gloak-probe-composite-client-role-parent"}`),
+				},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients/{{client_uuid}}/roles/gloak-probe-composite-client-role-parent",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"parent_id": "id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/roles",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"name":"gloak-probe-composite-client-parent-child-realm"}`),
+				},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/roles/gloak-probe-composite-client-parent-child-realm",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"child_realm_id": "id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients/{{client_uuid}}/roles",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"name":"gloak-probe-composite-client-parent-child-client"}`),
+				},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients/{{client_uuid}}/roles/gloak-probe-composite-client-parent-child-client",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"child_client_id": "id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients/{{client_uuid}}/roles/gloak-probe-composite-client-role-parent/composites",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`[{"id":"{{child_realm_id}}"},{"id":"{{child_client_id}}"}]`),
+				},
+			},
+		},
+	}
 }
 
 // confidentialClientFixture creates a confidential client, then captures its
