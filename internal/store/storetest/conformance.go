@@ -390,6 +390,85 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	// Deleting the last child must leave the parent non-composite. The
+	// composite_role row cascades away with the child, but `composite` is a
+	// column on the parent, so without the resync in Delete the parent answers
+	// `"composite":true` beside an empty composites listing - and the flag is
+	// derived, true exactly when the role has children.
+	t.Run("deleting a child resyncs the parent's composite flag", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		parent := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "parent"}
+		first := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "first"}
+		second := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "second"}
+		for _, r := range []*model.Role{parent, first, second} {
+			if err := s.Roles().Create(ctx, r); err != nil {
+				t.Fatalf("Create %s: %v", r.Name, err)
+			}
+		}
+		for _, child := range []*model.Role{first, second} {
+			if err := s.Roles().AddComposite(ctx, parent.ID, child.ID); err != nil {
+				t.Fatalf("AddComposite %s: %v", child.Name, err)
+			}
+		}
+		parent.Composite = true
+		if err := s.Roles().Update(ctx, parent); err != nil {
+			t.Fatalf("Update parent: %v", err)
+		}
+
+		// One child gone, one left: the parent is still composite.
+		if err := s.Roles().Delete(ctx, realm.ID, first.ID); err != nil {
+			t.Fatalf("Delete first: %v", err)
+		}
+		got, err := s.Roles().ByID(ctx, realm.ID, parent.ID)
+		if err != nil {
+			t.Fatalf("ByID parent: %v", err)
+		}
+		if !got.Composite {
+			t.Fatalf("parent still has a child, want composite true, got false")
+		}
+
+		// The last child gone: the flag has to follow.
+		if err := s.Roles().Delete(ctx, realm.ID, second.ID); err != nil {
+			t.Fatalf("Delete second: %v", err)
+		}
+		got, err = s.Roles().ByID(ctx, realm.ID, parent.ID)
+		if err != nil {
+			t.Fatalf("ByID parent: %v", err)
+		}
+		if got.Composite {
+			t.Fatalf("parent has no children left, want composite false, got true")
+		}
+		kids, err := s.Roles().ListComposites(ctx, parent.ID)
+		if err != nil {
+			t.Fatalf("ListComposites: %v", err)
+		}
+		if len(kids) != 0 {
+			t.Fatalf("want no composites left, got %d", len(kids))
+		}
+
+		// A delete that finds nothing must not disturb a flag it never
+		// touched: the UPDATE and the DELETE share one transaction.
+		other := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "other", Composite: true}
+		if err := s.Roles().Create(ctx, other); err != nil {
+			t.Fatalf("Create other: %v", err)
+		}
+		if err := s.Roles().Delete(ctx, realm.ID, model.NewID()); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("Delete of a missing role: want ErrNotFound, got %v", err)
+		}
+		got, err = s.Roles().ByID(ctx, realm.ID, other.ID)
+		if err != nil {
+			t.Fatalf("ByID other: %v", err)
+		}
+		if !got.Composite {
+			t.Fatalf("a failed delete cleared an unrelated composite flag")
+		}
+	})
+
 	t.Run("composite removal and role holders", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

@@ -116,6 +116,13 @@ type RoleRepo interface {
 	// client or a user. Renaming through it is legitimate; the id does not
 	// change.
 	Update(ctx context.Context, r *model.Role) error
+	// Delete removes the role **and resyncs the composite flag of any parent
+	// whose last child it was**. The composite_role rows cascade, but the flag
+	// is a column on the parent, so without this a deleted child leaves its
+	// parent answering `"composite":true` beside an empty composites listing.
+	// The flag is derived - true exactly when the role has children - and
+	// putting the resync here rather than in the three handlers that delete a
+	// role makes staleness impossible for every caller.
 	Delete(ctx context.Context, realmID, id string) error
 }
 

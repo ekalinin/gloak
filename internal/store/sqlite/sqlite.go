@@ -671,13 +671,46 @@ func (r *roleRepo) Update(ctx context.Context, m *model.Role) error {
 	return tx.Commit()
 }
 
+// Delete removes the role and, in the same transaction, clears the composite
+// flag on any parent whose last remaining child this was.
+//
+// The composite_role rows cascade away with the role, but `composite` is a
+// column on the *parent*, and the parent is not the row being deleted, so
+// nothing else would resync it: the parent would keep answering
+// `"composite":true` while its composites listing answered `[]`. The flag is
+// derived - true exactly when the role has children, measured in both
+// directions - so it cannot be allowed to outlive the last child.
+//
+// This is in the driver rather than in the three handlers that delete a role
+// (deleteRealmRole, deleteClientRole, deleteRoleByID) so that staleness is
+// impossible by construction: any future caller of Delete gets it too, without
+// having to know the rule exists.
 func (r *roleRepo) Delete(ctx context.Context, realmID, id string) error {
-	res, err := r.db.ExecContext(ctx,
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE keycloak_role SET composite = 0
+		 WHERE id IN (SELECT composite FROM composite_role WHERE child_role = ?)
+		   AND NOT EXISTS (SELECT 1 FROM composite_role c
+		                   WHERE c.composite = keycloak_role.id AND c.child_role <> ?)`,
+		id, id); err != nil {
+		return classify(err)
+	}
+	res, err := tx.ExecContext(ctx,
 		`DELETE FROM keycloak_role WHERE realm_id = ? AND id = ?`, realmID, id)
 	if err != nil {
 		return classify(err)
 	}
-	return affectedOne(res)
+	// Before the commit on purpose: a role that is not there must leave the
+	// flags it never touched alone, so the rollback takes the UPDATE with it.
+	if err := affectedOne(res); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *roleRepo) AddComposite(ctx context.Context, roleID, childRoleID string) error {

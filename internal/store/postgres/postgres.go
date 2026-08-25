@@ -660,13 +660,35 @@ func (r *roleRepo) Update(ctx context.Context, m *model.Role) error {
 	return tx.Commit(ctx)
 }
 
+// Delete removes the role and, in the same transaction, clears the composite
+// flag on any parent whose last remaining child this was. See the sqlite
+// driver's Delete for why this belongs here rather than in the handlers.
 func (r *roleRepo) Delete(ctx context.Context, realmID, id string) error {
-	tag, err := r.pool.Exec(ctx,
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE keycloak_role SET composite = FALSE
+		 WHERE id IN (SELECT composite FROM composite_role WHERE child_role = $1)
+		   AND NOT EXISTS (SELECT 1 FROM composite_role c
+		                   WHERE c.composite = keycloak_role.id AND c.child_role <> $1)`,
+		id); err != nil {
+		return classify(err)
+	}
+	tag, err := tx.Exec(ctx,
 		`DELETE FROM keycloak_role WHERE realm_id = $1 AND id = $2`, realmID, id)
 	if err != nil {
 		return classify(err)
 	}
-	return affectedOne(tag.RowsAffected())
+	// Before the commit on purpose: a role that is not there must leave the
+	// flags it never touched alone, so the rollback takes the UPDATE with it.
+	if err := affectedOne(tag.RowsAffected()); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *roleRepo) AddComposite(ctx context.Context, roleID, childRoleID string) error {
