@@ -296,6 +296,10 @@ var Fixtures = map[string]Fixture{
 	// A client with no role of its own yet, for the case that creates one.
 	"admin-token-role-create-container": clientFixture("gloak-probe-role-create-client"),
 
+	// A realm role and a client role sharing one search prefix, for the case
+	// that guards the realm listing against leaking a client role in.
+	"admin-token-same-named-roles": sameNamedRolesFixture(),
+
 	// A realm-role parent composite over one realm-family child and one
 	// client-family child, everything linked. Backs every read on the realm
 	// side of the composite endpoints, both by name and by id (roles-by-id
@@ -409,6 +413,54 @@ func clientRoleFixture(clientID, roleName string) Fixture {
 					Path:    "/admin/realms/master/clients/{{client_uuid}}/roles",
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"` + roleName + `"}`),
+				},
+			},
+		},
+	}
+}
+
+// sameNamedRolesFixture creates a realm role and a client role sharing one
+// search prefix, so a listing narrowed by that prefix has something to leak.
+//
+// Mined from RealmRolesSearchTest.testSearchForRealmRoles, upstream's guard on
+// issue #9587: the realm listing must never return a role whose clientRole is
+// true, however the search is spelled.
+func sameNamedRolesFixture() Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/roles",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"name":"gloak-probe-shared-realm"}`),
+				},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"clientId":"gloak-probe-shared-client"}`),
+				},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients",
+					Query:   map[string]string{"clientId": "gloak-probe-shared-client"},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"client_uuid": "0/id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients/{{client_uuid}}/roles",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"name":"gloak-probe-shared-on-client"}`),
 				},
 			},
 		},

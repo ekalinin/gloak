@@ -1426,6 +1426,7 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -1444,11 +1445,31 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 		// attributes is a Java Map in hash order and Go sorts map keys. This is
 		// the suite's one documented retreat from byte-exactness; see the
 		// UnorderedKeys note in case.go.
 		UnorderedKeys: []string{"*/attributes"},
+	},
+	{
+		ID: "admin/roles/list-realm-search-excludes-client-roles",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get all roles for the realm, search matching a client role too; mined from RealmRolesSearchTest.testSearchForRealmRoles, upstream issue #9587",
+			Retrieved: "2026-08-25",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-same-named-roles",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles",
+			Query:   map[string]string{"search": "gloak-probe-shared"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
 		ID: "admin/roles/read-realm",
