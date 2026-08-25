@@ -1,4 +1,4 @@
-.PHONY: test build lint conformance record oracle
+.PHONY: test build lint conformance record oracle kcsrc
 
 test:
 	CGO_ENABLED=0 go test ./...
@@ -24,3 +24,21 @@ record:
 # `make test`.
 oracle:
 	CGO_ENABLED=0 go test -tags docker ./internal/admin/ -run TestKcadm -v -count=1
+
+# kcsrc materialises a read-only checkout of Keycloak's own test sources at the
+# pinned tag, for mining behaviours the catalogue is missing. Nothing builds
+# from it and nothing is copied out of it: see
+# docs/superpowers/specs/2026-08-25-keycloak-upstream-testsuite-as-oracle.md.
+KC_TESTSUITE_TAG := 26.7.1
+KC_TESTSUITE_SHA := 73f08b397f193712b26d317210dce99898129709
+
+kcsrc:
+	@if [ ! -d .kc-testsuite ]; then \
+		git clone --filter=blob:none --sparse --depth 1 \
+			--branch $(KC_TESTSUITE_TAG) \
+			https://github.com/keycloak/keycloak.git .kc-testsuite; \
+		git -C .kc-testsuite sparse-checkout set tests test-framework; \
+	fi
+	@test "$$(git -C .kc-testsuite rev-parse HEAD)" = "$(KC_TESTSUITE_SHA)" \
+		|| { echo "kcsrc: checkout is not $(KC_TESTSUITE_SHA)"; exit 1; }
+	@echo "kcsrc: $(KC_TESTSUITE_TAG) at $(KC_TESTSUITE_SHA)"

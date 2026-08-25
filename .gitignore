@@ -1,5 +1,6 @@
 /gloak
 /dist/
+/.kc-testsuite/
 *.db
 *.db-shm
 *.db-wal
