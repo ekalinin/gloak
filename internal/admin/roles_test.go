@@ -163,10 +163,16 @@ func TestRealmRoleSearchIsASubstringOverNameAndDescription(t *testing.T) {
 	}
 }
 
-// TestPageRoles pins pageRoles's measured contract: first and max page a
-// listing only when search is non-empty, and with no search they are
-// accepted and entirely ignored - see the "Role listing: first and max"
-// section of docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+// TestPageRoles pins pageRoles's measured contract: a listing pages when
+// search is non-empty **or** when first and max are both present, and only a
+// request carrying neither is answered unpaginated - see the "Role listing:
+// first and max" section of
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+//
+// Every row below is a query that was issued against a live 26.7.1. The rows
+// that matter most are the four no-search ones with both bounds: an earlier
+// version of this test asserted they came back whole, which was inferred from
+// three probes that each sent only one bound.
 func TestPageRoles(t *testing.T) {
 	roles := []*model.Role{{Name: "a"}, {Name: "b"}, {Name: "c"}}
 	names := func(in []*model.Role) []string {
@@ -182,9 +188,17 @@ func TestPageRoles(t *testing.T) {
 		query string
 		want  []string
 	}{
-		{"no search: max is ignored", "max=2", []string{"a", "b", "c"}},
-		{"no search: first is ignored", "first=1", []string{"a", "b", "c"}},
-		{"no search: the admin client's no-paging convention is ignored too", "first=-1&max=-1", []string{"a", "b", "c"}},
+		{"no search: max alone is ignored", "max=2", []string{"a", "b", "c"}},
+		{"no search: first alone is ignored", "first=1", []string{"a", "b", "c"}},
+		{"no search: first and max together do page", "first=1&max=1", []string{"b"}},
+		{"no search: both bounds, max only", "first=0&max=2", []string{"a", "b"}},
+		{"no search: both bounds, first past the end", "first=99&max=2", []string{}},
+		{"no search: both bounds, max zero is an empty page", "first=1&max=0", []string{}},
+		{"no search: a negative first still opens the gate for max", "first=-1&max=2", []string{"a", "b"}},
+		{"no search: a negative max still opens the gate for first", "first=1&max=-1", []string{"b", "c"}},
+		{"no search: the admin client's no-paging convention pages with no bounds", "first=-1&max=-1", []string{"a", "b", "c"}},
+		{"an empty search is not a search: max alone is ignored", "search=&max=2", []string{"a", "b", "c"}},
+		{"an empty search with both bounds pages on the bounds alone", "search=&first=1&max=1", []string{"b"}},
 		{"search with no first or max is unbounded", "search=x", []string{"a", "b", "c"}},
 		{"search: max zero is an empty page", "search=x&max=0", []string{}},
 		{"search: max bounds the page", "search=x&max=2", []string{"a", "b"}},

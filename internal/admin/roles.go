@@ -136,25 +136,45 @@ func filterRoles(roles []*model.Role, search string) []*model.Role {
 // listing: first and max" section of
 // docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
 //
-// **Measured, not predicted: pagination only takes effect when the request
-// carries a search term.** With no search, a live 26.7.1 returns every role
-// unpaginated on both listings and ignores first and max entirely - max=2,
-// first=1 and the admin client's own no-paging convention first=-1&max=-1
-// are all indistinguishable in effect.
+// **Measured, not predicted: the listing pages when search is non-empty, or
+// when first and max are both present.** Either condition on its own is
+// enough. A request carrying neither - no search and at most one of the two
+// bounds - is answered with every role, unpaginated.
 //
-// When search is non-empty, first is a zero-based offset and max is a page
-// size, both counted over search's own order; an absent or negative value
-// means no bound, on both listings. A negative bound was measured to mean
-// "no bound" even with a search term present - the same shape the Java admin
-// client puts on the wire for "no paging", since it sends first=-1&max=-1
-// rather than omitting them.
+// That second condition is why max=2 alone and first=1 alone are ignored
+// while first=1&max=5 is not, and it is the whole of the difference: measured
+// against 18 realm roles created in reverse-alphabetical order, first=1&max=5
+// with no search returns exactly five roles and max=5 with no search returns
+// all 23. It also explains the one thing the earlier "search only" rule could
+// not, that first=-1&max=-1 came back sorted where max=2 came back unsorted:
+// both bounds are present there, so it takes this path too, and a negative
+// bound then means "no bound" rather than "do not page".
 //
-// An unparseable value (first=abc) is also treated as no bound, but that is
+// **The paged path is sorted by name.** Measured on both listings: the same
+// 18 roles created z..i come back i..z whenever this path is taken, with or
+// without search, while the unpaginated path keeps the unstable Java-set
+// order listRealmRoles documents. Gloak sorts every listing by name in the
+// store (both drivers ORDER BY name), so it already matches here and diverges
+// only on the unpaginated path, which is what Case.Unordered covers.
+//
+// first is a zero-based offset and max a page size, counted over that sorted
+// order; an absent or negative value means no bound, on both listings. A
+// negative bound was measured to mean "no bound" with search and without it -
+// the same shape the Java admin client puts on the wire for "no paging",
+// since it sends first=-1&max=-1 rather than omitting them.
+//
+// An empty search is not a non-empty one: search=&max=2 was measured
+// unpaginated, and search=&first=1&max=5 paged only because both bounds are
+// there. q.Get("search") == "" covers both, which is why the gate below reads
+// the value rather than only asking whether the parameter was sent.
+//
+// An unparseable value (first=abc) is treated as no bound, but that is
 // Gloak's own choice, not something measured: the real admin client always
 // sends a well-formed integer or omits the parameter, so a live 26.7.1's
-// behaviour on a malformed one was never probed.
+// behaviour on a malformed one was never probed. Note it still opens the gate,
+// because q.Has is about the parameter being sent, not about it parsing.
 func pageRoles(roles []*model.Role, q url.Values) []*model.Role {
-	if q.Get("search") == "" {
+	if q.Get("search") == "" && !(q.Has("first") && q.Has("max")) {
 		return roles
 	}
 
