@@ -132,19 +132,34 @@ func (h *handler) countUsers(w http.ResponseWriter, r *http.Request, rc *reqCont
 	httpx.WriteJSONCharset(w, http.StatusOK, len(users))
 }
 
+// resolveUser turns {userID} into a user, writing the measured 404 and
+// returning false when there is none.
+//
+// Every endpoint that takes a user ID goes through this. It exists because the
+// role-mapping endpoints added eleven more callers to what was already four
+// copies of the same eight lines, and a fifth spelling of "User not found"
+// would have been indistinguishable from a real divergence.
+func (h *handler) resolveUser(w http.ResponseWriter, r *http.Request, rc *reqContext) (*model.User, bool) {
+	user, err := h.store.Users().ByID(r.Context(), rc.realm.ID, r.PathValue("userID"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeUserNotFound(w)
+			return nil, false
+		}
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return nil, false
+	}
+	return user, true
+}
+
 // readUser serves GET /admin/realms/{realm}/users/{user-id}.
 //
 // The 404 message is "User not found", where a missing client answers "Could
 // not find client" and a missing realm "Realm not found." - three endpoints,
 // three spellings, one of them with a full stop.
 func (h *handler) readUser(w http.ResponseWriter, r *http.Request, rc *reqContext) {
-	user, err := h.store.Users().ByID(r.Context(), rc.realm.ID, r.PathValue("userID"))
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeUserNotFound(w)
-			return
-		}
-		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+	user, ok := h.resolveUser(w, r, rc)
+	if !ok {
 		return
 	}
 	rep := userRepresentationOf(user, false)
@@ -219,13 +234,8 @@ func (h *handler) createUser(w http.ResponseWriter, r *http.Request, rc *reqCont
 // which is why this reads the request's username even though it never applies
 // it.
 func (h *handler) updateUser(w http.ResponseWriter, r *http.Request, rc *reqContext) {
-	current, err := h.store.Users().ByID(r.Context(), rc.realm.ID, r.PathValue("userID"))
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeUserNotFound(w)
-			return
-		}
-		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+	current, ok := h.resolveUser(w, r, rc)
+	if !ok {
 		return
 	}
 

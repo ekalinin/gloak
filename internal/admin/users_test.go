@@ -252,6 +252,22 @@ func TestUpdateKeepsTheUsernameButStillReportsAConflict(t *testing.T) {
 	}
 }
 
+// resolveUser is the one place a {userID} becomes a user. The 404 body is
+// measured and shared by every endpoint that takes one.
+func TestResolveUserWritesTheMeasuredNotFound(t *testing.T) {
+	h, _, _ := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+
+	w := get(t, h, "/admin/realms/master/users/00000000-0000-0000-0000-000000000000", admin)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d: %s", w.Code, w.Body)
+	}
+	if body := w.Body.String(); body != `{"error":"User not found"}` {
+		t.Fatalf("unexpected 404 body: %s", body)
+	}
+}
+
 func postJSON(t *testing.T, h http.Handler, path, body, token string) *httptest.ResponseRecorder {
 	t.Helper()
 	return sendJSON(t, h, http.MethodPost, path, body, token)
