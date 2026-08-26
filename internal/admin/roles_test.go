@@ -169,10 +169,12 @@ func TestRealmRoleSearchIsASubstringOverNameAndDescription(t *testing.T) {
 // first and max" section of
 // docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
 //
-// Every row below is a query that was issued against a live 26.7.1. The rows
-// that matter most are the four no-search ones with both bounds: an earlier
-// version of this test asserted they came back whole, which was inferred from
-// three probes that each sent only one bound.
+// Every row below pins a behaviour that was measured against a live 26.7.1,
+// at the page sizes this three-role table allows rather than at the sizes the
+// probes used - the probes needed 23 roles for a page to be visible at all.
+// The rows that matter most are the no-search ones carrying both bounds: an
+// earlier version of this test asserted they came back whole, which was
+// inferred from three probes that each sent only one bound.
 func TestPageRoles(t *testing.T) {
 	roles := []*model.Role{{Name: "a"}, {Name: "b"}, {Name: "c"}}
 	names := func(in []*model.Role) []string {
