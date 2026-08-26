@@ -323,20 +323,6 @@ func (h *handler) disableCredentialTypes(w http.ResponseWriter, r *http.Request,
 	httpx.WriteNoContent(w, r)
 }
 
-// userFromPath resolves the {user-id} segment, writing the measured 404.
-func (h *handler) userFromPath(w http.ResponseWriter, r *http.Request, rc *reqContext) (*model.User, bool) {
-	user, err := h.store.Users().ByID(r.Context(), rc.realm.ID, r.PathValue("userID"))
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeUserNotFound(w)
-			return nil, false
-		}
-		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
-		return nil, false
-	}
-	return user, true
-}
-
 // credentialFromPath resolves both path segments. The user is checked first:
 // measured, a request naming an unknown user and a real credential answers
 // "User not found" rather than "Credential not found".

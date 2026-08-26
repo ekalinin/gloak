@@ -132,14 +132,16 @@ func (h *handler) countUsers(w http.ResponseWriter, r *http.Request, rc *reqCont
 	httpx.WriteJSONCharset(w, http.StatusOK, len(users))
 }
 
-// resolveUser turns {userID} into a user, writing the measured 404 and
-// returning false when there is none.
+// userFromPath resolves the {user-id} segment into a user, writing the
+// measured 404 and returning false when there is none.
 //
-// Every endpoint that takes a user ID goes through this. It exists because the
-// role-mapping endpoints added eleven more callers to what was already four
-// copies of the same eight lines, and a fifth spelling of "User not found"
-// would have been indistinguishable from a real divergence.
-func (h *handler) resolveUser(w http.ResponseWriter, r *http.Request, rc *reqContext) (*model.User, bool) {
+// Every endpoint that takes a user ID goes through this - the credential
+// endpoints in credentials.go already did, and readUser and updateUser below
+// did too until each carried its own copy of the same eight lines. The
+// role-mapping endpoints are about to add eleven more callers; a second
+// spelling of "User not found" would have been indistinguishable from a real
+// divergence, which is why there is exactly one.
+func (h *handler) userFromPath(w http.ResponseWriter, r *http.Request, rc *reqContext) (*model.User, bool) {
 	user, err := h.store.Users().ByID(r.Context(), rc.realm.ID, r.PathValue("userID"))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -158,7 +160,7 @@ func (h *handler) resolveUser(w http.ResponseWriter, r *http.Request, rc *reqCon
 // not find client" and a missing realm "Realm not found." - three endpoints,
 // three spellings, one of them with a full stop.
 func (h *handler) readUser(w http.ResponseWriter, r *http.Request, rc *reqContext) {
-	user, ok := h.resolveUser(w, r, rc)
+	user, ok := h.userFromPath(w, r, rc)
 	if !ok {
 		return
 	}
@@ -234,7 +236,7 @@ func (h *handler) createUser(w http.ResponseWriter, r *http.Request, rc *reqCont
 // which is why this reads the request's username even though it never applies
 // it.
 func (h *handler) updateUser(w http.ResponseWriter, r *http.Request, rc *reqContext) {
-	current, ok := h.resolveUser(w, r, rc)
+	current, ok := h.userFromPath(w, r, rc)
 	if !ok {
 		return
 	}
