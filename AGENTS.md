@@ -224,14 +224,22 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **The realm's own client refuses a new role even to a full administrator.**
   `POST /clients/{master-realm uuid}/roles` is 403 for everybody; reading its
   21 roles is not.
-- **`first` and `max` on a role listing take effect only when `search` is
-  non-empty.** With no `search` term both are accepted and ignored, and the
-  whole set comes back regardless of what they ask for. Measured on both the
-  realm listing and the client listing, which agree. A negative bound behaves
-  as absent, with or without `search`, which is what the Java admin client
-  sends for "no paging". It contradicts upstream's own
-  `RealmRolesSearchTest.testPaginationRoles`, which expects the no-search call
-  to page - the measurement is what Gloak reproduces.
+- **A role listing pages when `search` is non-empty, or when `first` and `max`
+  are both present.** Either condition alone is enough; only a request with
+  neither gets the whole set back. So `max=5` alone is ignored and
+  `first=1&max=5` is not. Measured on both the realm listing and the client
+  listing, which agree. The paged path is **sorted by name** and the
+  unpaginated one is not sorted at all, which is what makes `first=-1&max=-1`
+  come back sorted where `max=2` does not: a negative bound means "no bound",
+  but it still counts as present. An empty `search=` neither opens the gate nor
+  closes it.
+- **That rule was got wrong once, by inference rather than measurement.** The
+  first version said pagination needs `search`, generalised from three probes
+  that each sent only one bound; the central case, both bounds and no
+  `search`, had never been issued. When it was, it paged. Upstream's
+  `RealmRolesSearchTest.testPaginationRoles` had said so all along, and the
+  contradiction the spec claimed with it was an artifact of comparing
+  `list(1, null)` against an assertion about `list(1, 5)`.
 - **Role listings have no stable order across container starts.** Every one of
   them is a bare array at the root of the body, which is why `Case.Unordered`
   learned the root path spelling `"."`.
