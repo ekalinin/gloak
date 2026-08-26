@@ -52,6 +52,25 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/credentials/{credentialID}/moveAfter/{previousID}", h.guard("manage-users", h.moveCredentialAfter))
 	mux.HandleFunc("PUT /admin/realms/{realm}/users/{userID}/disable-credential-types", h.guard("manage-users", h.disableCredentialTypes))
 	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/logout", h.guard("manage-users", h.logoutUser))
+
+	// A user's realm role mappings: three reads that answer three different
+	// questions. All three take view-users or manage-users - measured against a
+	// live 26.7.1 with one user per role, a fresh token minted immediately
+	// before each call, and two different subjects.
+	//
+	// Not usersReadRoles, which is one role wider: query-users opens the user
+	// listing and the count and is 403 on all three of these. And not
+	// view-users alone, which the plan predicted: manage-users has no
+	// composites at all - it is not composite over view-users - and still opens
+	// every one of them, so refusing it would be the too-restrictive direction
+	// this cut has already reverted twice.
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/realm",
+		h.guardAny(userMappingsReadRoles, h.listRealmMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/realm/available",
+		h.guardAny(userMappingsReadRoles, h.availableRealmMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/realm/composite",
+		h.guardAny(userMappingsReadRoles, h.compositeRealmMappings))
+
 	mux.HandleFunc("GET /admin/realms/{realm}/clients", h.guard("view-clients", h.listClients))
 	// {clientUUID}, not {client-uuid}: net/http requires a wildcard name to be
 	// a Go identifier and panics on the hyphen. The OpenAPI description spells
@@ -311,6 +330,12 @@ func (h *handler) realmIssuer(realm string) string {
 // user by ID is not on this list: query-users was measured getting 403 there
 // and 200 on the other two.
 var usersReadRoles = []string{"view-users", "query-users", "manage-users"}
+
+// userMappingsReadRoles is what the three realm role-mapping reads accept.
+// It is usersReadRoles minus query-users, and the two lists are kept separate
+// because they were measured separately and disagree: the same caller that
+// gets 200 on GET /users gets 403 on GET /users/{id}/role-mappings/realm.
+var userMappingsReadRoles = []string{"view-users", "manage-users"}
 
 // realmRolesReadRoles is what both realm-role reads accept: view-realm or
 // manage-realm, measured across eight single-role callers.
