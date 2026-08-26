@@ -84,6 +84,121 @@ func (h *handler) availableRealmMappings(w http.ResponseWriter, r *http.Request,
 	writeMappingList(w, without(all, direct), rc.realm.ID, true)
 }
 
+// listClientMappings serves GET /users/{id}/role-mappings/clients/{client-uuid}:
+// the roles of that one client assigned **directly**.
+//
+// The brief shape is measured on this route, not carried over from
+// listRealmMappings: the two families of listings this API already has
+// disagree about briefRepresentation, so the client triple was swept in full.
+// It answers the same way its realm mirror does - only .../composite honours
+// the parameter.
+func (h *handler) listClientMappings(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	user, c, ok := h.clientMappingSubject(w, r, rc)
+	if !ok {
+		return
+	}
+	direct, err := h.store.Roles().ListUserRoles(r.Context(), user.ID)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	writeMappingList(w, rolesOfClient(direct, c.ID), rc.realm.ID, true)
+}
+
+// compositeClientMappings serves .../clients/{client-uuid}/composite: the
+// transitive expansion, narrowed to that client.
+//
+// The one of the three that honours briefRepresentation, measured on this
+// route. Note the expansion runs over the user's whole effective set and is
+// filtered afterwards: a client role reached through a *realm* role - which is
+// exactly how the administrator holds all 21 master-realm ones - has to be
+// listed, so the walk cannot be narrowed before it starts.
+func (h *handler) compositeClientMappings(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	user, c, ok := h.clientMappingSubject(w, r, rc)
+	if !ok {
+		return
+	}
+	effective, err := roles.Effective(r.Context(), h.store.Roles(), user.ID)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	writeMappingList(w, rolesOfClient(effective, c.ID), rc.realm.ID, briefRoles(r.URL.Query()))
+}
+
+// availableClientMappings serves .../clients/{client-uuid}/available: every
+// role of that client **not directly assigned**.
+//
+// The complement of the direct list, not of the composite one - measured on
+// this route rather than inherited from availableRealmMappings. On a subject
+// holding master-realm's view-users directly, query-users and query-groups are
+// in the composite expansion *and* in the available list, because the subject
+// reaches them through view-users without holding either directly.
+//
+// **Keycloak also filters this list by what the caller may grant**, and that
+// part is not implemented here, exactly as on the realm mirror. Measured on the
+// administrator as the subject: a caller holding only view-users gets `[]`, one
+// holding only manage-users gets seven of master-realm's 21, and a full
+// administrator gets all 21. F28 named this measurement as one that had to be
+// taken rather than inferred from the realm side; it was, it agrees, and the
+// predicate itself is still Task 7's. See the "`available` is filtered by what
+// the caller may grant" section of
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+func (h *handler) availableClientMappings(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	user, c, ok := h.clientMappingSubject(w, r, rc)
+	if !ok {
+		return
+	}
+	all, err := h.store.Roles().ListClientRoles(r.Context(), rc.realm.ID, c.ID)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	direct, err := h.store.Roles().ListUserRoles(r.Context(), user.ID)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	writeMappingList(w, without(all, direct), rc.realm.ID, true)
+}
+
+// clientMappingSubject resolves the two path segments a client mapping read
+// takes, in the order Keycloak resolves them: the **user first**. Measured on
+// all three routes - an unknown user with an unknown client answers "User not
+// found", so a client that does not exist is never the answer to a subject
+// that does not either.
+//
+// It does not call clientRoleContainer, although that helper resolves the same
+// {clientUUID} segment: the 404 body differs. See writeMappingClientNotFound.
+func (h *handler) clientMappingSubject(w http.ResponseWriter, r *http.Request, rc *reqContext) (*model.User, *model.Client, bool) {
+	user, ok := h.userFromPath(w, r, rc)
+	if !ok {
+		return nil, nil, false
+	}
+	c, err := h.store.Clients().ByID(r.Context(), rc.realm.ID, r.PathValue("clientUUID"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeMappingClientNotFound(w)
+			return nil, nil, false
+		}
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return nil, nil, false
+	}
+	return user, c, true
+}
+
+// writeMappingClientNotFound is the measured 404 for a client UUID a mapping
+// read cannot resolve.
+//
+// It is **not** writeClientNotFound's "Could not find client", which is what
+// GET /clients/{uuid} and GET /clients/{uuid}/roles answer for the very same
+// unknown UUID - the two were measured side by side in one session, on a live
+// 26.7.1, precisely because reusing clientRoleContainer here was the obvious
+// move. Ninth not-found spelling on this API.
+func writeMappingClientNotFound(w http.ResponseWriter) {
+	httpx.WriteMessageError(w, http.StatusNotFound, "Client not found")
+}
+
 // assignRealmMappings serves POST /users/{id}/role-mappings/realm.
 //
 // Assigning a role the user already holds is 204, not 409 - measured - so the
@@ -195,6 +310,23 @@ func realmRolesOnly(in []*model.Role) []*model.Role {
 	out := make([]*model.Role, 0, len(in))
 	for _, r := range in {
 		if r.ClientID == "" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// rolesOfClient keeps the roles owned by one client, realmRolesOnly's
+// counterpart for the client triple.
+//
+// Not spelled clientRolesOnly: roles.go already carries onlyRealmRoles and
+// onlyThisClientsRoles for the composite listings, realmRolesOnly above is
+// already one near-anagram of the first, and a fourth name in that shape would
+// be a coin toss at every call site. This one reads as what it returns.
+func rolesOfClient(in []*model.Role, clientID string) []*model.Role {
+	out := make([]*model.Role, 0, len(in))
+	for _, r := range in {
+		if r.ClientID == clientID {
 			out = append(out, r)
 		}
 	}

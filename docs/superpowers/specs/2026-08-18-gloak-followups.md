@@ -794,8 +794,8 @@ none. This is the *permissive* direction, and it is milder than the two writes
 above: it leaks the names of roles the caller may not grant, and grants
 nothing. The write guard is unaffected. But it is the same divergence from the
 same rule, and a fix wave that closes the two writes and leaves this one open
-would leave F28's predicate applied inconsistently across the three places the
-API exposes it.
+would leave F28's predicate applied inconsistently across the four places the
+API exposes it - see the count at the end of this entry.
 
 So: **F28 cannot be closed until this call site is covered as well.** Task 7 of
 the role-mappings plan enumerates two call sites - `eachComposite`'s child
@@ -806,6 +806,18 @@ already names F28 and says the filter is deliberately absent. The client
 mirror, `.../role-mappings/clients/{uuid}/available`, is the same endpoint by
 another locator and was not measured - it should be, in the same pass, rather
 than inferred from this one.
+
+**That measurement was taken, 2026-08-26, by Task 4 of the role-mappings plan,
+and the mirror agrees.** On the `master-realm` container: a caller holding only
+`view-users` gets `[]`, one holding only `manage-users` gets seven of the 21 -
+the ones it may hand out - and a full administrator gets the whole complement of
+the direct assignments. Only `available` is filtered; the direct listing and the
+composite expansion answer the same for all three callers. So the count is one
+predicate and **four** read/write call sites once the client reads ship:
+`eachComposite`'s child check, the mapping writes, `availableRealmMappings` and
+`availableClientMappings`. The latter carries the same deliberately-absent
+comment as its realm mirror. Transcript: "The client mirror is filtered the same
+way" in `2026-08-18-keycloak-26.7.1-observed.md`.
 
 Full transcript: the "`available` is filtered by what the caller may grant"
 section of `2026-08-18-keycloak-26.7.1-observed.md`, at line 2730. It sits

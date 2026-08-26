@@ -118,7 +118,7 @@ func TestOnlyCompositeRealmMappingsHonourBriefRepresentation(t *testing.T) {
 	postJSON(t, h, "/admin/realms/master/roles", `{"name":"probe-attr","attributes":{"probe":["v1","v2"]}}`, admin)
 	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-subject","enabled":true}`, admin)
 	uid := userID(t, s, realm, "probe-subject")
-	assignRole(t, s, realm, uid, "probe-attr")
+	assignRole(t, s, realm, uid, "", "probe-attr")
 	base := "/admin/realms/master/users/" + uid + "/role-mappings/realm"
 
 	// composite honours it, and carries the role's real attributes.
@@ -149,6 +149,245 @@ func TestOnlyCompositeRealmMappingsHonourBriefRepresentation(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// The client triple answers the same three questions the realm one does, on
+// the same subject. Measured on the bootstrapped administrator against a live
+// 26.7.1: it holds no `master-realm` role **directly** - which is why its
+// combined `/role-mappings` view carries no clientMappings key at all - so
+// direct is 0, while `admin` is composite over all 21 and none of them is
+// assigned directly, so composite and available are both 21.
+func TestClientMappingReadsMirrorTheRealmTriple(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	adminID := userID(t, s, realm, "admin")
+	mr := clientUUID(t, s, realm, "master-realm")
+	base := "/admin/realms/master/users/" + adminID + "/role-mappings/clients/" + mr
+
+	if got := mappingNames(t, h, base, admin); len(got) != 0 {
+		t.Fatalf("direct: want none, got %v", got)
+	}
+	if got := mappingNames(t, h, base+"/composite", admin); len(got) != 21 {
+		t.Fatalf("composite: want all 21 through the admin role, got %d: %v", len(got), got)
+	}
+	if got := mappingNames(t, h, base+"/available", admin); len(got) != 21 {
+		t.Fatalf("available: want all 21, since none is assigned directly, got %d: %v", len(got), got)
+	}
+}
+
+// available is the complement of **direct**, not of composite - the client
+// mirror of the create-realm case in the realm triple above, and measured on
+// its own subject rather than inferred from it.
+//
+// Measured on a subject holding `master-realm`'s view-users directly:
+// composite is view-users plus the two it is composite over, and both of those
+// are offered by available as well, because neither is assigned directly.
+// Computing available from the effective set would drop them.
+func TestClientAvailableIsTheComplementOfDirect(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-client-subject","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-client-subject")
+	mr := clientUUID(t, s, realm, "master-realm")
+	assignRole(t, s, realm, uid, mr, "view-users")
+	base := "/admin/realms/master/users/" + uid + "/role-mappings/clients/" + mr
+
+	direct := mappingNames(t, h, base, admin)
+	if want := []string{"view-users"}; !slices.Equal(direct, want) {
+		t.Fatalf("direct: want %v, got %v", want, direct)
+	}
+	// The representation's own shape, which nothing asserted before these
+	// routes existed: writeMappingList's client branch is what fills it, and
+	// every earlier caller pre-filtered to realm roles so it never ran.
+	// Measured - clientRole is true and containerId is the client's UUID.
+	rep, ok := repNamed(mappingReps(t, h, base, admin), "view-users")
+	if !ok {
+		t.Fatalf("direct lost view-users")
+	}
+	if !rep.ClientRole {
+		t.Errorf("direct: clientRole is false for a client role: %+v", rep)
+	}
+	if rep.ContainerID != mr {
+		t.Errorf("direct: containerId is %q, want the client's UUID %q", rep.ContainerID, mr)
+	}
+	composite := mappingNames(t, h, base+"/composite", admin)
+	if want := []string{"query-groups", "query-users", "view-users"}; !slices.Equal(composite, want) {
+		t.Fatalf("composite: want %v, got %v", want, composite)
+	}
+	available := mappingNames(t, h, base+"/available", admin)
+	if len(available) != 20 {
+		t.Fatalf("available: want the other 20, got %d: %v", len(available), available)
+	}
+	if slices.Contains(available, "view-users") {
+		t.Fatal("available offered a directly assigned role")
+	}
+	for _, name := range []string{"query-groups", "query-users"} {
+		if !slices.Contains(available, name) {
+			t.Fatalf("available dropped %s, reachable through a composite but not "+
+				"assigned directly; it is the complement of direct, not of composite", name)
+		}
+	}
+}
+
+// A client mapping listing carries **that client's roles and nothing else**:
+// not the realm roles the same user holds, and not another client's. Measured
+// on the administrator, whose effective set carries five realm roles and all
+// 21 master-realm ones.
+func TestClientMappingReadsExcludeOtherContainers(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	adminID := userID(t, s, realm, "admin")
+	mr := clientUUID(t, s, realm, "master-realm")
+	account := clientUUID(t, s, realm, "account")
+	base := "/admin/realms/master/users/" + adminID + "/role-mappings/clients/"
+
+	// admin and create-realm are realm roles in the administrator's effective
+	// set; view-profile belongs to the account client, not to master-realm.
+	for _, path := range []string{mr, mr + "/composite", mr + "/available"} {
+		got := mappingNames(t, h, base+path, admin)
+		for _, alien := range []string{"admin", "create-realm", "default-roles-master", "view-profile"} {
+			if slices.Contains(got, alien) {
+				t.Errorf("clients/%s leaked %s: %v", path, alien, got)
+			}
+		}
+	}
+	// And the other container's listing does not carry master-realm's.
+	for _, path := range []string{account, account + "/composite", account + "/available"} {
+		if got := mappingNames(t, h, base+path, admin); slices.Contains(got, "view-users") {
+			t.Errorf("clients/%s leaked a master-realm role: %v", path, got)
+		}
+	}
+}
+
+// The guard is view-users **or** manage-users, exactly as the realm triple's -
+// measured on the client routes directly rather than inherited from it, with
+// one user per role, a fresh token minted immediately before each call, two
+// subjects and two containers.
+//
+// A client-scoped route plausibly wants a client role too, and it does not:
+// view-clients and manage-clients are 403 on all three. Two roles open the
+// routes single-handed, so no pair was tried.
+func TestClientMappingReadsNeedViewOrManageUsers(t *testing.T) {
+	h, s, realm := newServer(t)
+	adminID := userID(t, s, realm, "admin")
+	mr := clientUUID(t, s, realm, "master-realm")
+	base := "/admin/realms/master/users/" + adminID + "/role-mappings/clients/" + mr
+	paths := []string{base, base + "/available", base + "/composite"}
+
+	for _, role := range []string{"view-users", "manage-users"} {
+		token := tokenForRole(t, h, s, realm, role)
+		for _, path := range paths {
+			if got := get(t, h, path, token).Code; got != http.StatusOK {
+				t.Errorf("%s as %s: want 200, got %d", path, role, got)
+			}
+		}
+	}
+	for _, role := range []string{
+		"query-users", "view-realm", "manage-realm", "view-clients", "manage-clients",
+	} {
+		token := tokenForRole(t, h, s, realm, role)
+		for _, path := range paths {
+			if got := get(t, h, path, token).Code; got != http.StatusForbidden {
+				t.Errorf("%s as %s: want 403, got %d", path, role, got)
+			}
+		}
+	}
+}
+
+// briefRepresentation is honoured by **composite alone** on the client triple
+// too. Measured on the client routes themselves, on a client role carrying
+// attributes and assigned directly, with a second attribute-carrying role left
+// unassigned so that available has something whose shape can be read.
+//
+// The realm triple behaving this way is one family's evidence and was not
+// enough: the three composite listings in the roles half ignore the parameter
+// outright, so two of this API's families already disagree about it.
+func TestOnlyCompositeClientMappingsHonourBriefRepresentation(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"probe-app"}`, admin)
+	app := clientUUID(t, s, realm, "probe-app")
+	roles := "/admin/realms/master/clients/" + app + "/roles"
+	postJSON(t, h, roles, `{"name":"probe-app-attr","attributes":{"probe":["v1","v2"]}}`, admin)
+	postJSON(t, h, roles, `{"name":"probe-app-attr-free","attributes":{"free":["f1"]}}`, admin)
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-app-subject","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-app-subject")
+	assignRole(t, s, realm, uid, app, "probe-app-attr")
+	base := "/admin/realms/master/users/" + uid + "/role-mappings/clients/" + app
+
+	// composite honours it, and carries the role's real attributes.
+	full := mappingReps(t, h, base+"/composite?briefRepresentation=false", admin)
+	rep, ok := repNamed(full, "probe-app-attr")
+	if !ok {
+		t.Fatalf("composite lost probe-app-attr: %v", full)
+	}
+	if rep.Attributes == nil {
+		t.Fatal("composite?briefRepresentation=false: no attributes key")
+	}
+	if got := (*rep.Attributes)["probe"]; !slices.Equal(got, []string{"v1", "v2"}) {
+		t.Fatalf("composite attributes: want [v1 v2], got %v", got)
+	}
+	// and defaults to the brief shape when the parameter is absent.
+	brief := mappingReps(t, h, base+"/composite", admin)
+	rep, ok = repNamed(brief, "probe-app-attr")
+	if !ok {
+		t.Fatalf("composite lost probe-app-attr: %v", brief)
+	}
+	if rep.Attributes != nil {
+		t.Fatalf("composite defaulted to the full shape: %v", *rep.Attributes)
+	}
+
+	// direct and available ignore it: no attributes key either way.
+	for _, path := range []string{base, base + "/available"} {
+		for _, q := range []string{"", "?briefRepresentation=false"} {
+			reps := mappingReps(t, h, path+q, admin)
+			if len(reps) == 0 {
+				t.Fatalf("%s%s: empty, so it asserts nothing", path, q)
+			}
+			for _, rep := range reps {
+				if rep.Attributes != nil {
+					t.Errorf("%s%s: %s carries attributes; measured absent",
+						path, q, rep.Name)
+				}
+			}
+		}
+	}
+}
+
+// A client UUID that resolves to nothing answers `{"error":"Client not
+// found"}` on all three - which is **not** the "Could not find client" the
+// client and role endpoints send for the same unknown UUID. Measured side by
+// side in one session; it is the ninth not-found spelling.
+//
+// The subject is resolved first: an unknown user with an unknown client
+// answers "User not found", so userFromPath runs before the client lookup.
+func TestClientMappingReadsAnswerTheMeasuredNotFounds(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	adminID := userID(t, s, realm, "admin")
+	const none = "00000000-0000-0000-0000-000000000000"
+
+	for _, suffix := range []string{"", "/available", "/composite"} {
+		path := "/admin/realms/master/users/" + adminID + "/role-mappings/clients/" + none + suffix
+		w := get(t, h, path, admin)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("%s: want 404, got %d: %s", path, w.Code, w.Body)
+			continue
+		}
+		if got := w.Body.String(); got != `{"error":"Client not found"}` {
+			t.Errorf("%s: unexpected body: %s", path, got)
+		}
+	}
+	// The control, in the same test: the roles endpoint's spelling differs.
+	if got := get(t, h, "/admin/realms/master/clients/"+none+"/roles", admin).Body.String(); got != `{"error":"Could not find client"}` {
+		t.Errorf("the roles endpoint's client 404 changed: %s", got)
+	}
+	// Unknown user and unknown client together: the user is answered.
+	unknown := "/admin/realms/master/users/" + none + "/role-mappings/clients/" + none
+	w := get(t, h, unknown, admin)
+	if w.Code != http.StatusNotFound || w.Body.String() != `{"error":"User not found"}` {
+		t.Errorf("unknown user and client: want 404 User not found, got %d %s", w.Code, w.Body)
 	}
 }
 
@@ -409,14 +648,17 @@ func userID(t *testing.T, s store.Store, realm *model.Realm, username string) st
 	return u.ID
 }
 
-// assignRole gives a user a realm role through the store. The API can do this
-// now, but the read tests above must not depend on the write path: a broken
-// POST would otherwise make them fail for a reason that has nothing to do with
-// what they assert.
-func assignRole(t *testing.T, s store.Store, realm *model.Realm, userID, role string) {
+// assignRole gives a user a role through the store. container is the owning
+// client's UUID, or "" for a realm role - the same convention RoleRepo.ByName
+// takes, rather than a second helper for the client side.
+//
+// The API can do this now, but the read tests above must not depend on the
+// write path: a broken POST would otherwise make them fail for a reason that
+// has nothing to do with what they assert.
+func assignRole(t *testing.T, s store.Store, realm *model.Realm, userID, container, role string) {
 	t.Helper()
 	ctx := context.Background()
-	r, err := s.Roles().ByName(ctx, realm.ID, "", role)
+	r, err := s.Roles().ByName(ctx, realm.ID, container, role)
 	if err != nil {
 		t.Fatalf("ByName(%s): %v", role, err)
 	}

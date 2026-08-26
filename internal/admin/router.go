@@ -87,6 +87,24 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /admin/realms/{realm}/users/{userID}/role-mappings/realm",
 		h.guard("manage-users", h.removeRealmMappings))
 
+	// The same three reads for one client's roles. The guard is the realm
+	// triple's, and that is measured on these routes rather than inherited:
+	// the same seven single-role callers were swept against all three, on two
+	// subjects and two containers, with a fresh token minted immediately
+	// before each call. A client-scoped route plausibly wants view-clients,
+	// and it does not - view-clients and manage-clients are 403 on all three,
+	// like every other role outside the users family.
+	//
+	// The guard follows the **subject** here too: which client's roles are
+	// being read makes no difference to it, which is why the {clientUUID}
+	// segment is the handler's business and not the guard's.
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}",
+		h.guardAny(userMappingsReadRoles, h.listClientMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}/available",
+		h.guardAny(userMappingsReadRoles, h.availableClientMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}/composite",
+		h.guardAny(userMappingsReadRoles, h.compositeClientMappings))
+
 	mux.HandleFunc("GET /admin/realms/{realm}/clients", h.guard("view-clients", h.listClients))
 	// {clientUUID}, not {client-uuid}: net/http requires a wildcard name to be
 	// a Go identifier and panics on the hyphen. The OpenAPI description spells
@@ -347,7 +365,8 @@ func (h *handler) realmIssuer(realm string) string {
 // and 200 on the other two.
 var usersReadRoles = []string{"view-users", "query-users", "manage-users"}
 
-// userMappingsReadRoles is what the three realm role-mapping reads accept.
+// userMappingsReadRoles is what the six role-mapping reads accept - the three
+// realm ones and the three client ones, swept separately and agreeing.
 // It is usersReadRoles minus query-users, and the two lists are kept separate
 // because they were measured separately and disagree: the same caller that
 // gets 200 on GET /users gets 403 on GET /users/{id}/role-mappings/realm.
