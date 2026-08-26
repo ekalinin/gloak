@@ -163,6 +163,68 @@ func TestRealmRoleSearchIsASubstringOverNameAndDescription(t *testing.T) {
 	}
 }
 
+// TestPageRoles pins pageRoles's measured contract: a listing pages when
+// search is non-empty **or** when first and max are both present, and only a
+// request carrying neither is answered unpaginated - see the "Role listing:
+// first and max" section of
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+//
+// Every row below pins a behaviour that was measured against a live 26.7.1,
+// at the page sizes this three-role table allows rather than at the sizes the
+// probes used - the probes needed 23 roles for a page to be visible at all.
+// The rows that matter most are the no-search ones carrying both bounds: an
+// earlier version of this test asserted they came back whole, which was
+// inferred from three probes that each sent only one bound.
+func TestPageRoles(t *testing.T) {
+	roles := []*model.Role{{Name: "a"}, {Name: "b"}, {Name: "c"}}
+	names := func(in []*model.Role) []string {
+		out := make([]string, 0, len(in))
+		for _, r := range in {
+			out = append(out, r.Name)
+		}
+		return out
+	}
+
+	for _, tc := range []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{"no search: max alone is ignored", "max=2", []string{"a", "b", "c"}},
+		{"no search: first alone is ignored", "first=1", []string{"a", "b", "c"}},
+		{"no search: first and max together do page", "first=1&max=1", []string{"b"}},
+		{"no search: both bounds, max only", "first=0&max=2", []string{"a", "b"}},
+		{"no search: both bounds, first past the end", "first=99&max=2", []string{}},
+		{"no search: both bounds, max zero is an empty page", "first=1&max=0", []string{}},
+		{"no search: a negative first still opens the gate for max", "first=-1&max=2", []string{"a", "b"}},
+		{"no search: a negative max still opens the gate for first", "first=1&max=-1", []string{"b", "c"}},
+		{"no search: the admin client's no-paging convention pages with no bounds", "first=-1&max=-1", []string{"a", "b", "c"}},
+		{"an empty search is not a search: max alone is ignored", "search=&max=2", []string{"a", "b", "c"}},
+		{"an empty search with both bounds pages on the bounds alone", "search=&first=1&max=1", []string{"b"}},
+		{"search with no first or max is unbounded", "search=x", []string{"a", "b", "c"}},
+		{"search: max zero is an empty page", "search=x&max=0", []string{}},
+		{"search: max bounds the page", "search=x&max=2", []string{"a", "b"}},
+		{"search: first zero is a no-op offset", "search=x&first=0", []string{"a", "b", "c"}},
+		{"search: first offsets from zero", "search=x&first=1", []string{"b", "c"}},
+		{"search: first past the end", "search=x&first=3", []string{}},
+		{"search: first and max compose", "search=x&first=1&max=1", []string{"b"}},
+		{"search: negative max alone means absent", "search=x&max=-1", []string{"a", "b", "c"}},
+		{"search: negative first alone means absent", "search=x&first=-1", []string{"a", "b", "c"}},
+		{"search: negative first and max together means absent", "search=x&first=-1&max=-1", []string{"a", "b", "c"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q, err := url.ParseQuery(tc.query)
+			if err != nil {
+				t.Fatalf("bad query: %v", err)
+			}
+			got := names(pageRoles(roles, q))
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("pageRoles(%q) = %v, want %v", tc.query, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestReadRealmRole(t *testing.T) {
 	h, _, _ := newServer(t)
 	admin := tokenFor(t, h, "admin", "admin")

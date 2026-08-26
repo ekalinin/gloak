@@ -281,6 +281,11 @@ var Fixtures = map[string]Fixture{
 	"admin-token-role-to-update": realmRoleFixture("gloak-probe-role-update"),
 	"admin-token-role-to-delete": realmRoleFixture("gloak-probe-role-delete"),
 
+	// Three realm roles sharing one search prefix, for the cases that
+	// exercise first and max on a narrowed listing.
+	"admin-token-paged-roles":          pagedRolesFixture(),
+	"admin-token-role-with-attributes": attributedRoleFixture(),
+
 	// A client carrying one role, for the cases that read a client's own
 	// roles back. Read-only cases only - see realmRoleFixture's doc for why a
 	// case that writes needs its own name instead.
@@ -290,6 +295,10 @@ var Fixtures = map[string]Fixture{
 
 	// A client with no role of its own yet, for the case that creates one.
 	"admin-token-role-create-container": clientFixture("gloak-probe-role-create-client"),
+
+	// A realm role and a client role sharing one search prefix, for the case
+	// that guards the realm listing against leaking a client role in.
+	"admin-token-same-named-roles": sameNamedRolesFixture(),
 
 	// A realm-role parent composite over one realm-family child and one
 	// client-family child, everything linked. Backs every read on the realm
@@ -320,6 +329,58 @@ func realmRoleFixture(name string) Fixture {
 				Path:    "/admin/realms/master/roles",
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 				Body:    []byte(`{"name":"` + name + `"}`),
+			},
+		}},
+	}
+}
+
+// pagedRolesFixture creates three realm roles sharing one search prefix, so a
+// listing can be narrowed to a set of known size before first and max are
+// applied to it.
+//
+// Narrowing first is what makes most of the goldens recordable. A page taken
+// out of the whole realm is generally a subset chosen by Keycloak's own role
+// order, which AGENTS.md records as differing between container starts, and
+// Case.Unordered cannot repair a difference in membership - only in order.
+// admin/roles/list-realm-page-no-search is the one case that does take a page
+// out of the whole realm; its comment says what makes that particular page
+// safe.
+//
+// **The three are created c, b, a, so creation order is not alphabetical
+// order.** Created a, b, c they agreed by accident, and a case over them could
+// not tell Keycloak's page selection from Gloak's own sort by name - the two
+// produced the same answer whatever the endpoint did. Measured 2026-08-26,
+// Keycloak sorts by name on every path that pages, so a fixture whose creation
+// order matches that sort is a fixture that cannot detect the difference.
+func pagedRolesFixture() Fixture {
+	steps := []Step{adminTokenStep()}
+	for _, suffix := range []string{"c", "b", "a"} {
+		steps = append(steps, Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/roles",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"name":"gloak-probe-page-` + suffix + `"}`),
+			},
+		})
+	}
+	return Fixture{State: "bootstrap", Steps: steps}
+}
+
+// attributedRoleFixture creates one realm role carrying attributes, so the
+// listing's briefRepresentation can be measured against something that has
+// something to hide. Exactly one role matches the search prefix, so the
+// resulting body is a one-element array and the realm's unstable role order
+// cannot reach it.
+func attributedRoleFixture() Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{adminTokenStep(), {
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/roles",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"name":"gloak-probe-attrs","attributes":{"attribute1":["value1","value2"]}}`),
 			},
 		}},
 	}
@@ -362,6 +423,54 @@ func clientRoleFixture(clientID, roleName string) Fixture {
 					Path:    "/admin/realms/master/clients/{{client_uuid}}/roles",
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"` + roleName + `"}`),
+				},
+			},
+		},
+	}
+}
+
+// sameNamedRolesFixture creates a realm role and a client role sharing one
+// search prefix, so a listing narrowed by that prefix has something to leak.
+//
+// Mined from RealmRolesSearchTest.testSearchForRealmRoles, upstream's guard on
+// issue #9587: the realm listing must never return a role whose clientRole is
+// true, however the search is spelled.
+func sameNamedRolesFixture() Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/roles",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"name":"gloak-probe-shared-realm"}`),
+				},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"clientId":"gloak-probe-shared-client"}`),
+				},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients",
+					Query:   map[string]string{"clientId": "gloak-probe-shared-client"},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"client_uuid": "0/id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients/{{client_uuid}}/roles",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"name":"gloak-probe-shared-on-client"}`),
 				},
 			},
 		},

@@ -224,6 +224,22 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **The realm's own client refuses a new role even to a full administrator.**
   `POST /clients/{master-realm uuid}/roles` is 403 for everybody; reading its
   21 roles is not.
+- **A role listing pages when `search` is non-empty, or when `first` and `max`
+  are both present.** Either condition alone is enough; only a request with
+  neither gets the whole set back. So `max=5` alone is ignored and
+  `first=1&max=5` is not. Measured on both the realm listing and the client
+  listing, which agree. The paged path is **sorted by name** and the
+  unpaginated one is not sorted at all, which is what makes `first=-1&max=-1`
+  come back sorted where `max=2` does not: a negative bound means "no bound",
+  but it still counts as present. An empty `search=` neither opens the gate nor
+  closes it.
+- **That rule was got wrong once, by inference rather than measurement.** The
+  first version said pagination needs `search`, generalised from three probes
+  that each sent only one bound; the central case, both bounds and no
+  `search`, had never been issued. When it was, it paged. Upstream's
+  `RealmRolesSearchTest.testPaginationRoles` had said so all along, and the
+  contradiction the spec claimed with it was an artifact of comparing
+  `list(1, null)` against an assertion about `list(1, 5)`.
 - **Role listings have no stable order across container starts.** Every one of
   them is a bare array at the root of the body, which is why `Case.Unordered`
   learned the root path spelling `"."`.
@@ -296,10 +312,56 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
   conformance suite in `internal/store/storetest` does not exercise every method, so
   compiling is not proof.
 
+## Where a new case can come from
+
+Three sources, in order of how much they cost:
+
+1. **The vendored OpenAPI description.** It says which operations exist. It
+   never says what one answers.
+2. **A live 26.7.1.** Every expected value comes from here. This is the rule
+   at the top of this file.
+3. **Keycloak's own test suite.** `make kcsrc` materialises a sparse checkout
+   at the pinned tag under `.kc-testsuite/` - `tests/`, `test-framework/`, and,
+   because sparse cone mode always includes them, the repository's root files
+   too. Nothing makes it read-only; that is a discipline, and the next sentence
+   is the actual rule. Its 2490 test methods are claims somebody upstream
+   thought worth guarding; the ones about surface Gloak already serves are
+   cases this catalogue may be missing.
+
+A mined case goes: read the upstream assertion, measure the same thing against
+a live 26.7.1, then add the `Case` under the status the measurement earns. One
+Gloak does not serve yet goes in as `Recorded` with a `Reason`, and it is
+`make test`'s `TestConformance` failing with "already matches" that tells you
+to promote it to `Implemented`; one Gloak already serves goes in as
+`Implemented` directly, with no `Reason`.
+
+Those last two are separate rules enforced in separate places, not one rule
+and its consequence. An `Implemented` case must carry no `Reason`
+(`catalog_test.go`). A `Recorded` case that matches its golden is a hard
+failure (`conformance_test.go`, and `case.go`'s `Recorded` doc comment says
+why). Neither follows from the other; you can break either on its own.
+
+Cite the upstream file and test method in `Case.Doc.Section`. Nothing is
+copied out of `.kc-testsuite/`: upstream is Apache-2.0 and this repository
+carries no upstream source.
+
+**Most mined cases pass on the first run, and that is the expected outcome.**
+An already-correct behaviour with a golden under it is one the next refactor
+cannot break silently. The ones that fail are the finds: `first` and `max` on
+the role listings were accepted and ignored until
+`RealmRolesSearchTest.testPaginationRoles` was read.
+
+Do not mine `testsuite/`. `testsuite/DEPRECATED.md` freezes it, and
+`make kcsrc` does not check it out.
+
 ## Conventions
 
 - Commit messages `type(scope): subject`, types limited to `feat`, `fix`, `docs`,
-  `refactor`, `perf`, `chore`.
+  `test`, `refactor`, `perf`, `chore`. `test` was in use long before it was
+  listed - counted across the 144 conventional commits behind this line, `feat`
+  59, `docs` 47, `fix` 27, `test` 7, `chore` 3, `refactor` 1, `perf` 0, so it
+  outranks three types the list already allowed and `perf` has never been used
+  at all. The list was wrong, not the commits; none were rewritten.
 - Never commit to `main`. Branch names carry their work type: `feat/`, `fix/`,
   `refactor/`, `docs/`, `chore/`.
 - Code comments in English.

@@ -1349,6 +1349,189 @@ var adminCases = []Case{
 		Volatile:  []string{"*/id", "*/containerId"},
 	},
 	{
+		ID: "admin/roles/list-realm-page-empty",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get all roles for the realm, max=0; mined from RealmRolesSearchTest.testSearchForRoles",
+			Retrieved: "2026-08-25",
+		},
+		Status: Implemented,
+		// No Operation: GET /admin/realms/{realm}/roles is already claimed by
+		// admin/roles/list-realm, and an operation is counted once.
+		Fixture: "admin-token-paged-roles",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles",
+			Query:   map[string]string{"search": "gloak-probe-page", "max": "0"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/roles/list-realm-page-past-end",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get all roles for the realm, first past the end of the match set; mined from RealmRolesSearchTest.testSearchForRoles",
+			Retrieved: "2026-08-25",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-paged-roles",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles",
+			Query:   map[string]string{"search": "gloak-probe-page", "first": "3"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		// Recordable because Task 2 measured this exact page -
+		// search=gloak-probe-page&first=1&max=1 - reproducible in both
+		// membership and order across two separate container starts.
+		//
+		// **This page cannot tell a sort by name from any other order.** The
+		// middle of three is the middle whichever way the three are arranged,
+		// so the assertion holds under Keycloak's measured sort by name and
+		// under the creation order this fixture used to hand it as well.
+		// pagedRolesFixture now creates c, b, a rather than a, b, c, which
+		// removes the accidental agreement but does not make *this* query
+		// discriminating - only a page that is not symmetric about the middle
+		// would be. admin/roles/list-realm-page-no-search below is the case
+		// that actually pins the sort.
+		ID: "admin/roles/list-realm-page-first",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get all roles for the realm, one role taken out of the middle of the match set; mined from RealmRolesSearchTest.testSearchForRoles",
+			Retrieved: "2026-08-25",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-paged-roles",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles",
+			Query:   map[string]string{"search": "gloak-probe-page", "first": "1", "max": "1"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		// **The only case guarding the gate that decides whether a role
+		// listing pages at all**, and the reason it exists is that the gate
+		// was got wrong once. Every other paging case sends search=, so all
+		// six of them passed while first=1&max=5 with no search returned the
+		// entire realm.
+		//
+		// Measured 2026-08-26: the listing pages when search is non-empty *or*
+		// when first and max are both present, and the paged path is sorted by
+		// name. This sends no search at all, so it is the second condition on
+		// its own. Without it the response would be every realm role.
+		//
+		// **Why a page of the whole realm is recordable here when Case.
+		// PristineRealm exists precisely because it usually is not.** The
+		// recorder shares one container and state accumulates in catalogue
+		// order, so an unfiltered listing normally picks up whatever earlier
+		// fixtures created. This page cannot: the paged path is sorted by
+		// name, and every realm role any fixture creates is named
+		// "gloak-probe-...", which sorts after "default-roles-master" and so
+		// can never enter or displace the window at indices 1 and 2. Those two
+		// slots hold create-realm and default-roles-master whatever else the
+		// realm accumulated, which is also why this case needs no
+		// PristineRealm marking and adds no ordering constraint. A future
+		// fixture creating a realm role sorting before "default-roles-master"
+		// would break that, and would break this case loudly rather than
+		// silently.
+		//
+		// No Unordered: the paged path was measured sorted and stable, unlike
+		// the plain listing, so order is worth asserting here. It is what
+		// distinguishes a real page from two roles picked out of the unstable
+		// set.
+		ID: "admin/roles/list-realm-page-no-search",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get all roles for the realm, first and max with no search term; mined from RealmRolesSearchTest.testPaginationRoles",
+			Retrieved: "2026-08-26",
+		},
+		Status: Implemented,
+		// No Operation: GET /admin/realms/{realm}/roles is already claimed by
+		// admin/roles/list-realm, and an operation is counted once.
+		Fixture: "admin-token-paged-roles",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles",
+			Query:   map[string]string{"first": "1", "max": "2"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/roles/list-realm-brief",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get all roles for the realm, briefRepresentation=true over a role with attributes; mined from RealmRolesSearchTest.getRolesWithBriefRepresentation",
+			Retrieved: "2026-08-25",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-role-with-attributes",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles",
+			Query:   map[string]string{"search": "gloak-probe-attrs", "briefRepresentation": "true"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/roles/list-realm-full",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get all roles for the realm, briefRepresentation=false over a role with attributes; mined from RealmRolesSearchTest.getRolesWithFullRepresentation",
+			Retrieved: "2026-08-25",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-role-with-attributes",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles",
+			Query:   map[string]string{"search": "gloak-probe-attrs", "briefRepresentation": "false"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+		// attributes is a Java Map in hash order and Go sorts map keys. This is
+		// the suite's one documented retreat from byte-exactness; see the
+		// UnorderedKeys note in case.go.
+		UnorderedKeys: []string{"*/attributes"},
+	},
+	{
+		ID: "admin/roles/list-realm-search-excludes-client-roles",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: get all roles for the realm, search matching a client role too; mined from RealmRolesSearchTest.testSearchForRealmRoles, upstream issue #9587",
+			Retrieved: "2026-08-25",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-same-named-roles",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles",
+			Query:   map[string]string{"search": "gloak-probe-shared"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
 		ID: "admin/roles/read-realm",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",

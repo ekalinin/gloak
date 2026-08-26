@@ -597,6 +597,42 @@ operation needs".
 
 Opened by the final whole-branch review of `feat/p2-roles`, 2026-08-25.
 
+**Partly closed 2026-08-26** by `feat/keycloak-testsuite-mining`, commits
+"feat(admin): apply first and max to the role listings" and "fix(admin): page
+the role listings when first and max are both present". **It stays open**, for
+the reason in the third paragraph below.
+
+*Closed:* the two flat listings. `GET /roles` and `GET /clients/{uuid}/roles`
+both honour `first` and `max` through `pageRoles`, and the measured rule - the
+listing pages when `search` is non-empty **or** when both bounds are present,
+over an order sorted by name - is in the "Role listing: first and max" section
+of `2026-08-18-keycloak-26.7.1-observed.md`. Every detail this entry listed as
+unmeasured now is: `first` past the end is `[]` rather than an error, `max=0`
+is an empty array rather than "ignored", and the bounds apply after `search`
+narrows the set. Seven conformance cases cover it.
+
+*Not closed:* the composite listings, which this entry also names.
+`listComposites` (`internal/admin/roles.go`) still reads neither parameter,
+and - the point - **nothing has measured whether Keycloak's composite
+listings take them at all.** It serves `GET .../composites` and its two
+filtered forms on the by-name and `roles-by-id` families alike, so one
+unmeasured behaviour covers ten routes. Do not copy `pageRoles` into it on the
+strength of the flat listings agreeing; the flat listings' own rule turned out
+to have a second gate nobody predicted from the first three probes.
+
+*Also not closed:* the conformance-model question in the last paragraph below,
+whether `Implemented` needs to mean "every query parameter" or the catalogue
+needs a way to say "implemented except for these". This branch did not decide
+it.
+
+**One line of the text below is now wrong** and is corrected here rather than
+deleted, because it is the same mistake the fix wave had to undo. It says the
+"realm role listing is not sorted" section "already records that `first`/`max`
+page in the listing's own order, so the parameters were observed working".
+That sentence has been removed from the observed spec: the listing's own order
+is unstable and unsorted, the paged path is sorted by name, and the two are
+different code paths. Nothing had observed the parameters working.
+
 Every role listing this cut shipped reads only `search` and
 `briefRepresentation` off the query string. `first` and `max` are accepted and
 silently dropped. That covers `GET /roles`, `GET /clients/{uuid}/roles`, and
