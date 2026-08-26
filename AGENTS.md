@@ -322,7 +322,7 @@ Three sources, in order of how much they cost:
    at the top of this file.
 3. **Keycloak's own test suite.** `make kcsrc` materialises a read-only
    checkout of `tests/` and `test-framework/` at the pinned tag under
-   `.kc-testsuite/`. Its 2643 test methods are claims somebody upstream thought
+   `.kc-testsuite/`. Its 2490 test methods are claims somebody upstream thought
    worth guarding; the ones about surface Gloak already serves are cases this
    catalogue may be missing.
 

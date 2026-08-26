@@ -10,7 +10,7 @@ the admin CLI that ships inside the Keycloak image, and it earns its keep by
 asking for things no golden asks for. It found `ClientRepresentation.description`
 on its first run.
 
-Keycloak also ships something larger: its own regression suite, 2643 test methods
+Keycloak also ships something larger: its own regression suite, 2490 test methods
 of it. This document answers whether that suite can become a second oracle, what
 it would cost, and what has to exist first.
 
@@ -38,9 +38,24 @@ Three top-level trees carry tests:
 | `test-framework/` | the framework those tests run on, published as `keycloak-test-framework-*` Maven modules | its own 4 |
 | `testsuite/` | the Arquillian suite, JUnit 4 | 649 |
 
-`tests/base` holds **2643 `@Test` methods** across its 430 classes, and 393 of
-those classes carry `@KeycloakIntegrationTest`, the annotation that starts a
-server.
+`tests/base` holds **2490 test methods**: 2483 `@Test` plus 7
+`@ParameterizedTest`. They are spread over the 364 of its 484 `.java` files
+that declare at least one, and 398 of those files carry
+`@KeycloakIntegrationTest`, the annotation that starts a server. Every `.java`
+file in `tests/base` is under `src/test/java`.
+
+**An earlier version of this line said 2643, and that number was a grep
+artifact.** It came from `grep -rho '@Test[A-Za-z]*'`, which has no word
+boundary, so it also counted 121 `@TestOnServer`, 22 `@TestSetup`, 15
+`@TestMethodOrder` and 2 `@TestCleanup` - lifecycle and ordering annotations,
+not test methods. 2483 + 121 + 22 + 15 + 2 = 2643 exactly. The counts above are
+word-bounded:
+
+```
+grep -rhoE '@(Test|ParameterizedTest)\b' .kc-testsuite/tests/base | wc -l
+```
+
+Counted against the pinned checkout, `73f08b397f193712b26d317210dce99898129709`.
 
 **`testsuite/` is deprecated and should be ignored.** `testsuite/DEPRECATED.md`
 says so in as many words: Arquillian is no longer maintained upstream, the module
