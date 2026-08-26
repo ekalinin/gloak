@@ -756,6 +756,63 @@ want one task between them rather than a bolt-on here. That task needs one
 more measurement pass first: the sweep above is two callers' rows, and what is
 wanted is the rule for an arbitrary caller.
 
+**There is a third call site, and it is a read.** Added 2026-08-26 by Task 2 of
+`feat/p2-role-mappings`. The paragraph above says "the two", and that count is
+now wrong: it is three. The correction is recorded here rather than made in
+place, because the reason the third was missed is the point - the first two are
+writes, and nobody looked for the same predicate on a read.
+
+`GET /users/{id}/role-mappings/realm/available` is **not** simply "every realm
+role not assigned directly". Keycloak also drops the roles the *caller* may not
+grant. Measured against a live 26.7.1 on one subject - `probe-subject`, holding
+`probe-attr` and `default-roles-master` directly - with three callers, a fresh
+token minted immediately before each call. **All three answer 200**; only the
+bodies differ:
+
+```
+--- caller probe-view-users ---
+    []
+--- caller probe-manage-users ---
+    ['offline_access', 'uma_authorization']
+--- caller admin ---
+    ['create-realm', 'offline_access', 'uma_authorization', 'admin']
+```
+
+The full administrator's answer is exactly the complement of the direct
+assignments. `manage-users` loses `admin` and `create-realm`, the two it may not
+grant. `view-users` loses everything, because it may grant nothing at all - it
+can read the list and assign none of it.
+
+**Gloak answers the full administrator's list to every caller its guard
+admits**, so a `view-users` caller sees four roles where Keycloak shows it
+none. This is the *permissive* direction, and it is milder than the two writes
+above: it leaks the names of roles the caller may not grant, and grants
+nothing. The write guard is unaffected. But it is the same divergence from the
+same rule, and a fix wave that closes the two writes and leaves this one open
+would leave F28's predicate applied inconsistently across the three places the
+API exposes it.
+
+So: **F28 cannot be closed until this call site is covered as well.** Task 7 of
+the role-mappings plan enumerates two call sites - `eachComposite`'s child
+check and the mapping writes - and its Step 3 says "write one predicate and
+call it from" them. It is one predicate and **three** call sites; the third is
+`availableRealmMappings` in `internal/admin/rolemappings.go`, whose doc comment
+already names F28 and says the filter is deliberately absent. The client
+mirror, `.../role-mappings/clients/{uuid}/available`, is the same endpoint by
+another locator and was not measured - it should be, in the same pass, rather
+than inferred from this one.
+
+Full transcript: the "`available` is filtered by what the caller may grant"
+section of `2026-08-18-keycloak-26.7.1-observed.md`, at line 2730. It sits
+beside the write-side sweep this entry already cites, "Adding an admin role as
+a composite is judged against the *caller*, not the role", at line 2297 of the
+same file.
+
+Not fixed in the task that measured it, for the reason the entry gives above:
+the rule is a mapping from an admin role to the power it confers, that mapping
+is not in this repository, and a partial version of it is what Task 7's own
+Step 2 tells its implementer to refuse to write.
+
 ## F29: deleting a client leaves its roles behind, and Keycloak deletes them
 
 Found and measured 2026-08-25 while verifying F-nothing in particular - it
