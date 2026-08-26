@@ -320,19 +320,27 @@ Three sources, in order of how much they cost:
    never says what one answers.
 2. **A live 26.7.1.** Every expected value comes from here. This is the rule
    at the top of this file.
-3. **Keycloak's own test suite.** `make kcsrc` materialises a read-only
-   checkout of `tests/` and `test-framework/` at the pinned tag under
-   `.kc-testsuite/`. Its 2490 test methods are claims somebody upstream thought
-   worth guarding; the ones about surface Gloak already serves are cases this
-   catalogue may be missing.
+3. **Keycloak's own test suite.** `make kcsrc` materialises a sparse checkout
+   at the pinned tag under `.kc-testsuite/` - `tests/`, `test-framework/`, and,
+   because sparse cone mode always includes them, the repository's root files
+   too. Nothing makes it read-only; that is a discipline, and the next sentence
+   is the actual rule. Its 2490 test methods are claims somebody upstream
+   thought worth guarding; the ones about surface Gloak already serves are
+   cases this catalogue may be missing.
 
 A mined case goes: read the upstream assertion, measure the same thing against
 a live 26.7.1, then add the `Case` under the status the measurement earns. One
 Gloak does not serve yet goes in as `Recorded` with a `Reason`, and it is
 `make test`'s `TestConformance` failing with "already matches" that tells you
 to promote it to `Implemented`; one Gloak already serves goes in as
-`Implemented` directly, with no `Reason`, because a `Recorded` case that
-matches its golden is a hard failure - see `case.go`'s `Recorded` doc comment.
+`Implemented` directly, with no `Reason`.
+
+Those last two are separate rules enforced in separate places, not one rule
+and its consequence. An `Implemented` case must carry no `Reason`
+(`catalog_test.go`). A `Recorded` case that matches its golden is a hard
+failure (`conformance_test.go`, and `case.go`'s `Recorded` doc comment says
+why). Neither follows from the other; you can break either on its own.
+
 Cite the upstream file and test method in `Case.Doc.Section`. Nothing is
 copied out of `.kc-testsuite/`: upstream is Apache-2.0 and this repository
 carries no upstream source.
@@ -349,7 +357,11 @@ Do not mine `testsuite/`. `testsuite/DEPRECATED.md` freezes it, and
 ## Conventions
 
 - Commit messages `type(scope): subject`, types limited to `feat`, `fix`, `docs`,
-  `refactor`, `perf`, `chore`.
+  `test`, `refactor`, `perf`, `chore`. `test` was in use long before it was
+  listed - counted across the 144 conventional commits behind this line, `feat`
+  59, `docs` 47, `fix` 27, `test` 7, `chore` 3, `refactor` 1, `perf` 0, so it
+  outranks three types the list already allowed and `perf` has never been used
+  at all. The list was wrong, not the commits; none were rewritten.
 - Never commit to `main`. Branch names carry their work type: `feat/`, `fix/`,
   `refactor/`, `docs/`, `chore/`.
 - Code comments in English.
