@@ -453,6 +453,12 @@ func TestRealmMappingWritesAreAllOrNothing(t *testing.T) {
 		if w.Code != http.StatusNotFound {
 			t.Fatalf("assign %s: want 404, got %d: %s", body, w.Code, w.Body)
 		}
+		// The measured body for an id that resolves to nothing, pinned here as
+		// well as in the client-role case below: the status alone would pass
+		// for any 404 this API can produce.
+		if got := w.Body.String(); got != `{"error":"Role not found"}` {
+			t.Errorf("assign %s: unexpected body: %s", body, got)
+		}
 		if got := mappingNames(t, h, base, admin); slices.Contains(got, "offline_access") {
 			t.Fatalf("assign %s applied the valid half: %v", body, got)
 		}
@@ -465,6 +471,9 @@ func TestRealmMappingWritesAreAllOrNothing(t *testing.T) {
 		w := sendJSON(t, h, http.MethodDelete, base, body, admin)
 		if w.Code != http.StatusNotFound {
 			t.Fatalf("remove %s: want 404, got %d: %s", body, w.Code, w.Body)
+		}
+		if got := w.Body.String(); got != `{"error":"Role not found"}` {
+			t.Errorf("remove %s: unexpected body: %s", body, got)
 		}
 		if got := mappingNames(t, h, base, admin); !slices.Contains(got, "offline_access") {
 			t.Fatalf("remove %s applied the valid half: %v", body, got)
@@ -705,6 +714,12 @@ func TestClientMappingWritesAreAllOrNothing(t *testing.T) {
 		if w.Code != http.StatusNotFound {
 			t.Fatalf("assign %s: want 404, got %d: %s", body, w.Code, w.Body)
 		}
+		// The body is the measured one for an id that resolves to nothing,
+		// which is the same string the wrong-container case sends. Pinned here
+		// too: the status alone would pass for any 404 this API can produce.
+		if got := w.Body.String(); got != `{"error":"Role not found"}` {
+			t.Errorf("assign %s: unexpected body: %s", body, got)
+		}
 		if got := mappingNames(t, h, base, admin); slices.Contains(got, "probe-app-role") {
 			t.Fatalf("assign %s applied the valid half: %v", body, got)
 		}
@@ -717,6 +732,9 @@ func TestClientMappingWritesAreAllOrNothing(t *testing.T) {
 		w := sendJSON(t, h, http.MethodDelete, base, body, admin)
 		if w.Code != http.StatusNotFound {
 			t.Fatalf("remove %s: want 404, got %d: %s", body, w.Code, w.Body)
+		}
+		if got := w.Body.String(); got != `{"error":"Role not found"}` {
+			t.Errorf("remove %s: unexpected body: %s", body, got)
 		}
 		if got := mappingNames(t, h, base, admin); !slices.Contains(got, "probe-app-role") {
 			t.Fatalf("remove %s applied the valid half: %v", body, got)
@@ -737,8 +755,10 @@ func TestClientMappingWritesNeedManageUsers(t *testing.T) {
 	admin := tokenFor(t, h, "admin", "admin")
 	uid, app := clientWriteFixture(t, h, s, realm)
 	base := "/admin/realms/master/users/" + uid + "/role-mappings/clients/" + app
-	role := readRole(t, h, "/admin/realms/master/clients/"+app+"/roles/probe-app-role", admin)
-	body := `[{"id":"` + role.ID + `","name":"probe-app-role"}]`
+	// appRole, not role: the loop below binds role to the caller's guard role,
+	// and two role variables in a dozen lines is a re-read every time.
+	appRole := readRole(t, h, "/admin/realms/master/clients/"+app+"/roles/probe-app-role", admin)
+	body := `[{"id":"` + appRole.ID + `","name":"probe-app-role"}]`
 	methods := []string{http.MethodPost, http.MethodDelete}
 
 	token := tokenForRole(t, h, s, realm, "manage-users")
