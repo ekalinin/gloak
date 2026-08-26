@@ -338,13 +338,23 @@ func realmRoleFixture(name string) Fixture {
 // listing can be narrowed to a set of known size before first and max are
 // applied to it.
 //
-// Narrowing first is what makes the goldens recordable at all. A page taken
-// out of the whole realm is a subset chosen by Keycloak's own role order,
-// which AGENTS.md records as differing between container starts, and
+// Narrowing first is what makes most of the goldens recordable. A page taken
+// out of the whole realm is generally a subset chosen by Keycloak's own role
+// order, which AGENTS.md records as differing between container starts, and
 // Case.Unordered cannot repair a difference in membership - only in order.
+// admin/roles/list-realm-page-no-search is the one case that does take a page
+// out of the whole realm; its comment says what makes that particular page
+// safe.
+//
+// **The three are created c, b, a, so creation order is not alphabetical
+// order.** Created a, b, c they agreed by accident, and a case over them could
+// not tell Keycloak's page selection from Gloak's own sort by name - the two
+// produced the same answer whatever the endpoint did. Measured 2026-08-26,
+// Keycloak sorts by name on every path that pages, so a fixture whose creation
+// order matches that sort is a fixture that cannot detect the difference.
 func pagedRolesFixture() Fixture {
 	steps := []Step{adminTokenStep()}
-	for _, suffix := range []string{"a", "b", "c"} {
+	for _, suffix := range []string{"c", "b", "a"} {
 		steps = append(steps, Step{
 			Request: Request{
 				Method:  http.MethodPost,
