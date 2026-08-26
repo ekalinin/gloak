@@ -105,6 +105,21 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}/composite",
 		h.guardAny(userMappingsReadRoles, h.compositeClientMappings))
 
+	// The two client writes take manage-users **alone** - the realm writes'
+	// guard, and narrower than the client reads directly above, which
+	// view-users opens. Measured on these routes across the same seven
+	// single-role callers, on both verbs, on an ordinary client and on the
+	// realm's own, with a fresh token minted immediately before each call.
+	//
+	// A client-scoped **write** is where manage-clients was most plausible -
+	// the reads refusing it is evidence about reads only - and it is 403 here
+	// too. The guard follows the subject on this pair as on every other one in
+	// the family, so the {clientUUID} segment stays the handler's business.
+	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}",
+		h.guard("manage-users", h.assignClientMappings))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}",
+		h.guard("manage-users", h.removeClientMappings))
+
 	mux.HandleFunc("GET /admin/realms/{realm}/clients", h.guard("view-clients", h.listClients))
 	// {clientUUID}, not {client-uuid}: net/http requires a wildcard name to be
 	// a Go identifier and panics on the hyphen. The OpenAPI description spells

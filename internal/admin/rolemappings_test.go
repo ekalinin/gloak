@@ -602,6 +602,278 @@ func TestRealmMappingWritesRejectANonArrayBody(t *testing.T) {
 	}
 }
 
+// The client round trip: POST puts one client's role on a user, DELETE takes
+// it off, and both answer 204.
+//
+// The 204 carries X-Frame-Options here too, because these requests send an
+// application/json Content-Type - measured on this route, not carried over from
+// the realm pair, and the reason the DELETE goes through sendJSON rather than
+// the bodyless do().
+func TestAssignAndRemoveClientMappings(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	uid, app := clientWriteFixture(t, h, s, realm)
+	base := "/admin/realms/master/users/" + uid + "/role-mappings/clients/" + app
+	role := readRole(t, h, "/admin/realms/master/clients/"+app+"/roles/probe-app-role", admin)
+
+	body := `[{"id":"` + role.ID + `","name":"probe-app-role"}]`
+	w := postJSON(t, h, base, body, admin)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("assign: want 204, got %d: %s", w.Code, w.Body)
+	}
+	if got := w.Header().Get("X-Frame-Options"); got != "SAMEORIGIN" {
+		t.Fatalf("assign 204: want X-Frame-Options SAMEORIGIN, got %q", got)
+	}
+	if got := mappingNames(t, h, base, admin); !slices.Contains(got, "probe-app-role") {
+		t.Fatalf("assign did not stick: %v", got)
+	}
+
+	w = sendJSON(t, h, http.MethodDelete, base, body, admin)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("remove: want 204, got %d: %s", w.Code, w.Body)
+	}
+	if got := w.Header().Get("X-Frame-Options"); got != "SAMEORIGIN" {
+		t.Fatalf("remove 204: want X-Frame-Options SAMEORIGIN, got %q", got)
+	}
+	if got := mappingNames(t, h, base, admin); slices.Contains(got, "probe-app-role") {
+		t.Fatalf("remove did not stick: %v", got)
+	}
+}
+
+// A role this endpoint's client does not own is 404 `{"error":"Role not
+// found"}` on both verbs, whether it is a **realm** role or **another
+// client's**.
+//
+// The message was measured on this route rather than assumed from the realm
+// mirror's: the task before this one found a ninth not-found spelling exactly
+// where a mirror was taken for granted. Here the mirror holds - it is the same
+// "Role not found", not a tenth spelling.
+//
+// Both ids name a role that exists, so neither is refused for being unknown.
+// The realm role is the case the plan named; the other client's role is the one
+// that decides the implementation, because it is what makes the check
+// `ClientID != this client` rather than `ClientID == ""`.
+func TestClientMappingWritesRejectARoleOfAnotherContainer(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	uid, app := clientWriteFixture(t, h, s, realm)
+	base := "/admin/realms/master/users/" + uid + "/role-mappings/clients/" + app
+	mr := clientUUID(t, s, realm, "master-realm")
+	offline := readRole(t, h, "/admin/realms/master/roles/offline_access", admin)
+	viewUsers := readRole(t, h, "/admin/realms/master/clients/"+mr+"/roles/view-users", admin)
+
+	for _, alien := range []struct{ what, body string }{
+		{"a realm role", `[{"id":"` + offline.ID + `","name":"offline_access"}]`},
+		{"another client's role", `[{"id":"` + viewUsers.ID + `","name":"view-users"}]`},
+	} {
+		for _, method := range []string{http.MethodPost, http.MethodDelete} {
+			w := sendJSON(t, h, method, base, alien.body, admin)
+			if w.Code != http.StatusNotFound {
+				t.Errorf("%s %s: want 404, got %d: %s", method, alien.what, w.Code, w.Body)
+				continue
+			}
+			if got := w.Body.String(); got != `{"error":"Role not found"}` {
+				t.Errorf("%s %s: unexpected body: %s", method, alien.what, got)
+			}
+		}
+	}
+	// The control: both ids are real, and their own endpoints take them.
+	realmBase := "/admin/realms/master/users/" + uid + "/role-mappings/realm"
+	if got := postJSON(t, h, realmBase, `[{"id":"`+offline.ID+`","name":"offline_access"}]`, admin).Code; got != http.StatusNoContent {
+		t.Errorf("the realm endpoint refused its own role: %d", got)
+	}
+	mrBase := "/admin/realms/master/users/" + uid + "/role-mappings/clients/" + mr
+	if got := postJSON(t, h, mrBase, `[{"id":"`+viewUsers.ID+`","name":"view-users"}]`, admin).Code; got != http.StatusNoContent {
+		t.Errorf("master-realm's endpoint refused its own role: %d", got)
+	}
+}
+
+// Both verbs validate the whole batch before applying any of it, exactly as the
+// realm pair does - measured on these routes, in both id orders and on both
+// verbs, rather than inherited from that mirror.
+func TestClientMappingWritesAreAllOrNothing(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	uid, app := clientWriteFixture(t, h, s, realm)
+	base := "/admin/realms/master/users/" + uid + "/role-mappings/clients/" + app
+	role := readRole(t, h, "/admin/realms/master/clients/"+app+"/roles/probe-app-role", admin)
+	good := `{"id":"` + role.ID + `","name":"probe-app-role"}`
+	bad := `{"id":"00000000-0000-0000-0000-000000000000","name":"nope"}`
+
+	for _, body := range []string{"[" + good + "," + bad + "]", "[" + bad + "," + good + "]"} {
+		w := postJSON(t, h, base, body, admin)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("assign %s: want 404, got %d: %s", body, w.Code, w.Body)
+		}
+		if got := mappingNames(t, h, base, admin); slices.Contains(got, "probe-app-role") {
+			t.Fatalf("assign %s applied the valid half: %v", body, got)
+		}
+	}
+
+	// The remove side, with the valid half genuinely assigned first so that a
+	// non-atomic implementation would have something to take away.
+	postJSON(t, h, base, "["+good+"]", admin)
+	for _, body := range []string{"[" + good + "," + bad + "]", "[" + bad + "," + good + "]"} {
+		w := sendJSON(t, h, http.MethodDelete, base, body, admin)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("remove %s: want 404, got %d: %s", body, w.Code, w.Body)
+		}
+		if got := mappingNames(t, h, base, admin); !slices.Contains(got, "probe-app-role") {
+			t.Fatalf("remove %s applied the valid half: %v", body, got)
+		}
+	}
+}
+
+// The client writes take manage-users **alone** - the realm writes' guard, and
+// narrower than the client reads next door, which view-users opens.
+//
+// Measured on these routes with one user per role, a fresh token minted
+// immediately before each call, and an empty array as well as a real one so
+// that the refusal is the route guard rather than the caller-relative filter.
+// A client-scoped **write** is where manage-clients was most plausible, and it
+// is 403 on both verbs, on an ordinary client and on the realm's own.
+func TestClientMappingWritesNeedManageUsers(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	uid, app := clientWriteFixture(t, h, s, realm)
+	base := "/admin/realms/master/users/" + uid + "/role-mappings/clients/" + app
+	role := readRole(t, h, "/admin/realms/master/clients/"+app+"/roles/probe-app-role", admin)
+	body := `[{"id":"` + role.ID + `","name":"probe-app-role"}]`
+	methods := []string{http.MethodPost, http.MethodDelete}
+
+	token := tokenForRole(t, h, s, realm, "manage-users")
+	for _, method := range methods {
+		if got := sendJSON(t, h, method, base, body, token).Code; got != http.StatusNoContent {
+			t.Errorf("%s as manage-users: want 204, got %d", method, got)
+		}
+	}
+	for _, role := range []string{
+		"view-users", "query-users", "view-realm", "manage-realm", "view-clients", "manage-clients",
+	} {
+		token := tokenForRole(t, h, s, realm, role)
+		for _, method := range methods {
+			if got := sendJSON(t, h, method, base, body, token).Code; got != http.StatusForbidden {
+				t.Errorf("%s as %s: want 403, got %d", method, role, got)
+			}
+			if got := sendJSON(t, h, method, base, `[]`, token).Code; got != http.StatusForbidden {
+				t.Errorf("%s [] as %s: want 403, got %d", method, role, got)
+			}
+		}
+	}
+}
+
+// Both verbs are idempotent here too: assigning a role the user already holds
+// is 204 and removing one it does not hold is 204, and an empty array is 204
+// with nothing to validate. Measured on these routes.
+func TestClientMappingWritesAreIdempotent(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	uid, app := clientWriteFixture(t, h, s, realm)
+	base := "/admin/realms/master/users/" + uid + "/role-mappings/clients/" + app
+	role := readRole(t, h, "/admin/realms/master/clients/"+app+"/roles/probe-app-role", admin)
+	body := `[{"id":"` + role.ID + `","name":"probe-app-role"}]`
+
+	postJSON(t, h, base, body, admin)
+	if got := postJSON(t, h, base, body, admin).Code; got != http.StatusNoContent {
+		t.Errorf("assigning twice: want 204, got %d", got)
+	}
+	sendJSON(t, h, http.MethodDelete, base, body, admin)
+	if got := sendJSON(t, h, http.MethodDelete, base, body, admin).Code; got != http.StatusNoContent {
+		t.Errorf("removing what is not held: want 204, got %d", got)
+	}
+	for _, method := range []string{http.MethodPost, http.MethodDelete} {
+		if got := sendJSON(t, h, method, base, `[]`, admin).Code; got != http.StatusNoContent {
+			t.Errorf("%s []: want 204, got %d", method, got)
+		}
+	}
+}
+
+// The two path segments are resolved **before the body is read**, and in the
+// measured order: the user, then the client, then the JSON.
+//
+// The last of those is what pins the order rather than merely the pair: an
+// unknown client sent a body that cannot be parsed answers the client's 404,
+// not the decoder's 400. A handler that decoded first would answer the 400.
+func TestClientMappingWritesResolveThePathBeforeTheBody(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	uid, app := clientWriteFixture(t, h, s, realm)
+	const none = "00000000-0000-0000-0000-000000000000"
+	role := readRole(t, h, "/admin/realms/master/clients/"+app+"/roles/probe-app-role", admin)
+	body := `[{"id":"` + role.ID + `","name":"probe-app-role"}]`
+
+	for _, method := range []string{http.MethodPost, http.MethodDelete} {
+		for _, c := range []struct{ what, path, body, want string }{
+			{"an unknown client",
+				"/admin/realms/master/users/" + uid + "/role-mappings/clients/" + none,
+				body, `{"error":"Client not found"}`},
+			{"an unknown user with a real client",
+				"/admin/realms/master/users/" + none + "/role-mappings/clients/" + app,
+				body, `{"error":"User not found"}`},
+			{"an unknown user with an unknown client",
+				"/admin/realms/master/users/" + none + "/role-mappings/clients/" + none,
+				body, `{"error":"User not found"}`},
+			{"an unknown client with a body that cannot be parsed",
+				"/admin/realms/master/users/" + uid + "/role-mappings/clients/" + none,
+				`{"id":"x"}`, `{"error":"Client not found"}`},
+			{"an unknown user with a body that cannot be parsed",
+				"/admin/realms/master/users/" + none + "/role-mappings/clients/" + app,
+				`{"id":"x"}`, `{"error":"User not found"}`},
+		} {
+			w := sendJSON(t, h, method, c.path, c.body, admin)
+			if w.Code != http.StatusNotFound {
+				t.Errorf("%s %s: want 404, got %d: %s", method, c.what, w.Code, w.Body)
+				continue
+			}
+			if got := w.Body.String(); got != c.want {
+				t.Errorf("%s %s: want %s, got %s", method, c.what, c.want, got)
+			}
+		}
+	}
+}
+
+// These are the two registrations the observed document's sweep of
+// decodeRoleList's call sites listed as **not covered** - "they will reach the
+// same helper, and they should be measured when they land rather than assumed
+// from this sweep". Measured on both verbs and both body forms: they answer
+// `unknown_error` like the other eight, so the sweep is now complete at ten.
+func TestClientMappingWritesRejectANonArrayBody(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	uid, app := clientWriteFixture(t, h, s, realm)
+	base := "/admin/realms/master/users/" + uid + "/role-mappings/clients/" + app
+	want := `{"error":"unknown_error","error_description":"Cannot parse the JSON"}`
+
+	for _, method := range []string{http.MethodPost, http.MethodDelete} {
+		for _, body := range []string{`{"id":"x"}`, `{not json`} {
+			w := sendJSON(t, h, method, base, body, admin)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("%s %s: want 400, got %d", method, body, w.Code)
+				continue
+			}
+			if got := w.Body.String(); got != want {
+				t.Errorf("%s %s: want %s, got %s", method, body, want, got)
+			}
+		}
+	}
+}
+
+// clientWriteFixture is the subject and container the client-write tests share:
+// the user probe-mapped and an ordinary client probe-app owning one role.
+//
+// An ordinary client rather than master-realm, because master-realm's roles are
+// the ones the caller-relative filter F28 covers would judge, and the guard
+// sweep above must not be measuring that filter by accident.
+func clientWriteFixture(t *testing.T, h http.Handler, s store.Store, realm *model.Realm) (subject, container string) {
+	t.Helper()
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-mapped","enabled":true}`, admin)
+	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"probe-app"}`, admin)
+	app := clientUUID(t, s, realm, "probe-app")
+	postJSON(t, h, "/admin/realms/master/clients/"+app+"/roles", `{"name":"probe-app-role"}`, admin)
+	return userID(t, s, realm, "probe-mapped"), app
+}
+
 // mappingNames reads a role-mapping listing and returns the names, sorted.
 func mappingNames(t *testing.T, h http.Handler, path, token string) []string {
 	t.Helper()

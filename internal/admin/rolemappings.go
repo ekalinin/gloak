@@ -229,18 +229,88 @@ func (h *handler) removeRealmMappings(w http.ResponseWriter, r *http.Request, rc
 	})
 }
 
-// eachRealmMapping is what the two mapping writes share: resolve the user,
-// decode the body, validate every entry, then apply each only once they all
-// validate.
+// eachRealmMapping is what the two realm mapping writes share: resolve the
+// user, then run the shared batch over the roles the **realm** owns.
+//
+// A client role is refused here although it exists, with the same 404 an
+// unknown id gets - measured on both verbs.
+func (h *handler) eachRealmMapping(w http.ResponseWriter, r *http.Request, rc *reqContext, apply func(context.Context, string, string) error) {
+	user, ok := h.userFromPath(w, r, rc)
+	if !ok {
+		return
+	}
+	h.eachMapping(w, r, rc, user.ID, func(role *model.Role) bool { return role.ClientID == "" }, apply)
+}
+
+// assignClientMappings serves POST /users/{id}/role-mappings/clients/{client-uuid}.
+//
+// Assigning a role the user already holds is 204, measured on this route, so
+// the store's ErrConflict is swallowed exactly as on the realm mirror.
+func (h *handler) assignClientMappings(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	h.eachClientMapping(w, r, rc, func(ctx context.Context, userID, roleID string) error {
+		err := h.store.Roles().AssignToUser(ctx, userID, roleID)
+		if errors.Is(err, store.ErrConflict) {
+			return nil
+		}
+		return err
+	})
+}
+
+// removeClientMappings serves DELETE /users/{id}/role-mappings/clients/{client-uuid}.
+//
+// Removing a role the user does not hold is 204, measured on this route, so
+// RemoveFromUser's ErrNotFound is swallowed.
+func (h *handler) removeClientMappings(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	h.eachClientMapping(w, r, rc, func(ctx context.Context, userID, roleID string) error {
+		err := h.store.Roles().RemoveFromUser(ctx, userID, roleID)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		return err
+	})
+}
+
+// eachClientMapping is eachRealmMapping's counterpart: resolve the user **and
+// the client**, then run the shared batch over the roles that one client owns.
+//
+// The accepted set is `role.ClientID == c.ID`, not `role.ClientID != ""`.
+// Measured on both verbs: a **realm** role and **another client's** role are
+// both refused here, both with 404 `{"error":"Role not found"}`, and both ids
+// name a role that exists - master-realm's own endpoint takes the second one in
+// the same session. So the check is which container owns the role, not merely
+// whether one does.
+//
+// That message is the one thing in this pair the plan flagged as unmeasured,
+// with an explicit instruction not to assume it matched the realm mirror's. It
+// was measured, and it does match - no tenth not-found spelling.
+//
+// The two path segments are resolved before the body is read, and
+// clientMappingSubject resolves them in the measured order. The evidence for
+// "before the body" is its own probe rather than an assumption from the reads,
+// which have no body: an unknown client sent a body that cannot be parsed
+// answers `Client not found`, not the decoder's 400.
+func (h *handler) eachClientMapping(w http.ResponseWriter, r *http.Request, rc *reqContext, apply func(context.Context, string, string) error) {
+	user, c, ok := h.clientMappingSubject(w, r, rc)
+	if !ok {
+		return
+	}
+	h.eachMapping(w, r, rc, user.ID, func(role *model.Role) bool { return role.ClientID == c.ID }, apply)
+}
+
+// eachMapping is what the four mapping writes share once the subject is
+// resolved: decode the body, validate every entry, then apply each only once
+// they all validate. accepts is what the endpoint's own locator will take -
+// the realm's roles for one pair, one client's for the other.
 //
 // **The batch validates in full before anything is applied, on both verbs.**
-// Measured on a live 26.7.1 in both id orders and for POST and DELETE alike: a
-// body of one real realm role id and one that resolves to nothing applies
-// neither and answers 404 `{"error":"Role not found"}`. That is the same shape
-// eachComposite takes, and it is measured here rather than carried over from
-// it - the composite writes were separately measured *disagreeing* with each
-// other on the per-child manage check, so agreement between neighbouring
-// endpoints is not something this file infers.
+// Measured on a live 26.7.1 in both id orders and for POST and DELETE alike, on
+// the realm pair and again on the client pair: a body of one real role id and
+// one that resolves to nothing applies neither and answers 404
+// `{"error":"Role not found"}`. That is the same shape eachComposite takes, and
+// it is measured on each of these routes rather than carried over - the
+// composite writes were separately measured *disagreeing* with each other on
+// the per-child manage check, so agreement between neighbouring endpoints is
+// not something this file infers.
 //
 // The guarantee is against a **bad request**, not against a store failure. A
 // decode failure and a validation failure both leave the user's roles
@@ -250,23 +320,23 @@ func (h *handler) removeRealmMappings(w http.ResponseWriter, r *http.Request, rc
 // eachComposite, which names it too: store.Store exposes no transaction that
 // spans several calls, so neither loop can be made atomic against a driver
 // failure without changing that interface. Closing it is a store concern, not
-// one of these two handlers'.
+// one of these handlers'.
 //
-// Unlike eachComposite there is no per-entry caller check. Keycloak has one -
-// a `manage-users` caller is refused `admin` and `create-realm` and allowed
-// `offline_access` and `uma_authorization`, on both verbs, all-or-nothing -
-// and it is the same caller-relative predicate F28 covers, whose rule is
-// derived in Task 7. Until then this applies whatever the route guard admits,
-// which means a `manage-users` caller here can hand out `admin`. Recorded
-// under "A mapping write **is** filtered by what the caller may grant" in
+// Unlike eachComposite there is no per-entry caller check. Keycloak has one on
+// **both** pairs - a `manage-users` caller is refused the realm roles `admin`
+// and `create-realm` and allowed `offline_access` and `uma_authorization`, and
+// on the client side is refused `master-realm`'s `manage-realm`,
+// `manage-clients` and `impersonation` and allowed its `view-users`; on both
+// verbs, all-or-nothing, and the set it may write is exactly the set its own
+// `available` read shows it. It is the caller-relative predicate F28 covers,
+// whose rule is derived in Task 7. Until then this applies whatever the route
+// guard admits, which means a `manage-users` caller here can hand out `admin`.
+// Recorded under "A mapping write **is** filtered by what the caller may grant"
+// and "The client writes are filtered the same way" in
 // docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md; deliberately
 // not half-implemented, because a partial version of that predicate is worse
 // than none.
-func (h *handler) eachRealmMapping(w http.ResponseWriter, r *http.Request, rc *reqContext, apply func(context.Context, string, string) error) {
-	user, ok := h.userFromPath(w, r, rc)
-	if !ok {
-		return
-	}
+func (h *handler) eachMapping(w http.ResponseWriter, r *http.Request, rc *reqContext, userID string, accepts func(*model.Role) bool, apply func(context.Context, string, string) error) {
 	reps, ok := decodeRoleList(w, r)
 	if !ok {
 		return
@@ -281,15 +351,13 @@ func (h *handler) eachRealmMapping(w http.ResponseWriter, r *http.Request, rc *r
 			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 			return
 		}
-		// A client role is refused by the realm endpoint although it exists,
-		// with the same 404 an unknown id gets - measured on both verbs.
-		if role.ClientID != "" {
+		if !accepts(role) {
 			writeMappingRoleNotFound(w)
 			return
 		}
 	}
 	for _, rep := range reps {
-		if err := apply(r.Context(), user.ID, rep.ID); err != nil {
+		if err := apply(r.Context(), userID, rep.ID); err != nil {
 			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 			return
 		}
@@ -301,6 +369,10 @@ func (h *handler) eachRealmMapping(w http.ResponseWriter, r *http.Request, rc *r
 // cannot use. It is **not** the roles endpoints' "Could not find role", not
 // roles-by-id's "Could not find role with id", and not the composite batch's
 // "Could not find composite role". Four spellings, one resource; all measured.
+//
+// Both write pairs send it, and that was measured on each rather than shared by
+// assumption: the client writes' 404 for a role of the wrong container is the
+// same string, so this stays four spellings rather than becoming five.
 func writeMappingRoleNotFound(w http.ResponseWriter) {
 	httpx.WriteMessageError(w, http.StatusNotFound, "Role not found")
 }

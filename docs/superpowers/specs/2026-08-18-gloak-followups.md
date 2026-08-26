@@ -26,7 +26,9 @@ and left open because the naive fix is falsified by the measurement.
 **Status, 2026-08-26.** The role-mappings cut opened F30 and made F28
 reachable: Task 3 shipped `POST`/`DELETE /users/{id}/role-mappings/realm`, so
 the escalation F28 describes is no longer theoretical. F28 gained the write-side
-measurement Task 7 needs; it is still open.
+measurement Task 7 needs; it is still open. Task 5 then shipped the client pair
+and measured it filtered as well, taking F28 from four measured surfaces to
+five - four places in the code, since the two write pairs share one helper.
 
 ## F3: two shipped endpoints have no measured contract (closed)
 
@@ -818,6 +820,39 @@ predicate and **four** read/write call sites once the client reads ship:
 `availableClientMappings`. The latter carries the same deliberately-absent
 comment as its realm mirror. Transcript: "The client mirror is filtered the same
 way" in `2026-08-18-keycloak-26.7.1-observed.md`.
+
+**Five, not four.** Added 2026-08-26 by Task 5 of the role-mappings plan, which
+shipped `POST` and `DELETE /users/{id}/role-mappings/clients/{uuid}`. That task
+was told to measure whether the client write is filtered and to record the
+answer without implementing it. It is filtered, so the fourth call site above
+splits in two: the mapping writes are a realm pair **and** a client pair, and
+each was measured on its own routes.
+
+Caller `probe-manage-users`, subject `probe-mapped`, container `master-realm`, a
+fresh token minted immediately before each call:
+
+- `POST .../role-mappings/clients/{master-realm}` naming `view-users`: **204**
+- the same request naming `manage-realm`: **403**
+- naming `impersonation`: **403**
+- naming `manage-clients`: **403**
+- `DELETE` naming `manage-realm`, on a subject that holds it: **403**
+- a batch naming `view-users` and `manage-realm` together: **403**, applying
+  neither, in both array orders
+
+The set it may write is again exactly the set its own `available` read shows it
+on that container - the seven of `master-realm`'s 21 already recorded above. On
+the ordinary client `probe-app`, whose three roles are all in that list, it may
+assign and remove freely, which is the control that the filter is per role
+rather than per container.
+
+So: one predicate and **five** measured surfaces - `eachComposite`'s child
+check, the realm mapping writes, the client mapping writes,
+`availableRealmMappings` and `availableClientMappings`. In the code it is
+**four** places, not five, because both write pairs run through one helper:
+`eachMapping` in `internal/admin/rolemappings.go`, whose doc comment records the
+gap for both. Task 7 writes the predicate once and calls it from those four.
+Transcript: "The client writes are filtered the same way" in
+`2026-08-18-keycloak-26.7.1-observed.md`.
 
 Full transcript: the "`available` is filtered by what the caller may grant"
 section of `2026-08-18-keycloak-26.7.1-observed.md`, at line 2730. It sits
