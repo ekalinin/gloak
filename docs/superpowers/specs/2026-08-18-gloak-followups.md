@@ -23,6 +23,11 @@ fix location turned out to be wrong - and opened F25 through F29. **F28 is the
 one to read first**: it is a second escalation path, measured on the same day,
 and left open because the naive fix is falsified by the measurement.
 
+**Status, 2026-08-26.** The role-mappings cut opened F30 and made F28
+reachable: Task 3 shipped `POST`/`DELETE /users/{id}/role-mappings/realm`, so
+the escalation F28 describes is no longer theoretical. F28 gained the write-side
+measurement Task 7 needs; it is still open.
+
 ## F3: two shipped endpoints have no measured contract (closed)
 
 `docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md` records the token
@@ -813,6 +818,41 @@ the rule is a mapping from an admin role to the power it confers, that mapping
 is not in this repository, and a partial version of it is what Task 7's own
 Step 2 tells its implementer to refuse to write.
 
+**The escalation is now reachable.** Added 2026-08-26 by Task 3 of
+`feat/p2-role-mappings`, which shipped `POST` and `DELETE
+/users/{id}/role-mappings/realm`. The entry above says "Not reachable from
+outside today - nothing can mint a narrow-role admin until role assignment
+ships - and reachable the moment it does". That moment is this commit: a
+`manage-users` caller can now assign `admin` to any user through Gloak's API,
+and from that user's token do anything at all.
+
+The second call site's own rule was measured in the same task, so Task 7 does
+not have to go back to the container for it. Against a live 26.7.1, caller
+`probe-manage-users`, subject `probe-mapped`, a fresh token minted immediately
+before each call:
+
+- `POST .../role-mappings/realm` naming `admin`: **403**
+- the same request naming `create-realm`: **403**
+- the same request naming `uma_authorization`: **204**
+- `DELETE .../role-mappings/realm` naming `admin`, on a subject that holds it:
+  **403**
+
+So the predicate governs **both verbs**, not just the assignment - and the
+refusal is all-or-nothing, exactly like the 404: a batch naming
+`uma_authorization` and `create-realm` together applies neither. The set the
+caller may write is the same set its `available` read shows it, which ties the
+write and the third call site together: one predicate, and `available` is its
+enumeration.
+
+Note also that this is a *second* authorization stage, distinct from the route
+guard. `view-users` is refused for an empty array, which has no role to filter,
+so the guard fires first; `manage-users` passes the guard and is then judged
+per role. Whatever Task 7 writes has to sit inside the handler, after the
+guard, not replace it.
+
+Full transcript: the "A mapping write **is** filtered by what the caller may
+grant" section of `2026-08-18-keycloak-26.7.1-observed.md`.
+
 ## F29: deleting a client leaves its roles behind, and Keycloak deletes them
 
 Found and measured 2026-08-25 while verifying F-nothing in particular - it
@@ -863,3 +903,66 @@ Two pieces, and the second depends on the first:
 Not fixed here: it is a client-lifecycle concern that predates the roles cut,
 it needs a migration, and the roles half of this cut had no business changing
 the client schema on the way past.
+
+## F30: the role-mapping guards are one stage where Keycloak has two
+
+Found and measured 2026-08-26 by Task 3 of `feat/p2-role-mappings`, while
+sweeping the write guards. Not what the task was looking for.
+
+Every `/users/{id}/role-mappings/...` route in Gloak is a single-stage route
+guard: `guardAny` or `guard` checks the caller's roles and the handler resolves
+the subject afterwards. Keycloak checks **twice**, with the subject resolved in
+between - so a caller that fails the fine-grained check but passes a coarse one
+learns whether the user exists, and a caller that fails the coarse check does
+not.
+
+Measured against a live 26.7.1 on
+`/users/00000000-0000-0000-0000-000000000000/role-mappings/realm`, a user id
+that resolves to nothing, one user per role and a fresh token minted
+immediately before each call:
+
+```
+probe-view-users       GET  .../role-mappings/realm (missing user) -> 404 {"error":"User not found"}
+probe-query-users      GET  .../role-mappings/realm (missing user) -> 404 {"error":"User not found"}
+probe-manage-realm     GET  .../role-mappings/realm (missing user) -> 403 {"error":"HTTP 403 Forbidden"}
+
+probe-view-users       POST   .../role-mappings/realm (missing user) -> 404 {"error":"User not found"}
+probe-view-users       DELETE .../role-mappings/realm (missing user) -> 404 {"error":"User not found"}
+probe-query-users      POST   .../role-mappings/realm (missing user) -> 404 {"error":"User not found"}
+probe-query-users      DELETE .../role-mappings/realm (missing user) -> 404 {"error":"User not found"}
+probe-manage-realm     POST   .../role-mappings/realm (missing user) -> 403 {"error":"HTTP 403 Forbidden"}
+probe-manage-realm     DELETE .../role-mappings/realm (missing user) -> 403 {"error":"HTTP 403 Forbidden"}
+probe-manage-users     POST   .../role-mappings/realm (missing user) -> 404 {"error":"User not found"}
+probe-manage-users     DELETE .../role-mappings/realm (missing user) -> 404 {"error":"User not found"}
+```
+
+`query-users` opens neither the reads nor the writes, and still gets 404. The
+coarse gate is exactly `usersReadRoles` - `view-users`, `query-users`,
+`manage-users` - and everything outside the users family fails it:
+
+```
+probe-subject          GET -> 403 {"error":"HTTP 403 Forbidden"} POST -> 403 {"error":"HTTP 403 Forbidden"}
+probe-view-clients     GET -> 403 {"error":"HTTP 403 Forbidden"} POST -> 403 {"error":"HTTP 403 Forbidden"}
+probe-manage-clients   GET -> 403 {"error":"HTTP 403 Forbidden"} POST -> 403 {"error":"HTTP 403 Forbidden"}
+probe-view-realm       GET -> 403 {"error":"HTTP 403 Forbidden"} POST -> 403 {"error":"HTTP 403 Forbidden"}
+```
+
+(`probe-subject` holds `probe-attr` and `default-roles-master` and no
+`master-realm` role at all.)
+
+**Gloak answers 403 in every one of the 404 rows.** It is the *conservative*
+direction - it tells the caller less, not more - so it is not an escalation
+path. It is still a divergence, and it is on eight route registrations, five of
+which shipped with the reads a day before this was found.
+
+Not fixed in the task that measured it, for two reasons. It needs a combinator
+that neither `guard`, `guardAny`, `guardAnyAndAny` nor `guardByRoleContainer`
+expresses - coarse check, resolve the subject, fine check - and adding it would
+change the three reads Task 2 shipped as well as the two writes Task 3 added,
+which is a wider blast radius than a write task should take on its own. And the
+coarse gate was swept on this route family only; the credential endpoints and
+`GET /users/{id}` take a user id too and were not measured, so whoever fixes
+this should sweep them in the same pass rather than assume the same gate.
+
+Transcript: the "Existence is answered before authorization, but only for the
+users family" section of `2026-08-18-keycloak-26.7.1-observed.md`.

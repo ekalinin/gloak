@@ -71,6 +71,22 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/realm/composite",
 		h.guardAny(userMappingsReadRoles, h.compositeRealmMappings))
 
+	// The two writes take manage-users **alone**, which is narrower than the
+	// reads above - measured on both verbs across the same seven single-role
+	// callers, with a fresh token minted immediately before each call.
+	// view-users opens all three reads and neither write, so
+	// userMappingsReadRoles must not be reused here; extending a rule measured
+	// on one verb to its neighbour is what this cut has already had to revert
+	// twice.
+	//
+	// The guard follows the **subject**, not the role: a caller holding
+	// manage-realm and nothing else is refused even for a realm role, which is
+	// the opposite of roles-by-id.
+	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/role-mappings/realm",
+		h.guard("manage-users", h.assignRealmMappings))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/users/{userID}/role-mappings/realm",
+		h.guard("manage-users", h.removeRealmMappings))
+
 	mux.HandleFunc("GET /admin/realms/{realm}/clients", h.guard("view-clients", h.listClients))
 	// {clientUUID}, not {client-uuid}: net/http requires a wildcard name to be
 	// a Go identifier and panics on the hyphen. The OpenAPI description spells

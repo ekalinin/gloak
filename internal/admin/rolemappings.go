@@ -1,11 +1,14 @@
 package admin
 
 import (
+	"context"
+	"errors"
 	"net/http"
 
 	"github.com/ekalinin/gloak/internal/httpx"
 	"github.com/ekalinin/gloak/internal/model"
 	"github.com/ekalinin/gloak/internal/roles"
+	"github.com/ekalinin/gloak/internal/store"
 )
 
 // listRealmMappings serves GET /users/{id}/role-mappings/realm: the realm roles
@@ -79,6 +82,102 @@ func (h *handler) availableRealmMappings(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	writeMappingList(w, without(all, direct), rc.realm.ID, true)
+}
+
+// assignRealmMappings serves POST /users/{id}/role-mappings/realm.
+//
+// Assigning a role the user already holds is 204, not 409 - measured - so the
+// store's ErrConflict is swallowed here the way addComposites swallows
+// AddComposite's.
+func (h *handler) assignRealmMappings(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	h.eachRealmMapping(w, r, rc, func(ctx context.Context, userID, roleID string) error {
+		err := h.store.Roles().AssignToUser(ctx, userID, roleID)
+		if errors.Is(err, store.ErrConflict) {
+			return nil
+		}
+		return err
+	})
+}
+
+// removeRealmMappings serves DELETE /users/{id}/role-mappings/realm.
+//
+// Removing a role the user does not hold is 204, measured, so RemoveFromUser's
+// ErrNotFound - which it reports when no row matched - is swallowed. That is
+// the mirror of the ErrConflict above and of removeComposites next door.
+func (h *handler) removeRealmMappings(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	h.eachRealmMapping(w, r, rc, func(ctx context.Context, userID, roleID string) error {
+		err := h.store.Roles().RemoveFromUser(ctx, userID, roleID)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		return err
+	})
+}
+
+// eachRealmMapping is what the two mapping writes share: resolve the user,
+// decode the body, validate every entry, then apply each only once they all
+// validate.
+//
+// **The batch validates in full before anything is applied, on both verbs.**
+// Measured on a live 26.7.1 in both id orders and for POST and DELETE alike: a
+// body of one real realm role id and one that resolves to nothing applies
+// neither and answers 404 `{"error":"Role not found"}`. That is the same shape
+// eachComposite takes, and it is measured here rather than carried over from
+// it - the composite writes were separately measured *disagreeing* with each
+// other on the per-child manage check, so agreement between neighbouring
+// endpoints is not something this file infers.
+//
+// Unlike eachComposite there is no per-entry caller check. Keycloak has one -
+// a `manage-users` caller is refused `admin` and `create-realm` and allowed
+// `offline_access` and `uma_authorization`, on both verbs, all-or-nothing -
+// and it is the same caller-relative predicate F28 covers, whose rule is
+// derived in Task 7. Until then this applies whatever the route guard admits,
+// which means a `manage-users` caller here can hand out `admin`. Recorded
+// under "A mapping write **is** filtered by what the caller may grant" in
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md; deliberately
+// not half-implemented, because a partial version of that predicate is worse
+// than none.
+func (h *handler) eachRealmMapping(w http.ResponseWriter, r *http.Request, rc *reqContext, apply func(context.Context, string, string) error) {
+	user, ok := h.userFromPath(w, r, rc)
+	if !ok {
+		return
+	}
+	reps, ok := decodeRoleList(w, r)
+	if !ok {
+		return
+	}
+	for _, rep := range reps {
+		role, err := h.store.Roles().ByID(r.Context(), rc.realm.ID, rep.ID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeMappingRoleNotFound(w)
+				return
+			}
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		// A client role is refused by the realm endpoint although it exists,
+		// with the same 404 an unknown id gets - measured on both verbs.
+		if role.ClientID != "" {
+			writeMappingRoleNotFound(w)
+			return
+		}
+	}
+	for _, rep := range reps {
+		if err := apply(r.Context(), user.ID, rep.ID); err != nil {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+	}
+	httpx.WriteNoContent(w, r)
+}
+
+// writeMappingRoleNotFound is the measured 404 for a role a mapping write
+// cannot use. It is **not** the roles endpoints' "Could not find role", not
+// roles-by-id's "Could not find role with id", and not the composite batch's
+// "Could not find composite role". Four spellings, one resource; all measured.
+func writeMappingRoleNotFound(w http.ResponseWriter) {
+	httpx.WriteMessageError(w, http.StatusNotFound, "Role not found")
 }
 
 // realmRolesOnly keeps the roles that belong to the realm rather than a client.

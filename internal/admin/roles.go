@@ -732,10 +732,20 @@ func (h *handler) roleGroups(locate roleLocator) func(http.ResponseWriter, *http
 
 // decodeRoleList reads the array body the composite and role-mapping writes
 // take. A body that is not an array answers the measured 400.
+//
+// **unknown_error, not invalid_request.** Measured 2026-08-26 on POST
+// .../composites and on both verbs of .../role-mappings/realm, with a
+// malformed body and a well-formed non-array body: all four answer
+// `{"error":"unknown_error","error_description":"Cannot parse the JSON"}`.
+// POST /users was re-measured alongside and still answers `invalid_request`
+// for the same description, so the difference is per endpoint and not a change
+// of version. This is the only decoder in this package that sends
+// unknown_error; the six other "Cannot parse the JSON" call sites keep
+// invalid_request, each measured on its own endpoint.
 func decodeRoleList(w http.ResponseWriter, r *http.Request) ([]roleRepresentation, bool) {
 	var reps []roleRepresentation
 	if err := json.NewDecoder(r.Body).Decode(&reps); err != nil {
-		httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_request", "Cannot parse the JSON")
+		httpx.WriteOAuthError(w, http.StatusBadRequest, "unknown_error", "Cannot parse the JSON")
 		return nil, false
 	}
 	return reps, true
