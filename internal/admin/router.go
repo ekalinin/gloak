@@ -53,6 +53,14 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /admin/realms/{realm}/users/{userID}/disable-credential-types", h.guard("manage-users", h.disableCredentialTypes))
 	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/logout", h.guard("manage-users", h.logoutUser))
 
+	// The combined view: both halves of a user's **direct** mappings in one
+	// object. Same guard as the six listings below, and measured on this route
+	// rather than inherited - the same seven single-role callers, a fresh token
+	// minted immediately before each call. view-clients was the plausible one
+	// on a body keyed by clientId, and it is 403 here like the other four.
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings",
+		h.guardAny(userMappingsReadRoles, h.allMappings))
+
 	// A user's realm role mappings: three reads that answer three different
 	// questions. All three take view-users or manage-users - measured against a
 	// live 26.7.1 with one user per role, a fresh token minted immediately

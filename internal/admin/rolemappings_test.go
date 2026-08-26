@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/ekalinin/gloak/internal/model"
@@ -351,6 +352,165 @@ func TestOnlyCompositeClientMappingsHonourBriefRepresentation(t *testing.T) {
 						path, q, rep.Name)
 				}
 			}
+		}
+	}
+}
+
+// Both top-level keys are ABSENT when their list would be empty - not [] and
+// not {}. Measured on the bootstrapped administrator, which holds two realm
+// roles and no client role directly.
+func TestCombinedMappingViewOmitsWhatIsEmpty(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	adminID := userID(t, s, realm, "admin")
+	path := "/admin/realms/master/users/" + adminID + "/role-mappings"
+
+	var body map[string]json.RawMessage
+	w := get(t, h, path, admin)
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, ok := body["realmMappings"]; !ok {
+		t.Fatal("realmMappings is missing for a user that has some")
+	}
+	if _, ok := body["clientMappings"]; ok {
+		t.Fatal("clientMappings is present for a user with no client role; " +
+			"measured absent, not {}")
+	}
+
+	// Assign one and the key appears, keyed by clientId, carrying the client's
+	// UUID and its clientId again.
+	mr := clientUUID(t, s, realm, "master-realm")
+	viewUsers := readRole(t, h, "/admin/realms/master/clients/"+mr+"/roles/view-users", admin)
+	postJSON(t, h, "/admin/realms/master/users/"+adminID+"/role-mappings/clients/"+mr,
+		`[{"id":"`+viewUsers.ID+`","name":"view-users"}]`, admin)
+
+	w = get(t, h, path, admin)
+	var full struct {
+		ClientMappings map[string]struct {
+			ID       string `json:"id"`
+			Client   string `json:"client"`
+			Mappings []struct {
+				Name string `json:"name"`
+			} `json:"mappings"`
+		} `json:"clientMappings"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &full); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	entry, ok := full.ClientMappings["master-realm"]
+	if !ok {
+		t.Fatalf("want the entry keyed by clientId, got %v", full.ClientMappings)
+	}
+	if entry.ID != mr || entry.Client != "master-realm" {
+		t.Fatalf("entry carries id %q client %q", entry.ID, entry.Client)
+	}
+}
+
+// A user holding nothing at all gets `{}` - both keys gone, not one of them
+// left behind as an empty container. Measured by stripping default-roles-master
+// and both client roles off a subject and re-reading it.
+func TestCombinedMappingViewOfAUserWithNoRolesIsAnEmptyObject(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-bare","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-bare")
+	path := "/admin/realms/master/users/" + uid + "/role-mappings"
+
+	defaults := readRole(t, h, "/admin/realms/master/roles/default-roles-master", admin)
+	sendJSON(t, h, http.MethodDelete, path+"/realm",
+		`[{"id":"`+defaults.ID+`","name":"default-roles-master"}]`, admin)
+
+	if got := get(t, h, path, admin).Body.String(); got != "{}" {
+		t.Fatalf("want {}, got %s", got)
+	}
+}
+
+// clientMappings is a Java HashMap and Keycloak writes it in bucket order, so
+// Gloak must not let Go sort the keys.
+//
+// zeta-client and alpha-client are the pair this asserts on because they are
+// the discriminating one: they land in buckets 6 and 13, so the HashMap order
+// is zeta-client, alpha-client - the reverse of what a Go map would emit.
+// Measured, and see internal/javamap for the bucket rule.
+func TestCombinedMappingViewKeysClientsInHashMapOrder(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-two","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-two")
+	for _, c := range []string{"alpha-client", "zeta-client"} {
+		postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"`+c+`"}`, admin)
+		uuid := clientUUID(t, s, realm, c)
+		postJSON(t, h, "/admin/realms/master/clients/"+uuid+"/roles", `{"name":"r-`+c+`"}`, admin)
+		assignRole(t, s, realm, uid, uuid, "r-"+c)
+	}
+
+	body := get(t, h, "/admin/realms/master/users/"+uid+"/role-mappings", admin).Body.String()
+	zeta := strings.Index(body, `"zeta-client":{`)
+	alpha := strings.Index(body, `"alpha-client":{`)
+	if zeta < 0 || alpha < 0 {
+		t.Fatalf("want both clients keyed in the body, got %s", body)
+	}
+	if zeta > alpha {
+		t.Fatalf("keys came out sorted; measured zeta-client first: %s", body)
+	}
+}
+
+// The combined view takes the same pair the other six reads take - measured on
+// this route across the same seven single-role callers, not inherited from
+// them. view-clients was the plausible one on a body that is keyed by clientId,
+// and it is 403 here like every other role outside the users family.
+func TestCombinedMappingViewNeedsViewOrManageUsers(t *testing.T) {
+	h, s, realm := newServer(t)
+	adminID := userID(t, s, realm, "admin")
+	path := "/admin/realms/master/users/" + adminID + "/role-mappings"
+
+	for _, role := range []string{"view-users", "manage-users"} {
+		token := tokenForRole(t, h, s, realm, role)
+		if got := get(t, h, path, token).Code; got != http.StatusOK {
+			t.Errorf("%s as %s: want 200, got %d", path, role, got)
+		}
+	}
+	for _, role := range []string{
+		"query-users", "view-realm", "manage-realm", "view-clients", "manage-clients",
+	} {
+		token := tokenForRole(t, h, s, realm, role)
+		if got := get(t, h, path, token).Code; got != http.StatusForbidden {
+			t.Errorf("%s as %s: want 403, got %d", path, role, got)
+		}
+	}
+}
+
+// briefRepresentation does **nothing** on this route. Measured on a subject
+// holding a client role that carries a real attribute value, with the parameter
+// absent, true and false: all three bodies came back byte-identical and none
+// carried an attributes key. So this endpoint is neither the composite listings
+// that honour it nor a special case - it is the majority behaviour.
+func TestCombinedMappingViewIgnoresBriefRepresentation(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"probe-app"}`, admin)
+	app := clientUUID(t, s, realm, "probe-app")
+	postJSON(t, h, "/admin/realms/master/clients/"+app+"/roles",
+		`{"name":"probe-app-attr","attributes":{"probe":["v1"]}}`, admin)
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-brief","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-brief")
+	assignRole(t, s, realm, uid, app, "probe-app-attr")
+	path := "/admin/realms/master/users/" + uid + "/role-mappings"
+
+	w := get(t, h, path, admin)
+	want := w.Body.String()
+	// Asserted before the comparison below, which three identical error bodies
+	// would otherwise satisfy while asserting nothing.
+	if w.Code != http.StatusOK || !strings.Contains(want, `"probe-app-attr"`) {
+		t.Fatalf("want a 200 carrying the attribute-bearing role, got %d %s", w.Code, want)
+	}
+	if strings.Contains(want, `"attributes"`) {
+		t.Fatalf("the default shape carries attributes; measured absent: %s", want)
+	}
+	for _, q := range []string{"?briefRepresentation=false", "?briefRepresentation=true"} {
+		if got := get(t, h, path+q, admin).Body.String(); got != want {
+			t.Errorf("%s changed the body\n want %s\n  got %s", q, want, got)
 		}
 	}
 }

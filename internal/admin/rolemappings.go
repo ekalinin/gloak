@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/ekalinin/gloak/internal/httpx"
+	"github.com/ekalinin/gloak/internal/javamap"
 	"github.com/ekalinin/gloak/internal/model"
 	"github.com/ekalinin/gloak/internal/roles"
 	"github.com/ekalinin/gloak/internal/store"
@@ -160,6 +161,97 @@ func (h *handler) availableClientMappings(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeMappingList(w, without(all, direct), rc.realm.ID, true)
+}
+
+// allMappings serves GET /users/{id}/role-mappings: the combined view, and the
+// only body in this family that is not a bare array.
+//
+// It is the **direct** assignments on both halves, not the composite expansion.
+// Measured on the bootstrapped administrator, which reaches all 21 master-realm
+// roles through the realm role admin and still gets no clientMappings key at
+// all - so this composes listRealmMappings and listClientMappings rather than
+// their composite siblings.
+//
+// briefRepresentation does nothing here. Measured with the parameter absent,
+// true and false on a subject holding a client role carrying a real attribute
+// value: the three bodies were byte-identical and none carried an attributes
+// key. Only the two .../composite routes in this family honour it, so this one
+// passes the constant true down like the four listings that ignore it.
+//
+// It is not caller-filtered either: a view-users caller reading the
+// administrator gets the same body a full administrator does, which is what
+// separates this from the two available reads that F28 covers.
+func (h *handler) allMappings(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	user, ok := h.userFromPath(w, r, rc)
+	if !ok {
+		return
+	}
+	direct, err := h.store.Roles().ListUserRoles(r.Context(), user.ID)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	clients, err := h.clientMappingsOf(r.Context(), rc, direct)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	writeAdminJSON(w, mappingsRepresentation{
+		RealmMappings:  mappingListOf(realmRolesOnly(direct), rc.realm.ID, true),
+		ClientMappings: clients,
+	})
+}
+
+// clientMappingsOf groups the client half of a user's direct roles by their
+// owning client, in Keycloak's key order.
+//
+// The order is javamap.KeyOrder's and not the store's, because Keycloak builds
+// this object as a Java Map and serialises it in HashMap bucket order. Sorting
+// instead would put alpha-client before zeta-client where Keycloak measurably
+// puts zeta-client first.
+//
+// A role whose owning client no longer exists makes this return an error and
+// the endpoint answer 500. That state is unreachable on Keycloak, which deletes
+// a client's roles with it, and reachable on Gloak, which does not - follow-up
+// F29. Skipping the orphan instead would make this endpoint the one place that
+// hides F29 while reporting a role list it knows to be short, so it is left to
+// fail loudly and F29 is the fix.
+func (h *handler) clientMappingsOf(ctx context.Context, rc *reqContext, direct []*model.Role) (clientMappings, error) {
+	byClient := make(map[string][]*model.Role)
+	for _, role := range direct {
+		if role.ClientID != "" {
+			byClient[role.ClientID] = append(byClient[role.ClientID], role)
+		}
+	}
+	if len(byClient) == 0 {
+		// nil rather than an empty slice, so omitempty drops the key: measured
+		// absent, never {}.
+		return nil, nil
+	}
+
+	// Keyed by clientId, which the roles do not carry, so each owning client
+	// has to be resolved before the order can be decided.
+	entries := make(map[string]clientMappingsEntry, len(byClient))
+	ids := make([]string, 0, len(byClient))
+	for uuid, roles := range byClient {
+		c, err := h.store.Clients().ByID(ctx, rc.realm.ID, uuid)
+		if err != nil {
+			return nil, err
+		}
+		entries[c.ClientID] = clientMappingsEntry{
+			ClientID: c.ClientID,
+			ID:       c.ID,
+			Client:   c.ClientID,
+			Mappings: mappingListOf(roles, rc.realm.ID, true),
+		}
+		ids = append(ids, c.ClientID)
+	}
+
+	out := make(clientMappings, 0, len(ids))
+	for _, id := range javamap.KeyOrder(ids) {
+		out = append(out, entries[id])
+	}
+	return out, nil
 }
 
 // clientMappingSubject resolves the two path segments a client mapping read
@@ -429,6 +521,17 @@ func without(all, exclude []*model.Role) []*model.Role {
 // parameter and never carry the key at all. Two behaviours across three
 // siblings, so the caller decides.
 func writeMappingList(w http.ResponseWriter, in []*model.Role, realmID string, brief bool) {
+	writeAdminJSON(w, mappingListOf(in, realmID, brief))
+}
+
+// mappingListOf builds that body without sending it, which is what the combined
+// view needs: there the same list is a value inside a larger object rather than
+// the whole response.
+//
+// The slice is non-nil even when empty, because the six listings that send it
+// alone are measured answering `[]`. The combined view's own omission of an
+// empty half is decided in clientMappingsOf and by omitempty, not here.
+func mappingListOf(in []*model.Role, realmID string, brief bool) []roleRepresentation {
 	out := make([]roleRepresentation, 0, len(in))
 	for _, role := range in {
 		container := realmID
@@ -437,5 +540,5 @@ func writeMappingList(w http.ResponseWriter, in []*model.Role, realmID string, b
 		}
 		out = append(out, roleRepresentationOf(role, container, brief))
 	}
-	writeAdminJSON(w, out)
+	return out
 }

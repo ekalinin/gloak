@@ -900,6 +900,15 @@ guard, not replace it.
 Full transcript: the "A mapping write **is** filtered by what the caller may
 grant" section of `2026-08-18-keycloak-26.7.1-observed.md`.
 
+**The call-site count stays at four.** Task 6 measured
+`GET /users/{id}/role-mappings` for the same filter on 2026-08-26 and it does
+not have one: a `view-users` caller and a full administrator reading the
+bootstrapped administrator get byte-identical bodies. So the predicate is on
+the two `available` reads and the two write pairs, and the combined view - like
+the four `direct` and `composite` reads - reports what the subject holds
+regardless of who is asking. Transcript under "The combined view is not
+caller-filtered" in `2026-08-18-keycloak-26.7.1-observed.md`.
+
 ## F29: deleting a client leaves its roles behind, and Keycloak deletes them
 
 Found and measured 2026-08-25 while verifying F-nothing in particular - it
@@ -950,6 +959,24 @@ Two pieces, and the second depends on the first:
 Not fixed here: it is a client-lifecycle concern that predates the roles cut,
 it needs a migration, and the roles half of this cut had no business changing
 the client schema on the way past.
+
+**It got one degree worse on 2026-08-26**, when Task 6 added
+`GET /users/{id}/role-mappings`. That endpoint has to resolve every owning
+client to key `clientMappings` by `clientId`, so an orphaned role is not merely
+cosmetic there - it is a **500**. Measured on Gloak: create a client and a role
+on it, assign the role to a user, delete the client, then read the combined
+view.
+
+```
+delete client -> 204
+combined view -> 500 {"error":"Internal Server Error"}
+realm view    -> 200 [{"id":"48284e32-4ca0-48ea-8ca6-4e9f5818bae1","name":"default-roles-master","description":"${role_default-roles}","composite":true,"clientRole":false,"containerId":"18effee7-1b68-4193-88c3-a1740f751e13"}]
+```
+
+The realm-half read beside it is unaffected, because it never looks a client
+up. `clientMappingsOf` was deliberately left to fail rather than skip the
+orphan: skipping would make this the one endpoint that conceals F29 while
+answering with a role list it knows to be short. Fixing F29 fixes this with it.
 
 ## F30: the role-mapping guards are one stage where Keycloak has two
 
@@ -1013,3 +1040,83 @@ this should sweep them in the same pass rather than assume the same gate.
 
 Transcript: the "Existence is answered before authorization, but only for the
 users family" section of `2026-08-18-keycloak-26.7.1-observed.md`.
+
+## F31: a real 405 exists, and the "wrong method is always 404" rule is too broad
+
+Found and measured 2026-08-26 by Task 6 of `feat/p2-role-mappings`, while
+checking whether `POST /users/{id}/role-mappings` is an operation before writing
+down that it is not. It is not - but the way it is not turned up something else.
+
+`AGENTS.md` says, under "Things that look like bugs and are not":
+
+> **A wrong method on a known path returns 404, not 405, with no `Allow`
+> header.** Gloak once invented a 405 that does not exist [...]
+
+The second sentence is still true of whatever route that was. The first is too
+broad: **`PUT` and `PATCH` on the role-mapping paths answer a genuine 405**,
+with no `Allow` header, on a live 26.7.1. Measured on all three, a fresh token
+minted immediately before each call:
+
+```
+$ curl -s -i -X PUT -H 'Content-Type: application/json' -d '[]' "$KC/admin/realms/master/users/$PU/role-mappings"
+HTTP/1.1 405 Method Not Allowed
+content-length: 39
+Content-Type: application/json
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"error":"HTTP 405 Method Not Allowed"}
+```
+
+`PATCH` on the same path, and `PUT` and `PATCH` on `.../role-mappings/realm` and
+`.../role-mappings/clients/{uuid}`, all answer that byte for byte - same status,
+same 39-byte body, same five security headers, no `Allow`.
+
+The same path does answer 404 for other verbs, which is why this is a
+refinement rather than a reversal:
+
+```
+$ curl -s -o /dev/stdout -w '\nHTTP %{http_code}\n' -X POST   -H 'Content-Type: application/json' -d '[]' "$KC/admin/realms/master/users/$PU/role-mappings"
+{"error":"HTTP 404 Not Found"}
+HTTP 404
+$ curl -s -o /dev/stdout -w '\nHTTP %{http_code}\n' -X DELETE -H 'Content-Type: application/json' -d '[]' "$KC/admin/realms/master/users/$PU/role-mappings"
+{"error":"HTTP 404 Not Found"}
+HTTP 404
+```
+
+So on one single path, `POST` and `DELETE` are 404 and `PUT` and `PATCH` are
+405. The status is not a property of "known path, wrong method" at all; which
+verb it is decides. Nothing measured so far says what the rule is - only that
+the current one-line summary cannot be it.
+
+**Gloak answers 404 for all four**, on every one of these paths:
+
+```
+PUT    role-mappings        -> 404 {"error":"HTTP 404 Not Found"}
+PATCH  role-mappings        -> 404 {"error":"HTTP 404 Not Found"}
+POST   role-mappings        -> 404 {"error":"HTTP 404 Not Found"}
+DELETE role-mappings        -> 404 {"error":"HTTP 404 Not Found"}
+PUT    role-mappings/realm  -> 404 {"error":"HTTP 404 Not Found"}
+PATCH  role-mappings/realm  -> 404 {"error":"HTTP 404 Not Found"}
+```
+
+Two of the six match and four do not.
+
+Not fixed in the task that found it. It is a `withKeycloakFallbacks` concern,
+not a role-mapping one - the divergence is on every route in the tree, it
+predates this branch, and the three `role-mappings/realm` rows above are Task
+2's registrations rather than Task 6's. Fixing it needs the rule measured
+first: which verbs get 405 and on which paths, swept across route families
+rather than generalised from this one, since generalising from one sweep is
+what put the too-broad sentence in `AGENTS.md` in the first place.
+
+`AGENTS.md` has not been edited. Its bullet is the contract for the two 404
+bodies, which are unchanged and still measured; only the "not 405" clause is
+now known to be narrower than it reads, and rewriting it before the rule is
+known would replace one guess with another.
+
+Transcript: the "A wrong method is not always 404" section of
+`2026-08-18-keycloak-26.7.1-observed.md`.
