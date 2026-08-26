@@ -782,6 +782,66 @@ func TestCompositeRemoveRollsBackOnABadID(t *testing.T) {
 	}
 }
 
+// A bad body on a composite write is 400 `unknown_error`, not `invalid_request`
+// - the code the rest of the admin API sends for the same description.
+//
+// All six composite registrations are covered because all six were measured:
+// the realm role by name, the client role by name and roles-by-id, POST and
+// DELETE each, with a well-formed non-array body and a malformed one, and with
+// both of roles-by-id's guardByRoleContainer branches. Every one answered
+// `{"error":"unknown_error","error_description":"Cannot parse the JSON"}`.
+//
+// It is spelled out per route rather than left to decodeRoleList's own test
+// next door: the helper is shared with the role-mapping writes, so a test that
+// only pins it there would let these six change observably with nothing
+// failing. An earlier pass corrected the helper on one family's evidence and
+// generalised to the others, which is the inference this cut has reverted
+// twice.
+//
+// An ordinary client is used rather than master-realm because a composite write
+// on the realm's own client's role is refused to everybody and never reaches
+// the decoder - see TestTheRealmsOwnClientRefusesCompositeWrites.
+func TestCompositeWritesRejectABadBody(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/roles", `{"name":"bad-body-parent"}`, admin)
+	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"bad-body-app","enabled":true}`, admin)
+	appUUID := clientUUID(t, s, realm, "bad-body-app")
+	postJSON(t, h, "/admin/realms/master/clients/"+appUUID+"/roles", `{"name":"bad-body-app-role"}`, admin)
+
+	realmRole := readRole(t, h, "/admin/realms/master/roles/bad-body-parent", admin)
+	clientRole := readRole(t, h, "/admin/realms/master/clients/"+appUUID+"/roles/bad-body-app-role", admin)
+
+	paths := []string{
+		"/admin/realms/master/roles/bad-body-parent/composites",
+		"/admin/realms/master/clients/" + appUUID + "/roles/bad-body-app-role/composites",
+		// Both branches of guardByRoleContainer: a realm role's id takes
+		// manage-realm and a client role's takes manage-clients, so the two
+		// reach the decoder by different routes through the same registration.
+		"/admin/realms/master/roles-by-id/" + realmRole.ID + "/composites",
+		"/admin/realms/master/roles-by-id/" + clientRole.ID + "/composites",
+	}
+	want := `{"error":"unknown_error","error_description":"Cannot parse the JSON"}`
+
+	for _, path := range paths {
+		for _, method := range []string{http.MethodPost, http.MethodDelete} {
+			// A well-formed non-array and a malformed body are
+			// indistinguishable here - measured, so there is no
+			// parse-versus-shape split to assert separately.
+			for _, body := range []string{`{"id":"x"}`, `{not json`} {
+				w := sendJSON(t, h, method, path, body, admin)
+				if w.Code != http.StatusBadRequest {
+					t.Errorf("%s %s with %s: want 400, got %d: %s", method, path, body, w.Code, w.Body)
+					continue
+				}
+				if got := w.Body.String(); got != want {
+					t.Errorf("%s %s with %s: want %s, got %s", method, path, body, want, got)
+				}
+			}
+		}
+	}
+}
+
 func TestClientRoleCompositesUseTheSameRoutes(t *testing.T) {
 	h, s, realm := newServer(t)
 	admin := tokenFor(t, h, "admin", "admin")

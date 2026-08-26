@@ -127,6 +127,16 @@ func (h *handler) removeRealmMappings(w http.ResponseWriter, r *http.Request, rc
 // other on the per-child manage check, so agreement between neighbouring
 // endpoints is not something this file infers.
 //
+// The guarantee is against a **bad request**, not against a store failure. A
+// decode failure and a validation failure both leave the user's roles
+// untouched, but the apply loop below writes one row at a time, so a genuine
+// store error partway through an already-validated batch can still leave part
+// of it applied under the 500. That hole is structural and shared with
+// eachComposite, which names it too: store.Store exposes no transaction that
+// spans several calls, so neither loop can be made atomic against a driver
+// failure without changing that interface. Closing it is a store concern, not
+// one of these two handlers'.
+//
 // Unlike eachComposite there is no per-entry caller check. Keycloak has one -
 // a `manage-users` caller is refused `admin` and `create-realm` and allowed
 // `offline_access` and `uma_authorization`, on both verbs, all-or-nothing -

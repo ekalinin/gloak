@@ -733,15 +733,30 @@ func (h *handler) roleGroups(locate roleLocator) func(http.ResponseWriter, *http
 // decodeRoleList reads the array body the composite and role-mapping writes
 // take. A body that is not an array answers the measured 400.
 //
-// **unknown_error, not invalid_request.** Measured 2026-08-26 on POST
-// .../composites and on both verbs of .../role-mappings/realm, with a
-// malformed body and a well-formed non-array body: all four answer
-// `{"error":"unknown_error","error_description":"Cannot parse the JSON"}`.
+// **unknown_error, not invalid_request.** This helper is reached from eight
+// route registrations - the six eachComposite serves (realm role by name,
+// client role by name and roles-by-id, POST and DELETE each) and the two realm
+// role-mapping writes - and **all eight were measured**, 2026-08-26, with a
+// malformed body and a well-formed non-array body, plus both of
+// guardByRoleContainer's branches for roles-by-id. Every one answers
+// `{"error":"unknown_error","error_description":"Cannot parse the JSON"}`, and
+// the two bad-body forms are indistinguishable, so there is no
+// parse-versus-shape split to model.
+//
+// The whole sweep is recorded rather than one route's, because an earlier draft
+// of this comment measured POST .../composites alone and generalised - which is
+// the inference this cut has reverted twice, and the role-mapping writes are
+// themselves the case where POST and DELETE agreed while the composite writes'
+// per-child check had them diverging.
+//
 // POST /users was re-measured alongside and still answers `invalid_request`
 // for the same description, so the difference is per endpoint and not a change
-// of version. This is the only decoder in this package that sends
-// unknown_error; the six other "Cannot parse the JSON" call sites keep
-// invalid_request, each measured on its own endpoint.
+// of version. That is the only object-taking endpoint re-measured in this pass;
+// the six other "Cannot parse the JSON" call sites in this package keep
+// `invalid_request` on their existing measurements, not on this one.
+//
+// The client role-mapping writes will reach this helper too and are not in the
+// sweep - they are not shipped yet. Measure them when they land.
 func decodeRoleList(w http.ResponseWriter, r *http.Request) ([]roleRepresentation, bool) {
 	var reps []roleRepresentation
 	if err := json.NewDecoder(r.Body).Decode(&reps); err != nil {
