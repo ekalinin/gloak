@@ -44,6 +44,20 @@ conformance` now reports **89 of 485** enumerated behaviours served:
 halves of `Role Mapper` and `Client Role Mappings` - are the second half and
 are not built yet.
 
+**Updated 2026-08-27, after the role-mapping half of P2's second cut, which
+completes it.** `make conformance` now reports **100 of 485** enumerated
+behaviours served: `admin/role-mapper` 6 of 18 and
+`admin/client-role-mappings` 5 of 15, the 11 operations that were the second
+half. Both tags stop short of their denominator because each tag covers three
+locators and only the **user** one is in this cut: the two tags hold 33
+operations, 11 on a user, 11 on a group (P2's third cut) and 11 on an
+organization (P12).
+
+The cut also closed F28: a caller may hand out a role only if its own rights
+already confer it, one predicate over both `available` reads, both write pairs
+and `POST .../composites`. F30 through F34 were opened along the way and are in
+`2026-08-18-gloak-followups.md`; F32 is the widest and is older than this cut.
+
 The rest of this section is the state before P1, kept because section 3 is the
 argument that produced the reporting, and the argument reads oddly without the
 number it was arguing about.
@@ -183,7 +197,7 @@ operations is allocated below; none is left unassigned.
 | **P1** | Token foundation **(done)** | - | `oidc/token` 8 of 17, `userinfo` 4 of 7, `introspection` 1 of 4, `revocation` 4 of 4; closed `oidc/certs` | 17 cases |
 | **P2** | Admin API core | P1 | Users 34, Clients 35, Roles 28, Roles by ID 10, Groups 11, Role Mapper 18, Client Role Mappings 15 | 151 ops |
 | P2 first cut | Clients and Users, done 2026-08-23 | | 24 of the 69 in those two tags; the other 45 belong to P5, P6, P7, P9, P10, P13, P14 or the second cut - see §1.1 of the P2 design | 24 ops |
-| P2 second cut | Roles and role mappings on a user, specced 2026-08-23, **roles half done 2026-08-25** | P2 first cut | 43 of the 71 in `Roles`, `Roles (by ID)`, `Role Mapper`, `Client Role Mappings`; the other 28 are groups (11), organizations (11) and P10 (6) - see `2026-08-23-p2-roles-and-role-mappings-design.md`. Of the 43, 32 (`Roles` 24, `Roles (by ID)` 8) are done; the remaining 11 - the user halves of `Role Mapper` and `Client Role Mappings` - are the second half | 43 ops |
+| P2 second cut | Roles and role mappings on a user, specced 2026-08-23, **done 2026-08-27** | P2 first cut | 43 of the 71 in `Roles`, `Roles (by ID)`, `Role Mapper`, `Client Role Mappings`; the other 28 are groups (11), organizations (11) and P10 (6) - see `2026-08-23-p2-roles-and-role-mappings-design.md`. All 43 are served: the roles half 32 (`Roles` 24, `Roles (by ID)` 8) on 2026-08-25, and the role-mapping half 11 (`Role Mapper` 6, `Client Role Mappings` 5) on 2026-08-27 | 43 ops |
 | P2 third cut | Groups | P2 second cut | `Groups` 9, a user's group membership 4, the group halves of the two mapping tags 11 | 24 ops |
 | **P3** | Browser code flow | P1 | `oidc/authorization` 11, `oidc/logout` (part) | ~15 cases |
 | **P4** | Multi-realm | P2 | Realms Admin 45, Key 1 | 46 ops |
@@ -200,10 +214,10 @@ operations is allocated below; none is left unassigned.
 
 Denominator today: **413 Admin API operations plus 72 protocol behaviours, 485
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **89** after
-the roles half of P2's second cut, up from 8 before P1 and 25 after it. Section
-2 records how the denominator moved from 483 to 485 and where each step of the
-numerator came from.
+surface is not counted and which the report says so about. Served: **100** after
+P2's second cut is complete, up from 8 before P1, 25 after it and 89 after that
+cut's roles half. Section 2 records how the denominator moved from 483 to 485
+and where each step of the numerator came from.
 
 P1 did not close its four chapters outright, and the remainder is worth naming
 rather than leaving as a subtraction. Nine `oidc/token` cases need the

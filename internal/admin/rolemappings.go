@@ -568,12 +568,14 @@ func without(all, exclude []*model.Role) []*model.Role {
 
 // writeMappingList is the body every mapping listing sends.
 //
-// brief is a parameter rather than a constant because the three realm reads do
-// not agree, which is measurable and was not guessable: `.../realm/composite`
-// grows an attributes key for briefRepresentation=false and carries the role's
-// real attribute values, while `.../realm` and `.../realm/available` ignore the
-// parameter and never carry the key at all. Two behaviours across three
-// siblings, so the caller decides.
+// brief is a parameter rather than a constant because the six routes that call
+// this do not agree, which is measurable and was not guessable:
+// `.../realm/composite` and `.../clients/{uuid}/composite` grow an attributes
+// key for briefRepresentation=false and carry the role's real attribute values,
+// while the other four - the two direct reads and the two available reads -
+// ignore the parameter and never carry the key at all. The client triple was
+// swept in full rather than inherited from the realm one. Two behaviours across
+// six siblings, so the caller decides.
 func writeMappingList(w http.ResponseWriter, in []*model.Role, realmID string, brief bool) {
 	writeAdminJSON(w, mappingListOf(in, realmID, brief))
 }

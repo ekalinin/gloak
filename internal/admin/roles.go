@@ -56,9 +56,10 @@ func (h *handler) realmRole(w http.ResponseWriter, r *http.Request, rc *reqConte
 }
 
 // writeRoleNotFound is the measured 404 for a role addressed by name.
-// roles-by-id has its own, different message - see writeRoleIDNotFound - and a
-// role rejected by a role-mapping write has a third. Three spellings, one
-// resource; all measured.
+// roles-by-id has its own, different message - see writeRoleIDNotFound - a bad
+// id in a composite batch has a third, see writeCompositeRoleNotFound, and a
+// role rejected by a role-mapping write has a fourth, see
+// writeMappingRoleNotFound. Four spellings, one resource; all measured.
 //
 // WriteMessageError, not WriteAdminError: this is `{"error":...}` and the 409
 // beside it is `{"errorMessage":...}`. Two shapes on one resource, measured.
@@ -767,12 +768,12 @@ func (h *handler) roleGroups(locate roleLocator) func(http.ResponseWriter, *http
 // decodeRoleList reads the array body the composite and role-mapping writes
 // take. A body that is not an array answers the measured 400.
 //
-// **unknown_error, not invalid_request.** This helper is reached from eight
+// **unknown_error, not invalid_request.** This helper is reached from ten
 // route registrations - the six eachComposite serves (realm role by name,
-// client role by name and roles-by-id, POST and DELETE each) and the two realm
-// role-mapping writes - and **all eight were measured**, 2026-08-26, with a
-// malformed body and a well-formed non-array body, plus both of
-// guardByRoleContainer's branches for roles-by-id. Every one answers
+// client role by name and roles-by-id, POST and DELETE each) and the four
+// role-mapping writes, realm and client - and **all ten were measured**,
+// 2026-08-26, with a malformed body and a well-formed non-array body, plus both
+// of guardByRoleContainer's branches for roles-by-id. Every one answers
 // `{"error":"unknown_error","error_description":"Cannot parse the JSON"}`, and
 // the two bad-body forms are indistinguishable, so there is no
 // parse-versus-shape split to model.
@@ -789,8 +790,10 @@ func (h *handler) roleGroups(locate roleLocator) func(http.ResponseWriter, *http
 // the six other "Cannot parse the JSON" call sites in this package keep
 // `invalid_request` on their existing measurements, not on this one.
 //
-// The client role-mapping writes will reach this helper too and are not in the
-// sweep - they are not shipped yet. Measure them when they land.
+// The client role-mapping writes were the two the first sweep listed as
+// uncovered, because they were not shipped when it ran. They shipped with the
+// client half of the cut and were measured then; both answer `unknown_error`
+// like the rest, which is what completes the sweep at ten.
 func decodeRoleList(w http.ResponseWriter, r *http.Request) ([]roleRepresentation, bool) {
 	var reps []roleRepresentation
 	if err := json.NewDecoder(r.Body).Decode(&reps); err != nil {

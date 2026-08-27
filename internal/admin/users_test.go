@@ -252,9 +252,9 @@ func TestUpdateKeepsTheUsernameButStillReportsAConflict(t *testing.T) {
 	}
 }
 
-// resolveUser is the one place a {userID} becomes a user. The 404 body is
+// userFromPath is the one place a {userID} becomes a user. The 404 body is
 // measured and shared by every endpoint that takes one.
-func TestResolveUserWritesTheMeasuredNotFound(t *testing.T) {
+func TestUserFromPathWritesTheMeasuredNotFound(t *testing.T) {
 	h, _, _ := newServer(t)
 	admin := tokenFor(t, h, "admin", "admin")
 
