@@ -58,15 +58,12 @@ func (h *handler) compositeRealmMappings(w http.ResponseWriter, r *http.Request,
 // holding it directly. Computing this from the effective set would silently
 // drop it.
 //
-// **Keycloak also filters this list by what the caller may grant**, and that
-// part is not implemented here. Measured on the same subject: a caller holding
-// only view-users gets `[]`, one holding only manage-users gets
-// offline_access and uma_authorization, and a full administrator gets those two
-// plus create-realm and admin. That filter is the same caller-relative
-// predicate F28 covers, whose rule is derived in Task 7; until then this
-// answers the administrator's list to every caller the guard admits. See the
-// "available is filtered by what the caller may grant" section of
-// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+// **Keycloak also filters this list by what the caller may grant**, which is
+// what grantable applies. Measured on the same subject: a caller holding only
+// view-users gets `[]`, one holding only manage-users gets offline_access and
+// uma_authorization, and a full administrator gets those two plus create-realm
+// and admin. See the "available is filtered by what the caller may grant"
+// section of docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
 func (h *handler) availableRealmMappings(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 	user, ok := h.userFromPath(w, r, rc)
 	if !ok {
@@ -82,7 +79,40 @@ func (h *handler) availableRealmMappings(w http.ResponseWriter, r *http.Request,
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	writeMappingList(w, without(all, direct), rc.realm.ID, true)
+	offer, err := h.grantable(r.Context(), rc, without(all, direct))
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	writeMappingList(w, offer, rc.realm.ID, true)
+}
+
+// grantable narrows an available list to the roles this caller could actually
+// assign, which is what the two available reads answer.
+//
+// Two conditions, and the first is not the read's own guard. `available` admits
+// view-users **or** manage-users, and a view-users caller was measured getting
+// 200 with an empty body on every container tried - the realm, master-realm and
+// an ordinary client - because it may read the list and assign none of it. So
+// the filter re-applies the *write* guard before judging any role, rather than
+// trusting the one the route already ran. mayGrantRole is then the same
+// predicate the writes use, which is the measured relationship between the two:
+// the set a caller may write is exactly the set its own available read shows it.
+func (h *handler) grantable(ctx context.Context, rc *reqContext, in []*model.Role) ([]*model.Role, error) {
+	out := make([]*model.Role, 0, len(in))
+	if !rc.caller.has(userMappingsWriteRole) {
+		return out, nil
+	}
+	for _, role := range in {
+		allowed, err := h.mayGrantRole(ctx, rc.realm, rc.caller, role)
+		if err != nil {
+			return nil, err
+		}
+		if allowed {
+			out = append(out, role)
+		}
+	}
+	return out, nil
 }
 
 // listClientMappings serves GET /users/{id}/role-mappings/clients/{client-uuid}:
@@ -136,14 +166,13 @@ func (h *handler) compositeClientMappings(w http.ResponseWriter, r *http.Request
 // in the composite expansion *and* in the available list, because the subject
 // reaches them through view-users without holding either directly.
 //
-// **Keycloak also filters this list by what the caller may grant**, and that
-// part is not implemented here, exactly as on the realm mirror. Measured on the
-// administrator as the subject: a caller holding only view-users gets `[]`, one
-// holding only manage-users gets seven of master-realm's 21, and a full
-// administrator gets all 21. F28 named this measurement as one that had to be
-// taken rather than inferred from the realm side; it was, it agrees, and the
-// predicate itself is still Task 7's. See the "`available` is filtered by what
-// the caller may grant" section of
+// **Keycloak also filters this list by what the caller may grant**, exactly as
+// on the realm mirror, and grantable applies it. Measured on the administrator
+// as the subject: a caller holding only view-users gets `[]`, one holding only
+// manage-users gets seven of master-realm's 21, and a full administrator gets
+// all 21. F28 named this measurement as one that had to be taken rather than
+// inferred from the realm side; it was, and it agrees. See the "`available` is
+// filtered by what the caller may grant" section of
 // docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
 func (h *handler) availableClientMappings(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 	user, c, ok := h.clientMappingSubject(w, r, rc)
@@ -160,7 +189,12 @@ func (h *handler) availableClientMappings(w http.ResponseWriter, r *http.Request
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	writeMappingList(w, without(all, direct), rc.realm.ID, true)
+	offer, err := h.grantable(r.Context(), rc, without(all, direct))
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	writeMappingList(w, offer, rc.realm.ID, true)
 }
 
 // allMappings serves GET /users/{id}/role-mappings: the combined view, and the
@@ -421,20 +455,24 @@ func (h *handler) eachClientMapping(w http.ResponseWriter, r *http.Request, rc *
 // failure without changing that interface. Closing it is a store concern, not
 // one of these handlers'.
 //
-// Unlike eachComposite there is no per-entry caller check. Keycloak has one on
-// **both** pairs - a `manage-users` caller is refused the realm roles `admin`
-// and `create-realm` and allowed `offline_access` and `uma_authorization`, and
-// on the client side is refused `master-realm`'s `manage-realm`,
-// `manage-clients` and `impersonation` and allowed its `view-users`; on both
-// verbs, all-or-nothing, and the set it may write is exactly the set its own
-// `available` read shows it. It is the caller-relative predicate F28 covers,
-// whose rule is derived in Task 7. Until then this applies whatever the route
-// guard admits, which means a `manage-users` caller here can hand out `admin`.
-// Recorded under "A mapping write **is** filtered by what the caller may grant"
-// and "The client writes are filtered the same way" in
-// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md; deliberately
-// not half-implemented, because a partial version of that predicate is worse
-// than none.
+// Like eachComposite it runs a per-entry caller check, mayGrantRole, and
+// unlike eachComposite it runs it on **both** verbs. That difference is
+// measured on each of the four routes rather than shared: a `manage-users`
+// caller is refused the realm roles `admin` and `create-realm` and allowed
+// `offline_access` and `uma_authorization`, is refused `master-realm`'s
+// `manage-realm`, `manage-clients` and `impersonation` and allowed its
+// `view-users`, and is refused `DELETE` of `admin` off a subject that holds it -
+// where `DELETE .../composites` next door allows the same removal. The set it
+// may write is exactly the set its own `available` read shows it, which is why
+// that read runs the same predicate.
+//
+// The check sits **after** the guard, not instead of it: `view-users` is
+// refused these routes outright, even for an empty array with no role to judge,
+// so the coarse "may you write user role mappings at all" question is the route
+// guard's and this is a second stage. And it sits inside the validate loop, in
+// array order, because Keycloak answers in array order - a body naming a
+// nonexistent id and then a refused role is 404, the same two entries the other
+// way round are 403, measured on this route and on the composite one.
 func (h *handler) eachMapping(w http.ResponseWriter, r *http.Request, rc *reqContext, userID string, accepts func(*model.Role) bool, apply func(context.Context, string, string) error) {
 	reps, ok := decodeRoleList(w, r)
 	if !ok {
@@ -452,6 +490,15 @@ func (h *handler) eachMapping(w http.ResponseWriter, r *http.Request, rc *reqCon
 		}
 		if !accepts(role) {
 			writeMappingRoleNotFound(w)
+			return
+		}
+		allowed, err := h.mayGrantRole(r.Context(), rc.realm, rc.caller, role)
+		if err != nil {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		if !allowed {
+			writeForbidden(w)
 			return
 		}
 	}

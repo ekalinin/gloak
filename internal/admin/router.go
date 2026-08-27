@@ -91,9 +91,9 @@ func (h *handler) register(mux *http.ServeMux) {
 	// manage-realm and nothing else is refused even for a realm role, which is
 	// the opposite of roles-by-id.
 	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/role-mappings/realm",
-		h.guard("manage-users", h.assignRealmMappings))
+		h.guard(userMappingsWriteRole, h.assignRealmMappings))
 	mux.HandleFunc("DELETE /admin/realms/{realm}/users/{userID}/role-mappings/realm",
-		h.guard("manage-users", h.removeRealmMappings))
+		h.guard(userMappingsWriteRole, h.removeRealmMappings))
 
 	// The same three reads for one client's roles. The guard is the realm
 	// triple's, and that is measured on these routes rather than inherited:
@@ -124,9 +124,9 @@ func (h *handler) register(mux *http.ServeMux) {
 	// too. The guard follows the subject on this pair as on every other one in
 	// the family, so the {clientUUID} segment stays the handler's business.
 	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}",
-		h.guard("manage-users", h.assignClientMappings))
+		h.guard(userMappingsWriteRole, h.assignClientMappings))
 	mux.HandleFunc("DELETE /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}",
-		h.guard("manage-users", h.removeClientMappings))
+		h.guard(userMappingsWriteRole, h.removeClientMappings))
 
 	mux.HandleFunc("GET /admin/realms/{realm}/clients", h.guard("view-clients", h.listClients))
 	// {clientUUID}, not {client-uuid}: net/http requires a wildcard name to be
@@ -394,6 +394,17 @@ var usersReadRoles = []string{"view-users", "query-users", "manage-users"}
 // because they were measured separately and disagree: the same caller that
 // gets 200 on GET /users gets 403 on GET /users/{id}/role-mappings/realm.
 var userMappingsReadRoles = []string{"view-users", "manage-users"}
+
+// userMappingsWriteRole is what all four role-mapping writes take, and it is a
+// single role rather than a slice: view-users opens every read above and
+// neither verb of either write.
+//
+// It is named because the two available reads need it too. Their own guard is
+// the looser pair above, and the list they answer is measurably the set the
+// caller could POST - a view-users caller gets 200 and `[]` - so grantable
+// re-applies this before judging any individual role. Spelling it once is what
+// stops that filter and this guard from drifting apart.
+const userMappingsWriteRole = "manage-users"
 
 // realmRolesReadRoles is what both realm-role reads accept: view-realm or
 // manage-realm, measured across eight single-role callers.

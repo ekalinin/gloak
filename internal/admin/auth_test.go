@@ -127,19 +127,32 @@ func createUserWithPassword(t *testing.T, s store.Store, realm *model.Realm, use
 // through the API because role assignment is part two of this cut.
 func tokenForRole(t *testing.T, h http.Handler, s store.Store, realm *model.Realm, role string) string {
 	t.Helper()
+	return tokenForRoles(t, h, s, realm, role)
+}
+
+// tokenForRoles is tokenForRole for a caller that needs more than one.
+//
+// F28's rule is about what a caller's rights add up to, and the sweep that
+// derived it used two-role and three-role callers throughout: the too-permissive
+// direction only shows up when the caller holds one role and is offered a role
+// it does not hold, and the too-restrictive one only when it holds two.
+func tokenForRoles(t *testing.T, h http.Handler, s store.Store, realm *model.Realm, roles ...string) string {
+	t.Helper()
 	ctx := context.Background()
-	username := "only-" + role
+	username := "only-" + strings.Join(roles, "+")
 	u := createUserWithPassword(t, s, realm, username, "pw")
 	container, err := s.Clients().ByClientID(ctx, realm.ID, "master-realm")
 	if err != nil {
 		t.Fatalf("ByClientID: %v", err)
 	}
-	r, err := s.Roles().ByName(ctx, realm.ID, container.ID, role)
-	if err != nil {
-		t.Fatalf("ByName(%s): %v", role, err)
-	}
-	if err := s.Roles().AssignToUser(ctx, u.ID, r.ID); err != nil {
-		t.Fatalf("AssignToUser: %v", err)
+	for _, role := range roles {
+		r, err := s.Roles().ByName(ctx, realm.ID, container.ID, role)
+		if err != nil {
+			t.Fatalf("ByName(%s): %v", role, err)
+		}
+		if err := s.Roles().AssignToUser(ctx, u.ID, r.ID); err != nil {
+			t.Fatalf("AssignToUser(%s): %v", role, err)
+		}
 	}
 	return tokenFor(t, h, username, "pw")
 }

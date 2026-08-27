@@ -1435,3 +1435,169 @@ func TestRolesByIDUpdatesAndDeletes(t *testing.T) {
 		t.Fatalf("delete: want 204, got %d", got)
 	}
 }
+
+// F28's escalation, on the call site it was found on: a caller holding one
+// narrow manage role attaching `admin` to `default-roles-master`, the role
+// every user in the realm holds.
+//
+// Measured against a live 26.7.1 with a fresh token minted immediately before
+// each call: 403 for a caller holding only manage-realm, 204 for a full
+// administrator, with the parent read back after each. Both directions are
+// here because the 403 alone would also pass for a guard that refuses
+// everybody, which is the failure mode this cut has already reverted twice.
+func TestCompositeWriteRefusesAnAdminRoleTheCallerCannotGrant(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	narrow := tokenForRole(t, h, s, realm, "manage-realm")
+	base := "/admin/realms/master/roles/default-roles-master/composites"
+	body := `[{"id":"` + readRole(t, h, "/admin/realms/master/roles/admin", admin).ID + `","name":"admin"}]`
+
+	w := postJSON(t, h, base, body, narrow)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("manage-realm attaching admin: want 403, got %d: %s", w.Code, w.Body)
+	}
+	if got := w.Body.String(); got != `{"error":"HTTP 403 Forbidden"}` {
+		t.Errorf("unexpected body: %s", got)
+	}
+	if got := compositeNames(t, h, base, admin); slices.Contains(got, "admin") {
+		t.Fatalf("the refusal still applied the child: %v", got)
+	}
+
+	if w := postJSON(t, h, base, body, admin); w.Code != http.StatusNoContent {
+		t.Fatalf("full administrator attaching admin: want 204, got %d: %s", w.Code, w.Body)
+	}
+	if got := compositeNames(t, h, base, admin); !slices.Contains(got, "admin") {
+		t.Fatalf("the 204 did not apply the child: %v", got)
+	}
+}
+
+// The other direction, and the one a naive rule gets wrong: a caller may
+// attach admin roles it does **not** hold, as long as its own rights already
+// confer them.
+//
+// "The caller must already hold the child" is falsified by the row below.
+// Measured on a live 26.7.1 with a caller holding manage-realm and
+// manage-clients and nothing else, swept over every child it could name: the
+// four allowed here are four of the fourteen it does not hold and gets 204 for,
+// and the five refused are five of the nine it is refused. Implementing the
+// naive rule would turn every 204 in this table into a 403.
+func TestCompositeWriteAdmitsAnAdminRoleTheCallerDoesNotHold(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	caller := tokenForRoles(t, h, s, realm, "manage-realm", "manage-clients")
+	postJSON(t, h, "/admin/realms/master/roles", `{"name":"probe-parent"}`, admin)
+	base := "/admin/realms/master/roles/probe-parent/composites"
+	mrUUID := clientUUID(t, s, realm, "master-realm")
+
+	for _, tc := range []struct {
+		child string
+		want  int
+	}{
+		// Conferred by manage-clients, and not held.
+		{"create-client", http.StatusNoContent},
+		{"manage-authorization", http.StatusNoContent},
+		{"view-clients", http.StatusNoContent},
+		// Conferred by manage-realm, and not held.
+		{"view-realm", http.StatusNoContent},
+		// Conferred by neither. impersonation, the events pair and the
+		// identity-provider pair each need themselves.
+		{"impersonation", http.StatusForbidden},
+		{"manage-events", http.StatusForbidden},
+		{"view-events", http.StatusForbidden},
+		{"manage-identity-providers", http.StatusForbidden},
+		{"view-users", http.StatusForbidden},
+	} {
+		child := readRole(t, h, "/admin/realms/master/clients/"+mrUUID+"/roles/"+tc.child, admin)
+		body := `[{"id":"` + child.ID + `","name":"` + tc.child + `"}]`
+		w := postJSON(t, h, base, body, caller)
+		if w.Code != tc.want {
+			t.Errorf("child %s: want %d, got %d: %s", tc.child, tc.want, w.Code, w.Body)
+			continue
+		}
+		if got := compositeNames(t, h, base, admin); slices.Contains(got, tc.child) != (tc.want == http.StatusNoContent) {
+			t.Errorf("child %s: status %d but composites are %v", tc.child, w.Code, got)
+		}
+	}
+}
+
+// DELETE .../composites does **not** apply the rule, measured rather than
+// carried over from POST beside it.
+//
+// The same caller that is refused POST naming admin removes that same child
+// from that same parent and gets 204, with the parent left without it. This is
+// the second asymmetry between these two verbs - the child's own manage role is
+// the first - and the role-mapping writes next door are the counter-example
+// that made it worth measuring instead of assuming: there DELETE is filtered.
+func TestCompositeRemovalIgnoresTheCallerRelativeRule(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	caller := tokenForRoles(t, h, s, realm, "manage-realm", "manage-clients")
+	postJSON(t, h, "/admin/realms/master/roles", `{"name":"probe-parent"}`, admin)
+	base := "/admin/realms/master/roles/probe-parent/composites"
+	body := `[{"id":"` + readRole(t, h, "/admin/realms/master/roles/admin", admin).ID + `","name":"admin"}]`
+
+	if w := postJSON(t, h, base, body, caller); w.Code != http.StatusForbidden {
+		t.Fatalf("precondition: the same caller must be refused POST, got %d", w.Code)
+	}
+	if w := postJSON(t, h, base, body, admin); w.Code != http.StatusNoContent {
+		t.Fatalf("setup: full administrator attaching admin: %d %s", w.Code, w.Body)
+	}
+
+	w := sendJSON(t, h, http.MethodDelete, base, body, caller)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("remove: want 204, got %d: %s", w.Code, w.Body)
+	}
+	if got := compositeNames(t, h, base, admin); slices.Contains(got, "admin") {
+		t.Fatalf("remove did not stick: %v", got)
+	}
+}
+
+// Whichever entry comes first in the array decides the answer, with the
+// caller-relative refusal in the mix. Measured on a live 26.7.1 in both orders:
+// a bad id in front answers 404 before the refused child is looked at, and the
+// refused child in front answers 403 before the bad id is. Nothing is applied
+// either way.
+func TestCompositeWriteAnswersInArrayOrder(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	caller := tokenForRoles(t, h, s, realm, "manage-realm", "manage-clients")
+	postJSON(t, h, "/admin/realms/master/roles", `{"name":"probe-parent"}`, admin)
+	base := "/admin/realms/master/roles/probe-parent/composites"
+	refused := `{"id":"` + readRole(t, h, "/admin/realms/master/roles/admin", admin).ID + `","name":"admin"}`
+	missing := `{"id":"00000000-0000-0000-0000-000000000000","name":"nope"}`
+
+	for _, tc := range []struct {
+		body string
+		want int
+	}{
+		{"[" + missing + "," + refused + "]", http.StatusNotFound},
+		{"[" + refused + "," + missing + "]", http.StatusForbidden},
+	} {
+		w := postJSON(t, h, base, tc.body, caller)
+		if w.Code != tc.want {
+			t.Errorf("%s: want %d, got %d: %s", tc.body, tc.want, w.Code, w.Body)
+		}
+		if got := compositeNames(t, h, base, admin); len(got) != 0 {
+			t.Errorf("%s applied something: %v", tc.body, got)
+		}
+	}
+}
+
+// compositeNames reads a role's children by name, sorted.
+func compositeNames(t *testing.T, h http.Handler, path, token string) []string {
+	t.Helper()
+	w := get(t, h, path, token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET %s: want 200, got %d: %s", path, w.Code, w.Body)
+	}
+	var reps []roleRepresentation
+	if err := json.Unmarshal(w.Body.Bytes(), &reps); err != nil {
+		t.Fatalf("decode %s: %v", path, err)
+	}
+	names := make([]string, 0, len(reps))
+	for _, r := range reps {
+		names = append(names, r.Name)
+	}
+	sort.Strings(names)
+	return names
+}

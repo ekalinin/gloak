@@ -1224,3 +1224,229 @@ func assignRole(t *testing.T, s store.Store, realm *model.Realm, userID, contain
 		t.Fatalf("AssignToUser: %v", err)
 	}
 }
+
+// F28's escalation on the second call site: the same caller assigning `admin`
+// to a user. This is the one that became reachable when role assignment
+// shipped - a manage-users caller could hand out admin and, from that user's
+// token, do anything at all.
+//
+// Measured against a live 26.7.1 with a fresh token minted immediately before
+// each call, subject read back after every request: admin 403, create-realm
+// 403, uma_authorization 204, and the full administrator 204 on all three.
+func TestMappingWriteRefusesAnAdminRoleTheCallerCannotGrant(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	caller := tokenForRole(t, h, s, realm, "manage-users")
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-mapped","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-mapped")
+	base := "/admin/realms/master/users/" + uid + "/role-mappings/realm"
+
+	for _, tc := range []struct {
+		role string
+		want int
+	}{
+		{"admin", http.StatusForbidden},
+		{"create-realm", http.StatusForbidden},
+		{"uma_authorization", http.StatusNoContent},
+	} {
+		role := readRole(t, h, "/admin/realms/master/roles/"+tc.role, admin)
+		body := `[{"id":"` + role.ID + `","name":"` + tc.role + `"}]`
+		w := postJSON(t, h, base, body, caller)
+		if w.Code != tc.want {
+			t.Errorf("assign %s: want %d, got %d: %s", tc.role, tc.want, w.Code, w.Body)
+			continue
+		}
+		if got := mappingNames(t, h, base, admin); slices.Contains(got, tc.role) != (tc.want == http.StatusNoContent) {
+			t.Errorf("assign %s: status %d but the subject holds %v", tc.role, w.Code, got)
+		}
+		// The control in the same loop: a full administrator is not refused
+		// any of them, so the 403s above are about the caller and not the role.
+		if w := postJSON(t, h, base, body, admin); w.Code != http.StatusNoContent {
+			t.Errorf("full administrator assigning %s: want 204, got %d: %s", tc.role, w.Code, w.Body)
+		}
+	}
+}
+
+// The removal is filtered too, which is where this pair parts company with
+// `DELETE .../composites`. Measured: a manage-users caller is refused DELETE
+// naming admin on a subject that holds it, and the subject keeps it.
+func TestMappingRemovalIsFilteredTheSameWay(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	caller := tokenForRole(t, h, s, realm, "manage-users")
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-mapped","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-mapped")
+	base := "/admin/realms/master/users/" + uid + "/role-mappings/realm"
+	body := `[{"id":"` + readRole(t, h, "/admin/realms/master/roles/admin", admin).ID + `","name":"admin"}]`
+
+	if w := postJSON(t, h, base, body, admin); w.Code != http.StatusNoContent {
+		t.Fatalf("setup: full administrator assigning admin: %d %s", w.Code, w.Body)
+	}
+	w := sendJSON(t, h, http.MethodDelete, base, body, caller)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("remove admin: want 403, got %d: %s", w.Code, w.Body)
+	}
+	if got := mappingNames(t, h, base, admin); !slices.Contains(got, "admin") {
+		t.Fatalf("the refusal still removed the role: %v", got)
+	}
+}
+
+// The client pair takes the same predicate, measured on its own routes rather
+// than inherited from the realm one.
+//
+// Caller holding only manage-users, container master-realm: view-users is
+// allowed, manage-realm, manage-clients and impersonation are refused - and the
+// set it may write is exactly the set its own available read shows it, which is
+// what ties this to the read filter below.
+func TestClientMappingWritesTakeTheSamePredicate(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	caller := tokenForRole(t, h, s, realm, "manage-users")
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-mapped","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-mapped")
+	mrUUID := clientUUID(t, s, realm, "master-realm")
+	base := "/admin/realms/master/users/" + uid + "/role-mappings/clients/" + mrUUID
+
+	for _, tc := range []struct {
+		role string
+		want int
+	}{
+		{"view-users", http.StatusNoContent},
+		{"manage-realm", http.StatusForbidden},
+		{"manage-clients", http.StatusForbidden},
+		{"impersonation", http.StatusForbidden},
+	} {
+		role := readRole(t, h, "/admin/realms/master/clients/"+mrUUID+"/roles/"+tc.role, admin)
+		body := `[{"id":"` + role.ID + `","name":"` + tc.role + `"}]`
+		w := postJSON(t, h, base, body, caller)
+		if w.Code != tc.want {
+			t.Errorf("assign %s: want %d, got %d: %s", tc.role, tc.want, w.Code, w.Body)
+			continue
+		}
+		if got := mappingNames(t, h, base, admin); slices.Contains(got, tc.role) != (tc.want == http.StatusNoContent) {
+			t.Errorf("assign %s: status %d but the subject holds %v", tc.role, w.Code, got)
+		}
+	}
+	// The writable set is the available set, on the same caller and container.
+	if got := mappingNames(t, h, base+"/available", caller); !slices.Contains(got, "manage-users") || slices.Contains(got, "manage-realm") {
+		t.Errorf("available disagrees with the write: %v", got)
+	}
+}
+
+// The refusal is all-or-nothing and answers in array order, both measured. A
+// batch naming one role the caller may grant and one it may not applies
+// neither, whichever comes first; a bad id in front answers 404 before the
+// refused role is looked at.
+func TestMappingWriteRefusalIsAllOrNothing(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	caller := tokenForRole(t, h, s, realm, "manage-users")
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-mapped","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-mapped")
+	base := "/admin/realms/master/users/" + uid + "/role-mappings/realm"
+	allowed := `{"id":"` + readRole(t, h, "/admin/realms/master/roles/uma_authorization", admin).ID + `","name":"uma_authorization"}`
+	refused := `{"id":"` + readRole(t, h, "/admin/realms/master/roles/admin", admin).ID + `","name":"admin"}`
+	missing := `{"id":"00000000-0000-0000-0000-000000000000","name":"nope"}`
+
+	for _, tc := range []struct {
+		body string
+		want int
+	}{
+		{"[" + allowed + "," + refused + "]", http.StatusForbidden},
+		{"[" + refused + "," + allowed + "]", http.StatusForbidden},
+		{"[" + missing + "," + refused + "]", http.StatusNotFound},
+		{"[" + refused + "," + missing + "]", http.StatusForbidden},
+	} {
+		w := postJSON(t, h, base, tc.body, caller)
+		if w.Code != tc.want {
+			t.Errorf("%s: want %d, got %d: %s", tc.body, tc.want, w.Code, w.Body)
+		}
+		// The subject holds default-roles-master from its creation and nothing
+		// else, so anything more than that is a half-applied batch.
+		if got := mappingNames(t, h, base, admin); !slices.Equal(got, []string{"default-roles-master"}) {
+			t.Errorf("%s applied part of the batch: %v", tc.body, got)
+		}
+	}
+}
+
+// Both available reads are filtered by what the caller may grant, and the
+// view-users row is the one that shows the filter is not simply the route
+// guard: it is 200 with an empty body, on the realm and on a client.
+//
+// Measured on one subject with three callers, a fresh token minted immediately
+// before each call. The full administrator's answer is exactly the complement
+// of the direct assignments; manage-users loses admin and create-realm on the
+// realm side and keeps seven of master-realm's 21 on the client side;
+// view-users loses everything, because it may read the list and assign none of
+// it.
+func TestAvailableMappingsAreFilteredByWhatTheCallerMayGrant(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	viewUsers := tokenForRole(t, h, s, realm, "view-users")
+	manageUsers := tokenForRole(t, h, s, realm, "manage-users")
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-mapped","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-mapped")
+	mrUUID := clientUUID(t, s, realm, "master-realm")
+	realmBase := "/admin/realms/master/users/" + uid + "/role-mappings/realm/available"
+	clientBase := "/admin/realms/master/users/" + uid + "/role-mappings/clients/" + mrUUID + "/available"
+
+	for _, tc := range []struct {
+		name   string
+		token  string
+		realm  []string
+		client []string
+	}{
+		{"view-users", viewUsers, []string{}, []string{}},
+		// default-roles-master is in neither row: the subject holds it
+		// directly, and available is the complement of the direct list.
+		{"manage-users", manageUsers,
+			[]string{"offline_access", "uma_authorization"},
+			[]string{"manage-users", "query-clients", "query-groups", "query-organizations", "query-realms", "query-users", "view-users"}},
+		{"full administrator", admin,
+			[]string{"admin", "create-realm", "offline_access", "uma_authorization"},
+			[]string{"create-client", "impersonation", "manage-authorization", "manage-clients", "manage-events",
+				"manage-identity-providers", "manage-organizations", "manage-realm", "manage-users", "query-clients",
+				"query-groups", "query-organizations", "query-realms", "query-users", "view-authorization",
+				"view-clients", "view-events", "view-identity-providers", "view-organizations", "view-realm", "view-users"}},
+	} {
+		if got := mappingNames(t, h, realmBase, tc.token); !slices.Equal(got, tc.realm) {
+			t.Errorf("caller %s realm available: want %v, got %v", tc.name, tc.realm, got)
+		}
+		if got := mappingNames(t, h, clientBase, tc.token); !slices.Equal(got, tc.client) {
+			t.Errorf("caller %s client available: want %v, got %v", tc.name, tc.client, got)
+		}
+	}
+}
+
+// The role's **container** decides whether it is an admin role, not its name.
+//
+// Measured on a live 26.7.1 with a client of one's own carrying roles named
+// admin, impersonation and manage-realm: a caller holding only manage-users
+// assigns all three, 204 each, and sees all three in that client's available
+// list - while master-realm's roles of the very same names are refused to it.
+// A predicate keyed on the name would refuse these and diverge.
+func TestOnlyTheRealmsOwnClientCarriesAdminRoles(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	caller := tokenForRole(t, h, s, realm, "manage-users")
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-mapped","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-mapped")
+	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"probe-imposter"}`, admin)
+	impostor := clientUUID(t, s, realm, "probe-imposter")
+	names := []string{"admin", "impersonation", "manage-realm"}
+	for _, n := range names {
+		postJSON(t, h, "/admin/realms/master/clients/"+impostor+"/roles", `{"name":"`+n+`"}`, admin)
+	}
+	base := "/admin/realms/master/users/" + uid + "/role-mappings/clients/" + impostor
+
+	for _, n := range names {
+		role := readRole(t, h, "/admin/realms/master/clients/"+impostor+"/roles/"+n, admin)
+		body := `[{"id":"` + role.ID + `","name":"` + n + `"}]`
+		if w := postJSON(t, h, base, body, caller); w.Code != http.StatusNoContent {
+			t.Errorf("assign probe-imposter/%s: want 204, got %d: %s", n, w.Code, w.Body)
+		}
+	}
+	if got := mappingNames(t, h, base, admin); !slices.Equal(got, names) {
+		t.Errorf("subject holds %v, want %v", got, names)
+	}
+}

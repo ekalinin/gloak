@@ -30,6 +30,16 @@ measurement Task 7 needs; it is still open. Task 5 then shipped the client pair
 and measured it filtered as well, taking F28 from four measured surfaces to
 five - four places in the code, since the two write pairs share one helper.
 
+**Status, 2026-08-27.** Task 7 **closed F28** on all four call sites. The rule
+it needed - the one this list has been calling "not in this repository" since
+2026-08-25 - was derived by sweeping 22 admin roles against 27 children on four
+different surfaces, and the read filter and the write check turned out to be one
+predicate rather than two that resemble each other. Writing it opened **F32**:
+Gloak keys the caller's roles on the name alone, so an ordinary client role
+called `manage-realm` is indistinguishable from the real one. That is older and
+wider than F28 - it is the whole guard layer - and measured diverging from
+Keycloak on both sides.
+
 ## F3: two shipped endpoints have no measured contract (closed)
 
 `docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md` records the token
@@ -723,7 +733,7 @@ The `add-roles` one belongs with the role-mapping cut rather than here. The
 other three are available now and would have caught anything that made the
 role representation unparseable to a real client.
 
-## F28: composite writes do not apply Keycloak's caller-relative admin-role rule
+## F28: composite writes do not apply Keycloak's caller-relative admin-role rule (closed)
 
 Opened by the final whole-branch review of `feat/p2-roles`, 2026-08-25. **This
 one is a privilege-escalation path, not a cosmetic divergence.**
@@ -908,6 +918,50 @@ the two `available` reads and the two write pairs, and the combined view - like
 the four `direct` and `composite` reads - reports what the subject holds
 regardless of who is asking. Transcript under "The combined view is not
 caller-filtered" in `2026-08-18-keycloak-26.7.1-observed.md`.
+
+**Closed 2026-08-27** by Task 7 of `feat/p2-role-mappings`, on all four call
+sites. What closed it is a measurement, not a decision: the rule this entry says
+"is a mapping from each admin role name to the administrative power it confers"
+was derived by sweeping a live 26.7.1 and is now recorded there.
+
+The rule:
+
+> A caller may hand out a role only if the role is not one of the realm's own
+> admin roles, or the caller's own effective roles already confer that admin
+> role - itself, or one measured to subsume it.
+
+**One predicate, not two.** For every one of 23 caller rows, the set of roles a
+caller may write is byte-for-byte the set its own `available` read returns, on
+the realm locator and on the client one. The read filter and the write check are
+the same question, checked cell by cell rather than assumed from the
+resemblance. It is `mayGrantRole` in `internal/admin/auth.go`, called from
+`eachMapping`, `availableRealmMappings`, `availableClientMappings` and
+`addComposites`' `mayAttachChild` - the four this entry counts.
+
+Three things the sweep found that the two-caller version could not:
+
+- **The role-mapping surface has a second condition.** A caller holding
+  `view-users` plus any one other admin role gets `[]` from both `available`
+  reads, ordinary roles included. Handing a role to a *user* needs `manage-users`
+  first and the conferral second, so the two `available` reads re-apply the
+  *write* guard - their own is looser. The composite surface has no such
+  condition.
+- **`DELETE .../composites` does not apply the rule**, measured on that verb
+  rather than carried over from `POST`: the caller refused `POST` naming `admin`
+  removes that same child, 204. The role-mapping `DELETE` **does**. That is why
+  `removeComposites` still passes nil and `eachMapping` checks both verbs.
+- **A role's container decides whether it is an admin role, not its name.** A
+  client of one's own carrying roles named `admin`, `impersonation` and
+  `manage-realm` is assignable in full by a `manage-users` caller, while
+  `master-realm`'s roles of those names are refused it.
+
+Nothing is re-filed from this entry: all four call sites are covered and the
+predicate is one. The name-collision hole the third point brushes against is
+Gloak's own and older than F28 - see F32.
+
+Full transcript, including all four matrices as data: the "A caller may hand out
+a role only if its own rights already confer it" section of
+`2026-08-18-keycloak-26.7.1-observed.md`.
 
 ## F29: deleting a client leaves its roles behind, and Keycloak deletes them
 
@@ -1126,3 +1180,46 @@ known would replace one guess with another.
 
 Transcript: the "A wrong method is not always 404" section of
 `2026-08-18-keycloak-26.7.1-observed.md`.
+
+## F32: the caller's roles are flattened by name, so an ordinary client role can impersonate an admin one
+
+Found 2026-08-27 by Task 7 of `feat/p2-role-mappings`, while writing F28's
+predicate. It is **older than F28 and wider**: it is the whole guard layer, not
+the role-mapping family.
+
+`caller.roles` is `roles.Names(effective)` - a `map[string]bool` keyed on the
+role's **name**, with the owning container dropped. `caller.has("manage-realm")`
+therefore cannot tell `master-realm`'s `manage-realm` from an ordinary client's
+role that happens to be called `manage-realm`. The doc comment on `has` says so
+and treats it as safe ("Names are unique within the admin role container"),
+which is true of that container and not of the realm.
+
+Measured on both sides, 2026-08-27. Create a client, give it a role named
+`manage-realm`, assign that role to a user, and ask for a realm role to be
+created:
+
+```
+Keycloak 26.7.1:  POST /admin/realms/master/roles -> 403 {"error":"HTTP 403 Forbidden"}
+                  the role was not created
+Gloak:            POST /admin/realms/master/roles -> 201
+                  read back: {"id":"...","name":"minted-by-an-ordinary-role",...}
+```
+
+**This is a privilege escalation.** Minting the impostor needs `manage-clients`
+(to create the client and its role) and `manage-users` (to assign it), so it is
+a narrow admin widening itself rather than an anonymous path - the same shape
+F28 had, one layer down. Keycloak is immune because it resolves the caller's
+admin roles by container, which is exactly what F28's own predicate was measured
+doing and what `mayGrantRole` implements for the role it is judging.
+
+`mayGrantRole` inherits the hole for the *caller* side: `grants()` is seeded
+from `caller.roles`, so an impostor `manage-clients` confers the client-domain
+roles there too. It is no weaker than the guard beside it - the same caller
+already passes `guard("manage-clients")` on every client route - so closing F28
+did not widen anything, but it did not narrow this either.
+
+The fix is not local. `caller` would have to carry the container alongside the
+name, which means `resolveCaller` resolving each effective role's owning client,
+and every `has`/`hasAny` call site deciding which container it means. That is
+the whole authorization layer of `internal/admin`, so it wants its own task
+rather than a bolt-on to the one that found it.
