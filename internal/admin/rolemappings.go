@@ -214,8 +214,15 @@ func (h *handler) allMappings(w http.ResponseWriter, r *http.Request, rc *reqCon
 // the endpoint answer 500. That state is unreachable on Keycloak, which deletes
 // a client's roles with it, and reachable on Gloak, which does not - follow-up
 // F29. Skipping the orphan instead would make this endpoint the one place that
-// hides F29 while reporting a role list it knows to be short, so it is left to
-// fail loudly and F29 is the fix.
+// hides F29 while reporting a role list it knows to be short, so it fails
+// rather than skips.
+//
+// Fails quietly, though: allMappings discards this error for the generic
+// Internal Server Error body, and handler carries no logger, so the caller gets
+// a bare 500 and nothing is recorded anywhere. That is the only behaviour
+// consistent with the rest of the package today - every other 500 in this file
+// does the same - so it is not a gap this endpoint can close on its own. F29 is
+// what removes the state; giving the 500 a diagnosis is a separate concern.
 func (h *handler) clientMappingsOf(ctx context.Context, rc *reqContext, direct []*model.Role) (clientMappings, error) {
 	byClient := make(map[string][]*model.Role)
 	for _, role := range direct {

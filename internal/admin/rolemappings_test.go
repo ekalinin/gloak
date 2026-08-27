@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -454,6 +455,111 @@ func TestCombinedMappingViewKeysClientsInHashMapOrder(t *testing.T) {
 	if zeta > alpha {
 		t.Fatalf("keys came out sorted; measured zeta-client first: %s", body)
 	}
+}
+
+// The six-client vector, which is what actually pins the order.
+//
+// The two-client test above rules out sorting, but any deterministic
+// non-alphabetical scheme has even odds of passing it. cx1..cx6 land in six
+// **distinct** HashMap buckets - 13, 12, 15, 14, 1, 0 - so javamap is fully
+// determined for this set with no collision to guess at, and Keycloak's
+// measured answer is one particular permutation out of 720.
+//
+// The clients are created and the roles assigned in cx1..cx6 order on purpose:
+// that is the order the fixture on the live 26.7.1 was built in, so insertion
+// order is ruled out by the same assertion rather than left unmeasured.
+func TestCombinedMappingViewReproducesTheMeasuredSixClientOrder(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-six","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-six")
+	for _, c := range []string{"cx1", "cx2", "cx3", "cx4", "cx5", "cx6"} {
+		postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"`+c+`"}`, admin)
+		uuid := clientUUID(t, s, realm, c)
+		postJSON(t, h, "/admin/realms/master/clients/"+uuid+"/roles", `{"name":"r-`+c+`"}`, admin)
+		assignRole(t, s, realm, uid, uuid, "r-"+c)
+	}
+
+	w := get(t, h, "/admin/realms/master/users/"+uid+"/role-mappings", admin)
+	want := []string{"cx6", "cx5", "cx2", "cx1", "cx4", "cx3"}
+	if got := clientMappingOrder(t, w.Body.Bytes()); !slices.Equal(got, want) {
+		t.Fatalf("want %v, got %v\nbody: %s", want, got, w.Body)
+	}
+}
+
+// realmMappings is omitted on its own rule, not as a side effect of
+// clientMappings being present. Measured on a subject stripped of
+// default-roles-master while it still held a client role: the body came back
+// carrying clientMappings alone, content-length 514.
+//
+// The two tests above cover realm-present/client-absent and both-absent, which
+// leaves this third combination the only one where a per-key rule and a
+// whole-body rule would disagree.
+func TestCombinedMappingViewOmitsRealmMappingsAlone(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"probe-app"}`, admin)
+	app := clientUUID(t, s, realm, "probe-app")
+	postJSON(t, h, "/admin/realms/master/clients/"+app+"/roles", `{"name":"probe-app-role"}`, admin)
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-clientonly","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-clientonly")
+	assignRole(t, s, realm, uid, app, "probe-app-role")
+	path := "/admin/realms/master/users/" + uid + "/role-mappings"
+
+	defaults := readRole(t, h, "/admin/realms/master/roles/default-roles-master", admin)
+	sendJSON(t, h, http.MethodDelete, path+"/realm",
+		`[{"id":"`+defaults.ID+`","name":"default-roles-master"}]`, admin)
+
+	var body map[string]json.RawMessage
+	w := get(t, h, path, admin)
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, ok := body["realmMappings"]; ok {
+		t.Fatalf("realmMappings is present for a user with no realm role; "+
+			"measured absent, not []: %s", w.Body)
+	}
+	if _, ok := body["clientMappings"]; !ok {
+		t.Fatalf("clientMappings is missing for a user that has one: %s", w.Body)
+	}
+}
+
+// clientMappingOrder returns the clientMappings keys in the order the body
+// carries them.
+//
+// Decoding into a map cannot be used here: Go loses the order, and the order is
+// the whole assertion. So the object is walked as a token stream instead.
+func clientMappingOrder(t *testing.T, body []byte) []string {
+	t.Helper()
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(body, &top); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	raw, ok := top["clientMappings"]
+	if !ok {
+		t.Fatalf("no clientMappings in %s", body)
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if _, err := dec.Token(); err != nil { // the opening brace
+		t.Fatalf("clientMappings is not an object: %v", err)
+	}
+	out := make([]string, 0)
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			t.Fatalf("key: %v", err)
+		}
+		name, ok := key.(string)
+		if !ok {
+			t.Fatalf("key %v is not a string", key)
+		}
+		out = append(out, name)
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			t.Fatalf("value of %s: %v", name, err)
+		}
+	}
+	return out
 }
 
 // The combined view takes the same pair the other six reads take - measured on
