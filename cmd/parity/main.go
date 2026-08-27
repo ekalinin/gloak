@@ -9,14 +9,9 @@ package main
 import (
 	"fmt"
 	"os"
-	"regexp"
-	"strings"
 
 	"github.com/ekalinin/gloak/internal/parity"
 )
-
-// decreaseLine matches the escape hatch a pull request body may carry.
-var decreaseLine = regexp.MustCompile(`(?mi)^\s*Parity-decrease:\s*(.+?)\s*$`)
 
 func main() {
 	if len(os.Args) != 3 {
@@ -35,10 +30,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	var reason string
-	if m := decreaseLine.FindStringSubmatch(os.Getenv("PR_BODY")); m != nil {
-		reason = strings.TrimSpace(m[1])
-	}
+	reason := parity.DecreaseReason(os.Getenv("PR_BODY"))
 
 	d := parity.Compare(before, after)
 	fmt.Print(parity.Render(d, reason))
@@ -53,7 +45,7 @@ func main() {
 func read(path string) (parity.Report, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return parity.Report{}, fmt.Errorf("parity: open %s: %w", path, err)
+		return parity.Report{}, fmt.Errorf("parity: %w", err)
 	}
 	defer f.Close()
 	return parity.Parse(f)
