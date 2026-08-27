@@ -1076,6 +1076,12 @@ composites listing, carrying a `containerId` that names a client which no
 longer exists. The role is also still assignable and still resolves through
 `roles-by-id`.
 
+(**"Still assignable" was true on 2026-08-25 and is not true now.** `104f495`
+added `mayAttachChild`, whose container lookup turns a composite add naming an
+orphan into a 500; the role-mapping writes that shipped after it answer 404. The
+listing and `roles-by-id` halves of that sentence still hold. Probed both
+sides - see the 2026-08-27 subsection at the end of this entry.)
+
 Two pieces, and the second depends on the first:
 
 1. A client deletion has to take its roles with it. That is a schema change -
@@ -1131,13 +1137,41 @@ other store error still stops the request.
 
 **This is against the spirit of the paragraph above, and that is the point of
 recording it here.** What is concealed: an orphan no longer announces itself on
-every admin request. What still surfaces, unchanged:
+every admin request. What the swallow did **not** touch, all measured against
+this head on 2026-08-27:
 
-- `GET /users/{id}/role-mappings` still answers 500, which is the symptom that
-  paragraph is about and the one `clientMappingsOf` refuses to hide;
-- the orphaned role is still listed by the realm-half reads with a
-  `containerId` naming a client that does not exist, still assignable, and
-  still resolvable through `roles-by-id`.
+- `GET /users/{id}/role-mappings` still answers **500**, which is the symptom
+  that paragraph is about and the one `clientMappingsOf` refuses to hide;
+- the **composites listing** still returns the orphan - `GET
+  /roles/probe-parent/composites` answers `200` with `"clientRole":true` and a
+  `containerId` naming a client that does not exist - which is the surface F29's
+  own body describes;
+- `roles-by-id` still resolves it, `200`, with the same dead `containerId`;
+- **`POST .../composites` naming the orphan as a child answers 500**, and so do
+  `POST` and `DELETE .../roles-by-id/{orphan}/composites` with the orphan as the
+  parent. See the paragraph below.
+
+Two clauses that stood here until 2026-08-27 were wrong and are removed rather
+than softened, because this list's job is to be checkable:
+
+- "still listed by the **realm-half** reads" - it is not. That read filters to
+  `clientRole:false`, so a client role can never appear in it; measured, it
+  answers `200` with the subject's realm roles and no orphan. The composites
+  listing above is the surface that was meant.
+- "still **assignable**" - not through any route probed at this head. The realm
+  mapping write answers `404 {"error":"Role not found"}`, the client mapping
+  write `404 {"error":"Client not found"}` because the path segment no longer
+  resolves, and the composite add answers 500. A live realm role assigned
+  through the same route in the same run answered 204, so the route works and
+  the refusals are about the orphan.
+
+That clause was **true when F29 was written** and went stale, which is why it is
+dated rather than called a mistake: probed on `694dfc7`, the commit before this
+branch, `POST /roles/probe-parent/composites` naming the orphan as a child
+answered **204** and the listing showed it. `mayAttachChild` shipped in
+`104f495` and turned that into the 500 above. The same clause in F29's body at
+"The role is also still assignable" carries the same date stamp for the same
+reason.
 
 So F29 is no *less* visible than it was before this branch existed; what was
 removed is a new, wider symptom this branch introduced. The alternative was
@@ -1150,6 +1184,34 @@ handed out and make an orphan grantable, which is fail-open. The asymmetry is
 spelled out at `adminRoleNames` in `internal/admin/auth.go`.
 `TestARoleOnADeletedClientDoesNotLockTheCallerOut` and
 `TestAFailingClientLookupStillStopsTheRequest` pin both halves.
+
+**The composite writes therefore answer 500 on an orphan, and that is left
+standing.** Same root cause as the lock-out above, on routes this pass
+deliberately did not touch. Measured 2026-08-27 against this head, two distinct
+lookups:
+
+```
+POST   /roles/probe-parent/composites          [orphan as child]   -> 500
+DELETE /roles/probe-parent/composites          [orphan as child]   -> 204
+POST   /roles/probe-parent/composites  as manage-realm, no manage-clients -> 403
+POST   /roles-by-id/{orphan}/composites        [orphan as parent]  -> 500
+DELETE /roles-by-id/{orphan}/composites        [orphan as parent]  -> 500
+```
+
+The child-side 500 is `mayGrantRole`'s lookup (`auth.go:175`), reached through
+`mayAttachChild` (`roles.go:109`) - **not** the parent-side check at
+`roles.go:652`, which returns without a lookup for a realm parent. The two
+controls prove it: `DELETE` passes nil for `checkChild` and answers 204, and a
+caller without `manage-clients` short-circuits at `requiresChildManageRole` and
+answers 403 before any lookup runs. The parent-side check at `roles.go:652` is
+reached separately, through `roles-by-id` with the orphan **as** the parent, and
+that is the last two rows.
+
+Bounded to those routes, fail-closed, and unreachable on Keycloak, which deletes
+a client's roles with the client. Not fixed here for the reason `mayGrantRole`
+was not: these judge a role rather than the caller, so the safe direction is to
+refuse. `PUT` and `DELETE` on `/roles-by-id/{orphan}` both answer 204, so an
+operator can still remove the orphan and is not stuck.
 
 None of this reduces F29's priority. Fixing F29 removes the state, and this
 paragraph with it.
