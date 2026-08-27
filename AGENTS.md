@@ -56,6 +56,12 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   find matching target resource method"}`, a wrong method on a known path
   answers `{"error":"HTTP 404 Not Found"}`. That is why `withKeycloakFallbacks`
   still tells the two cases apart even though both return the same status.
+- **That rule is measured too broad.** On the role-mapping paths `PUT` and
+  `PATCH` answer a real 405 while `POST` and `DELETE` answer the 404 above -
+  same path, four verbs, two statuses - so the verb decides and not the path.
+  Gloak sends 404 to all four. What the actual rule is has not been measured;
+  only that one line cannot be it. See F31 before adding a 405 or defending
+  the 404.
 - **The five security headers have three exceptions, not one.** A route match
   and a known path hit with the wrong method both get `Referrer-Policy`,
   `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`

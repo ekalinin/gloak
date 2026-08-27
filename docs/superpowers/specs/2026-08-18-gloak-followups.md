@@ -1058,7 +1058,7 @@ with no `Allow` header, on a live 26.7.1. Measured on all three, a fresh token
 minted immediately before each call:
 
 ```
-$ curl -s -i -X PUT -H 'Content-Type: application/json' -d '[]' "$KC/admin/realms/master/users/$PU/role-mappings"
+$ curl -s -i -X PUT -H "Authorization: Bearer $T" -H "Content-Type: application/json" -d '[]' "$KC/admin/realms/master/users/$PU/role-mappings"
 HTTP/1.1 405 Method Not Allowed
 content-length: 39
 Content-Type: application/json
@@ -1079,13 +1079,19 @@ The same path does answer 404 for other verbs, which is why this is a
 refinement rather than a reversal:
 
 ```
-$ curl -s -o /dev/stdout -w '\nHTTP %{http_code}\n' -X POST   -H 'Content-Type: application/json' -d '[]' "$KC/admin/realms/master/users/$PU/role-mappings"
+$ curl -s -o /dev/stdout -w '\nHTTP %{http_code}\n' -X POST -H "Authorization: Bearer $T" -H "Content-Type: application/json" -d '[]' "$KC/admin/realms/master/users/$PU/role-mappings"
 {"error":"HTTP 404 Not Found"}
 HTTP 404
-$ curl -s -o /dev/stdout -w '\nHTTP %{http_code}\n' -X DELETE -H 'Content-Type: application/json' -d '[]' "$KC/admin/realms/master/users/$PU/role-mappings"
+$ curl -s -o /dev/stdout -w '\nHTTP %{http_code}\n' -X DELETE -H "Authorization: Bearer $T" -H "Content-Type: application/json" -d '[]' "$KC/admin/realms/master/users/$PU/role-mappings"
 {"error":"HTTP 404 Not Found"}
 HTTP 404
 ```
+
+All four command lines above were re-run verbatim on 2026-08-26 after this
+entry was first written, because the version committed with it had the
+`Authorization` header missing - a rendering fault, not a measurement fault.
+The corrected lines reproduce the statuses shown; the version without the
+header returns `401 {"error":"HTTP 401 Unauthorized"}` and measures nothing.
 
 So on one single path, `POST` and `DELETE` are 404 and `PUT` and `PATCH` are
 405. The status is not a property of "known path, wrong method" at all; which
