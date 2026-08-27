@@ -34,18 +34,25 @@ jobs:
       - name: Test
         run: CGO_ENABLED=0 go test ./...
 
+      # -count=1 forces a fresh run. go test's result cache keys on the
+      # GLOAK_PARITY_REPORT value read through os.Getenv, but RUNNER_TEMP is a
+      # stable path on GitHub-hosted runners, so a job re-run (or a push that
+      # leaves this package's import graph untouched) can replay a cached pass
+      # without writing the report at all. The compare step would then fail on
+      # a missing file with no hint that caching was the cause.
       - name: Parity report for this branch
         run: |
           GLOAK_PARITY_REPORT="$RUNNER_TEMP/parity-head.tsv" \
-            CGO_ENABLED=0 go test ./internal/conformance/ -run TestCoverage
+            CGO_ENABLED=0 go test ./internal/conformance/ -run TestCoverage -count=1
 
       - name: Parity report for the merge base
         run: |
           base=$(git merge-base "origin/${{ github.base_ref }}" HEAD)
           git worktree add "$RUNNER_TEMP/base" "$base"
           cd "$RUNNER_TEMP/base"
+          # See the previous step: -count=1 avoids the same cache pitfall.
           GLOAK_PARITY_REPORT="$RUNNER_TEMP/parity-base.tsv" \
-            CGO_ENABLED=0 go test ./internal/conformance/ -run TestCoverage
+            CGO_ENABLED=0 go test ./internal/conformance/ -run TestCoverage -count=1
 
       # Built rather than "go run": go run collapses any exit code above 1 down
       # to 1, which would make a real parity decrease (exit 1) indistinguishable
@@ -64,16 +71,29 @@ jobs:
             "$RUNNER_TEMP/parity-base.tsv" "$RUNNER_TEMP/parity-head.tsv" \
             > "$RUNNER_TEMP/comment.md" || status=$?
 
-          id=$(gh pr view "${{ github.event.pull_request.number }}" \
-            --json comments \
-            --jq '[.comments[] | select(.body | startswith("<!-- gloak-parity -->")) | .url] | last // ""' \
-            | sed 's/.*#issuecomment-//')
-          if [ -n "$id" ]; then
-            gh api --method PATCH "repos/${{ github.repository }}/issues/comments/$id" \
-              -F body=@"$RUNNER_TEMP/comment.md" >/dev/null
-          else
-            gh pr comment "${{ github.event.pull_request.number }}" \
-              --body-file "$RUNNER_TEMP/comment.md"
+          # cmd/parity writes nothing to stdout on the report-unreadable path
+          # (exit 2), so an empty comment.md means there is nothing to post;
+          # posting it would only add confusing noise on top of the failure
+          # "status" already carries.
+          if [ -s "$RUNNER_TEMP/comment.md" ]; then
+            id=$(gh pr view "${{ github.event.pull_request.number }}" \
+              --json comments \
+              --jq '[.comments[] | select(.body | startswith("<!-- gloak-parity -->")) | .url] | last // ""' \
+              | sed 's/.*#issuecomment-//')
+            gh_status=0
+            if [ -n "$id" ]; then
+              gh api --method PATCH "repos/${{ github.repository }}/issues/comments/$id" \
+                -F body=@"$RUNNER_TEMP/comment.md" >/dev/null || gh_status=$?
+            else
+              gh pr comment "${{ github.event.pull_request.number }}" \
+                --body-file "$RUNNER_TEMP/comment.md" || gh_status=$?
+            fi
+            # The comment is the deliverable, so a failed post must fail the
+            # job too - but when the parity check already failed, that status
+            # is more informative than a bare gh failure, so it wins.
+            if [ "$gh_status" -ne 0 ] && [ "$status" -eq 0 ]; then
+              status=$gh_status
+            fi
           fi
 
           exit $status
