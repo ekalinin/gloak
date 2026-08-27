@@ -137,14 +137,22 @@ func TestOnlyCompositeRealmMappingsHonourBriefRepresentation(t *testing.T) {
 	}
 	// and defaults to the brief shape when the parameter is absent.
 	brief := mappingReps(t, h, base+"/composite", admin)
-	if rep, _ := repNamed(brief, "probe-attr"); rep.Attributes != nil {
+	rep, ok = repNamed(brief, "probe-attr")
+	if !ok {
+		t.Fatalf("composite lost probe-attr: %v", brief)
+	}
+	if rep.Attributes != nil {
 		t.Fatalf("composite defaulted to the full shape: %v", *rep.Attributes)
 	}
 
 	// direct and available ignore it: no attributes key either way.
 	for _, path := range []string{base, base + "/available"} {
 		for _, q := range []string{"", "?briefRepresentation=false"} {
-			for _, rep := range mappingReps(t, h, path+q, admin) {
+			reps := mappingReps(t, h, path+q, admin)
+			if len(reps) == 0 {
+				t.Fatalf("%s%s: empty, so it asserts nothing", path, q)
+			}
+			for _, rep := range reps {
 				if rep.Attributes != nil {
 					t.Errorf("%s%s: %s carries attributes; measured absent",
 						path, q, rep.Name)
