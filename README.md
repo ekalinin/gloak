@@ -41,20 +41,25 @@ Working today:
 - realm roles and client roles: CRUD, composites, `roles-by-id`, and the direct
   holders of a role - 32 operations, guarded by the pair of roles (view or
   manage) Keycloak guards each with, not the single role either name suggests
+- a user's role mappings: reading the realm and per-client direct, effective and
+  assignable lists, the combined view, and assigning or removing both kinds -
+  11 operations, including Keycloak's rule that a caller may hand out a role
+  only if its own rights already confer it, which filters the assignable lists
+  as well as refusing the writes
 - client secrets, service accounts, user credentials and user logout
 - a documentation-derived conformance suite (`internal/conformance`) that checks
   Gloak's responses byte-for-byte against bytes recorded from a live
   Keycloak 26.7.1
 - a parity meter whose denominator comes from Keycloak's own OpenAPI description
-  rather than from a hand-kept list: **89 of 485 enumerated behaviours served**,
+  rather than from a hand-kept list: **100 of 485 enumerated behaviours served**,
   plus four chapters whose surface has not been counted
 - an external oracle: `make oracle` drives Gloak with `kcadm.sh`, Keycloak's own
   admin CLI, which asks for things no recorded case asks for
 
 Not implemented yet: the browser login flow and the authorization code grant,
-logout endpoints, assigning a role to a user and groups on the admin API,
-multi-realm, client scopes and protocol mappers, SAML, user federation,
-identity brokering, authorization services, the admin console.
+logout endpoints, groups on the admin API, multi-realm, client scopes and
+protocol mappers, SAML, user federation, identity brokering, authorization
+services, the admin console.
 
 Where this is going is `docs/superpowers/specs/2026-08-21-gloak-parity-roadmap.md`:
 fourteen sub-projects with their dependencies and what each closes.
@@ -165,7 +170,7 @@ and stay out of the total rather than being dropped from it silently, which
 would inflate the percentage by hiding the parts nobody has counted. It reads:
 
 ```
-total: 89 of 485 enumerated behaviours served; 4 chapters not enumerated
+total: 100 of 485 enumerated behaviours served; 4 chapters not enumerated
 ```
 
 A case has one of three statuses. `Implemented` is served and compared, and a
@@ -213,7 +218,14 @@ not discover it on its own:
 ```bash
 export DOCKER_HOST="$(docker context inspect --format '{{.Endpoints.docker.Host}}')"
 export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
+export TESTCONTAINERS_RYUK_DISABLED=true
 ```
+
+The third was needed to get `make record` and the Docker-tagged suites to run
+under Colima on the machine this was last done on; the first two alone were not
+enough. It turns off Ryuk, the reaper testcontainers starts to clean up after
+itself, which leaves cleanup to each test's own teardown - so an interrupted
+run can leave a container behind, and `docker ps` afterwards is worth a look.
 
 The build must stay cgo-free, so `CGO_ENABLED=0 go build ./...` has to work. SQLite
 is `modernc.org/sqlite` for that reason, and swapping in a cgo driver would break the

@@ -61,7 +61,8 @@ kcsrc:
 			     echo "kcsrc: clone failed; the partial checkout was removed, so just run 'make kcsrc' again"; \
 			     exit 1; }; \
 	fi
-	@git -C .kc-testsuite sparse-checkout set $(KC_TESTSUITE_PATHS)
+	@git -C .kc-testsuite sparse-checkout set $(KC_TESTSUITE_PATHS) \
+		|| { echo "kcsrc: cannot apply the sparse paths; run 'rm -rf .kc-testsuite' and try again"; exit 1; }
 	@if [ "$$(git -C .kc-testsuite rev-parse HEAD)" != "$(KC_TESTSUITE_SHA)" ]; then \
 		git -C .kc-testsuite fetch --depth 1 origin $(KC_TESTSUITE_SHA) \
 			&& git -C .kc-testsuite checkout --detach --force $(KC_TESTSUITE_SHA) \

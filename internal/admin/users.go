@@ -132,19 +132,36 @@ func (h *handler) countUsers(w http.ResponseWriter, r *http.Request, rc *reqCont
 	httpx.WriteJSONCharset(w, http.StatusOK, len(users))
 }
 
+// userFromPath resolves the {user-id} segment into a user, writing the
+// measured 404 and returning false when there is none.
+//
+// Every endpoint that takes a user ID goes through this - the credential
+// endpoints in credentials.go already did, and readUser and updateUser below
+// did too until each carried its own copy of the same eight lines. The
+// role-mapping endpoints are about to add eleven more callers; a second
+// spelling of "User not found" would have been indistinguishable from a real
+// divergence, which is why there is exactly one.
+func (h *handler) userFromPath(w http.ResponseWriter, r *http.Request, rc *reqContext) (*model.User, bool) {
+	user, err := h.store.Users().ByID(r.Context(), rc.realm.ID, r.PathValue("userID"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeUserNotFound(w)
+			return nil, false
+		}
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return nil, false
+	}
+	return user, true
+}
+
 // readUser serves GET /admin/realms/{realm}/users/{user-id}.
 //
 // The 404 message is "User not found", where a missing client answers "Could
 // not find client" and a missing realm "Realm not found." - three endpoints,
 // three spellings, one of them with a full stop.
 func (h *handler) readUser(w http.ResponseWriter, r *http.Request, rc *reqContext) {
-	user, err := h.store.Users().ByID(r.Context(), rc.realm.ID, r.PathValue("userID"))
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeUserNotFound(w)
-			return
-		}
-		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+	user, ok := h.userFromPath(w, r, rc)
+	if !ok {
 		return
 	}
 	rep := userRepresentationOf(user, false)
@@ -219,13 +236,8 @@ func (h *handler) createUser(w http.ResponseWriter, r *http.Request, rc *reqCont
 // which is why this reads the request's username even though it never applies
 // it.
 func (h *handler) updateUser(w http.ResponseWriter, r *http.Request, rc *reqContext) {
-	current, err := h.store.Users().ByID(r.Context(), rc.realm.ID, r.PathValue("userID"))
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeUserNotFound(w)
-			return
-		}
-		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+	current, ok := h.userFromPath(w, r, rc)
+	if !ok {
 		return
 	}
 

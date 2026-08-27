@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -30,7 +31,33 @@ type Step struct {
 	// is what a case substitutes into a path and the base URL differs between
 	// the recorder and the verifier. Anything else is captured whole.
 	CaptureHeader map[string]string
+	// ExpectStatus is the set of status codes this step accepts. Empty means
+	// **any 2xx**, which is what almost every step wants.
+	//
+	// It exists because a fixture step that fails used to be silent: RunFixture
+	// read resp.StatusCode only to decorate a capture-failure message, so a
+	// refused setup request left the fixture running to completion, the case's
+	// own request went to a server in the wrong state, and `make record` wrote
+	// that response as the contract and reported PASS. Follow-up F34 has the
+	// realised symptom - nineteen goldens recorded, every subtest passing, and
+	// every one of them describing a subject holding no roles.
+	//
+	// The default cannot simply be "2xx" with no way out: the recorder shares
+	// one container, so a fixture more than one case names runs its creates more
+	// than once and every run after the first answers 409. Those creates say so
+	// with idempotentCreate, which turns each of the comments that documented
+	// that 409 into something checked.
+	ExpectStatus []int
 }
+
+// idempotentCreate is the ExpectStatus of a create whose repeat is harmless:
+// the object is already there, the fixture looks its id up rather than reading
+// Location, and the state the case needs is reached either way.
+//
+// The creates that do **not** carry it are the ones that capture from Location -
+// see clientFixtureBody - where a 409 leaves nothing to capture and the failure
+// must be loud.
+var idempotentCreate = []int{http.StatusCreated, http.StatusConflict}
 
 // Fixture is the setup a case runs against: a named server-side starting
 // state, plus the steps that lead from it to the state the case measures.
@@ -271,6 +298,7 @@ var Fixtures = map[string]Fixture{
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 				Body:    []byte(`{"name":"gloak-probe-role","description":"a probe"}`),
 			},
+			ExpectStatus: idempotentCreate,
 		}},
 	},
 
@@ -314,6 +342,220 @@ var Fixtures = map[string]Fixture{
 	// compositeParentFixture's mirror with a client role as the parent, for
 	// the client side of the same endpoints.
 	"admin-token-composite-parent-client": compositeParentClientFixture(),
+
+	// The subject every mapping read is taken on: one user holding one realm
+	// role and one role on each of two clients.
+	"admin-token-mapping-subject": mappingSubjectFixture(),
+
+	// A user holding nothing but the default-roles-master it is created with.
+	// It backs the realm `available` read, which is the one case in this
+	// family that enumerates the realm's own roles rather than one user's -
+	// so its fixture must create no realm role of its own. See that case's
+	// PristineRealm marking.
+	"admin-token-mapping-bare-user": userFixture("gloak-probe-mapping-bare"),
+
+	// One fixture per write pair, each with its own user, role and client -
+	// the uniqueness realmRoleFixture's doc explains. Both end by assigning
+	// the role, so the pair's `DELETE` has something to remove and its `POST`
+	// repeats an assignment that is measured idempotent.
+	"admin-token-mapping-realm-write":  mappingRealmWriteFixture(),
+	"admin-token-mapping-client-write": mappingClientWriteFixture(),
+}
+
+// mappingSubjectFixture builds the subject the mapping reads are taken on: one
+// user holding one realm role and one role on each of two clients, plus a
+// second role on the first client left unassigned so `available` has something
+// to offer.
+//
+// The realm role and the assigned client role carry an attribute value, which
+// is what makes the two `.../composite` reads' briefRepresentation measurable -
+// they are the only two of the six reads that honour it.
+//
+// **The two clientIds must not share a Java HashMap bucket.** The combined view
+// keys `clientMappings` in bucket order and Gloak reproduces it with
+// internal/javamap, which is exact only while every key has a bucket to
+// itself: colliding keys chain in insertion order, which nothing observable
+// reports. At capacity 16 `gloak-probe-mapping-side` is bucket 1 and
+// `gloak-probe-mapping-app` is bucket 4. The pair is also discriminating -
+// bucket order puts `side` first, where sorting and insertion order both put
+// `app` first - so the case would fail rather than pass by accident if the
+// endpoint stopped using javamap.
+//
+// Every create is looked up rather than trusted from Location, for the reason
+// confidentialClientFixture gives: several cases name this fixture, so the
+// recorder runs its creates several times against one container and every run
+// after the first answers 409 with no Location.
+//
+// **The assignment bodies carry the role's name as well as its id**, and that
+// is not decoration: measured 2026-08-27, a mapping write resolves the entry by
+// **name** and then requires the id to name the same role, so an id-only body
+// answers 404 whatever the id is. See "A mapping write resolves the role by
+// name, and the id has to agree" in
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md, and follow-up
+// F33 for the Gloak side.
+func mappingSubjectFixture() Fixture {
+	f := userFixture("gloak-probe-mapping-user")
+	f.Steps = append(f.Steps,
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/roles",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"name":"gloak-probe-mapping-realm","attributes":{"probe":["v1","v2"]}}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/roles/gloak-probe-mapping-realm",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"realm_role_id": "id"},
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/realm",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`[{"id":"{{realm_role_id}}","name":"gloak-probe-mapping-realm"}]`),
+			},
+		},
+	)
+	f.Steps = append(f.Steps, clientWithRoleSteps("gloak-probe-mapping-app", "client_uuid",
+		`{"name":"gloak-probe-mapping-app-role","attributes":{"probe":["v1","v2"]}}`,
+		"gloak-probe-mapping-app-role", "app_role_id")...)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/roles",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`{"name":"gloak-probe-mapping-app-free"}`),
+		},
+		ExpectStatus: idempotentCreate,
+	})
+	f.Steps = append(f.Steps, clientWithRoleSteps("gloak-probe-mapping-side", "side_client_uuid",
+		`{"name":"gloak-probe-mapping-side-role"}`,
+		"gloak-probe-mapping-side-role", "side_role_id")...)
+	f.Steps = append(f.Steps,
+		assignClientRoleStep("{{client_uuid}}", "{{app_role_id}}", "gloak-probe-mapping-app-role"),
+		assignClientRoleStep("{{side_client_uuid}}", "{{side_role_id}}", "gloak-probe-mapping-side-role"),
+	)
+	return f
+}
+
+// mappingRealmWriteFixture is the realm write pair's subject: its own user, its
+// own realm role, and the role already assigned.
+//
+// Already assigned, because the pair shares one fixture. `POST` on a role the
+// user already holds is measured 204 rather than 409, so the assign case
+// repeats what this did; and the remove case's deletion is undone the next
+// time the fixture runs, since its last step re-assigns before every case that
+// names it. That is compositeParentFixture's arrangement, for the same reason.
+func mappingRealmWriteFixture() Fixture {
+	f := userFixture("gloak-probe-mapping-realm-write")
+	f.Steps = append(f.Steps,
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/roles",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"name":"gloak-probe-mapping-write-realm-role"}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/roles/gloak-probe-mapping-write-realm-role",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"realm_role_id": "id"},
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/realm",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`[{"id":"{{realm_role_id}}","name":"gloak-probe-mapping-write-realm-role"}]`),
+			},
+		},
+	)
+	return f
+}
+
+// mappingClientWriteFixture is mappingRealmWriteFixture's mirror for the client
+// write pair, with the role on a client of its own.
+func mappingClientWriteFixture() Fixture {
+	f := userFixture("gloak-probe-mapping-client-write")
+	f.Steps = append(f.Steps, clientWithRoleSteps("gloak-probe-mapping-write-client", "client_uuid",
+		`{"name":"gloak-probe-mapping-write-client-role"}`,
+		"gloak-probe-mapping-write-client-role", "client_role_id")...)
+	f.Steps = append(f.Steps, assignClientRoleStep("{{client_uuid}}", "{{client_role_id}}",
+		"gloak-probe-mapping-write-client-role"))
+	return f
+}
+
+// clientWithRoleSteps creates one client and one role on it, capturing the
+// client's UUID under uuidVar and the role's id under roleVar. The mapping
+// fixtures need both ids, unlike clientRoleFixture next door which addresses
+// its role by name and so captures only the client.
+func clientWithRoleSteps(clientID, uuidVar, roleBody, roleName, roleVar string) []Step {
+	return []Step{
+		{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"clientId":"` + clientID + `","enabled":true}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/clients",
+				Query:   map[string]string{"clientId": clientID},
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{uuidVar: "0/id"},
+		},
+		{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients/{{" + uuidVar + "}}/roles",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(roleBody),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/clients/{{" + uuidVar + "}}/roles/" + roleName,
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{roleVar: "id"},
+		},
+	}
+}
+
+// assignClientRoleStep gives the fixture's user one client role. The endpoint
+// it uses is one of the eleven under test, which is the arrangement
+// compositeParentFixture already takes: there is no other way to reach the
+// state, and a case whose own endpoint cannot serve its setup fails loudly.
+//
+// roleName goes into the body beside the id because the write resolves by name;
+// see mappingSubjectFixture.
+func assignClientRoleStep(uuidRef, roleRef, roleName string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/clients/" + uuidRef,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`[{"id":"` + roleRef + `","name":"` + roleName + `"}]`),
+		},
+	}
 }
 
 // realmRoleFixture creates one realm role and nothing else. Unlike
@@ -330,6 +572,7 @@ func realmRoleFixture(name string) Fixture {
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 				Body:    []byte(`{"name":"` + name + `"}`),
 			},
+			ExpectStatus: idempotentCreate,
 		}},
 	}
 }
@@ -362,6 +605,7 @@ func pagedRolesFixture() Fixture {
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 				Body:    []byte(`{"name":"gloak-probe-page-` + suffix + `"}`),
 			},
+			ExpectStatus: idempotentCreate,
 		})
 	}
 	return Fixture{State: "bootstrap", Steps: steps}
@@ -382,6 +626,7 @@ func attributedRoleFixture() Fixture {
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 				Body:    []byte(`{"name":"gloak-probe-attrs","attributes":{"attribute1":["value1","value2"]}}`),
 			},
+			ExpectStatus: idempotentCreate,
 		}},
 	}
 }
@@ -407,6 +652,7 @@ func clientRoleFixture(clientID, roleName string) Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"clientId":"` + clientID + `","enabled":true}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -424,6 +670,7 @@ func clientRoleFixture(clientID, roleName string) Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"` + roleName + `"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 		},
 	}
@@ -447,6 +694,7 @@ func sameNamedRolesFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"gloak-probe-shared-realm"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -455,6 +703,7 @@ func sameNamedRolesFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"clientId":"gloak-probe-shared-client"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -472,6 +721,7 @@ func sameNamedRolesFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"gloak-probe-shared-on-client"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 		},
 	}
@@ -500,6 +750,7 @@ func compositeParentFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"gloak-probe-composite-parent"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -516,6 +767,7 @@ func compositeParentFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"gloak-probe-composite-child-realm"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -532,6 +784,7 @@ func compositeParentFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"clientId":"gloak-probe-composite-client","enabled":true}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -549,6 +802,7 @@ func compositeParentFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"gloak-probe-composite-child-client"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -588,6 +842,7 @@ func compositeParentClientFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"clientId":"gloak-probe-composite-client-parent","enabled":true}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -605,6 +860,7 @@ func compositeParentClientFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"gloak-probe-composite-client-role-parent"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -621,6 +877,7 @@ func compositeParentClientFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"gloak-probe-composite-client-parent-child-realm"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -637,6 +894,7 @@ func compositeParentClientFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"gloak-probe-composite-client-parent-child-client"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -679,6 +937,7 @@ func confidentialClientFixture(clientID, body string, extra ...Step) Fixture {
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 				Body:    []byte(body),
 			},
+			ExpectStatus: idempotentCreate,
 		},
 		{
 			Request: Request{
@@ -807,6 +1066,7 @@ func userFixture(username string) Fixture {
 					Body: []byte(`{"username":"` + username + `","enabled":true,` +
 						`"firstName":"Ada","lastName":"Lovelace","email":"` + username + `@example.com"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -918,6 +1178,9 @@ type Do func(*http.Request) (*http.Response, error)
 // string. Substituting an empty token would record whatever Keycloak answers
 // for a blank credential: a real response to a request nobody meant to make,
 // and one that would look like a measured contract afterwards.
+//
+// A step whose **status** is not the one it expects is an error too, and that
+// is checked before anything is captured: see Step.ExpectStatus and F34.
 func RunFixture(f Fixture, base string, do Do) (map[string]string, error) {
 	vars := map[string]string{}
 	for i, s := range f.Steps {
@@ -933,6 +1196,10 @@ func RunFixture(f Fixture, base string, do Do) (map[string]string, error) {
 		_ = resp.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("fixture step %d: read body: %w", i, err)
+		}
+		if !acceptedStatus(s.ExpectStatus, resp.StatusCode) {
+			return nil, fmt.Errorf("fixture step %d: %s %s: want %s, got %d: %s",
+				i, s.Request.Method, s.Request.Path, wantedStatus(s.ExpectStatus), resp.StatusCode, body)
 		}
 		for name, path := range s.Capture {
 			value, err := captureFrom(body, path)
@@ -955,6 +1222,29 @@ func RunFixture(f Fixture, base string, do Do) (map[string]string, error) {
 		time.Sleep(f.Delay)
 	}
 	return vars, nil
+}
+
+// acceptedStatus applies a step's ExpectStatus: the listed codes, or any 2xx
+// when the step lists none.
+func acceptedStatus(expect []int, got int) bool {
+	if len(expect) == 0 {
+		return got >= 200 && got < 300
+	}
+	return slices.Contains(expect, got)
+}
+
+// wantedStatus spells an ExpectStatus for the failure message. The symptom of a
+// silent step appears one request later at the earliest, so the message has to
+// carry enough to find the step without re-running anything.
+func wantedStatus(expect []int) string {
+	if len(expect) == 0 {
+		return "2xx"
+	}
+	out := make([]string, 0, len(expect))
+	for _, c := range expect {
+		out = append(out, strconv.Itoa(c))
+	}
+	return strings.Join(out, " or ")
 }
 
 // captureFrom pulls one value out of a JSON body by slash-separated path.

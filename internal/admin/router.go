@@ -52,6 +52,82 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/credentials/{credentialID}/moveAfter/{previousID}", h.guard("manage-users", h.moveCredentialAfter))
 	mux.HandleFunc("PUT /admin/realms/{realm}/users/{userID}/disable-credential-types", h.guard("manage-users", h.disableCredentialTypes))
 	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/logout", h.guard("manage-users", h.logoutUser))
+
+	// The combined view: both halves of a user's **direct** mappings in one
+	// object. Same guard as the six listings below, and measured on this route
+	// rather than inherited - the same seven single-role callers, a fresh token
+	// minted immediately before each call. view-clients was the plausible one
+	// on a body keyed by clientId, and it is 403 here like the other four.
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings",
+		h.guardAny(userMappingsReadRoles, h.allMappings))
+
+	// A user's realm role mappings: three reads that answer three different
+	// questions. All three take view-users or manage-users - measured against a
+	// live 26.7.1 with one user per role, a fresh token minted immediately
+	// before each call, and two different subjects.
+	//
+	// Not usersReadRoles, which is one role wider: query-users opens the user
+	// listing and the count and is 403 on all three of these. And not
+	// view-users alone, which the plan predicted: manage-users has no
+	// composites at all - it is not composite over view-users - and still opens
+	// every one of them, so refusing it would be the too-restrictive direction
+	// this cut has already reverted twice.
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/realm",
+		h.guardAny(userMappingsReadRoles, h.listRealmMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/realm/available",
+		h.guardAny(userMappingsReadRoles, h.availableRealmMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/realm/composite",
+		h.guardAny(userMappingsReadRoles, h.compositeRealmMappings))
+
+	// The two writes take manage-users **alone**, which is narrower than the
+	// reads above - measured on both verbs across the same seven single-role
+	// callers, with a fresh token minted immediately before each call.
+	// view-users opens all three reads and neither write, so
+	// userMappingsReadRoles must not be reused here; extending a rule measured
+	// on one verb to its neighbour is what this cut has already had to revert
+	// twice.
+	//
+	// The guard follows the **subject**, not the role: a caller holding
+	// manage-realm and nothing else is refused even for a realm role, which is
+	// the opposite of roles-by-id.
+	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/role-mappings/realm",
+		h.guard(userMappingsWriteRole, h.assignRealmMappings))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/users/{userID}/role-mappings/realm",
+		h.guard(userMappingsWriteRole, h.removeRealmMappings))
+
+	// The same three reads for one client's roles. The guard is the realm
+	// triple's, and that is measured on these routes rather than inherited:
+	// the same seven single-role callers were swept against all three, on two
+	// subjects and two containers, with a fresh token minted immediately
+	// before each call. A client-scoped route plausibly wants view-clients,
+	// and it does not - view-clients and manage-clients are 403 on all three,
+	// like every other role outside the users family.
+	//
+	// The guard follows the **subject** here too: which client's roles are
+	// being read makes no difference to it, which is why the {clientUUID}
+	// segment is the handler's business and not the guard's.
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}",
+		h.guardAny(userMappingsReadRoles, h.listClientMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}/available",
+		h.guardAny(userMappingsReadRoles, h.availableClientMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}/composite",
+		h.guardAny(userMappingsReadRoles, h.compositeClientMappings))
+
+	// The two client writes take manage-users **alone** - the realm writes'
+	// guard, and narrower than the client reads directly above, which
+	// view-users opens. Measured on these routes across the same seven
+	// single-role callers, on both verbs, on an ordinary client and on the
+	// realm's own, with a fresh token minted immediately before each call.
+	//
+	// A client-scoped **write** is where manage-clients was most plausible -
+	// the reads refusing it is evidence about reads only - and it is 403 here
+	// too. The guard follows the subject on this pair as on every other one in
+	// the family, so the {clientUUID} segment stays the handler's business.
+	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}",
+		h.guard(userMappingsWriteRole, h.assignClientMappings))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}",
+		h.guard(userMappingsWriteRole, h.removeClientMappings))
+
 	mux.HandleFunc("GET /admin/realms/{realm}/clients", h.guard("view-clients", h.listClients))
 	// {clientUUID}, not {client-uuid}: net/http requires a wildcard name to be
 	// a Go identifier and panics on the hyphen. The OpenAPI description spells
@@ -311,6 +387,25 @@ func (h *handler) realmIssuer(realm string) string {
 // user by ID is not on this list: query-users was measured getting 403 there
 // and 200 on the other two.
 var usersReadRoles = []string{"view-users", "query-users", "manage-users"}
+
+// userMappingsReadRoles is what the seven role-mapping reads accept - the three
+// realm ones, the three client ones and the combined view, swept separately and
+// agreeing. Six until the combined view joined them.
+// It is usersReadRoles minus query-users, and the two lists are kept separate
+// because they were measured separately and disagree: the same caller that
+// gets 200 on GET /users gets 403 on GET /users/{id}/role-mappings/realm.
+var userMappingsReadRoles = []string{"view-users", "manage-users"}
+
+// userMappingsWriteRole is what all four role-mapping writes take, and it is a
+// single role rather than a slice: view-users opens every read above and
+// neither verb of either write.
+//
+// It is named because the two available reads need it too. Their own guard is
+// the looser pair above, and the list they answer is measurably the set the
+// caller could POST - a view-users caller gets 200 and `[]` - so grantable
+// re-applies this before judging any individual role. Spelling it once is what
+// stops that filter and this guard from drifting apart.
+const userMappingsWriteRole = "manage-users"
 
 // realmRolesReadRoles is what both realm-role reads accept: view-realm or
 // manage-realm, measured across eight single-role callers.

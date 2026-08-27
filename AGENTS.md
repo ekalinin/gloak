@@ -56,6 +56,12 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   find matching target resource method"}`, a wrong method on a known path
   answers `{"error":"HTTP 404 Not Found"}`. That is why `withKeycloakFallbacks`
   still tells the two cases apart even though both return the same status.
+- **That rule is measured too broad.** On the role-mapping paths `PUT` and
+  `PATCH` answer a real 405 while `POST` and `DELETE` answer the 404 above -
+  same path, four verbs, two statuses - so the verb decides and not the path.
+  Gloak sends 404 to all four. What the actual rule is has not been measured;
+  only that one line cannot be it. See F31 before adding a 405 or defending
+  the 404.
 - **The five security headers have three exceptions, not one.** A route match
   and a known path hit with the wrong method both get `Referrer-Policy`,
   `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`
@@ -134,7 +140,10 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   issuing client - the one place the two tokens disagree.
 - **Keycloak's JSON key order for a Java `Map` is `HashMap` bucket order**, not
   sorted and not insertion order. `internal/javamap` reproduces it and is
-  confirmed against four measured key sets. It cannot resolve a bucket
+  confirmed against five measured key sets - four in its own tests, and the
+  `clientMappings` of a combined role-mapping view, where six clients created
+  and assigned `cx1..cx6` came back `cx6, cx5, cx2, cx1, cx4, cx3` and
+  `internal/admin` pins it. It cannot resolve a bucket
   collision, because those chain in insertion order and nothing observable says
   what that was; the 21 admin role names collide twice and come back the other
   way round. Sorting instead is what makes `resource_access` come out
@@ -181,6 +190,14 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   one still answers 409.
 - **An empty or `null` request body on `POST /users` is a 500**, not a 400.
   Another of Keycloak's own defects, reproduced.
+- **The endpoints taking a role *array* answer a malformed body
+  `unknown_error`, where `POST /users` answers `invalid_request`.** Same 400,
+  same `"Cannot parse the JSON"` description, different code. Measured on all
+  ten registrations that decode a role array - the six composite writes, the
+  two realm mapping writes and the two client ones - with `POST /users`
+  re-measured alongside as the control, so the difference is per endpoint and
+  not a change of version. Gloak served `invalid_request` on the composites
+  until this was swept, because one helper decodes for both families.
 - **A credential list carries no secret**, so `view-users` is enough to read
   it. `credentialData` inside it is a **JSON string**, not a nested object, and
   the `additionalParameters` inside *that* are a Java map in hash order which
@@ -197,6 +214,14 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **`briefRepresentation` defaults to true on a role listing and false on the
   user listing.** Same parameter, two endpoints, opposite defaults, both
   measured. One shared helper would get one of them wrong.
+- **On a role mapping, `briefRepresentation` is honoured by `.../composite`
+  alone.** `.../realm` and `.../realm/available` ignore it and always send the
+  brief shape; the `clients/{uuid}` triple was swept separately and answers the
+  same way. On the combined `GET /users/{id}/role-mappings` it does nothing at
+  all - absent, `true` and `false` gave three byte-identical bodies on a
+  subject holding an attribute-bearing role. That is a third answer for one
+  parameter name, and plumbing it through all seven of these routes is the
+  tidy-up that breaks the five which ignore it.
 - **Reads accept the manage role, not just the view role.** `view-realm` or
   `manage-realm` for realm roles, `view-clients` or `manage-clients` for
   client roles, on the plain reads and the composite listings alike. The plan
@@ -215,6 +240,29 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   parent needs `manage-realm` and `manage-clients` together; removing the
   same child needs only the parent's. Measured on both verbs in both
   directions. Nobody knows why they differ.
+- **A role mapping's read guard and its write guard are different shapes.**
+  Every read under `/users/{id}/role-mappings/...` takes `view-users` **or**
+  `manage-users`; every write takes `manage-users` alone. `query-users` opens
+  neither, although it opens `GET /users` - so the user listing's role set is
+  not reusable here, and `view-users` opening every read and no write means the
+  write guard is not the read guard's slice. The guard follows the **subject**,
+  not the role: assigning a `master-realm` client role needs `manage-users`,
+  and `manage-clients` or `manage-realm` alone is refused, which is the
+  opposite of `roles-by-id`. Five sweeps, one single role at a time - the realm
+  reads, the client reads, the realm writes, the client writes and the combined
+  view - because the two locators, the two columns and the combined view were
+  each capable of disagreeing.
+- **A caller may hand out a role only if the role is not one of the realm's
+  own admin roles, or the caller's own effective roles already confer that
+  admin role** - itself, or one measured to subsume it. Conferral is a measured
+  implication table, not composition, and which roles count as admin roles is
+  decided by the role's **container**, not its name. One predicate governs four
+  operations: both `available` reads, both role-mapping write pairs, and
+  `POST .../composites`. The reads are what surprises: they answer **200 with a
+  shorter list** to a weaker caller rather than refusing it, so an `available`
+  that looks like it lost roles is usually right. `DELETE .../composites` is
+  **not** filtered where its `POST` is, and the role-mapping `DELETE` **is** -
+  measured per verb and implemented as measured, not as coherent.
 - **A composite batch validates before it applies**, so one bad id leaves the
   store untouched, and the answer to a batch mixing a bad id with a forbidden
   child depends on array order.
@@ -243,10 +291,17 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **Role listings have no stable order across container starts.** Every one of
   them is a bare array at the root of the body, which is why `Case.Unordered`
   learned the root path spelling `"."`.
-- **Eight spellings of not-found now**, including three for one resource:
-  `Could not find client`, `User not found`, `Realm not found.` with its full
-  stop, `Credential not found`, `Could not find role`, `Role not found`,
-  `Could not find role with id`, `Could not find composite role`.
+- **Nine spellings of not-found in the admin API now**, including four for one
+  resource:
+  `Could not find client`, `Client not found`, `User not found`,
+  `Realm not found.` with its full stop, `Credential not found`,
+  `Could not find role`, `Role not found`, `Could not find role with id`,
+  `Could not find composite role`. The first two are the same resource by the
+  same key: the role-mapping routes answer `Client not found` for an unknown
+  client UUID where the client and role endpoints answer `Could not find
+  client` for that very UUID. The qualifier matters: the protocol side spells a
+  tenth, `Realm does not exist` (`internal/oidc/router.go:145`), against the
+  admin API's `Realm not found.` for the same missing realm.
 
 ## Boundaries
 
@@ -323,8 +378,9 @@ Three sources, in order of how much they cost:
 3. **Keycloak's own test suite.** `make kcsrc` materialises a sparse checkout
    at the pinned tag under `.kc-testsuite/` - `tests/`, `test-framework/`, and,
    because sparse cone mode always includes them, the repository's root files
-   too. Nothing makes it read-only; that is a discipline, and the next sentence
-   is the actual rule. Its 2490 test methods are claims somebody upstream
+   too. Nothing makes it read-only; that is a discipline, and the rule it
+   serves is "Nothing is copied out of `.kc-testsuite/`" below.
+   Its 2490 test methods are claims somebody upstream
    thought worth guarding; the ones about surface Gloak already serves are
    cases this catalogue may be missing.
 

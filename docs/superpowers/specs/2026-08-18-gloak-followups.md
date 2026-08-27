@@ -23,6 +23,25 @@ fix location turned out to be wrong - and opened F25 through F29. **F28 is the
 one to read first**: it is a second escalation path, measured on the same day,
 and left open because the naive fix is falsified by the measurement.
 
+**Status, 2026-08-26.** The role-mappings cut opened F30 and made F28
+reachable: Task 3 shipped `POST`/`DELETE /users/{id}/role-mappings/realm`, so
+the escalation F28 describes is no longer theoretical. F28 gained the write-side
+measurement Task 7 needs; it is still open. Task 5 then shipped the client pair
+and measured it filtered as well, taking F28 from four measured surfaces to
+five - four places in the code, since the two write pairs share one helper.
+
+**Status, 2026-08-27.** Task 7 **closed F28** on all three call sites - the four
+surfaces above, with the write pair sharing `eachMapping` and the two
+`available` reads sharing `grantable`. The rule
+it needed - the one this list has been calling "not in this repository" since
+2026-08-25 - was derived by sweeping 22 admin roles against 27 children on four
+different surfaces, and the read filter and the write check turned out to be one
+predicate rather than two that resemble each other. Writing it opened **F32**:
+Gloak keys the caller's roles on the name alone, so an ordinary client role
+called `manage-realm` is indistinguishable from the real one. That is older and
+wider than F28 - it is the whole guard layer - and measured diverging from
+Keycloak on both sides.
+
 ## F3: two shipped endpoints have no measured contract (closed)
 
 `docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md` records the token
@@ -229,6 +248,9 @@ appears to.
   hash. Documented in README's record section; all three cases are `Pending`, so
   nothing compares them. A fourth used to churn on the token response's `scope`
   word order and no longer does: `UnorderedWords` sorts the words inside a string.
+- **`RunFixture` ignores a step's status code.** Split out as **F34** rather than
+  kept here, because it is the one item on this list that has already recorded a
+  wrong contract rather than merely being able to. **Closed 2026-08-27.**
 
 One shape-level note rather than a defect:
 
@@ -343,17 +365,48 @@ caller's own view permission, `clientAccessFor(...).View` and
 gets `[]` from the listing and `7` from the count. So the fix belongs in the
 listing alone, and the two endpoints disagreeing is the contract.
 
-It cannot become a conformance case until role assignment is served - that is
-the Role Mapper tag, P2's second cut - because a fixture reaching a
-narrow-role caller has to build one through the API in both the reference
-container and Gloak. `internal/admin`'s own tests cover what they can:
-TestQueryUsersOpensTheListingButNotTheRead pins the status codes.
+**Updated 2026-08-27: the blocker this entry named is gone, and it is still
+open.** The user halves of `Role Mapper` and `Client Role Mappings` landed with
+P2's second cut, so role assignment is served on both locators and both verbs.
+A fixture can now build a narrow-role caller end to end without leaving the
+API - create a user, set a password on it, `POST` the one role it should hold
+to `.../role-mappings/realm`, and password-grant it on `admin-cli` - and every
+one of those steps is served by Gloak and recorded against Keycloak.
 
-Role assignment does not arrive with the roles half of the second cut, the
-work this entry's own measurements came out of - `Role Mapper` and `Client
-Role Mappings`' user halves are the second half of that cut, still to be
-built. So this stays open, and its conformance case with it, until that half
-lands.
+Two things remain, and neither is the one this entry was waiting for. Only the
+first is a blocker; the second is two steps of fixture work:
+
+1. **The filtering is not implemented, and its details are not measured.**
+   What is measured is the top of this entry: a `query-` caller gets 200 and an
+   empty array. What a `view-users` caller sees when it may view *some* users
+   is not, and neither is `GET /clients` for a `query-clients` caller beyond
+   the 200 `[]`. `clientAccessFor(...).View` and `userAccessFor(...).View` are
+   Gloak's own notions; the sweep that says what Keycloak puts in those lists
+   has not been run. This entry should not be closed by wiring up a predicate
+   nobody measured.
+2. **No fixture yet captures a narrow-role caller's access token.** This is a
+   smaller gap than it first looks. `loggedOutUserFixture`
+   (`internal/conformance/fixture.go`, registered as `logged-out-user`) already
+   creates `gloak-probe-logged-out` through the API, sets a password on it and
+   password-grants **that user** on `admin-cli` - so minting a token for
+   somebody other than the bootstrap administrator is an established move, not
+   a missing capability. Two more fixtures grant on `gloak-confidential` rather
+   than `admin-cli`. What `logged-out-user` captures is
+   `{"user_refresh_token": "refresh_token"}`, because a refresh token is what
+   its case needs; nothing captures the **access** token, and no fixture
+   assigns the user a role before minting. Those two steps are the remainder.
+   The same two would serve F28's caller-relative predicate, which is pinned by
+   unit tests alone and whose two `available` reads count as served on the
+   strength of the administrator's answer.
+
+So the honest statement of the remaining work is a measurement task plus two
+fixture steps, where it used to be a dependency on another sub-project. Blocker
+1 is sufficient on its own: even with the fixture in hand there is nothing
+correct to assert until the filtering is measured and built.
+`admin/users/list-without-view-users` stays `Pending` and its `Reason` now
+names those rather than role assignment. `internal/admin`'s own tests still
+cover what they can: TestQueryUsersOpensTheListingButNotTheRead pins the status
+codes.
 
 ## F18: tokens carry no roles, so `aud` is wrong and introspection is too permissive (closed)
 
@@ -609,7 +662,11 @@ over an order sorted by name - is in the "Role listing: first and max" section
 of `2026-08-18-keycloak-26.7.1-observed.md`. Every detail this entry listed as
 unmeasured now is: `first` past the end is `[]` rather than an error, `max=0`
 is an empty array rather than "ignored", and the bounds apply after `search`
-narrows the set. Seven conformance cases cover it.
+narrows the set. Seven conformance cases cover it. Four send `first` or `max`:
+`admin/roles/list-realm-page-empty`, `list-realm-page-past-end`,
+`list-realm-page-first` and `list-realm-page-no-search`. Three send only
+`search`, which is the gate's other half: `admin/roles/list-realm-brief`,
+`list-realm-full` and `list-realm-search-excludes-client-roles`.
 
 *Not closed:* the composite listings, which this entry also names.
 `listComposites` (`internal/admin/roles.go`) still reads neither parameter,
@@ -670,22 +727,45 @@ of F24's fix `eachComposite` refuses both composite writes on those roles.
 `user_role_mapping` rows away with it and silently strips the right from every
 user that held it.
 
-**Keycloak's behaviour here is unmeasured.** F24 is evidence that the "the
-realm's own client is never configurable" rule extends past create - it turned
-out to cover both composite verbs - so the likely answer is 403, but likely is
-not measured and this repository does not ship likely. Two `curl`s against a
-live 26.7.1 with the full administrator token settle it:
+**Measured 2026-08-27, and the answer is 403 on all four.** This entry used to
+say Keycloak's behaviour here was unmeasured and that 403 was only likely; the
+four requests it asked for were run against a live 26.7.1 with the full
+administrator token, and `query-groups` was read back afterwards and is still
+there:
 
 ```
-PUT    /admin/realms/master/clients/{master-realm uuid}/roles/query-groups
-DELETE /admin/realms/master/clients/{master-realm uuid}/roles/query-groups
+PUT    /admin/realms/master/clients/{master-realm uuid}/roles/query-groups   403
+PUT    /admin/realms/master/roles-by-id/{query-groups id}                    403
+DELETE /admin/realms/master/roles-by-id/{query-groups id}                    403
+DELETE /admin/realms/master/clients/{master-realm uuid}/roles/query-groups   403
 ```
 
-and the `roles-by-id` forms of the same two, since F24 showed the two route
-families have to be checked separately. If they are 403, the check already
-written for F24 - `ownedByRealmOwnClient` in `internal/admin/roles.go` - is
-the piece to reuse; the only decision is where it goes so that both families
-reach it, which for these two is not `eachComposite`.
+The `PUT` bodies were the role's own representation unchanged, so nothing about
+the content earns the refusal. Both route families were asked, because F24
+showed they have to be. So this is now an implementation gap, not an unmeasured
+one: the check already written for F24 - `ownedByRealmOwnClient` in
+`internal/admin/roles.go` - is the piece to reuse, and the only decision left is
+where it goes so that both families reach it, which for these two is not
+`eachComposite`. Verbatim transcript in the "realm's own client is never
+configurable" passage of `2026-08-18-keycloak-26.7.1-observed.md`.
+
+**The same pass found a second, wider divergence: the realm roles `admin` and
+`create-realm` refuse `PUT` to a full administrator too, and Gloak accepts it.**
+Both answer 403 to a `PUT` carrying the role's own representation unchanged,
+where `offline_access` answers 204 to that body and to one that adds an
+`attributes` key. So the refusal is not about attributes and not about being
+bootstrapped. `updateRealmRole` has no check at all, so Gloak answers 204 to
+all of them.
+
+**The boundary is not measured.** Two of `master`'s five realm roles,
+`default-roles-master` and `uma_authorization`, were never probed, so "these two
+and no others" is one negative control short of a sweep. That `admin` and
+`create-realm` happen to be the two realm roles F28's predicate treats as admin
+roles is suggestive and is not evidence. Whoever fixes this measures all five
+first, and `DELETE` alongside `PUT`, rather than assuming the predicate
+transfers. Filed here rather than as its own entry because the fix is the same
+shape and the same call-site family as the client half above; if the boundary
+turns out to be F28's admin-role set, `mayGrantRole` already computes it.
 
 ## F27: `make oracle` exercises no role commands
 
@@ -716,7 +796,7 @@ The `add-roles` one belongs with the role-mapping cut rather than here. The
 other three are available now and would have caught anything that made the
 role representation unparseable to a real client.
 
-## F28: composite writes do not apply Keycloak's caller-relative admin-role rule
+## F28: composite writes do not apply Keycloak's caller-relative admin-role rule (closed)
 
 Opened by the final whole-branch review of `feat/p2-roles`, 2026-08-25. **This
 one is a privilege-escalation path, not a cosmetic divergence.**
@@ -756,6 +836,210 @@ want one task between them rather than a bolt-on here. That task needs one
 more measurement pass first: the sweep above is two callers' rows, and what is
 wanted is the rule for an arbitrary caller.
 
+**There is a third call site, and it is a read.** Added 2026-08-26 by Task 2 of
+`feat/p2-role-mappings`. The paragraph above says "the two", and that count is
+now wrong: it is three. The correction is recorded here rather than made in
+place, because the reason the third was missed is the point - the first two are
+writes, and nobody looked for the same predicate on a read.
+
+`GET /users/{id}/role-mappings/realm/available` is **not** simply "every realm
+role not assigned directly". Keycloak also drops the roles the *caller* may not
+grant. Measured against a live 26.7.1 on one subject - `probe-subject`, holding
+`probe-attr` and `default-roles-master` directly - with three callers, a fresh
+token minted immediately before each call. **All three answer 200**; only the
+bodies differ:
+
+```
+--- caller probe-view-users ---
+    []
+--- caller probe-manage-users ---
+    ['offline_access', 'uma_authorization']
+--- caller admin ---
+    ['create-realm', 'offline_access', 'uma_authorization', 'admin']
+```
+
+The full administrator's answer is exactly the complement of the direct
+assignments. `manage-users` loses `admin` and `create-realm`, the two it may not
+grant. `view-users` loses everything, because it may grant nothing at all - it
+can read the list and assign none of it.
+
+**Gloak answers the full administrator's list to every caller its guard
+admits**, so a `view-users` caller sees four roles where Keycloak shows it
+none. This is the *permissive* direction, and it is milder than the two writes
+above: it leaks the names of roles the caller may not grant, and grants
+nothing. The write guard is unaffected. But it is the same divergence from the
+same rule, and a fix wave that closes the two writes and leaves this one open
+would leave F28's predicate applied inconsistently across the four places the
+API exposes it - see the count at the end of this entry.
+
+So: **F28 cannot be closed until this call site is covered as well.** Task 7 of
+the role-mappings plan enumerates two call sites - `eachComposite`'s child
+check and the mapping writes - and its Step 3 says "write one predicate and
+call it from" them. It is one predicate and **three** call sites; the third is
+`availableRealmMappings` in `internal/admin/rolemappings.go`, whose doc comment
+already names F28 and says the filter is deliberately absent. The client
+mirror, `.../role-mappings/clients/{uuid}/available`, is the same endpoint by
+another locator and was not measured - it should be, in the same pass, rather
+than inferred from this one.
+
+**That measurement was taken, 2026-08-26, by Task 4 of the role-mappings plan,
+and the mirror agrees.** On the `master-realm` container: a caller holding only
+`view-users` gets `[]`, one holding only `manage-users` gets seven of the 21 -
+the ones it may hand out - and a full administrator gets the whole complement of
+the direct assignments. Only `available` is filtered; the direct listing and the
+composite expansion answer the same for all three callers. So the count is one
+predicate and **four** read/write call sites once the client reads ship:
+`eachComposite`'s child check, the mapping writes, `availableRealmMappings` and
+`availableClientMappings`. The latter carries the same deliberately-absent
+comment as its realm mirror. Transcript: "The client mirror is filtered the same
+way" in `2026-08-18-keycloak-26.7.1-observed.md`.
+
+**Five, not four.** Added 2026-08-26 by Task 5 of the role-mappings plan, which
+shipped `POST` and `DELETE /users/{id}/role-mappings/clients/{uuid}`. That task
+was told to measure whether the client write is filtered and to record the
+answer without implementing it. It is filtered, so the fourth call site above
+splits in two: the mapping writes are a realm pair **and** a client pair, and
+each was measured on its own routes.
+
+Caller `probe-manage-users`, subject `probe-mapped`, container `master-realm`, a
+fresh token minted immediately before each call:
+
+- `POST .../role-mappings/clients/{master-realm}` naming `view-users`: **204**
+- the same request naming `manage-realm`: **403**
+- naming `impersonation`: **403**
+- naming `manage-clients`: **403**
+- `DELETE` naming `manage-realm`, on a subject that holds it: **403**
+- a batch naming `view-users` and `manage-realm` together: **403**, applying
+  neither, in both array orders
+
+The set it may write is again exactly the set its own `available` read shows it
+on that container - the seven of `master-realm`'s 21 already recorded above. On
+the ordinary client `probe-app`, whose three roles are all in that list, it may
+assign and remove freely, which is the control that the filter is per role
+rather than per container.
+
+So: one predicate and **five** measured surfaces - `eachComposite`'s child
+check, the realm mapping writes, the client mapping writes,
+`availableRealmMappings` and `availableClientMappings`. In the code it is
+**four** places, not five, because both write pairs run through one helper:
+`eachMapping` in `internal/admin/rolemappings.go`, whose doc comment records the
+gap for both. Task 7 writes the predicate once and calls it from those four.
+Transcript: "The client writes are filtered the same way" in
+`2026-08-18-keycloak-26.7.1-observed.md`.
+
+Full transcript: the "`available` is filtered by what the caller may grant"
+section of `2026-08-18-keycloak-26.7.1-observed.md`, at line 2730. It sits
+beside the write-side sweep this entry already cites, "Adding an admin role as
+a composite is judged against the *caller*, not the role", at line 2297 of the
+same file.
+
+Not fixed in the task that measured it, for the reason the entry gives above:
+the rule is a mapping from an admin role to the power it confers, that mapping
+is not in this repository, and a partial version of it is what Task 7's own
+Step 2 tells its implementer to refuse to write.
+
+**The escalation is now reachable.** Added 2026-08-26 by Task 3 of
+`feat/p2-role-mappings`, which shipped `POST` and `DELETE
+/users/{id}/role-mappings/realm`. The entry above says "Not reachable from
+outside today - nothing can mint a narrow-role admin until role assignment
+ships - and reachable the moment it does". That moment is this commit: a
+`manage-users` caller can now assign `admin` to any user through Gloak's API,
+and from that user's token do anything at all.
+
+The second call site's own rule was measured in the same task, so Task 7 does
+not have to go back to the container for it. Against a live 26.7.1, caller
+`probe-manage-users`, subject `probe-mapped`, a fresh token minted immediately
+before each call:
+
+- `POST .../role-mappings/realm` naming `admin`: **403**
+- the same request naming `create-realm`: **403**
+- the same request naming `uma_authorization`: **204**
+- `DELETE .../role-mappings/realm` naming `admin`, on a subject that holds it:
+  **403**
+
+So the predicate governs **both verbs**, not just the assignment - and the
+refusal is all-or-nothing, exactly like the 404: a batch naming
+`uma_authorization` and `create-realm` together applies neither. The set the
+caller may write is the same set its `available` read shows it, which ties the
+write and the third call site together: one predicate, and `available` is its
+enumeration.
+
+Note also that this is a *second* authorization stage, distinct from the route
+guard. `view-users` is refused for an empty array, which has no role to filter,
+so the guard fires first; `manage-users` passes the guard and is then judged
+per role. Whatever Task 7 writes has to sit inside the handler, after the
+guard, not replace it.
+
+Full transcript: the "A mapping write **is** filtered by what the caller may
+grant" section of `2026-08-18-keycloak-26.7.1-observed.md`.
+
+**The call-site count stays at four.** Task 6 measured
+`GET /users/{id}/role-mappings` for the same filter on 2026-08-26 and it does
+not have one: a `view-users` caller and a full administrator reading the
+bootstrapped administrator get byte-identical bodies. So the predicate is on
+the two `available` reads and the two write pairs, and the combined view - like
+the four `direct` and `composite` reads - reports what the subject holds
+regardless of who is asking. Transcript under "The combined view is not
+caller-filtered" in `2026-08-18-keycloak-26.7.1-observed.md`.
+
+**Closed 2026-08-27** by Task 7 of `feat/p2-role-mappings`, on all four call
+sites. What closed it is a measurement, not a decision: the rule this entry says
+"is a mapping from each admin role name to the administrative power it confers"
+was derived by sweeping a live 26.7.1 and is now recorded there.
+
+The rule:
+
+> A caller may hand out a role only if the role is not one of the realm's own
+> admin roles, or the caller's own effective roles already confer that admin
+> role - itself, or one measured to subsume it.
+
+**One predicate, not two.** For every one of 23 caller rows, the set of roles a
+caller may write is the set its own `available` read returns, on the realm
+locator and on the client one. The read filter and the write check are the same
+question rather than two that agree by coincidence. (The *equality* is claimed
+more strongly in `2026-08-18-keycloak-26.7.1-observed.md` than the evidence on
+that page supports - the matrix-B `available` block was never pasted. See F35.)
+It is `mayGrantRole` in `internal/admin/auth.go`, called from **three** call
+sites serving four surfaces: `eachMapping`, `grantable` - which both
+`availableRealmMappings` and `availableClientMappings` go through, exactly as
+the write pair shares `eachMapping` - and `addComposites`' `mayAttachChild`.
+
+Three things the sweep found that the two-caller version could not:
+
+- **The role-mapping surface has a second condition.** A caller holding
+  `view-users` plus any one other admin role gets `[]` from both `available`
+  reads, ordinary roles included. Handing a role to a *user* needs `manage-users`
+  first and the conferral second, so the two `available` reads re-apply the
+  *write* guard - their own is looser. The composite surface has no such
+  condition.
+- **`DELETE .../composites` does not apply the rule**, measured on that verb
+  rather than carried over from `POST`: the caller refused `POST` naming `admin`
+  removes that same child, 204. The role-mapping `DELETE` **does**. That is why
+  `removeComposites` still passes nil and `eachMapping` checks both verbs.
+- **A role's container decides whether it is an admin role, not its name.** A
+  client of one's own carrying roles named `admin`, `impersonation` and
+  `manage-realm` is assignable in full by a `manage-users` caller, while
+  `master-realm`'s roles of those names are refused it.
+
+**F28 is closed against callers who cannot obtain a name collision.** That
+qualification is the entry, not a footnote on it. The rule above is
+caller-relative, and the caller's side of it is a name test as long as F32
+stands: `has` and `hasAny` are keyed on the role name with the owning container
+dropped, so a caller who can mint or rename an ordinary role into an admin
+role's name passes a guard it does not hold. `mayGrantRole` no longer inherits
+that - its own caller side was moved onto the container test on 2026-08-27, see
+the closing note under F32 - but the guards in front of it did not move, and a
+caller that reaches a route it should not have reached is still inside F28's
+surface when it gets there. **F28 is not fully closed until F32 is**, and F32 is
+where the remaining half lives.
+
+Nothing else is re-filed from this entry: all three call sites are covered and
+the predicate is one.
+
+Full transcript, including all four matrices as data: the "A caller may hand out
+a role only if its own rights already confer it" section of
+`2026-08-18-keycloak-26.7.1-observed.md`.
+
 ## F29: deleting a client leaves its roles behind, and Keycloak deletes them
 
 Found and measured 2026-08-25 while verifying F-nothing in particular - it
@@ -792,6 +1076,12 @@ composites listing, carrying a `containerId` that names a client which no
 longer exists. The role is also still assignable and still resolves through
 `roles-by-id`.
 
+(**"Still assignable" was true on 2026-08-25 and is not true now.** `104f495`
+added `mayAttachChild`, whose container lookup turns a composite add naming an
+orphan into a 500; the role-mapping writes that shipped after it answer 404. The
+listing and `roles-by-id` halves of that sentence still hold. Probed both
+sides - see the 2026-08-27 subsection at the end of this entry.)
+
 Two pieces, and the second depends on the first:
 
 1. A client deletion has to take its roles with it. That is a schema change -
@@ -806,3 +1096,574 @@ Two pieces, and the second depends on the first:
 Not fixed here: it is a client-lifecycle concern that predates the roles cut,
 it needs a migration, and the roles half of this cut had no business changing
 the client schema on the way past.
+
+**It got one degree worse on 2026-08-26**, when Task 6 added
+`GET /users/{id}/role-mappings`. That endpoint has to resolve every owning
+client to key `clientMappings` by `clientId`, so an orphaned role is not merely
+cosmetic there - it is a **500**. Measured on Gloak: create a client and a role
+on it, assign the role to a user, delete the client, then read the combined
+view.
+
+```
+delete client -> 204
+combined view -> 500 {"error":"Internal Server Error"}
+realm view    -> 200 [{"id":"48284e32-4ca0-48ea-8ca6-4e9f5818bae1","name":"default-roles-master","description":"${role_default-roles}","composite":true,"clientRole":false,"containerId":"18effee7-1b68-4193-88c3-a1740f751e13"}]
+```
+
+The realm-half read beside it is unaffected, because it never looks a client
+up. `clientMappingsOf` was deliberately left to fail rather than skip the
+orphan: skipping would make this the one endpoint that conceals F29 while
+answering with a role list it knows to be short. Fixing F29 fixes this with it.
+
+### 2026-08-27: one symptom is now deliberately concealed, and this says which
+
+`adminRoleNames` resolves each of the caller's client roles to its owning client
+on **every** admin request - that is F28's caller-side fix. Run against an
+orphan it propagated `ErrNotFound`, and the effect was out of all proportion to
+F29's own severity:
+
+- a caller holding one role on a deleted client got **500 on every admin
+  route**, not merely on the endpoints that report that role;
+- it was **unrecoverable through the API**, because the role-mapping route that
+  would remove the offending mapping answered 500 too;
+- and `DELETE /admin/realms/{realm}/clients/{uuid}` on `master-realm`, which
+  Gloak answers 204, took the **bootstrapped administrator** down with it.
+
+**The decision, taken deliberately: `adminRoleNames` now treats `ErrNotFound`
+from that lookup as "not an admin role" and carries on.** It stays fail-closed
+for the decision the set feeds - an orphan cannot be an admin role of a living
+container, so it confers nothing - and only `ErrNotFound` is swallowed; any
+other store error still stops the request.
+
+**This is against the spirit of the paragraph above, and that is the point of
+recording it here.** What is concealed: an orphan no longer announces itself on
+every admin request. What the swallow did **not** touch, all measured against
+this head on 2026-08-27:
+
+- `GET /users/{id}/role-mappings` still answers **500**, which is the symptom
+  that paragraph is about and the one `clientMappingsOf` refuses to hide;
+- the **composites listing** still returns the orphan - `GET
+  /roles/probe-parent/composites` answers `200` with `"clientRole":true` and a
+  `containerId` naming a client that does not exist - which is the surface F29's
+  own body describes;
+- `roles-by-id` still resolves it, `200`, with the same dead `containerId`;
+- **`POST .../composites` naming the orphan as a child answers 500**, and so do
+  `POST` and `DELETE .../roles-by-id/{orphan}/composites` with the orphan as the
+  parent. See the paragraph below.
+
+Two clauses that stood here until 2026-08-27 were wrong and are removed rather
+than softened, because this list's job is to be checkable:
+
+- "still listed by the **realm-half** reads" - it is not. That read filters to
+  `clientRole:false`, so a client role can never appear in it; measured, it
+  answers `200` with the subject's realm roles and no orphan. The composites
+  listing above is the surface that was meant.
+- "still **assignable**" - not through any route probed at this head. The realm
+  mapping write answers `404 {"error":"Role not found"}`, the client mapping
+  write `404 {"error":"Client not found"}` because the path segment no longer
+  resolves, and the composite add answers 500. A live realm role assigned
+  through the same route in the same run answered 204, so the route works and
+  the refusals are about the orphan.
+
+That clause was **true when F29 was written** and went stale, which is why it is
+dated rather than called a mistake: probed on `694dfc7`, the commit before this
+branch, `POST /roles/probe-parent/composites` naming the orphan as a child
+answered **204** and the listing showed it. `mayAttachChild` shipped in
+`104f495` and turned that into the 500 above. The same clause in F29's body at
+"The role is also still assignable" carries the same date stamp for the same
+reason.
+
+So F29 is no *less* visible than it was before this branch existed; what was
+removed is a new, wider symptom this branch introduced. The alternative was
+leaving a caller unable to reach any admin endpoint, with no way back through
+the API, over a state Gloak creates by answering 204.
+
+`mayGrantRole`'s own container lookup was **not** changed and must not be:
+there the same swallow would answer "not an admin role" for the role being
+handed out and make an orphan grantable, which is fail-open. The asymmetry is
+spelled out at `adminRoleNames` in `internal/admin/auth.go`.
+`TestARoleOnADeletedClientDoesNotLockTheCallerOut` and
+`TestAFailingClientLookupStillStopsTheRequest` pin both halves.
+
+**The composite writes therefore answer 500 on an orphan, and that is left
+standing.** Same root cause as the lock-out above, on routes this pass
+deliberately did not touch. Measured 2026-08-27 against this head, two distinct
+lookups:
+
+```
+POST   /roles/probe-parent/composites          [orphan as child]   -> 500
+DELETE /roles/probe-parent/composites          [orphan as child]   -> 204
+POST   /roles/probe-parent/composites  as manage-realm, no manage-clients -> 403
+POST   /roles-by-id/{orphan}/composites        [orphan as parent]  -> 500
+DELETE /roles-by-id/{orphan}/composites        [orphan as parent]  -> 500
+```
+
+The child-side 500 is `mayGrantRole`'s lookup (`auth.go:175`), reached through
+`mayAttachChild` (`roles.go:109`) - **not** the parent-side check at
+`roles.go:652`, which returns without a lookup for a realm parent. The two
+controls prove it: `DELETE` passes nil for `checkChild` and answers 204, and a
+caller without `manage-clients` short-circuits at `requiresChildManageRole` and
+answers 403 before any lookup runs. The parent-side check at `roles.go:652` is
+reached separately, through `roles-by-id` with the orphan **as** the parent, and
+that is the last two rows.
+
+Bounded to those routes, fail-closed, and unreachable on Keycloak, which deletes
+a client's roles with the client. Not fixed here for the reason `mayGrantRole`
+was not: these judge a role rather than the caller, so the safe direction is to
+refuse. `PUT` and `DELETE` on `/roles-by-id/{orphan}` both answer 204, so an
+operator can still remove the orphan and is not stuck.
+
+None of this reduces F29's priority. Fixing F29 removes the state, and this
+paragraph with it.
+
+## F30: the role-mapping guards are one stage where Keycloak has two
+
+Found and measured 2026-08-26 by Task 3 of `feat/p2-role-mappings`, while
+sweeping the write guards. Not what the task was looking for.
+
+Every `/users/{id}/role-mappings/...` route in Gloak is a single-stage route
+guard: `guardAny` or `guard` checks the caller's roles and the handler resolves
+the subject afterwards. Keycloak checks **twice**, with the subject resolved in
+between - so a caller that fails the fine-grained check but passes a coarse one
+learns whether the user exists, and a caller that fails the coarse check does
+not.
+
+Measured against a live 26.7.1 on
+`/users/00000000-0000-0000-0000-000000000000/role-mappings/realm`, a user id
+that resolves to nothing, one user per role and a fresh token minted
+immediately before each call:
+
+```
+probe-view-users       GET  .../role-mappings/realm (missing user) -> 404 {"error":"User not found"}
+probe-query-users      GET  .../role-mappings/realm (missing user) -> 404 {"error":"User not found"}
+probe-manage-realm     GET  .../role-mappings/realm (missing user) -> 403 {"error":"HTTP 403 Forbidden"}
+
+probe-view-users       POST   .../role-mappings/realm (missing user) -> 404 {"error":"User not found"}
+probe-view-users       DELETE .../role-mappings/realm (missing user) -> 404 {"error":"User not found"}
+probe-query-users      POST   .../role-mappings/realm (missing user) -> 404 {"error":"User not found"}
+probe-query-users      DELETE .../role-mappings/realm (missing user) -> 404 {"error":"User not found"}
+probe-manage-realm     POST   .../role-mappings/realm (missing user) -> 403 {"error":"HTTP 403 Forbidden"}
+probe-manage-realm     DELETE .../role-mappings/realm (missing user) -> 403 {"error":"HTTP 403 Forbidden"}
+probe-manage-users     POST   .../role-mappings/realm (missing user) -> 404 {"error":"User not found"}
+probe-manage-users     DELETE .../role-mappings/realm (missing user) -> 404 {"error":"User not found"}
+```
+
+`query-users` opens neither the reads nor the writes, and still gets 404. The
+coarse gate is exactly `usersReadRoles` - `view-users`, `query-users`,
+`manage-users` - and everything outside the users family fails it:
+
+```
+probe-subject          GET -> 403 {"error":"HTTP 403 Forbidden"} POST -> 403 {"error":"HTTP 403 Forbidden"}
+probe-view-clients     GET -> 403 {"error":"HTTP 403 Forbidden"} POST -> 403 {"error":"HTTP 403 Forbidden"}
+probe-manage-clients   GET -> 403 {"error":"HTTP 403 Forbidden"} POST -> 403 {"error":"HTTP 403 Forbidden"}
+probe-view-realm       GET -> 403 {"error":"HTTP 403 Forbidden"} POST -> 403 {"error":"HTTP 403 Forbidden"}
+```
+
+(`probe-subject` holds `probe-attr` and `default-roles-master` and no
+`master-realm` role at all.)
+
+**Gloak answers 403 in every one of the 404 rows.** It is the *conservative*
+direction - it tells the caller less, not more - so it is not an escalation
+path. It is still a divergence, and it is on eight route registrations, five of
+which shipped with the reads a day before this was found.
+
+Not fixed in the task that measured it, for two reasons. It needs a combinator
+that neither `guard`, `guardAny`, `guardAnyAndAny` nor `guardByRoleContainer`
+expresses - coarse check, resolve the subject, fine check - and adding it would
+change the three reads Task 2 shipped as well as the two writes Task 3 added,
+which is a wider blast radius than a write task should take on its own. And the
+coarse gate was swept on this route family only; the credential endpoints and
+`GET /users/{id}` take a user id too and were not measured, so whoever fixes
+this should sweep them in the same pass rather than assume the same gate.
+
+**F36 wants the same two routes swept for a different question** - which roles
+open them at all, where this entry asks in what order the two checks run. Same
+fixtures, same tokens, two columns; do them together.
+
+Transcript: the "Existence is answered before authorization, but only for the
+users family" section of `2026-08-18-keycloak-26.7.1-observed.md`.
+
+## F31: a real 405 exists, and the "wrong method is always 404" rule is too broad
+
+Found and measured 2026-08-26 by Task 6 of `feat/p2-role-mappings`, while
+checking whether `POST /users/{id}/role-mappings` is an operation before writing
+down that it is not. It is not - but the way it is not turned up something else.
+
+`AGENTS.md` says, under "Things that look like bugs and are not":
+
+> **A wrong method on a known path returns 404, not 405, with no `Allow`
+> header.** Gloak once invented a 405 that does not exist [...]
+
+The second sentence is still true of whatever route that was. The first is too
+broad: **`PUT` and `PATCH` on the role-mapping paths answer a genuine 405**,
+with no `Allow` header, on a live 26.7.1. Measured on all three, a fresh token
+minted immediately before each call:
+
+```
+$ curl -s -i -X PUT -H "Authorization: Bearer $T" -H "Content-Type: application/json" -d '[]' "$KC/admin/realms/master/users/$PU/role-mappings"
+HTTP/1.1 405 Method Not Allowed
+content-length: 39
+Content-Type: application/json
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"error":"HTTP 405 Method Not Allowed"}
+```
+
+`PATCH` on the same path, and `PUT` and `PATCH` on `.../role-mappings/realm` and
+`.../role-mappings/clients/{uuid}`, all answer that byte for byte - same status,
+same 39-byte body, same five security headers, no `Allow`.
+
+The same path does answer 404 for other verbs, which is why this is a
+refinement rather than a reversal:
+
+```
+$ curl -s -o /dev/stdout -w '\nHTTP %{http_code}\n' -X POST -H "Authorization: Bearer $T" -H "Content-Type: application/json" -d '[]' "$KC/admin/realms/master/users/$PU/role-mappings"
+{"error":"HTTP 404 Not Found"}
+HTTP 404
+$ curl -s -o /dev/stdout -w '\nHTTP %{http_code}\n' -X DELETE -H "Authorization: Bearer $T" -H "Content-Type: application/json" -d '[]' "$KC/admin/realms/master/users/$PU/role-mappings"
+{"error":"HTTP 404 Not Found"}
+HTTP 404
+```
+
+All four command lines above were re-run verbatim on 2026-08-26 after this
+entry was first written, because the version committed with it had the
+`Authorization` header missing - a rendering fault, not a measurement fault.
+The corrected lines reproduce the statuses shown; the version without the
+header returns `401 {"error":"HTTP 401 Unauthorized"}` and measures nothing.
+
+So on one single path, `POST` and `DELETE` are 404 and `PUT` and `PATCH` are
+405. The status is not a property of "known path, wrong method" at all; which
+verb it is decides. Nothing measured so far says what the rule is - only that
+the current one-line summary cannot be it.
+
+**Gloak answers 404 for all four**, on every one of these paths:
+
+```
+PUT    role-mappings        -> 404 {"error":"HTTP 404 Not Found"}
+PATCH  role-mappings        -> 404 {"error":"HTTP 404 Not Found"}
+POST   role-mappings        -> 404 {"error":"HTTP 404 Not Found"}
+DELETE role-mappings        -> 404 {"error":"HTTP 404 Not Found"}
+PUT    role-mappings/realm  -> 404 {"error":"HTTP 404 Not Found"}
+PATCH  role-mappings/realm  -> 404 {"error":"HTTP 404 Not Found"}
+```
+
+Two of the six match and four do not.
+
+Not fixed in the task that found it. It is a `withKeycloakFallbacks` concern,
+not a role-mapping one - the divergence is on every route in the tree, it
+predates this branch, and the three `role-mappings/realm` rows above are Task
+2's registrations rather than Task 6's. Fixing it needs the rule measured
+first: which verbs get 405 and on which paths, swept across route families
+rather than generalised from this one, since generalising from one sweep is
+what put the too-broad sentence in `AGENTS.md` in the first place.
+
+`AGENTS.md`'s bullet has not been rewritten, only marked. Its text is the
+contract for the two 404 bodies, which are unchanged and still measured; only
+the "not 405" clause is now known to be narrower than it reads, and rewriting
+it before the rule is known would replace one guess with another. So the
+bullet stands and the sentence under it - "That rule is measured too broad" -
+records what this entry measured and points back here.
+
+Transcript: the "A wrong method is not always 404" section of
+`2026-08-18-keycloak-26.7.1-observed.md`.
+
+## F32: the caller's roles are flattened by name, so an ordinary client role can impersonate an admin one
+
+Found 2026-08-27 by Task 7 of `feat/p2-role-mappings`, while writing F28's
+predicate. It is **older than F28 and wider**: it is the whole guard layer, not
+the role-mapping family.
+
+`caller.roles` is `roles.Names(effective)` - a `map[string]bool` keyed on the
+role's **name**, with the owning container dropped. `caller.has("manage-realm")`
+therefore cannot tell `master-realm`'s `manage-realm` from an ordinary client's
+role that happens to be called `manage-realm`. The doc comment on `has` says so
+and treats it as safe ("Names are unique within the admin role container"),
+which is true of that container and not of the realm.
+
+Measured on both sides, 2026-08-27. Create a client, give it a role named
+`manage-realm`, assign that role to a user, and ask for a realm role to be
+created:
+
+```
+Keycloak 26.7.1:  POST /admin/realms/master/roles -> 403 {"error":"HTTP 403 Forbidden"}
+                  the role was not created
+Gloak:            POST /admin/realms/master/roles -> 201
+                  read back: {"id":"...","name":"minted-by-an-ordinary-role",...}
+```
+
+**This is a privilege escalation.** Minting the impostor needs `manage-clients`
+(to create the client and its role) and `manage-users` (to assign it), so it is
+a narrow admin widening itself rather than an anonymous path - the same shape
+F28 had, one layer down. Keycloak is immune because it resolves the caller's
+admin roles by container, which is exactly what F28's own predicate was measured
+doing and what `mayGrantRole` implements for the role it is judging.
+
+**`mayGrantRole` inherited the hole for the *caller* side, and that half is now
+fixed.** `grants()` was seeded from `caller.roles`, so an impostor
+`manage-clients` conferred the client-domain roles there too.
+
+This entry used to say that was harmless - "no weaker than the guard beside it -
+the same caller already passes `guard("manage-clients")` on every client route -
+so closing F28 did not widen anything". **Both halves of that sentence were
+wrong, and it is corrected here rather than deleted, because the reasoning is
+what failed and not only the wording.**
+
+- The predicate consults `grants()` *before* any container test, so it is not a
+  second opinion on a decision the guard already made. It is the whole decision
+  for a role whose name collides.
+- The names that mattered are `admin` and `create-realm`, and **no route on
+  `694dfc7`, the commit before this branch, requires either of them.** They
+  conferred nothing before F28 was closed. Afterwards they conferred the ability
+  to hand out realm superuser, which is the widening the sentence denied.
+
+Measured on the branch head by review, 2026-08-27, and the minimal precondition
+is narrower than this entry's own: `manage-clients` **alone**, plus the default
+roles every `POST /users` grants. `account` is not the realm's own client, so a
+`manage-clients` caller may rename its `manage-account` to `admin` and its
+`view-profile` to `manage-users`; the second rename passes `guard` by F32, and
+the first then passes `mayGrantRole` by the same name-keying. The realm role
+`admin` goes to any user: 403 before, 204 after, and the subject's realm
+mappings read back `[admin default-roles-master]`. The implication closure
+amplified each collision - ordinary roles named `manage-realm`, `impersonation`
+and `manage-events` took a caller's `available` list on `master-realm` from 12
+roles to 19.
+
+`mayGrantRole`'s caller side was moved onto the container test the same day, in
+`fix(admin): judge the caller's own roles by container, not by name`:
+`adminRoleNames` reduces the caller's effective set to the admin role names in
+it, and `grants()` closes over that instead of over every name held.
+`internal/admin/rolemappings_test.go` carries the regression.
+
+**What remains is F32 proper**, which this branch does not introduce: on
+`694dfc7` the same rename already gets a `manage-clients` caller to
+`POST /roles` answering 201. The remaining fix is not local. `caller` would have
+to carry the container alongside the name, which means `resolveCaller` resolving
+each effective role's owning client - `adminRoleNames` now does exactly that for
+the grant set, so the mechanism exists - and every `has`/`hasAny` call site
+deciding which container it means. That is the whole authorization layer of
+`internal/admin`, so it wants its own task rather than a bolt-on to the one that
+found it. **F28 is qualified on this entry**: see its closing note.
+
+## F33: a mapping write resolves the role by id, where Keycloak resolves it by name
+
+Found 2026-08-27 by Task 8 of `feat/p2-role-mappings`, by the conformance
+fixture failing silently: its assignment steps sent `[{"id":"..."}]`, which is
+the shape `POST .../roles/{name}/composites` next door accepts, and every
+recorded body came back as though nothing had been assigned.
+
+Measured on all four write routes - `POST` and `DELETE`, realm and client -
+with three body shapes each:
+
+```
+[{"id":R}]                  -> 404 {"error":"Role not found"}
+[{"name":"role-two"}]       -> 404 {"error":"Role not found"}
+[{"id":R_other,"name":"role-two"}] -> 404 {"error":"Role not found"}
+[{"id":R,"name":"role-two"}]       -> 204
+```
+
+So Keycloak looks the entry up by **name** and then requires `id` to name the
+same role. Gloak's `eachMapping` does `store.Roles().ByID(ctx, realm.ID, rep.ID)`
+and never reads `name`.
+
+**Two of the three failing shapes diverge, not three.** Measured against a
+`./gloak serve -db sqlite` on 2026-08-27, subject `t8-verify`, so that this
+entry states what Gloak does rather than what reading it suggests:
+
+| body | Keycloak | Gloak | verdict |
+|---|---|---|---|
+| `[{"id":R}]` | 404 `Role not found` | **204** | diverges |
+| `[{"name":"role-two"}]` | 404 `Role not found` | 404 `Role not found` | **agrees** |
+| `[{"id":R,"name":"role-two"}]`, the two disagreeing | 404 `Role not found` | **204** | diverges |
+| `[{"id":R2,"name":"role-two"}]`, the two agreeing | 204 | 204 | agrees |
+
+The name-only body already answers correctly, and by accident rather than by
+design: `rep.ID` decodes to `""`, `roleRepo.ByID` matches no row, `classify`
+turns `sql.ErrNoRows` into `store.ErrNotFound`, and `eachMapping` writes the
+same 404 the measured one is. **Whoever fixes this must not touch that shape** -
+it is already right, and the right answer is currently reached down a path that
+would disappear if the lookup moved to the name.
+
+The disagreeing pair is the worse of the two divergences, because it is not
+merely lax: Gloak **writes the role the `id` names and ignores the `name`
+entirely**, where Keycloak writes nothing. Measured with `id` naming
+`t8-verify-role-three` and `name` naming `t8-verify-role-four`, neither held
+beforehand: 204, and `t8-verify-role-three` is what the subject came away
+holding.
+
+Not a privilege escalation: the per-entry `mayGrantRole` check still runs on
+whatever role the id resolved to, so nothing is granted that the caller could
+not grant anyway. It is a fidelity gap - Gloak accepts requests Keycloak
+refuses, and on the disagreeing pair silently picks a role for the caller - and
+one that a client written against Gloak would not survive being pointed at
+Keycloak.
+
+Why it was missed until now: every body in the "Writing a mapping" sections of
+the observed document sends both keys, so "resolve by id" was consistent with
+every measurement taken and was never probed. Task 8's fixture was the first
+thing to send one key on its own.
+
+Not fixed in the task that found it: Task 8 records contracts and does not
+change handlers, and the fix has a decision in it - whether the 404 for a
+mismatched pair is reached by looking up the **name** and comparing the id, or
+by looking up the **id** and comparing the name. Every body measured so far
+answers the same either way.
+
+**The probe that separates them, and it needs no second container.**
+`eachMapping` raises its 404 and its 403 at two different points of one validate
+loop, and that precedence is itself measured - see the doc comment there, and
+"The refusal answers in array order, like the 404 beside it" in the observed
+document. So send **one entry whose `id` names a role the caller may grant and
+whose `name` names one it may not**, as a caller narrow enough for the
+distinction to exist: `manage-users` may grant `offline_access` and may not
+grant `admin`, which is the pair the F28 sweep already used. The two orders then
+answer differently, because the role that reaches the caller check is not the
+same role:
+
+- 403 means the entry was resolved by `name` and the resolved role reached
+  `mayGrantRole` before any id comparison.
+- 404 means the mismatch was decided first - either because the id comparison
+  precedes the caller check, or because the lookup went by `id`.
+
+Run it against Keycloak first. Whichever way it answers also fixes **which role
+a correct implementation must authorize**, which is the part the fix cannot
+guess and the part that makes this a decision rather than a rename. Gloak today
+authorizes the role `id` picked, so a fix that moves the lookup to `name`
+without settling this silently moves what `mayGrantRole` judges.
+
+Recorded as `admin/role-mapper/assign-realm-id-only` and
+`admin/client-role-mappings/assign-id-only`, both `Recorded` - so the day the
+handler is fixed, the verifier's "already matches, promote it" alarm says so.
+
+Transcript: the "A mapping write resolves the role by name, and the id has to
+agree" section of `2026-08-18-keycloak-26.7.1-observed.md`.
+
+## F34: a fixture step that fails is silent, so the recorder can write a wrong contract and pass (closed)
+
+Found 2026-08-27 by Task 8 of `feat/p2-role-mappings`, the hard way. Split out
+of F13 rather than added to it: every other item on that list is a way the
+harness *could* do less than it appears to, and this one already did.
+
+**Closed 2026-08-27** by `fix(conformance): fail a fixture whose step is
+refused`. `Step.ExpectStatus` takes the first of the two options sketched below,
+defaulting to any 2xx; the failure names the step index, the method, the path,
+the expected status and the body. The 24 creates whose repeat answers 409 on the
+recorder's shared container carry `idempotentCreate` explicitly, which is what
+turns each of the comments that documented that 409 into something checked; the
+creates that capture from `Location` keep the strict default, because a 409
+leaves them nothing to read. `TestRunFixtureFailsOnARefusedStep` and
+`TestRunFixtureAcceptsAnExpectedNon2xx` pin both halves.
+
+`RunFixture` (`internal/conformance/fixture.go:1130`) reads `resp.StatusCode`
+only to decorate a capture-failure message. A step whose request is refused -
+403, 404, 409, 400 - returns no error, so the fixture runs to completion, the
+case's own request is sent against a server that is not in the state the fixture
+claims, and `make record` writes the response as the contract and reports `PASS`.
+
+The realised symptom: Task 8's mapping fixtures assigned roles with
+`[{"id":"..."}]`, which F33 shows Keycloak refuses with 404. All four
+assignment steps failed. **Nineteen goldens recorded, every subtest `PASS`, and
+every one of them described a subject holding no roles** - `[]` for the client
+listing, `default-roles-master` alone for the realm one, and 404 for the four
+write cases. Nothing in the run said anything was wrong. It was caught only
+because the goldens were read line by line before committing, which is a
+discipline rather than a mechanism.
+
+What makes it dangerous rather than merely annoying: the wrong goldens are
+*self-consistent*. Gloak's fixture run fails in exactly the same way against
+exactly the same handler, so the verifier agrees with the recorder and
+`make test` is green. A wrong contract recorded this way is invisible to every
+check the suite has.
+
+The fix is small and the decision inside it is what to do about the steps that
+are *meant* to be refused. `confidentialClientFixture` and `clientRoleFixture`
+document a create answering 409 on the recorder's shared container as normal and
+harmless, so a blanket "non-2xx is an error" would break several fixtures on the
+second case that names them. Options, in the order they look sensible:
+
+- a per-step `AllowStatus []int`, defaulting to "2xx only", with the idempotent
+  creates naming 409 explicitly - which also turns each of those comments into
+  something checked;
+- or an `Expect` predicate per step, if a range turns out to be too coarse.
+
+Either way the failure has to name the step index, the method, the path and the
+body, because the symptom appears one request later at the earliest.
+
+Worth doing before the next family of endpoints is recorded, not after: the cost
+of this defect scales with how much of the catalogue is written by fixtures that
+mutate state, and that is the direction every remaining chapter goes.
+
+## F35: `available` is claimed equal to the write set cell by cell, and the comparison is not on the page
+
+Found 2026-08-27 by review of `feat/p2-role-mappings`. Nothing is falsified -
+this is a **traceability** defect, which in a project whose governing rule is
+"observable values are measured, never remembered" is the kind that matters.
+
+`2026-08-18-keycloak-26.7.1-observed.md` says that for all 23 caller rows of
+matrix B the set a caller may `POST` is "byte-for-byte the set its own
+`available` read returns ... Not 'resembles': the same set, on every row, checked
+cell by cell." F28's own entry repeated it. The write cells for matrices B, C and
+D are pasted, and matrix A's `available` output is pasted - but matrix A's
+callers are `view-users` plus row, which measures the *gate*, not the equality.
+**The matrix-B `available` block is in neither the observed document nor
+`task-7-report.md`.**
+
+The document's own arithmetic exposes it: 3178 claimed verdicts minus 1890
+pasted write cells is 1288, exactly two blocks of 23 by 28 read verdicts, one of
+which is on the page. The other is the one the equality rests on.
+
+The plan for that task forbade exactly this: "Report raw request and response
+text, not summary tables. A reviewer cannot check a table against anything."
+
+**The consequence is bounded.** A wrong read filter produces a wrong list, not
+an escalation - the writes are guarded by the same predicate whatever the reads
+show, and those cells *are* pasted. The wording in both documents has been
+downgraded to what the page supports.
+
+The container is gone, so this cannot be re-measured now. **Sweep instruction
+for whoever next has one running:** build matrix B's 23 callers again
+(`manage-users` + each of the 21 `master-realm` roles, plus `manage-users` alone
+and the realm role `admin`), and for each caller read
+`GET /users/{subject}/role-mappings/realm/available` and
+`.../role-mappings/clients/{master-realm}/available` with a fresh token minted
+immediately before each call. Paste the two lists verbatim per row beside that
+row's write line. The claim is true only if each list equals that row's `204`
+columns exactly; if it does not, the read filter and the write check are two
+predicates and `grantable` is wrong to share `mayGrantRole`.
+
+## F36: `manage-users` opens all seven mapping reads and is refused `GET /users/{id}`
+
+Filed 2026-08-27 by review of `feat/p2-role-mappings`. Pre-existing, needs a
+container, and it is the **too-restrictive** direction this cut has already
+reverted twice - which is the reason it is worth a sweep rather than a shrug.
+
+`manage-users` is not composite over `view-users`: it has no children at all,
+measured. It nevertheless opens all seven role-mapping reads, which is why
+`userMappingsReadRoles` is `{view-users, manage-users}` rather than `view-users`
+alone. Two neighbouring routes that take a user id were never swept the same way
+and are still guarded by `view-users` on its own:
+
+- `GET /admin/realms/{realm}/users/{userID}` (`internal/admin/router.go:41`)
+- `GET /admin/realms/{realm}/users/{userID}/credentials` (`router.go:47`)
+
+The comment at `router.go:386-389` records only that `query-users` was measured
+getting 403 on the first of those and 200 on the listing and the count. **That
+says nothing about `manage-users`**, and a caller holding `manage-users` alone
+can currently update and delete a user it may not read - which is not a shape
+Keycloak is likely to have.
+
+**Sweep instruction:** one user per role, a fresh token minted immediately
+before each call, over `view-users`, `query-users` and `manage-users` at least,
+against `GET /users/{id}`, `GET /users/{id}/credentials`, and the rest of the
+credential family (`PUT .../reset-password`, `DELETE
+.../credentials/{id}`, `PUT .../credentials/{id}/userLabel`, the two `move*`
+routes and `PUT .../disable-credential-types`) so the whole family is decided in
+one pass rather than one route at a time.
+
+F30 also names `GET /users/{id}` and the credential endpoints, for a different
+question - whether the subject is resolved before the caller is judged, which is
+about the **404-before-403 ordering** rather than about which roles open the
+route. **Do both in the same pass**: same fixtures, same tokens, two columns.

@@ -1,6 +1,8 @@
 package admin
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/url"
 
 	"github.com/ekalinin/gloak/internal/model"
@@ -203,4 +205,73 @@ func roleRepresentationOf(r *model.Role, containerID string, brief bool) roleRep
 // measured on both, which is why the two do not share a helper.
 func briefRoles(q url.Values) bool {
 	return q.Get("briefRepresentation") != "false"
+}
+
+// mappingsRepresentation is the combined view GET /users/{id}/role-mappings
+// sends - the one body in this family that is not a bare array.
+//
+// **Both keys are absent when their list would be empty**, measured: the
+// bootstrapped administrator holds two realm roles and no client role directly
+// and its body carries realmMappings alone, and a user stripped of every role
+// answers `{}` with content-length 2. Neither `[]` nor `{}` is ever emitted for
+// an empty half.
+//
+// Plain omitempty is enough for that, so neither field is a pointer. The plan
+// asked for one on RealmMappings, reasoning that "omitempty on a slice cannot
+// tell none from absent"; it can - encoding/json drops a slice field whose
+// length is zero, nil or not. A pointer is what roleRepresentation.Attributes
+// needs, because there the empty value has to be *emitted* as {}; here the
+// empty value has to disappear, which is exactly what omitempty does.
+type mappingsRepresentation struct {
+	RealmMappings  []roleRepresentation `json:"realmMappings,omitempty"`
+	ClientMappings clientMappings       `json:"clientMappings,omitempty"`
+}
+
+// clientMappings is the clientMappings object: one entry per client the user
+// holds a role on, keyed by clientId.
+//
+// It is a slice rather than a map for the reason resourceAccess in
+// internal/token is: Keycloak builds it from a Java Map and serialises it in
+// HashMap bucket order, and Go sorts a map's keys. Measured on a subject
+// holding one role on each of six clients cx1..cx6, created and assigned in
+// that order, the keys came back cx6, cx5, cx2, cx1, cx4, cx3 - neither sorted
+// nor insertion order, and exactly what javamap.KeyOrder predicts. See
+// internal/javamap and the "clientMappings is a Java HashMap" section of
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+type clientMappings []clientMappingsEntry
+
+// clientMappingsEntry is one client's block inside clientMappings, which is
+// keyed by clientId and then repeats the clientId as `client` alongside the
+// UUID. ClientID is `json:"-"` because MarshalJSON below writes it as the
+// object key rather than as a field of the value.
+type clientMappingsEntry struct {
+	ClientID string               `json:"-"`
+	ID       string               `json:"id"`
+	Client   string               `json:"client"`
+	Mappings []roleRepresentation `json:"mappings"`
+}
+
+// MarshalJSON writes the entries as a JSON object in the order they are held,
+// which is the order clientMappingsOf put them in.
+func (m clientMappings) MarshalJSON() ([]byte, error) {
+	var b bytes.Buffer
+	b.WriteByte('{')
+	for i, entry := range m {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		key, err := json.Marshal(entry.ClientID)
+		if err != nil {
+			return nil, err
+		}
+		b.Write(key)
+		b.WriteByte(':')
+		value, err := json.Marshal(entry)
+		if err != nil {
+			return nil, err
+		}
+		b.Write(value)
+	}
+	b.WriteByte('}')
+	return b.Bytes(), nil
 }
