@@ -352,6 +352,14 @@ func (h *handler) clientRoleContainer(w http.ResponseWriter, r *http.Request, rc
 // so the name is rebuilt here the same way createClientRole rebuilds it. A
 // realm role can never be owned by a client, so it answers false without a
 // lookup.
+//
+// **"{realm}-realm" is a master-realm construct.** Keycloak keeps the master
+// realm's admin roles on `master-realm` and every *other* realm's on that
+// realm's own `realm-management` client. Gloak bootstraps no realm but master,
+// so the second spelling is unreachable today - but when Realms Admin lands,
+// every admin role outside master would silently answer false here and become
+// grantable to anyone. Whoever adds realm creation adds the second name to this
+// test in the same change.
 func (h *handler) ownedByRealmOwnClient(ctx context.Context, realm *model.Realm, role *model.Role) (bool, error) {
 	if role.ClientID == "" {
 		return false, nil

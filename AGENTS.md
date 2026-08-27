@@ -291,14 +291,17 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **Role listings have no stable order across container starts.** Every one of
   them is a bare array at the root of the body, which is why `Case.Unordered`
   learned the root path spelling `"."`.
-- **Nine spellings of not-found now**, including four for one resource:
+- **Nine spellings of not-found in the admin API now**, including four for one
+  resource:
   `Could not find client`, `Client not found`, `User not found`,
   `Realm not found.` with its full stop, `Credential not found`,
   `Could not find role`, `Role not found`, `Could not find role with id`,
   `Could not find composite role`. The first two are the same resource by the
   same key: the role-mapping routes answer `Client not found` for an unknown
   client UUID where the client and role endpoints answer `Could not find
-  client` for that very UUID.
+  client` for that very UUID. The qualifier matters: the protocol side spells a
+  tenth, `Realm does not exist` (`internal/oidc/router.go:145`), against the
+  admin API's `Realm not found.` for the same missing realm.
 
 ## Boundaries
 

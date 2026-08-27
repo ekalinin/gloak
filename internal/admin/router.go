@@ -388,8 +388,9 @@ func (h *handler) realmIssuer(realm string) string {
 // and 200 on the other two.
 var usersReadRoles = []string{"view-users", "query-users", "manage-users"}
 
-// userMappingsReadRoles is what the six role-mapping reads accept - the three
-// realm ones and the three client ones, swept separately and agreeing.
+// userMappingsReadRoles is what the seven role-mapping reads accept - the three
+// realm ones, the three client ones and the combined view, swept separately and
+// agreeing. Six until the combined view joined them.
 // It is usersReadRoles minus query-users, and the two lists are kept separate
 // because they were measured separately and disagree: the same caller that
 // gets 200 on GET /users gets 403 on GET /users/{id}/role-mappings/realm.
