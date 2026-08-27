@@ -246,6 +246,9 @@ appears to.
   hash. Documented in README's record section; all three cases are `Pending`, so
   nothing compares them. A fourth used to churn on the token response's `scope`
   word order and no longer does: `UnorderedWords` sorts the words inside a string.
+- **`RunFixture` ignores a step's status code.** Split out as **F34** rather than
+  kept here, because it is the one item on this list that has already recorded a
+  wrong contract rather than merely being able to.
 
 One shape-level note rather than a defect:
 
@@ -1243,13 +1246,38 @@ with three body shapes each:
 
 So Keycloak looks the entry up by **name** and then requires `id` to name the
 same role. Gloak's `eachMapping` does `store.Roles().ByID(ctx, realm.ID, rep.ID)`
-and never reads `name`, so it answers **204 where Keycloak answers 404** for an
-id-only body, a name-only body, and a body whose two keys disagree.
+and never reads `name`.
+
+**Two of the three failing shapes diverge, not three.** Measured against a
+`./gloak serve -db sqlite` on 2026-08-27, subject `t8-verify`, so that this
+entry states what Gloak does rather than what reading it suggests:
+
+| body | Keycloak | Gloak | |
+|---|---|---|---|
+| `[{"id":R}]` | 404 `Role not found` | **204** | diverges |
+| `[{"name":"role-two"}]` | 404 `Role not found` | 404 `Role not found` | **agrees** |
+| `[{"id":R,"name":"role-two"}]`, the two disagreeing | 404 `Role not found` | **204** | diverges |
+| `[{"id":R2,"name":"role-two"}]`, the two agreeing | 204 | 204 | agrees |
+
+The name-only body already answers correctly, and by accident rather than by
+design: `rep.ID` decodes to `""`, `roleRepo.ByID` matches no row, `classify`
+turns `sql.ErrNoRows` into `store.ErrNotFound`, and `eachMapping` writes the
+same 404 the measured one is. **Whoever fixes this must not touch that shape** -
+it is already right, and the right answer is currently reached down a path that
+would disappear if the lookup moved to the name.
+
+The disagreeing pair is the worse of the two divergences, because it is not
+merely lax: Gloak **writes the role the `id` names and ignores the `name`
+entirely**, where Keycloak writes nothing. Measured with `id` naming
+`t8-verify-role-three` and `name` naming `t8-verify-role-four`, neither held
+beforehand: 204, and `t8-verify-role-three` is what the subject came away
+holding.
 
 Not a privilege escalation: the per-entry `mayGrantRole` check still runs on
 whatever role the id resolved to, so nothing is granted that the caller could
-not grant anyway. It is a laxness - Gloak accepts requests Keycloak refuses -
-and one that a client written against Gloak would not survive being pointed at
+not grant anyway. It is a fidelity gap - Gloak accepts requests Keycloak
+refuses, and on the disagreeing pair silently picks a role for the caller - and
+one that a client written against Gloak would not survive being pointed at
 Keycloak.
 
 Why it was missed until now: every body in the "Writing a mapping" sections of
@@ -1259,10 +1287,31 @@ thing to send one key on its own.
 
 Not fixed in the task that found it: Task 8 records contracts and does not
 change handlers, and the fix has a decision in it - whether the 404 for a
-mismatched pair is reached by looking up the name and comparing the id, or by
-looking up the id and comparing the name, which are indistinguishable from
-outside on every body measured so far but not on a body naming a role in one
-container and an id in another.
+mismatched pair is reached by looking up the **name** and comparing the id, or
+by looking up the **id** and comparing the name. Every body measured so far
+answers the same either way.
+
+**The probe that separates them, and it needs no second container.**
+`eachMapping` raises its 404 and its 403 at two different points of one validate
+loop, and that precedence is itself measured - see the doc comment there, and
+"The refusal answers in array order, like the 404 beside it" in the observed
+document. So send **one entry whose `id` names a role the caller may grant and
+whose `name` names one it may not**, as a caller narrow enough for the
+distinction to exist: `manage-users` may grant `offline_access` and may not
+grant `admin`, which is the pair the F28 sweep already used. The two orders then
+answer differently, because the role that reaches the caller check is not the
+same role:
+
+- 403 means the entry was resolved by `name` and the resolved role reached
+  `mayGrantRole` before any id comparison.
+- 404 means the mismatch was decided first - either because the id comparison
+  precedes the caller check, or because the lookup went by `id`.
+
+Run it against Keycloak first. Whichever way it answers also fixes **which role
+a correct implementation must authorize**, which is the part the fix cannot
+guess and the part that makes this a decision rather than a rename. Gloak today
+authorizes the role `id` picked, so a fix that moves the lookup to `name`
+without settling this silently moves what `mayGrantRole` judges.
 
 Recorded as `admin/role-mapper/assign-realm-id-only` and
 `admin/client-role-mappings/assign-id-only`, both `Recorded` - so the day the
@@ -1270,3 +1319,48 @@ handler is fixed, the verifier's "already matches, promote it" alarm says so.
 
 Transcript: the "A mapping write resolves the role by name, and the id has to
 agree" section of `2026-08-18-keycloak-26.7.1-observed.md`.
+
+## F34: a fixture step that fails is silent, so the recorder can write a wrong contract and pass
+
+Found 2026-08-27 by Task 8 of `feat/p2-role-mappings`, the hard way. Split out
+of F13 rather than added to it: every other item on that list is a way the
+harness *could* do less than it appears to, and this one already did.
+
+`RunFixture` (`internal/conformance/fixture.go:1130`) reads `resp.StatusCode`
+only to decorate a capture-failure message. A step whose request is refused -
+403, 404, 409, 400 - returns no error, so the fixture runs to completion, the
+case's own request is sent against a server that is not in the state the fixture
+claims, and `make record` writes the response as the contract and reports `PASS`.
+
+The realised symptom: Task 8's mapping fixtures assigned roles with
+`[{"id":"..."}]`, which F33 shows Keycloak refuses with 404. All four
+assignment steps failed. **Nineteen goldens recorded, every subtest `PASS`, and
+every one of them described a subject holding no roles** - `[]` for the client
+listing, `default-roles-master` alone for the realm one, and 404 for the four
+write cases. Nothing in the run said anything was wrong. It was caught only
+because the goldens were read line by line before committing, which is a
+discipline rather than a mechanism.
+
+What makes it dangerous rather than merely annoying: the wrong goldens are
+*self-consistent*. Gloak's fixture run fails in exactly the same way against
+exactly the same handler, so the verifier agrees with the recorder and
+`make test` is green. A wrong contract recorded this way is invisible to every
+check the suite has.
+
+The fix is small and the decision inside it is what to do about the steps that
+are *meant* to be refused. `confidentialClientFixture` and `clientRoleFixture`
+document a create answering 409 on the recorder's shared container as normal and
+harmless, so a blanket "non-2xx is an error" would break several fixtures on the
+second case that names them. Options, in the order they look sensible:
+
+- a per-step `AllowStatus []int`, defaulting to "2xx only", with the idempotent
+  creates naming 409 explicitly - which also turns each of those comments into
+  something checked;
+- or an `Expect` predicate per step, if a range turns out to be too coarse.
+
+Either way the failure has to name the step index, the method, the path and the
+body, because the symptom appears one request later at the earliest.
+
+Worth doing before the next family of endpoints is recorded, not after: the cost
+of this defect scales with how much of the catalogue is written by fixtures that
+mutate state, and that is the direction every remaining chapter goes.
