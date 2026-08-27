@@ -237,6 +237,60 @@ func TestRunFixtureFailsWhenACaptureIsMissing(t *testing.T) {
 	}
 }
 
+// A step that is refused must fail the fixture, even though it captures
+// nothing and nothing later reads from it.
+//
+// This is F34's mechanism. Without it a refused setup request was silent: the
+// fixture ran to completion, the case's own request met a server in a state the
+// fixture only claimed to have built, and the recorder wrote that response as
+// the contract. It fired for real on feat/p2-role-mappings - nineteen goldens,
+// every subtest passing, every one describing a subject holding no roles.
+func TestRunFixtureFailsOnARefusedStep(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"error":"HTTP 403 Forbidden"}`)
+	}))
+	defer srv.Close()
+
+	f := Fixture{State: "bootstrap", Steps: []Step{{
+		Request: Request{Method: http.MethodPost, Path: "/admin/realms/master/users/u/role-mappings/realm"},
+	}}}
+
+	_, err := RunFixture(f, srv.URL, srv.Client().Do)
+	if err == nil {
+		t.Fatal("want an error for a step answering 403, got nil")
+	}
+	// The symptom shows up one request later at the earliest, so the message
+	// has to name the step, the method, the path and the body.
+	for _, want := range []string{"step 0", http.MethodPost, "/role-mappings/realm", "2xx", "403", "HTTP 403 Forbidden"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error message lacks %q: %v", want, err)
+		}
+	}
+}
+
+// The override the idempotent creates need: the recorder shares one container,
+// so a fixture more than one case names answers 409 on every run after the
+// first, and that is the state the case wants.
+func TestRunFixtureAcceptsAnExpectedNon2xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = io.WriteString(w, `{"errorMessage":"Client gloak-probe already exists"}`)
+	}))
+	defer srv.Close()
+
+	f := Fixture{State: "bootstrap", Steps: []Step{{
+		Request:      Request{Method: http.MethodPost, Path: "/admin/realms/master/clients"},
+		ExpectStatus: idempotentCreate,
+	}}}
+
+	if _, err := RunFixture(f, srv.URL, srv.Client().Do); err != nil {
+		t.Fatalf("a create naming 409 must pass: %v", err)
+	}
+}
+
 // A later step sees what an earlier one captured, which is what makes a
 // fixture a chain rather than a list.
 func TestRunFixtureThreadsValuesBetweenSteps(t *testing.T) {

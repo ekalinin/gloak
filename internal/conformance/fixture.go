@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -30,7 +31,33 @@ type Step struct {
 	// is what a case substitutes into a path and the base URL differs between
 	// the recorder and the verifier. Anything else is captured whole.
 	CaptureHeader map[string]string
+	// ExpectStatus is the set of status codes this step accepts. Empty means
+	// **any 2xx**, which is what almost every step wants.
+	//
+	// It exists because a fixture step that fails used to be silent: RunFixture
+	// read resp.StatusCode only to decorate a capture-failure message, so a
+	// refused setup request left the fixture running to completion, the case's
+	// own request went to a server in the wrong state, and `make record` wrote
+	// that response as the contract and reported PASS. Follow-up F34 has the
+	// realised symptom - nineteen goldens recorded, every subtest passing, and
+	// every one of them describing a subject holding no roles.
+	//
+	// The default cannot simply be "2xx" with no way out: the recorder shares
+	// one container, so a fixture more than one case names runs its creates more
+	// than once and every run after the first answers 409. Those creates say so
+	// with idempotentCreate, which turns each of the comments that documented
+	// that 409 into something checked.
+	ExpectStatus []int
 }
+
+// idempotentCreate is the ExpectStatus of a create whose repeat is harmless:
+// the object is already there, the fixture looks its id up rather than reading
+// Location, and the state the case needs is reached either way.
+//
+// The creates that do **not** carry it are the ones that capture from Location -
+// see clientFixtureBody - where a 409 leaves nothing to capture and the failure
+// must be loud.
+var idempotentCreate = []int{http.StatusCreated, http.StatusConflict}
 
 // Fixture is the setup a case runs against: a named server-side starting
 // state, plus the steps that lead from it to the state the case measures.
@@ -271,6 +298,7 @@ var Fixtures = map[string]Fixture{
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 				Body:    []byte(`{"name":"gloak-probe-role","description":"a probe"}`),
 			},
+			ExpectStatus: idempotentCreate,
 		}},
 	},
 
@@ -375,6 +403,7 @@ func mappingSubjectFixture() Fixture {
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 				Body:    []byte(`{"name":"gloak-probe-mapping-realm","attributes":{"probe":["v1","v2"]}}`),
 			},
+			ExpectStatus: idempotentCreate,
 		},
 		Step{
 			Request: Request{
@@ -403,6 +432,7 @@ func mappingSubjectFixture() Fixture {
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body:    []byte(`{"name":"gloak-probe-mapping-app-free"}`),
 		},
+		ExpectStatus: idempotentCreate,
 	})
 	f.Steps = append(f.Steps, clientWithRoleSteps("gloak-probe-mapping-side", "side_client_uuid",
 		`{"name":"gloak-probe-mapping-side-role"}`,
@@ -432,6 +462,7 @@ func mappingRealmWriteFixture() Fixture {
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 				Body:    []byte(`{"name":"gloak-probe-mapping-write-realm-role"}`),
 			},
+			ExpectStatus: idempotentCreate,
 		},
 		Step{
 			Request: Request{
@@ -478,6 +509,7 @@ func clientWithRoleSteps(clientID, uuidVar, roleBody, roleName, roleVar string) 
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 				Body:    []byte(`{"clientId":"` + clientID + `","enabled":true}`),
 			},
+			ExpectStatus: idempotentCreate,
 		},
 		{
 			Request: Request{
@@ -495,6 +527,7 @@ func clientWithRoleSteps(clientID, uuidVar, roleBody, roleName, roleVar string) 
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 				Body:    []byte(roleBody),
 			},
+			ExpectStatus: idempotentCreate,
 		},
 		{
 			Request: Request{
@@ -539,6 +572,7 @@ func realmRoleFixture(name string) Fixture {
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 				Body:    []byte(`{"name":"` + name + `"}`),
 			},
+			ExpectStatus: idempotentCreate,
 		}},
 	}
 }
@@ -571,6 +605,7 @@ func pagedRolesFixture() Fixture {
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 				Body:    []byte(`{"name":"gloak-probe-page-` + suffix + `"}`),
 			},
+			ExpectStatus: idempotentCreate,
 		})
 	}
 	return Fixture{State: "bootstrap", Steps: steps}
@@ -591,6 +626,7 @@ func attributedRoleFixture() Fixture {
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 				Body:    []byte(`{"name":"gloak-probe-attrs","attributes":{"attribute1":["value1","value2"]}}`),
 			},
+			ExpectStatus: idempotentCreate,
 		}},
 	}
 }
@@ -616,6 +652,7 @@ func clientRoleFixture(clientID, roleName string) Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"clientId":"` + clientID + `","enabled":true}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -633,6 +670,7 @@ func clientRoleFixture(clientID, roleName string) Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"` + roleName + `"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 		},
 	}
@@ -656,6 +694,7 @@ func sameNamedRolesFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"gloak-probe-shared-realm"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -664,6 +703,7 @@ func sameNamedRolesFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"clientId":"gloak-probe-shared-client"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -681,6 +721,7 @@ func sameNamedRolesFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"gloak-probe-shared-on-client"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 		},
 	}
@@ -709,6 +750,7 @@ func compositeParentFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"gloak-probe-composite-parent"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -725,6 +767,7 @@ func compositeParentFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"gloak-probe-composite-child-realm"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -741,6 +784,7 @@ func compositeParentFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"clientId":"gloak-probe-composite-client","enabled":true}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -758,6 +802,7 @@ func compositeParentFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"gloak-probe-composite-child-client"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -797,6 +842,7 @@ func compositeParentClientFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"clientId":"gloak-probe-composite-client-parent","enabled":true}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -814,6 +860,7 @@ func compositeParentClientFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"gloak-probe-composite-client-role-parent"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -830,6 +877,7 @@ func compositeParentClientFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"gloak-probe-composite-client-parent-child-realm"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -846,6 +894,7 @@ func compositeParentClientFixture() Fixture {
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`{"name":"gloak-probe-composite-client-parent-child-client"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -888,6 +937,7 @@ func confidentialClientFixture(clientID, body string, extra ...Step) Fixture {
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 				Body:    []byte(body),
 			},
+			ExpectStatus: idempotentCreate,
 		},
 		{
 			Request: Request{
@@ -1016,6 +1066,7 @@ func userFixture(username string) Fixture {
 					Body: []byte(`{"username":"` + username + `","enabled":true,` +
 						`"firstName":"Ada","lastName":"Lovelace","email":"` + username + `@example.com"}`),
 				},
+				ExpectStatus: idempotentCreate,
 			},
 			{
 				Request: Request{
@@ -1127,6 +1178,9 @@ type Do func(*http.Request) (*http.Response, error)
 // string. Substituting an empty token would record whatever Keycloak answers
 // for a blank credential: a real response to a request nobody meant to make,
 // and one that would look like a measured contract afterwards.
+//
+// A step whose **status** is not the one it expects is an error too, and that
+// is checked before anything is captured: see Step.ExpectStatus and F34.
 func RunFixture(f Fixture, base string, do Do) (map[string]string, error) {
 	vars := map[string]string{}
 	for i, s := range f.Steps {
@@ -1142,6 +1196,10 @@ func RunFixture(f Fixture, base string, do Do) (map[string]string, error) {
 		_ = resp.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("fixture step %d: read body: %w", i, err)
+		}
+		if !acceptedStatus(s.ExpectStatus, resp.StatusCode) {
+			return nil, fmt.Errorf("fixture step %d: %s %s: want %s, got %d: %s",
+				i, s.Request.Method, s.Request.Path, wantedStatus(s.ExpectStatus), resp.StatusCode, body)
 		}
 		for name, path := range s.Capture {
 			value, err := captureFrom(body, path)
@@ -1164,6 +1222,29 @@ func RunFixture(f Fixture, base string, do Do) (map[string]string, error) {
 		time.Sleep(f.Delay)
 	}
 	return vars, nil
+}
+
+// acceptedStatus applies a step's ExpectStatus: the listed codes, or any 2xx
+// when the step lists none.
+func acceptedStatus(expect []int, got int) bool {
+	if len(expect) == 0 {
+		return got >= 200 && got < 300
+	}
+	return slices.Contains(expect, got)
+}
+
+// wantedStatus spells an ExpectStatus for the failure message. The symptom of a
+// silent step appears one request later at the earliest, so the message has to
+// carry enough to find the step without re-running anything.
+func wantedStatus(expect []int) string {
+	if len(expect) == 0 {
+		return "2xx"
+	}
+	out := make([]string, 0, len(expect))
+	for _, c := range expect {
+		out = append(out, strconv.Itoa(c))
+	}
+	return strings.Join(out, " or ")
 }
 
 // captureFrom pulls one value out of a JSON body by slash-separated path.
