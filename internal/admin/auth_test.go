@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -351,5 +352,114 @@ func TestRealmIsCheckedBeforeCredentials(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("want 404, got %d: %s", w.Code, w.Body)
+	}
+}
+
+// A caller holding a role whose owning client is gone still reaches the admin
+// API, and still cannot hand out an admin role.
+//
+// F29 leaves a client's role rows behind when the client is deleted, so this
+// state is reachable on Gloak and not on Keycloak. Resolving the caller now
+// asks each of its client roles which container owns it, and propagating that
+// lookup's ErrNotFound answered 500 on **every** admin route - including the
+// role-mapping route that would remove the offending mapping, so the caller
+// could not dig itself out, and including everything the bootstrapped
+// administrator does the moment anything deletes the master-realm client, which
+// Gloak answers 204.
+//
+// Both halves are the test. The 200 is the regression. The 403 is the guarantee
+// that must not be lost while fixing it: skipping the orphan must not skip the
+// admin roles beside it.
+func TestARoleOnADeletedClientDoesNotLockTheCallerOut(t *testing.T) {
+	h, s, realm := newServer(t)
+	ctx := context.Background()
+	admin := tokenFor(t, h, "admin", "admin")
+
+	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"probe-orphan"}`, admin)
+	orphanClient := clientUUID(t, s, realm, "probe-orphan")
+	postJSON(t, h, "/admin/realms/master/clients/"+orphanClient+"/roles", `{"name":"probe-orphan-role"}`, admin)
+
+	user := createUserWithPassword(t, s, realm, "probe-orphaned", "pw")
+	mr, err := s.Clients().ByClientID(ctx, realm.ID, "master-realm")
+	if err != nil {
+		t.Fatalf("ByClientID: %v", err)
+	}
+	for _, r := range []struct{ container, name string }{
+		{mr.ID, "manage-users"},
+		{orphanClient, "probe-orphan-role"},
+	} {
+		role, err := s.Roles().ByName(ctx, realm.ID, r.container, r.name)
+		if err != nil {
+			t.Fatalf("ByName(%s): %v", r.name, err)
+		}
+		if err := s.Roles().AssignToUser(ctx, user.ID, role.ID); err != nil {
+			t.Fatalf("AssignToUser(%s): %v", r.name, err)
+		}
+	}
+	caller := tokenFor(t, h, "probe-orphaned", "pw")
+
+	// The precondition: entitled before the client goes away.
+	if w := get(t, h, "/admin/realms/master/users", caller); w.Code != http.StatusOK {
+		t.Fatalf("precondition: want 200 before the client is deleted, got %d: %s", w.Code, w.Body)
+	}
+	if w := sendJSON(t, h, http.MethodDelete, "/admin/realms/master/clients/"+orphanClient, "", admin); w.Code != http.StatusNoContent {
+		t.Fatalf("delete the client: want 204, got %d: %s", w.Code, w.Body)
+	}
+	// F29 in one line: the role outlives its client, which is the state under
+	// test. If Gloak ever deletes the roles too, this test stops testing
+	// anything and should be deleted with the behaviour.
+	if _, err := s.Roles().ByName(ctx, realm.ID, orphanClient, "probe-orphan-role"); err != nil {
+		t.Fatalf("F29's orphan is gone, so this test no longer reaches the path it exists for: %v", err)
+	}
+
+	if w := get(t, h, "/admin/realms/master/users", caller); w.Code != http.StatusOK {
+		t.Fatalf("a role on a deleted client locked the caller out: want 200, got %d: %s", w.Code, w.Body)
+	}
+
+	// And the grant decision is unchanged: the orphan is skipped, the real
+	// admin roles beside it are not.
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-orphan-subject","enabled":true}`, admin)
+	subject := userID(t, s, realm, "probe-orphan-subject")
+	base := "/admin/realms/master/users/" + subject + "/role-mappings/realm"
+	realmAdmin := readRole(t, h, "/admin/realms/master/roles/admin", admin)
+	if w := postJSON(t, h, base, `[{"id":"`+realmAdmin.ID+`","name":"admin"}]`, caller); w.Code != http.StatusForbidden {
+		t.Fatalf("granting the realm role admin: want 403, got %d: %s", w.Code, w.Body)
+	}
+	if got := mappingNames(t, h, base, admin); slices.Contains(got, "admin") {
+		t.Fatalf("the subject was promoted: %v", got)
+	}
+	// The route itself is open to this caller, so the 403 above is the
+	// predicate's answer and not the guard's.
+	uma := readRole(t, h, "/admin/realms/master/roles/uma_authorization", admin)
+	if w := postJSON(t, h, base, `[{"id":"`+uma.ID+`","name":"uma_authorization"}]`, caller); w.Code != http.StatusNoContent {
+		t.Fatalf("granting an ordinary realm role: want 204, got %d: %s", w.Code, w.Body)
+	}
+}
+
+// The other half of that rule: only ErrNotFound is swallowed. A store that is
+// failing for any other reason must still stop the request, because "the
+// container could not be read" and "the container is not there" are different
+// facts and only the second one means "not an admin role".
+//
+// Without this, the orphan fix would be a fail-open one: a driver error would
+// quietly empty the caller's admin grant set instead of refusing the request.
+func TestAFailingClientLookupStillStopsTheRequest(t *testing.T) {
+	var armed bool
+	h, s, realm := newServerWrapping(t, failingClientLookup(func(string) error {
+		if armed {
+			return errInjected
+		}
+		return nil
+	}))
+	caller := tokenForRole(t, h, s, realm, "manage-users")
+
+	if w := get(t, h, "/admin/realms/master/users", caller); w.Code != http.StatusOK {
+		t.Fatalf("precondition: want 200 before the fault, got %d: %s", w.Code, w.Body)
+	}
+
+	armed = true
+	w := get(t, h, "/admin/realms/master/users", caller)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("a failing store must not be read as an absent container: want 500, got %d: %s", w.Code, w.Body)
 	}
 }

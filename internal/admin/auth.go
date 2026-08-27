@@ -262,6 +262,28 @@ func (h *handler) effectiveRoles(r *http.Request, realm *model.Realm, user *mode
 // The container answer is memoised per owning client, not per role: the
 // bootstrapped administrator reaches all 21 of master-realm's roles, so a naive
 // loop would do 21 identical lookups on every admin request and this does one.
+//
+// **A container that no longer exists is not an admin role, and is not an
+// error here.** F29 leaves a client's role rows behind when the client is
+// deleted, so a caller can hold a role whose owning client is gone. Propagating
+// that ErrNotFound locked such a caller out of the **whole** admin API with a
+// 500 - including the role-mapping route that would remove the offending
+// mapping, so it was unrecoverable through the API, and including the
+// bootstrapped administrator the moment anything deleted the master-realm
+// client, which Gloak answers 204. Skipping the orphan is fail-closed for the
+// decision this set feeds: an orphan cannot be an admin role of a living
+// container, so it confers nothing.
+//
+// **mayGrantRole's lookup must not copy this, and the difference is not an
+// oversight.** That one judges the role being *handed out*, where swallowing
+// ErrNotFound would answer "not an admin role" and make an orphan grantable -
+// fail-open. This one judges roles the caller already holds, where swallowing
+// only ever removes a name from the grant set. Same error, opposite safe
+// direction, so the two are deliberately not shared. See F29 in
+// docs/superpowers/specs/2026-08-18-gloak-followups.md for what this conceals.
+//
+// Only ErrNotFound is swallowed. A dead database is not an orphan and still
+// propagates.
 func (h *handler) adminRoleNames(ctx context.Context, realm *model.Realm, in []*model.Role) (map[string]bool, error) {
 	out := make(map[string]bool, len(in))
 	own := make(map[string]bool, 1)
@@ -274,10 +296,10 @@ func (h *handler) adminRoleNames(ctx context.Context, realm *model.Realm, in []*
 		}
 		if _, seen := own[role.ClientID]; !seen {
 			owned, err := h.ownedByRealmOwnClient(ctx, realm, role)
-			if err != nil {
+			if err != nil && !errors.Is(err, store.ErrNotFound) {
 				return nil, err
 			}
-			own[role.ClientID] = owned
+			own[role.ClientID] = err == nil && owned
 		}
 		if own[role.ClientID] {
 			out[role.Name] = true
