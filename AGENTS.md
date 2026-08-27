@@ -248,9 +248,10 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   write guard is not the read guard's slice. The guard follows the **subject**,
   not the role: assigning a `master-realm` client role needs `manage-users`,
   and `manage-clients` or `manage-realm` alone is refused, which is the
-  opposite of `roles-by-id`. Four sweeps, one single role at a time, because
-  the realm and client locators and the read and write columns were each
-  capable of disagreeing.
+  opposite of `roles-by-id`. Five sweeps, one single role at a time - the realm
+  reads, the client reads, the realm writes, the client writes and the combined
+  view - because the two locators, the two columns and the combined view were
+  each capable of disagreeing.
 - **A caller may hand out a role only if the role is not one of the realm's
   own admin roles, or the caller's own effective roles already confer that
   admin role** - itself, or one measured to subsume it. Conferral is a measured

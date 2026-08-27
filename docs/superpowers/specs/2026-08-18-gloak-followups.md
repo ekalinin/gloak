@@ -371,8 +371,8 @@ API - create a user, set a password on it, `POST` the one role it should hold
 to `.../role-mappings/realm`, and password-grant it on `admin-cli` - and every
 one of those steps is served by Gloak and recorded against Keycloak.
 
-Two things still hold it open, and neither is the one this entry was waiting
-for:
+Two things remain, and neither is the one this entry was waiting for. Only the
+first is a blocker; the second is two steps of fixture work:
 
 1. **The filtering is not implemented, and its details are not measured.**
    What is measured is the top of this entry: a `query-` caller gets 200 and an
@@ -382,20 +382,29 @@ for:
    Gloak's own notions; the sweep that says what Keycloak puts in those lists
    has not been run. This entry should not be closed by wiring up a predicate
    nobody measured.
-2. **No conformance fixture mints a token for anybody but the bootstrap
-   administrator.** Every fixture in `internal/conformance/fixture.go`
-   password-grants `admin` on `admin-cli`. The *steps* to do otherwise now
-   exist; the fixture does not. That capability is shared, not specific to
-   this entry: F28's caller-relative predicate is pinned by unit tests alone
-   for exactly the same reason, and both `available` reads count as served on
-   the strength of the administrator's answer.
+2. **No fixture yet captures a narrow-role caller's access token.** This is a
+   smaller gap than it first looks. `loggedOutUserFixture`
+   (`internal/conformance/fixture.go`, registered as `logged-out-user`) already
+   creates `gloak-probe-logged-out` through the API, sets a password on it and
+   password-grants **that user** on `admin-cli` - so minting a token for
+   somebody other than the bootstrap administrator is an established move, not
+   a missing capability. Two more fixtures grant on `gloak-confidential` rather
+   than `admin-cli`. What `logged-out-user` captures is
+   `{"user_refresh_token": "refresh_token"}`, because a refresh token is what
+   its case needs; nothing captures the **access** token, and no fixture
+   assigns the user a role before minting. Those two steps are the remainder.
+   The same two would serve F28's caller-relative predicate, which is pinned by
+   unit tests alone and whose two `available` reads count as served on the
+   strength of the administrator's answer.
 
-So the honest statement of the remaining work is a measurement task plus a
-harness task, where it used to be a dependency on another sub-project.
+So the honest statement of the remaining work is a measurement task plus two
+fixture steps, where it used to be a dependency on another sub-project. Blocker
+1 is sufficient on its own: even with the fixture in hand there is nothing
+correct to assert until the filtering is measured and built.
 `admin/users/list-without-view-users` stays `Pending` and its `Reason` now
-names those two rather than role assignment. `internal/admin`'s own tests
-still cover what they can: TestQueryUsersOpensTheListingButNotTheRead pins the
-status codes.
+names those rather than role assignment. `internal/admin`'s own tests still
+cover what they can: TestQueryUsersOpensTheListingButNotTheRead pins the status
+codes.
 
 ## F18: tokens carry no roles, so `aud` is wrong and introspection is too permissive (closed)
 
@@ -651,10 +660,11 @@ over an order sorted by name - is in the "Role listing: first and max" section
 of `2026-08-18-keycloak-26.7.1-observed.md`. Every detail this entry listed as
 unmeasured now is: `first` past the end is `[]` rather than an error, `max=0`
 is an empty array rather than "ignored", and the bounds apply after `search`
-narrows the set. Seven conformance cases cover it: four send `first` or `max`
-(`list-realm-page-empty`, `-past-end`, `-first`, `-no-search`) and three send
-only `search` (`list-realm-brief`, `-full`, `-search-excludes-client-roles`),
-which is the gate's other half.
+narrows the set. Seven conformance cases cover it. Four send `first` or `max`:
+`admin/roles/list-realm-page-empty`, `list-realm-page-past-end`,
+`list-realm-page-first` and `list-realm-page-no-search`. Three send only
+`search`, which is the gate's other half: `admin/roles/list-realm-brief`,
+`list-realm-full` and `list-realm-search-excludes-client-roles`.
 
 *Not closed:* the composite listings, which this entry also names.
 `listComposites` (`internal/admin/roles.go`) still reads neither parameter,
@@ -741,14 +751,19 @@ configurable" passage of `2026-08-18-keycloak-26.7.1-observed.md`.
 `create-realm` refuse `PUT` to a full administrator too, and Gloak accepts it.**
 Both answer 403 to a `PUT` carrying the role's own representation unchanged,
 where `offline_access` answers 204 to that body and to one that adds an
-`attributes` key. So it is those two roles specifically - the same two the
-caller-relative rule of F28 singles out as the realm-level admin roles - and not
-built-in roles in general. `updateRealmRole` has no check at all, so Gloak
-answers 204 to all of them. Filed here rather than as its own entry because the
-fix is the same shape and the same call site family; the predicate is wider than
-`ownedByRealmOwnClient` and has to add the two realm roles by name **within the
-realm's own container**, which is how F28's `mayGrantRole` already decides them.
-`DELETE` on those two realm roles was not measured.
+`attributes` key. So the refusal is not about attributes and not about being
+bootstrapped. `updateRealmRole` has no check at all, so Gloak answers 204 to
+all of them.
+
+**The boundary is not measured.** Two of `master`'s five realm roles,
+`default-roles-master` and `uma_authorization`, were never probed, so "these two
+and no others" is one negative control short of a sweep. That `admin` and
+`create-realm` happen to be the two realm roles F28's predicate treats as admin
+roles is suggestive and is not evidence. Whoever fixes this measures all five
+first, and `DELETE` alongside `PUT`, rather than assuming the predicate
+transfers. Filed here rather than as its own entry because the fix is the same
+shape and the same call-site family as the client half above; if the boundary
+turns out to be F28's admin-role set, `mayGrantRole` already computes it.
 
 ## F27: `make oracle` exercises no role commands
 

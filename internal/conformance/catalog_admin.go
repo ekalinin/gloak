@@ -1290,13 +1290,18 @@ var adminCases = []Case{
 		},
 		Status: Pending,
 		// Role assignment landed with P2's second cut, so the step this
-		// fixture was waiting for exists now. What is still missing is a
-		// fixture that mints a token for somebody other than the bootstrap
-		// administrator: every fixture in this package password-grants
-		// `admin` on `admin-cli`. That capability is shared with F28's
-		// caller-relative predicate, whose two `available` reads have no
-		// conformance case for the same reason. See F17.
-		Reason:  "no fixture mints a non-administrator token, and the listing is not filtered yet - F17",
+		// fixture was waiting for exists now. Minting a token for somebody
+		// other than the bootstrap administrator is established too -
+		// loggedOutUserFixture password-grants gloak-probe-logged-out on
+		// admin-cli. What is missing is narrower: that fixture captures the
+		// refresh token, not the access token, and no fixture assigns the
+		// user a role before minting. Those two steps would also give F28's
+		// caller-relative predicate its first conformance case.
+		//
+		// The blocker that stands on its own is the other one: the listing
+		// is not filtered by the caller's visibility, and what a partly
+		// sighted caller sees has never been measured. See F17.
+		Reason:  "the listing is not filtered by caller visibility, and that filtering is unmeasured - F17",
 		Fixture: "",
 		Request: Request{
 			Method:  http.MethodGet,
