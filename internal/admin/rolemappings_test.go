@@ -1626,10 +1626,24 @@ func TestOrdinaryNamesDoNotSeedTheImplicationClosure(t *testing.T) {
 	mrUUID := clientUUID(t, s, realm, "master-realm")
 	available := "/admin/realms/master/users/" + victim + "/role-mappings/clients/" + mrUUID + "/available"
 
+	collisions := []string{"manage-realm", "impersonation", "manage-events"}
+
 	before := mappingNames(t, h, available, caller)
+	// Without these two guards the comparison at the end asserts nothing: an
+	// empty list stays empty, and a name already in the list cannot be seen to
+	// arrive. This caller legitimately gets 12 of master-realm's 21 through
+	// manage-clients and manage-users, and none of the three is among them.
+	if len(before) == 0 {
+		t.Fatalf("%s: empty before the collision, so the comparison asserts nothing", available)
+	}
+	for _, n := range collisions {
+		if slices.Contains(before, n) {
+			t.Fatalf("%s is already offered, so its arrival cannot be detected: %v", n, before)
+		}
+	}
 
 	adminCli := clientUUID(t, s, realm, "admin-cli")
-	for _, n := range []string{"manage-realm", "impersonation", "manage-events"} {
+	for _, n := range collisions {
 		if w := postJSON(t, h, "/admin/realms/master/clients/"+adminCli+"/roles", `{"name":"`+n+`"}`, caller); w.Code != http.StatusCreated {
 			t.Fatalf("mint an ordinary role named %s: %d %s", n, w.Code, w.Body)
 		}
