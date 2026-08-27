@@ -40,9 +40,16 @@ Three top-level trees carry tests:
 
 `tests/base` holds **2490 test methods**: 2483 `@Test` plus 7
 `@ParameterizedTest`. They are spread over the 364 of its 484 `.java` files
-that declare at least one, and 398 of those files carry
-`@KeycloakIntegrationTest`, the annotation that starts a server. Every `.java`
-file in `tests/base` is under `src/test/java`.
+that declare at least one. A different 398 of those 484 carry
+`@KeycloakIntegrationTest`, the annotation that starts a server, and the two
+sets overlap in **353** files - those are the ones that both declare a test
+method and run it against a live server, and they are the mining ground. Every
+`.java` file in `tests/base` is under `src/test/java`.
+
+(An earlier version of this line read "398 of those files", with "those"
+pointing at the 364. That cannot be: 398 is the larger number. The annotation
+is counted over all 484, which is why the intersection had to be taken
+separately.)
 
 **An earlier version of this line said 2643, and that number was a grep
 artifact.** It came from `grep -rho '@Test[A-Za-z]*'`, which has no word

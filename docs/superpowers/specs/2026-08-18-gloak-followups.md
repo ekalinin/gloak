@@ -363,17 +363,39 @@ caller's own view permission, `clientAccessFor(...).View` and
 gets `[]` from the listing and `7` from the count. So the fix belongs in the
 listing alone, and the two endpoints disagreeing is the contract.
 
-It cannot become a conformance case until role assignment is served - that is
-the Role Mapper tag, P2's second cut - because a fixture reaching a
-narrow-role caller has to build one through the API in both the reference
-container and Gloak. `internal/admin`'s own tests cover what they can:
-TestQueryUsersOpensTheListingButNotTheRead pins the status codes.
+**Updated 2026-08-27: the blocker this entry named is gone, and it is still
+open.** The user halves of `Role Mapper` and `Client Role Mappings` landed with
+P2's second cut, so role assignment is served on both locators and both verbs.
+A fixture can now build a narrow-role caller end to end without leaving the
+API - create a user, set a password on it, `POST` the one role it should hold
+to `.../role-mappings/realm`, and password-grant it on `admin-cli` - and every
+one of those steps is served by Gloak and recorded against Keycloak.
 
-Role assignment does not arrive with the roles half of the second cut, the
-work this entry's own measurements came out of - `Role Mapper` and `Client
-Role Mappings`' user halves are the second half of that cut, still to be
-built. So this stays open, and its conformance case with it, until that half
-lands.
+Two things still hold it open, and neither is the one this entry was waiting
+for:
+
+1. **The filtering is not implemented, and its details are not measured.**
+   What is measured is the top of this entry: a `query-` caller gets 200 and an
+   empty array. What a `view-users` caller sees when it may view *some* users
+   is not, and neither is `GET /clients` for a `query-clients` caller beyond
+   the 200 `[]`. `clientAccessFor(...).View` and `userAccessFor(...).View` are
+   Gloak's own notions; the sweep that says what Keycloak puts in those lists
+   has not been run. This entry should not be closed by wiring up a predicate
+   nobody measured.
+2. **No conformance fixture mints a token for anybody but the bootstrap
+   administrator.** Every fixture in `internal/conformance/fixture.go`
+   password-grants `admin` on `admin-cli`. The *steps* to do otherwise now
+   exist; the fixture does not. That capability is shared, not specific to
+   this entry: F28's caller-relative predicate is pinned by unit tests alone
+   for exactly the same reason, and both `available` reads count as served on
+   the strength of the administrator's answer.
+
+So the honest statement of the remaining work is a measurement task plus a
+harness task, where it used to be a dependency on another sub-project.
+`admin/users/list-without-view-users` stays `Pending` and its `Reason` now
+names those two rather than role assignment. `internal/admin`'s own tests
+still cover what they can: TestQueryUsersOpensTheListingButNotTheRead pins the
+status codes.
 
 ## F18: tokens carry no roles, so `aud` is wrong and introspection is too permissive (closed)
 
@@ -629,7 +651,10 @@ over an order sorted by name - is in the "Role listing: first and max" section
 of `2026-08-18-keycloak-26.7.1-observed.md`. Every detail this entry listed as
 unmeasured now is: `first` past the end is `[]` rather than an error, `max=0`
 is an empty array rather than "ignored", and the bounds apply after `search`
-narrows the set. Seven conformance cases cover it.
+narrows the set. Seven conformance cases cover it: four send `first` or `max`
+(`list-realm-page-empty`, `-past-end`, `-first`, `-no-search`) and three send
+only `search` (`list-realm-brief`, `-full`, `-search-excludes-client-roles`),
+which is the gate's other half.
 
 *Not closed:* the composite listings, which this entry also names.
 `listComposites` (`internal/admin/roles.go`) still reads neither parameter,
@@ -690,22 +715,40 @@ of F24's fix `eachComposite` refuses both composite writes on those roles.
 `user_role_mapping` rows away with it and silently strips the right from every
 user that held it.
 
-**Keycloak's behaviour here is unmeasured.** F24 is evidence that the "the
-realm's own client is never configurable" rule extends past create - it turned
-out to cover both composite verbs - so the likely answer is 403, but likely is
-not measured and this repository does not ship likely. Two `curl`s against a
-live 26.7.1 with the full administrator token settle it:
+**Measured 2026-08-27, and the answer is 403 on all four.** This entry used to
+say Keycloak's behaviour here was unmeasured and that 403 was only likely; the
+four requests it asked for were run against a live 26.7.1 with the full
+administrator token, and `query-groups` was read back afterwards and is still
+there:
 
 ```
-PUT    /admin/realms/master/clients/{master-realm uuid}/roles/query-groups
-DELETE /admin/realms/master/clients/{master-realm uuid}/roles/query-groups
+PUT    /admin/realms/master/clients/{master-realm uuid}/roles/query-groups   403
+PUT    /admin/realms/master/roles-by-id/{query-groups id}                    403
+DELETE /admin/realms/master/roles-by-id/{query-groups id}                    403
+DELETE /admin/realms/master/clients/{master-realm uuid}/roles/query-groups   403
 ```
 
-and the `roles-by-id` forms of the same two, since F24 showed the two route
-families have to be checked separately. If they are 403, the check already
-written for F24 - `ownedByRealmOwnClient` in `internal/admin/roles.go` - is
-the piece to reuse; the only decision is where it goes so that both families
-reach it, which for these two is not `eachComposite`.
+The `PUT` bodies were the role's own representation unchanged, so nothing about
+the content earns the refusal. Both route families were asked, because F24
+showed they have to be. So this is now an implementation gap, not an unmeasured
+one: the check already written for F24 - `ownedByRealmOwnClient` in
+`internal/admin/roles.go` - is the piece to reuse, and the only decision left is
+where it goes so that both families reach it, which for these two is not
+`eachComposite`. Verbatim transcript in the "realm's own client is never
+configurable" passage of `2026-08-18-keycloak-26.7.1-observed.md`.
+
+**The same pass found a second, wider divergence: the realm roles `admin` and
+`create-realm` refuse `PUT` to a full administrator too, and Gloak accepts it.**
+Both answer 403 to a `PUT` carrying the role's own representation unchanged,
+where `offline_access` answers 204 to that body and to one that adds an
+`attributes` key. So it is those two roles specifically - the same two the
+caller-relative rule of F28 singles out as the realm-level admin roles - and not
+built-in roles in general. `updateRealmRole` has no check at all, so Gloak
+answers 204 to all of them. Filed here rather than as its own entry because the
+fix is the same shape and the same call site family; the predicate is wider than
+`ownedByRealmOwnClient` and has to add the two realm roles by name **within the
+realm's own container**, which is how F28's `mayGrantRole` already decides them.
+`DELETE` on those two realm roles was not measured.
 
 ## F27: `make oracle` exercises no role commands
 
@@ -1176,10 +1219,12 @@ first: which verbs get 405 and on which paths, swept across route families
 rather than generalised from this one, since generalising from one sweep is
 what put the too-broad sentence in `AGENTS.md` in the first place.
 
-`AGENTS.md` has not been edited. Its bullet is the contract for the two 404
-bodies, which are unchanged and still measured; only the "not 405" clause is
-now known to be narrower than it reads, and rewriting it before the rule is
-known would replace one guess with another.
+`AGENTS.md`'s bullet has not been rewritten, only marked. Its text is the
+contract for the two 404 bodies, which are unchanged and still measured; only
+the "not 405" clause is now known to be narrower than it reads, and rewriting
+it before the rule is known would replace one guess with another. So the
+bullet stands and the sentence under it - "That rule is measured too broad" -
+records what this entry measured and points back here.
 
 Transcript: the "A wrong method is not always 404" section of
 `2026-08-18-keycloak-26.7.1-observed.md`.
@@ -1252,7 +1297,7 @@ and never reads `name`.
 `./gloak serve -db sqlite` on 2026-08-27, subject `t8-verify`, so that this
 entry states what Gloak does rather than what reading it suggests:
 
-| body | Keycloak | Gloak | |
+| body | Keycloak | Gloak | verdict |
 |---|---|---|---|
 | `[{"id":R}]` | 404 `Role not found` | **204** | diverges |
 | `[{"name":"role-two"}]` | 404 `Role not found` | 404 `Role not found` | **agrees** |

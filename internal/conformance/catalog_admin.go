@@ -1288,8 +1288,15 @@ var adminCases = []Case{
 			Section:   "Users: get users, caller lacking view-users",
 			Retrieved: "2026-08-22",
 		},
-		Status:  Pending,
-		Reason:  "the fixture needs role assignment, which is P2's second cut",
+		Status: Pending,
+		// Role assignment landed with P2's second cut, so the step this
+		// fixture was waiting for exists now. What is still missing is a
+		// fixture that mints a token for somebody other than the bootstrap
+		// administrator: every fixture in this package password-grants
+		// `admin` on `admin-cli`. That capability is shared with F28's
+		// caller-relative predicate, whose two `available` reads have no
+		// conformance case for the same reason. See F17.
+		Reason:  "no fixture mints a non-administrator token, and the listing is not filtered yet - F17",
 		Fixture: "",
 		Request: Request{
 			Method:  http.MethodGet,
