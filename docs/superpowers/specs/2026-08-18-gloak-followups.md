@@ -248,7 +248,7 @@ appears to.
   word order and no longer does: `UnorderedWords` sorts the words inside a string.
 - **`RunFixture` ignores a step's status code.** Split out as **F34** rather than
   kept here, because it is the one item on this list that has already recorded a
-  wrong contract rather than merely being able to.
+  wrong contract rather than merely being able to. **Closed 2026-08-27.**
 
 One shape-level note rather than a defect:
 
@@ -992,12 +992,15 @@ The rule:
 > role - itself, or one measured to subsume it.
 
 **One predicate, not two.** For every one of 23 caller rows, the set of roles a
-caller may write is byte-for-byte the set its own `available` read returns, on
-the realm locator and on the client one. The read filter and the write check are
-the same question, checked cell by cell rather than assumed from the
-resemblance. It is `mayGrantRole` in `internal/admin/auth.go`, called from
-`eachMapping`, `availableRealmMappings`, `availableClientMappings` and
-`addComposites`' `mayAttachChild` - the four this entry counts.
+caller may write is the set its own `available` read returns, on the realm
+locator and on the client one. The read filter and the write check are the same
+question rather than two that agree by coincidence. (The *equality* is claimed
+more strongly in `2026-08-18-keycloak-26.7.1-observed.md` than the evidence on
+that page supports - the matrix-B `available` block was never pasted. See F35.)
+It is `mayGrantRole` in `internal/admin/auth.go`, called from **three** call
+sites serving four surfaces: `eachMapping`, `grantable` - which both
+`availableRealmMappings` and `availableClientMappings` go through, exactly as
+the write pair shares `eachMapping` - and `addComposites`' `mayAttachChild`.
 
 Three things the sweep found that the two-caller version could not:
 
@@ -1016,9 +1019,20 @@ Three things the sweep found that the two-caller version could not:
   `manage-realm` is assignable in full by a `manage-users` caller, while
   `master-realm`'s roles of those names are refused it.
 
-Nothing is re-filed from this entry: all four call sites are covered and the
-predicate is one. The name-collision hole the third point brushes against is
-Gloak's own and older than F28 - see F32.
+**F28 is closed against callers who cannot obtain a name collision.** That
+qualification is the entry, not a footnote on it. The rule above is
+caller-relative, and the caller's side of it is a name test as long as F32
+stands: `has` and `hasAny` are keyed on the role name with the owning container
+dropped, so a caller who can mint or rename an ordinary role into an admin
+role's name passes a guard it does not hold. `mayGrantRole` no longer inherits
+that - its own caller side was moved onto the container test on 2026-08-27, see
+the closing note under F32 - but the guards in front of it did not move, and a
+caller that reaches a route it should not have reached is still inside F28's
+surface when it gets there. **F28 is not fully closed until F32 is**, and F32 is
+where the remaining half lives.
+
+Nothing else is re-filed from this entry: all three call sites are covered and
+the predicate is one.
 
 Full transcript, including all four matrices as data: the "A caller may hand out
 a role only if its own rights already confer it" section of
@@ -1153,6 +1167,10 @@ coarse gate was swept on this route family only; the credential endpoints and
 `GET /users/{id}` take a user id too and were not measured, so whoever fixes
 this should sweep them in the same pass rather than assume the same gate.
 
+**F36 wants the same two routes swept for a different question** - which roles
+open them at all, where this entry asks in what order the two checks run. Same
+fixtures, same tokens, two columns; do them together.
+
 Transcript: the "Existence is answered before authorization, but only for the
 users family" section of `2026-08-18-keycloak-26.7.1-observed.md`.
 
@@ -1275,17 +1293,51 @@ F28 had, one layer down. Keycloak is immune because it resolves the caller's
 admin roles by container, which is exactly what F28's own predicate was measured
 doing and what `mayGrantRole` implements for the role it is judging.
 
-`mayGrantRole` inherits the hole for the *caller* side: `grants()` is seeded
-from `caller.roles`, so an impostor `manage-clients` confers the client-domain
-roles there too. It is no weaker than the guard beside it - the same caller
-already passes `guard("manage-clients")` on every client route - so closing F28
-did not widen anything, but it did not narrow this either.
+**`mayGrantRole` inherited the hole for the *caller* side, and that half is now
+fixed.** `grants()` was seeded from `caller.roles`, so an impostor
+`manage-clients` conferred the client-domain roles there too.
 
-The fix is not local. `caller` would have to carry the container alongside the
-name, which means `resolveCaller` resolving each effective role's owning client,
-and every `has`/`hasAny` call site deciding which container it means. That is
-the whole authorization layer of `internal/admin`, so it wants its own task
-rather than a bolt-on to the one that found it.
+This entry used to say that was harmless - "no weaker than the guard beside it -
+the same caller already passes `guard("manage-clients")` on every client route -
+so closing F28 did not widen anything". **Both halves of that sentence were
+wrong, and it is corrected here rather than deleted, because the reasoning is
+what failed and not only the wording.**
+
+- The predicate consults `grants()` *before* any container test, so it is not a
+  second opinion on a decision the guard already made. It is the whole decision
+  for a role whose name collides.
+- The names that mattered are `admin` and `create-realm`, and **no route on
+  `694dfc7`, the commit before this branch, requires either of them.** They
+  conferred nothing before F28 was closed. Afterwards they conferred the ability
+  to hand out realm superuser, which is the widening the sentence denied.
+
+Measured on the branch head by review, 2026-08-27, and the minimal precondition
+is narrower than this entry's own: `manage-clients` **alone**, plus the default
+roles every `POST /users` grants. `account` is not the realm's own client, so a
+`manage-clients` caller may rename its `manage-account` to `admin` and its
+`view-profile` to `manage-users`; the second rename passes `guard` by F32, and
+the first then passes `mayGrantRole` by the same name-keying. The realm role
+`admin` goes to any user: 403 before, 204 after, and the subject's realm
+mappings read back `[admin default-roles-master]`. The implication closure
+amplified each collision - ordinary roles named `manage-realm`, `impersonation`
+and `manage-events` took a caller's `available` list on `master-realm` from 12
+roles to 19.
+
+`mayGrantRole`'s caller side was moved onto the container test the same day, in
+`fix(admin): judge the caller's own roles by container, not by name`:
+`adminRoleNames` reduces the caller's effective set to the admin role names in
+it, and `grants()` closes over that instead of over every name held.
+`internal/admin/rolemappings_test.go` carries the regression.
+
+**What remains is F32 proper**, which this branch does not introduce: on
+`694dfc7` the same rename already gets a `manage-clients` caller to
+`POST /roles` answering 201. The remaining fix is not local. `caller` would have
+to carry the container alongside the name, which means `resolveCaller` resolving
+each effective role's owning client - `adminRoleNames` now does exactly that for
+the grant set, so the mechanism exists - and every `has`/`hasAny` call site
+deciding which container it means. That is the whole authorization layer of
+`internal/admin`, so it wants its own task rather than a bolt-on to the one that
+found it. **F28 is qualified on this entry**: see its closing note.
 
 ## F33: a mapping write resolves the role by id, where Keycloak resolves it by name
 
@@ -1380,11 +1432,21 @@ handler is fixed, the verifier's "already matches, promote it" alarm says so.
 Transcript: the "A mapping write resolves the role by name, and the id has to
 agree" section of `2026-08-18-keycloak-26.7.1-observed.md`.
 
-## F34: a fixture step that fails is silent, so the recorder can write a wrong contract and pass
+## F34: a fixture step that fails is silent, so the recorder can write a wrong contract and pass (closed)
 
 Found 2026-08-27 by Task 8 of `feat/p2-role-mappings`, the hard way. Split out
 of F13 rather than added to it: every other item on that list is a way the
 harness *could* do less than it appears to, and this one already did.
+
+**Closed 2026-08-27** by `fix(conformance): fail a fixture whose step is
+refused`. `Step.ExpectStatus` takes the first of the two options sketched below,
+defaulting to any 2xx; the failure names the step index, the method, the path,
+the expected status and the body. The 24 creates whose repeat answers 409 on the
+recorder's shared container carry `idempotentCreate` explicitly, which is what
+turns each of the comments that documented that 409 into something checked; the
+creates that capture from `Location` keep the strict default, because a 409
+leaves them nothing to read. `TestRunFixtureFailsOnARefusedStep` and
+`TestRunFixtureAcceptsAnExpectedNon2xx` pin both halves.
 
 `RunFixture` (`internal/conformance/fixture.go:1130`) reads `resp.StatusCode`
 only to decorate a capture-failure message. A step whose request is refused -
@@ -1424,3 +1486,75 @@ body, because the symptom appears one request later at the earliest.
 Worth doing before the next family of endpoints is recorded, not after: the cost
 of this defect scales with how much of the catalogue is written by fixtures that
 mutate state, and that is the direction every remaining chapter goes.
+
+## F35: `available` is claimed equal to the write set cell by cell, and the comparison is not on the page
+
+Found 2026-08-27 by review of `feat/p2-role-mappings`. Nothing is falsified -
+this is a **traceability** defect, which in a project whose governing rule is
+"observable values are measured, never remembered" is the kind that matters.
+
+`2026-08-18-keycloak-26.7.1-observed.md` says that for all 23 caller rows of
+matrix B the set a caller may `POST` is "byte-for-byte the set its own
+`available` read returns ... Not 'resembles': the same set, on every row, checked
+cell by cell." F28's own entry repeated it. The write cells for matrices B, C and
+D are pasted, and matrix A's `available` output is pasted - but matrix A's
+callers are `view-users` plus row, which measures the *gate*, not the equality.
+**The matrix-B `available` block is in neither the observed document nor
+`task-7-report.md`.**
+
+The document's own arithmetic exposes it: 3178 claimed verdicts minus 1890
+pasted write cells is 1288, exactly two blocks of 23 by 28 read verdicts, one of
+which is on the page. The other is the one the equality rests on.
+
+The plan for that task forbade exactly this: "Report raw request and response
+text, not summary tables. A reviewer cannot check a table against anything."
+
+**The consequence is bounded.** A wrong read filter produces a wrong list, not
+an escalation - the writes are guarded by the same predicate whatever the reads
+show, and those cells *are* pasted. The wording in both documents has been
+downgraded to what the page supports.
+
+The container is gone, so this cannot be re-measured now. **Sweep instruction
+for whoever next has one running:** build matrix B's 23 callers again
+(`manage-users` + each of the 21 `master-realm` roles, plus `manage-users` alone
+and the realm role `admin`), and for each caller read
+`GET /users/{subject}/role-mappings/realm/available` and
+`.../role-mappings/clients/{master-realm}/available` with a fresh token minted
+immediately before each call. Paste the two lists verbatim per row beside that
+row's write line. The claim is true only if each list equals that row's `204`
+columns exactly; if it does not, the read filter and the write check are two
+predicates and `grantable` is wrong to share `mayGrantRole`.
+
+## F36: `manage-users` opens all six mapping reads and is refused `GET /users/{id}`
+
+Filed 2026-08-27 by review of `feat/p2-role-mappings`. Pre-existing, needs a
+container, and it is the **too-restrictive** direction this cut has already
+reverted twice - which is the reason it is worth a sweep rather than a shrug.
+
+`manage-users` is not composite over `view-users`: it has no children at all,
+measured. It nevertheless opens all seven role-mapping reads, which is why
+`userMappingsReadRoles` is `{view-users, manage-users}` rather than `view-users`
+alone. Two neighbouring routes that take a user id were never swept the same way
+and are still guarded by `view-users` on its own:
+
+- `GET /admin/realms/{realm}/users/{userID}` (`internal/admin/router.go:41`)
+- `GET /admin/realms/{realm}/users/{userID}/credentials` (`router.go:47`)
+
+The comment at `router.go:386-389` records only that `query-users` was measured
+getting 403 on the first of those and 200 on the listing and the count. **That
+says nothing about `manage-users`**, and a caller holding `manage-users` alone
+can currently update and delete a user it may not read - which is not a shape
+Keycloak is likely to have.
+
+**Sweep instruction:** one user per role, a fresh token minted immediately
+before each call, over `view-users`, `query-users` and `manage-users` at least,
+against `GET /users/{id}`, `GET /users/{id}/credentials`, and the rest of the
+credential family (`PUT .../reset-password`, `DELETE
+.../credentials/{id}`, `PUT .../credentials/{id}/userLabel`, the two `move*`
+routes and `PUT .../disable-credential-types`) so the whole family is decided in
+one pass rather than one route at a time.
+
+F30 also names `GET /users/{id}` and the credential endpoints, for a different
+question - whether the subject is resolved before the caller is judged, which is
+about the **404-before-403 ordering** rather than about which roles open the
+route. **Do both in the same pass**: same fixtures, same tokens, two columns.
