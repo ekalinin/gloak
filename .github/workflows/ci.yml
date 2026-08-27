@@ -1,0 +1,79 @@
+name: ci
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The parity step needs the merge base, so the shallow default
+          # clone is not enough.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: CGO_ENABLED=0 go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # Nothing behind the docker build tag runs here: not the Postgres driver
+      # suite, not make oracle, not make record. A green run does NOT mean the
+      # two store drivers agree; that evidence still comes from running the
+      # Postgres suite by hand, as AGENTS.md requires.
+      - name: Test
+        run: CGO_ENABLED=0 go test ./...
+
+      - name: Parity report for this branch
+        run: |
+          GLOAK_PARITY_REPORT="$RUNNER_TEMP/parity-head.tsv" \
+            CGO_ENABLED=0 go test ./internal/conformance/ -run TestCoverage
+
+      - name: Parity report for the merge base
+        run: |
+          base=$(git merge-base "origin/${{ github.base_ref }}" HEAD)
+          git worktree add "$RUNNER_TEMP/base" "$base"
+          cd "$RUNNER_TEMP/base"
+          GLOAK_PARITY_REPORT="$RUNNER_TEMP/parity-base.tsv" \
+            CGO_ENABLED=0 go test ./internal/conformance/ -run TestCoverage
+
+      # Built rather than "go run": go run collapses any exit code above 1 down
+      # to 1, which would make a real parity decrease (exit 1) indistinguishable
+      # from a report that could not be read (exit 2).
+      - name: Build the parity command
+        run: CGO_ENABLED=0 go build -o "$RUNNER_TEMP/parity" ./cmd/parity
+
+      - name: Compare and comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -o pipefail
+          status=0
+          "$RUNNER_TEMP/parity" \
+            "$RUNNER_TEMP/parity-base.tsv" "$RUNNER_TEMP/parity-head.tsv" \
+            > "$RUNNER_TEMP/comment.md" || status=$?
+
+          id=$(gh pr view "${{ github.event.pull_request.number }}" \
+            --json comments \
+            --jq '[.comments[] | select(.body | startswith("<!-- gloak-parity -->")) | .url] | last // ""' \
+            | sed 's/.*#issuecomment-//')
+          if [ -n "$id" ]; then
+            gh api --method PATCH "repos/${{ github.repository }}/issues/comments/$id" \
+              -F body=@"$RUNNER_TEMP/comment.md" >/dev/null
+          else
+            gh pr comment "${{ github.event.pull_request.number }}" \
+              --body-file "$RUNNER_TEMP/comment.md"
+          fi
+
+          exit $status
