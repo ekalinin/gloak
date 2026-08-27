@@ -29,9 +29,10 @@ func TestRenderSaysSoWhenNothingMoved(t *testing.T) {
 		t.Fatalf("want an explicit no-change line:\n%s", got)
 	}
 	// A change expected to move the meter and did not is worth seeing, so the
-	// totals still appear.
-	if !strings.Contains(got, "100 of 485") {
-		t.Fatalf("want the total even when flat:\n%s", got)
+	// totals still appear. Assert the exact format to discriminate against an
+	// arrow-form "(+0)" that would appear if the no-change branch was dropped.
+	if !strings.Contains(got, "100 of 485, no change") {
+		t.Fatalf("want the no-change format, not an arrow:\n%s", got)
 	}
 }
 
@@ -57,5 +58,21 @@ func TestRenderNamesChaptersThatAppearedAndDisappeared(t *testing.T) {
 
 	if !strings.Contains(got, "admin/new") || !strings.Contains(got, "admin/gone") {
 		t.Fatalf("want both named:\n%s", got)
+	}
+}
+
+func TestRenderSaysSoWhenDecreaseHasNoReason(t *testing.T) {
+	d := Diff{BeforeServed: 100, AfterServed: 97, Documented: 485,
+		Moved: []ChapterDelta{{Name: "admin/users", Before: 14, After: 11}}}
+
+	got := Render(d, "")
+
+	if !strings.Contains(got, "no reason was given") {
+		t.Fatalf("want the no-reason message:\n%s", got)
+	}
+	// Ensure the reason-quoting format is not present: the pattern is the
+	// specific message followed by the markdown quote block.
+	if strings.Contains(got, "The total fell, and the pull request gives a reason") {
+		t.Fatalf("want no reason-quoting block when reason is empty:\n%s", got)
 	}
 }
