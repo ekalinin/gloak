@@ -30,7 +30,9 @@ measurement Task 7 needs; it is still open. Task 5 then shipped the client pair
 and measured it filtered as well, taking F28 from four measured surfaces to
 five - four places in the code, since the two write pairs share one helper.
 
-**Status, 2026-08-27.** Task 7 **closed F28** on all four call sites. The rule
+**Status, 2026-08-27.** Task 7 **closed F28** on all three call sites - the four
+surfaces above, with the write pair sharing `eachMapping` and the two
+`available` reads sharing `grantable`. The rule
 it needed - the one this list has been calling "not in this repository" since
 2026-08-25 - was derived by sweeping 22 admin roles against 27 children on four
 different surfaces, and the read filter and the write check turned out to be one
@@ -1107,6 +1109,51 @@ up. `clientMappingsOf` was deliberately left to fail rather than skip the
 orphan: skipping would make this the one endpoint that conceals F29 while
 answering with a role list it knows to be short. Fixing F29 fixes this with it.
 
+### 2026-08-27: one symptom is now deliberately concealed, and this says which
+
+`adminRoleNames` resolves each of the caller's client roles to its owning client
+on **every** admin request - that is F28's caller-side fix. Run against an
+orphan it propagated `ErrNotFound`, and the effect was out of all proportion to
+F29's own severity:
+
+- a caller holding one role on a deleted client got **500 on every admin
+  route**, not merely on the endpoints that report that role;
+- it was **unrecoverable through the API**, because the role-mapping route that
+  would remove the offending mapping answered 500 too;
+- and `DELETE /admin/realms/{realm}/clients/{uuid}` on `master-realm`, which
+  Gloak answers 204, took the **bootstrapped administrator** down with it.
+
+**The decision, taken deliberately: `adminRoleNames` now treats `ErrNotFound`
+from that lookup as "not an admin role" and carries on.** It stays fail-closed
+for the decision the set feeds - an orphan cannot be an admin role of a living
+container, so it confers nothing - and only `ErrNotFound` is swallowed; any
+other store error still stops the request.
+
+**This is against the spirit of the paragraph above, and that is the point of
+recording it here.** What is concealed: an orphan no longer announces itself on
+every admin request. What still surfaces, unchanged:
+
+- `GET /users/{id}/role-mappings` still answers 500, which is the symptom that
+  paragraph is about and the one `clientMappingsOf` refuses to hide;
+- the orphaned role is still listed by the realm-half reads with a
+  `containerId` naming a client that does not exist, still assignable, and
+  still resolvable through `roles-by-id`.
+
+So F29 is no *less* visible than it was before this branch existed; what was
+removed is a new, wider symptom this branch introduced. The alternative was
+leaving a caller unable to reach any admin endpoint, with no way back through
+the API, over a state Gloak creates by answering 204.
+
+`mayGrantRole`'s own container lookup was **not** changed and must not be:
+there the same swallow would answer "not an admin role" for the role being
+handed out and make an orphan grantable, which is fail-open. The asymmetry is
+spelled out at `adminRoleNames` in `internal/admin/auth.go`.
+`TestARoleOnADeletedClientDoesNotLockTheCallerOut` and
+`TestAFailingClientLookupStillStopsTheRequest` pin both halves.
+
+None of this reduces F29's priority. Fixing F29 removes the state, and this
+paragraph with it.
+
 ## F30: the role-mapping guards are one stage where Keycloak has two
 
 Found and measured 2026-08-26 by Task 3 of `feat/p2-role-mappings`, while
@@ -1525,7 +1572,7 @@ row's write line. The claim is true only if each list equals that row's `204`
 columns exactly; if it does not, the read filter and the write check are two
 predicates and `grantable` is wrong to share `mayGrantRole`.
 
-## F36: `manage-users` opens all six mapping reads and is refused `GET /users/{id}`
+## F36: `manage-users` opens all seven mapping reads and is refused `GET /users/{id}`
 
 Filed 2026-08-27 by review of `feat/p2-role-mappings`. Pre-existing, needs a
 container, and it is the **too-restrictive** direction this cut has already
