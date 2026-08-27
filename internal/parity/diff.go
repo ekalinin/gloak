@@ -73,6 +73,14 @@ func Compare(before, after Report) Diff {
 	for _, ch := range before.Chapters {
 		if _, still := is[ch.Name]; !still {
 			out.Disappeared = append(out.Disappeared, ch.Name)
+			// A chapter that disappears with non-zero served is also a move.
+			if ch.Served != 0 {
+				out.Moved = append(out.Moved, ChapterDelta{
+					Name:   ch.Name,
+					Before: ch.Served,
+					After:  0,
+				})
+			}
 		}
 	}
 

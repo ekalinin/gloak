@@ -101,3 +101,71 @@ func TestCompareIgnoresAnUnchangedUnenumeratedChapter(t *testing.T) {
 		t.Fatalf("moved: want none, got %+v", got.Moved)
 	}
 }
+
+// A chapter disappearing with a non-zero served count is both gone and a move, and
+// the comment has to show the regression number rather than only the name.
+func TestCompareCountsADisappearedChapterThatServed(t *testing.T) {
+	before := report(15, 505, chapter("admin/roles", 6), chapter("admin/legacy", 9))
+	after := report(6, 485, chapter("admin/roles", 6))
+
+	got := Compare(before, after)
+
+	if want := []string{"admin/legacy"}; !slices.Equal(got.Disappeared, want) {
+		t.Fatalf("disappeared: want %v, got %v", want, got.Disappeared)
+	}
+	want := []ChapterDelta{{Name: "admin/legacy", Before: 9, After: 0}}
+	if !slices.Equal(got.Moved, want) {
+		t.Fatalf("moved: want %+v, got %+v", want, got.Moved)
+	}
+}
+
+// A per-chapter fall with a flat or rising total is an honest rearrangement
+// and must not gate. Decreased must report only the total falling, not any
+// chapter falling.
+func TestCompareRearrangementWithoutDecreaseIsAllowed(t *testing.T) {
+	before := report(10, 485, chapter("admin/old", 7), chapter("admin/new", 3))
+	after := report(10, 485, chapter("admin/old", 2), chapter("admin/new", 8))
+
+	got := Compare(before, after)
+
+	if got.Decreased() {
+		t.Fatal("want false; rearrangement with flat total is not a decrease")
+	}
+	if got.Delta() != 0 {
+		t.Fatalf("want delta 0, got %d", got.Delta())
+	}
+	want := []ChapterDelta{
+		{Name: "admin/new", Before: 3, After: 8},
+		{Name: "admin/old", Before: 7, After: 2},
+	}
+	if !slices.Equal(got.Moved, want) {
+		t.Fatalf("moved: want %+v, got %+v", want, got.Moved)
+	}
+}
+
+// Sort order must be enforced. Chapters in Moved are returned sorted by name,
+// not in iteration order.
+func TestCompareSortsMoved(t *testing.T) {
+	before := report(8, 485,
+		chapter("zzz/last", 2),
+		chapter("aaa/first", 3),
+		chapter("mmm/middle", 3),
+	)
+	after := report(15, 485,
+		chapter("zzz/last", 4),
+		chapter("aaa/first", 5),
+		chapter("mmm/middle", 6),
+	)
+
+	got := Compare(before, after)
+
+	// All three should be in Moved, sorted alphabetically.
+	want := []ChapterDelta{
+		{Name: "aaa/first", Before: 3, After: 5},
+		{Name: "mmm/middle", Before: 3, After: 6},
+		{Name: "zzz/last", Before: 2, After: 4},
+	}
+	if !slices.Equal(got.Moved, want) {
+		t.Fatalf("moved: want %+v, got %+v", want, got.Moved)
+	}
+}
