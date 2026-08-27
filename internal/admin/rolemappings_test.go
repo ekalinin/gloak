@@ -1451,6 +1451,104 @@ func TestOnlyTheRealmsOwnClientCarriesAdminRoles(t *testing.T) {
 	}
 }
 
+// mayGrantRole fails **closed**: a store error on the container lookup is a
+// 500, never a grant.
+//
+// The mutation this kills is one line - `return true, nil` where auth.go
+// returns `false, err` - and it is the only one of F28's mutants that is an
+// authorization bypass rather than a wrong body. Nothing could kill it before,
+// because the error path is unreachable through a working store: it needed the
+// fault-injecting store in auth_test.go.
+//
+// The role is an **ordinary client role**, which this caller may grant, so
+// without the fault the write is 204. That is what makes the 500 evidence about
+// the error path rather than about the predicate's verdict.
+func TestMappingWriteFailsClosedWhenTheContainerLookupFails(t *testing.T) {
+	// The setup runs against a working store: the fault stays disarmed until
+	// appUUID is set. skip lets the request's **first** lookup of that client
+	// through - eachClientMapping resolving {clientUUID}, which has its own
+	// measured 404 - so the failure lands on mayGrantRole's and nowhere else.
+	var appUUID string
+	skip := 0
+	h, s, realm := newServerWrapping(t, failingClientLookup(func(id string) error {
+		if appUUID == "" || id != appUUID {
+			return nil
+		}
+		if skip > 0 {
+			skip--
+			return nil
+		}
+		return errInjected
+	}))
+	admin := tokenFor(t, h, "admin", "admin")
+	caller := tokenForRole(t, h, s, realm, "manage-users")
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-mapped","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-mapped")
+	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"probe-app"}`, admin)
+	app := clientUUID(t, s, realm, "probe-app")
+	postJSON(t, h, "/admin/realms/master/clients/"+app+"/roles", `{"name":"probe-app-role"}`, admin)
+	role := readRole(t, h, "/admin/realms/master/clients/"+app+"/roles/probe-app-role", admin)
+	base := "/admin/realms/master/users/" + uid + "/role-mappings/clients/" + app
+	body := `[{"id":"` + role.ID + `","name":"probe-app-role"}]`
+
+	// The control, with the fault disarmed: this write is allowed.
+	if w := postJSON(t, h, base, body, caller); w.Code != http.StatusNoContent {
+		t.Fatalf("control: want 204 before the fault, got %d: %s", w.Code, w.Body)
+	}
+	if w := sendJSON(t, h, http.MethodDelete, base, body, caller); w.Code != http.StatusNoContent {
+		t.Fatalf("control: want 204 undoing it, got %d: %s", w.Code, w.Body)
+	}
+
+	appUUID, skip = app, 1
+	w := postJSON(t, h, base, body, caller)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("a failed container lookup must not decide the grant: want 500, got %d: %s", w.Code, w.Body)
+	}
+	appUUID = ""
+	if got := mappingNames(t, h, base, admin); slices.Contains(got, "probe-app-role") {
+		t.Fatalf("the 500 still applied the mapping: %v", got)
+	}
+}
+
+// grantable fails closed too, on the read side of the same predicate. Its own
+// error path is a separate line from the write's, and an `available` list built
+// from a failed lookup would be a list of roles nobody checked.
+//
+// The lookup the fault aims at is the second of the request: the first is
+// clientMappingSubject resolving the path, which has its own measured 404 and
+// is not what this pins.
+func TestAvailableFailsClosedWhenTheContainerLookupFails(t *testing.T) {
+	var appUUID string
+	skip := 0
+	h, s, realm := newServerWrapping(t, failingClientLookup(func(id string) error {
+		if appUUID == "" || id != appUUID {
+			return nil
+		}
+		if skip > 0 {
+			skip--
+			return nil
+		}
+		return errInjected
+	}))
+	admin := tokenFor(t, h, "admin", "admin")
+	caller := tokenForRole(t, h, s, realm, "manage-users")
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-mapped","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-mapped")
+	postJSON(t, h, "/admin/realms/master/clients", `{"clientId":"probe-app"}`, admin)
+	app := clientUUID(t, s, realm, "probe-app")
+	postJSON(t, h, "/admin/realms/master/clients/"+app+"/roles", `{"name":"probe-app-role"}`, admin)
+	path := "/admin/realms/master/users/" + uid + "/role-mappings/clients/" + app + "/available"
+
+	if got := mappingNames(t, h, path, caller); !slices.Equal(got, []string{"probe-app-role"}) {
+		t.Fatalf("control: want [probe-app-role] before the fault, got %v", got)
+	}
+
+	appUUID, skip = app, 1
+	if w := get(t, h, path, caller); w.Code != http.StatusInternalServerError {
+		t.Fatalf("a failed container lookup must not produce a list: want 500, got %d: %s", w.Code, w.Body)
+	}
+}
+
 // The mirror of the test above, on the **caller's** side of the predicate: an
 // ordinary role named `admin` must not unlock the realm role `admin`.
 //

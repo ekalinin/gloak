@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -28,6 +29,19 @@ const testIssuer = "http://localhost:8080"
 // a caller obtains its token from it.
 func newServer(t *testing.T) (http.Handler, store.Store, *model.Realm) {
 	t.Helper()
+	return newServerWrapping(t, nil)
+}
+
+// newServerWrapping is newServer with the store the **admin** API sees passed
+// through wrap first, which is how a test reaches an error path no fixture can
+// produce.
+//
+// Only the admin side is wrapped. The protocol side mints the caller's token,
+// so a fault that reached it would fail the test setup rather than the handler
+// under test, and the store returned is the unwrapped one so a test still
+// arranges its state against a working database.
+func newServerWrapping(t *testing.T, wrap func(store.Store) store.Store) (http.Handler, store.Store, *model.Realm) {
+	t.Helper()
 	ctx := context.Background()
 	s, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "gloak.db"))
 	if err != nil {
@@ -44,8 +58,61 @@ func newServer(t *testing.T) (http.Handler, store.Store, *model.Realm) {
 	km := keys.NewManager(s)
 	mux := http.NewServeMux()
 	oidc.Register(mux, s, km, testIssuer)
-	Register(mux, s, km, testIssuer)
+	adminStore := store.Store(s)
+	if wrap != nil {
+		adminStore = wrap(s)
+	}
+	Register(mux, adminStore, km, testIssuer)
 	return oidc.WithKeycloakFallbacks(mux), s, realm
+}
+
+// errInjected is what a fault-injecting repository returns. It is deliberately
+// neither store.ErrNotFound nor store.ErrConflict: the handlers map those to
+// measured 404s and 204s, and the paths this exists to test are the ones that
+// have no measured answer but must still not be an authorization decision.
+var errInjected = errors.New("injected store failure")
+
+// faultyStore is store.Store with one repository replaced by a fault-injecting
+// one. Everything else is delegated by embedding, so the wrapper does not have
+// to track store.Store as it grows.
+//
+// It exists for the authorization error paths, which no fixture can reach:
+// mayGrantRole's container lookup can fail, and what it must do then is refuse.
+// A predicate that answered "may grant" on a store error would be a fail-open
+// authorization bypass and, before this helper, nothing in the package could
+// tell the difference.
+type faultyStore struct {
+	store.Store
+	clients *faultyClients
+}
+
+func (f *faultyStore) Clients() store.ClientRepo { return f.clients }
+
+// faultyClients fails Clients().ByID when fail says so. fail is consulted on
+// every lookup and sees the client's id, so a test that has to aim at one
+// lookup out of several the same request makes for the same client counts them
+// in its own closure - which is also what keeps the arming visible at the call
+// site rather than hidden in a counter here.
+type faultyClients struct {
+	store.ClientRepo
+	fail func(id string) error
+}
+
+func (f *faultyClients) ByID(ctx context.Context, realmID, id string) (*model.Client, error) {
+	if f.fail != nil {
+		if err := f.fail(id); err != nil {
+			return nil, err
+		}
+	}
+	return f.ClientRepo.ByID(ctx, realmID, id)
+}
+
+// failingClientLookup builds newServerWrapping's argument: a store whose client
+// lookup fails according to fail.
+func failingClientLookup(fail func(id string) error) func(store.Store) store.Store {
+	return func(s store.Store) store.Store {
+		return &faultyStore{Store: s, clients: &faultyClients{ClientRepo: s.Clients(), fail: fail}}
+	}
 }
 
 // tokenFor obtains an access token for a user through admin-cli, the way
