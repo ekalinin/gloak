@@ -26,10 +26,17 @@ import (
 
 // caller is an authenticated administrator and the roles it effectively holds:
 // its direct assignments plus everything reachable through composites.
+//
+// Two name sets, not one, and the split is what keeps F28's predicate honest.
+// roles is every name the caller holds from any container, which is what the
+// route guards ask about. adminGrants is the subset that are **admin** roles by
+// container - see adminRoleNames - and it is the only seed grants() takes, so an
+// ordinary role that happens to be named admin or manage-realm confers nothing.
 type caller struct {
-	user    *model.User
-	roles   map[string]bool
-	granted map[string]bool
+	user        *model.User
+	roles       map[string]bool
+	adminGrants map[string]bool
+	granted     map[string]bool
 }
 
 // has reports whether the caller holds a role by name. Names are unique within
@@ -98,22 +105,27 @@ var adminRoleImplications = map[string][]string{
 	"view-organizations":        {"query-organizations"},
 }
 
-// grants is the set of role names this caller may hand out: everything it
-// effectively holds, closed over adminRoleImplications.
+// grants is the set of admin role names this caller may hand out: the admin
+// roles it effectively holds, closed over adminRoleImplications.
 //
-// It is seeded from the whole effective set rather than from the admin roles
-// alone, because this package has no list of the 21 admin role names - which
-// container owns a role is what makes it an admin role, and that is a store
-// lookup mayGrantRole does per role rather than a constant here. Ordinary role
-// names landing in this map costs nothing: mayGrantRole only consults it for a
-// role it has already decided is an admin one.
+// **It is seeded from adminGrants, not from the whole effective set.** Seeding
+// it from every name the caller holds was a privilege escalation: mayGrantRole
+// consults this map *before* deciding whether the role being handed out is an
+// admin one, so an ordinary role named admin - minted on any client that is not
+// the realm's own, or renamed into place - made the caller's own name set
+// contain "admin" and unlocked the real realm role of that name. The closure
+// below amplified it, since one collided name pulls in everything
+// adminRoleImplications says that name confers.
+//
+// Ordinary roles are not in this map and do not need to be: mayGrantRole lets
+// every non-admin role through on the container test below.
 //
 // Computed once per request and memoised on the caller, which is built per
 // request and never shared.
 func (c *caller) grants() map[string]bool {
 	if c.granted == nil {
-		c.granted = make(map[string]bool, len(c.roles))
-		for name := range c.roles {
+		c.granted = make(map[string]bool, len(c.adminGrants))
+		for name := range c.adminGrants {
 			c.implies(name)
 		}
 	}
@@ -141,14 +153,18 @@ func (c *caller) implies(name string) {
 // manage-users, and all three appear in that caller's available list, while
 // master-realm's roles of the same names are refused to it.
 //
-// Ordinary roles are never checked this way, on any of the four call sites.
+// Ordinary roles are never checked this way, on any of the three call sites -
+// roles.go's mayAttachChild and rolemappings.go's grantable and eachMapping.
 // The admin roles are the ones the realm's own "{realm}-realm" client owns,
 // plus the realm roles admin and create-realm - which exist in the master realm
 // only, so a name test is enough for those two and Gloak bootstraps no other
 // realm.
 //
-// The coverage test runs **before** the container lookup, so a caller that may
-// grant the role never pays for one; a full administrator does none at all.
+// **The same container test decides both sides.** grants() carries admin role
+// names only, because adminRoleNames applied ownedByRealmOwnClient to the
+// caller's own effective set when the caller was resolved; the lookup below
+// applies it to the role being handed out. A caller that may grant the role
+// short-circuits on the coverage test and pays no lookup here.
 func (h *handler) mayGrantRole(ctx context.Context, realm *model.Realm, c *caller, role *model.Role) (bool, error) {
 	if c.grants()[role.Name] {
 		return true, nil
@@ -201,26 +217,73 @@ func (h *handler) resolveCaller(w http.ResponseWriter, r *http.Request, realm *m
 		return nil
 	}
 
-	roles, err := h.effectiveRoles(r, user)
+	held, adminGrants, err := h.effectiveRoles(r, realm, user)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return nil
 	}
-	return &caller{user: user, roles: roles}
+	return &caller{user: user, roles: held, adminGrants: adminGrants}
 }
 
 // effectiveRoles is the caller's rights: its direct assignments expanded
-// through composites, reduced to names.
+// through composites, reduced to the two name sets caller carries - every name
+// it holds, and the admin ones among them.
 //
 // The expansion is internal/roles' because internal/oidc needs the same one to
 // fill a token's realm_access and resource_access, and the two must not be
 // able to disagree about who is an administrator.
-func (h *handler) effectiveRoles(r *http.Request, user *model.User) (map[string]bool, error) {
+//
+// A store failure here is a 401/500 at the call site, never an empty role set:
+// resolveCaller returns nil rather than a caller holding nothing, which would
+// be indistinguishable from a caller that legitimately holds nothing only until
+// the first guard let it through.
+func (h *handler) effectiveRoles(r *http.Request, realm *model.Realm, user *model.User) (map[string]bool, map[string]bool, error) {
 	effective, err := roles.Effective(r.Context(), h.store.Roles(), user.ID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return roles.Names(effective), nil
+	adminGrants, err := h.adminRoleNames(r.Context(), realm, effective)
+	if err != nil {
+		return nil, nil, err
+	}
+	return roles.Names(effective), adminGrants, nil
+}
+
+// adminRoleNames reduces a role set to the names of the **admin** roles in it,
+// by the same container test mayGrantRole applies to the role being handed out:
+// the realm's own "{realm}-realm" client owns it, or it is one of the two realm
+// roles admin and create-realm.
+//
+// This is the caller side of F28's predicate and the reason it cannot be
+// defeated by a name. Deciding it here rather than in grants() is what keeps
+// grants() a pure name closure over adminRoleImplications, which has to run over
+// names because an implied role is never expanded through the store.
+//
+// The container answer is memoised per owning client, not per role: the
+// bootstrapped administrator reaches all 21 of master-realm's roles, so a naive
+// loop would do 21 identical lookups on every admin request and this does one.
+func (h *handler) adminRoleNames(ctx context.Context, realm *model.Realm, in []*model.Role) (map[string]bool, error) {
+	out := make(map[string]bool, len(in))
+	own := make(map[string]bool, 1)
+	for _, role := range in {
+		if role.ClientID == "" {
+			if role.Name == "admin" || role.Name == "create-realm" {
+				out[role.Name] = true
+			}
+			continue
+		}
+		if _, seen := own[role.ClientID]; !seen {
+			owned, err := h.ownedByRealmOwnClient(ctx, realm, role)
+			if err != nil {
+				return nil, err
+			}
+			own[role.ClientID] = owned
+		}
+		if own[role.ClientID] {
+			out[role.Name] = true
+		}
+	}
+	return out, nil
 }
 
 // writeUnauthorized emits the measured 401. It is shape 2 carrying the generic

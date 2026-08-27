@@ -1450,3 +1450,91 @@ func TestOnlyTheRealmsOwnClientCarriesAdminRoles(t *testing.T) {
 		t.Errorf("subject holds %v, want %v", got, names)
 	}
 }
+
+// The mirror of the test above, on the **caller's** side of the predicate: an
+// ordinary role named `admin` must not unlock the realm role `admin`.
+//
+// The two halves are not the same statement. The test above says the role being
+// handed out is judged by its container; this one says the roles the caller
+// already holds are judged the same way. Getting the first right and the second
+// wrong is a privilege escalation and it shipped: grants() was seeded from every
+// name the caller held, from any container, and mayGrantRole consults grants()
+// before it looks at any container - so a client role of one's own named `admin`
+// made the predicate answer true for the realm role of that name.
+//
+// The route guard is not the thing under test here. The caller holds
+// manage-users legitimately, so it reaches the handler either way; what it must
+// not reach is realm superuser. See F28's entry in the follow-ups, and F32 for
+// the name-keying that survives in `has`.
+func TestAnOrdinaryRoleNamedAdminDoesNotUnlockTheRealmRole(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	caller := tokenForRoles(t, h, s, realm, "manage-clients", "manage-users")
+	callerID := userID(t, s, realm, "only-manage-clients+manage-users")
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-victim","enabled":true}`, admin)
+	victim := userID(t, s, realm, "probe-victim")
+	victimBase := "/admin/realms/master/users/" + victim + "/role-mappings/realm"
+	grantAdmin := `[{"id":"` + readRole(t, h, "/admin/realms/master/roles/admin", admin).ID + `","name":"admin"}]`
+
+	// The control, before the collision exists: refused.
+	if got := postJSON(t, h, victimBase, grantAdmin, caller).Code; got != http.StatusForbidden {
+		t.Fatalf("control: want 403 before the collision, got %d", got)
+	}
+
+	// admin-cli is not the realm's own client, so manage-clients may mint a role
+	// named `admin` on it and the caller may assign it to itself. Both of those
+	// are legitimate and stay 201/204 - the escalation was the third step.
+	adminCli := clientUUID(t, s, realm, "admin-cli")
+	if w := postJSON(t, h, "/admin/realms/master/clients/"+adminCli+"/roles", `{"name":"admin"}`, caller); w.Code != http.StatusCreated {
+		t.Fatalf("mint an ordinary role named admin: %d %s", w.Code, w.Body)
+	}
+	impostor := readRole(t, h, "/admin/realms/master/clients/"+adminCli+"/roles/admin", caller)
+	self := "/admin/realms/master/users/" + callerID + "/role-mappings/clients/" + adminCli
+	if w := postJSON(t, h, self, `[{"id":"`+impostor.ID+`","name":"admin"}]`, caller); w.Code != http.StatusNoContent {
+		t.Fatalf("self-assign the ordinary role: %d %s", w.Code, w.Body)
+	}
+
+	if w := postJSON(t, h, victimBase, grantAdmin, caller); w.Code != http.StatusForbidden {
+		t.Fatalf("an ordinary role named admin unlocked the realm role: %d %s", w.Code, w.Body)
+	}
+	if got := mappingNames(t, h, victimBase, admin); slices.Contains(got, "admin") {
+		t.Fatalf("the victim was promoted: %v", got)
+	}
+}
+
+// The same collision through the implication closure rather than through a
+// direct name match, and on the read rather than the write.
+//
+// adminRoleImplications is keyed by name, so seeding grants() with an ordinary
+// name did not merely add that name - it added everything the admin role of that
+// name confers. Measured on the shipped code by the reviewer: three ordinary
+// roles named manage-realm, impersonation and manage-events took this caller's
+// `available` list on master-realm from 12 roles to 19.
+func TestOrdinaryNamesDoNotSeedTheImplicationClosure(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	caller := tokenForRoles(t, h, s, realm, "manage-clients", "manage-users")
+	callerID := userID(t, s, realm, "only-manage-clients+manage-users")
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-victim","enabled":true}`, admin)
+	victim := userID(t, s, realm, "probe-victim")
+	mrUUID := clientUUID(t, s, realm, "master-realm")
+	available := "/admin/realms/master/users/" + victim + "/role-mappings/clients/" + mrUUID + "/available"
+
+	before := mappingNames(t, h, available, caller)
+
+	adminCli := clientUUID(t, s, realm, "admin-cli")
+	for _, n := range []string{"manage-realm", "impersonation", "manage-events"} {
+		if w := postJSON(t, h, "/admin/realms/master/clients/"+adminCli+"/roles", `{"name":"`+n+`"}`, caller); w.Code != http.StatusCreated {
+			t.Fatalf("mint an ordinary role named %s: %d %s", n, w.Code, w.Body)
+		}
+		impostor := readRole(t, h, "/admin/realms/master/clients/"+adminCli+"/roles/"+n, caller)
+		self := "/admin/realms/master/users/" + callerID + "/role-mappings/clients/" + adminCli
+		if w := postJSON(t, h, self, `[{"id":"`+impostor.ID+`","name":"`+n+`"}]`, caller); w.Code != http.StatusNoContent {
+			t.Fatalf("self-assign the ordinary role %s: %d %s", n, w.Code, w.Body)
+		}
+	}
+
+	if got := mappingNames(t, h, available, caller); !slices.Equal(got, before) {
+		t.Fatalf("ordinary role names widened available from %v to %v", before, got)
+	}
+}
