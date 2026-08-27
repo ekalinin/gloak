@@ -2244,4 +2244,482 @@ var adminCases = []Case{
 		},
 		AssertHeaders: []string{"X-Frame-Options"},
 	},
+
+	// --- Role mappings on a user ---
+	//
+	// Measured in the "Role mappings on a user" section of
+	// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md. This block
+	// and the next record the eleven operations of the Role Mapper and Client
+	// Role Mappings tags that act on a **user**; the group and organization
+	// mirrors those two tags also carry are a later cut.
+	{
+		ID: "admin/role-mapper/list-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: get realm-level role mappings",
+			Retrieved: "2026-08-27",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/users/{user-id}/role-mappings/realm",
+		Fixture:   "admin-token-mapping-subject",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/realm",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		// A bare array, like every listing in this family. "." is the document
+		// root; see Case.Unordered.
+		Unordered: []string{"."},
+		Volatile:  []string{"*/id", "*/containerId"},
+	},
+	{
+		// The same read with briefRepresentation=false, which this endpoint
+		// **ignores**: the body is the six-key brief shape and carries no
+		// attributes key, although the subject's realm role has real attribute
+		// values. Only .../composite honours the parameter, and the three
+		// siblings disagreeing is what this case pins - the obvious tidy-up is
+		// to make them agree.
+		ID: "admin/role-mapper/list-realm-ignores-brief",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: get realm-level role mappings, briefRepresentation=false",
+			Retrieved: "2026-08-27",
+		},
+		Status: Implemented,
+		// No Operation: the case above already claims this one.
+		Fixture: "admin-token-mapping-subject",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/realm",
+			Query:   map[string]string{"briefRepresentation": "false"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		// The transitive expansion, which is a different question from the
+		// direct list above: the subject holds default-roles-master, so
+		// offline_access and uma_authorization are here and are not there.
+		ID: "admin/role-mapper/composite-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: get effective realm-level role mappings",
+			Retrieved: "2026-08-27",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/users/{user-id}/role-mappings/realm/composite",
+		Fixture:   "admin-token-mapping-subject",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/realm/composite",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		// The one read of the six that honours briefRepresentation. With it
+		// false every element grows a seventh key, and the subject's own realm
+		// role carries a real attribute value where the bootstrapped ones carry
+		// {} - which is what tells "the key appeared" from "the values arrived".
+		//
+		// No UnorderedKeys: the attributes map has one key here, so there is no
+		// key order to give up. The suite's single documented retreat from
+		// byte-exactness stays single.
+		ID: "admin/role-mapper/composite-realm-full",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: get effective realm-level role mappings, briefRepresentation=false",
+			Retrieved: "2026-08-27",
+		},
+		Status: Implemented,
+		// No Operation: admin/role-mapper/composite-realm already claims it.
+		Fixture: "admin-token-mapping-subject",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/realm/composite",
+			Query:   map[string]string{"briefRepresentation": "false"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		// **The one case in this family that enumerates the realm**, so it has
+		// to record before any fixture has created a realm role. See
+		// Case.PristineRealm - and note that its own fixture creates a user and
+		// no role, for the same reason.
+		//
+		// The subject holds only the default-roles-master it was created with,
+		// so this is the other four bootstrapped realm roles. The caller is a
+		// full administrator, which is what makes the list the plain complement:
+		// the same read run by a manage-users caller loses admin and
+		// create-realm, and by a view-users caller loses everything.
+		ID: "admin/role-mapper/available-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: get realm-level roles that can be mapped",
+			Retrieved: "2026-08-27",
+		},
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/users/{user-id}/role-mappings/realm/available",
+		PristineRealm: true,
+		Fixture:       "admin-token-mapping-bare-user",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/realm/available",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		// Already assigned by the time this runs - the fixture assigns it.
+		// Measured idempotent: a role the user already holds is 204, not 409.
+		// See mappingRealmWriteFixture.
+		//
+		// **The entry carries the role's name as well as its id, and both are
+		// required.** Measured 2026-08-27: this write resolves the role by name
+		// and then checks the id names the same one, so an id-only body is 404.
+		// admin/role-mapper/assign-realm-id-only below records that.
+		ID: "admin/role-mapper/assign-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: add realm-level role mappings to the user",
+			Retrieved: "2026-08-27",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/users/{user-id}/role-mappings/realm",
+		Fixture:   "admin-token-mapping-realm-write",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users/{{user_id}}/role-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{realm_role_id}}","name":"gloak-probe-mapping-write-realm-role"}]`),
+		},
+		// A JSON request body, so this 204 carries X-Frame-Options - see
+		// httpx.WriteNoContent.
+		AssertHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "admin/role-mapper/remove-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: delete realm-level role mappings",
+			Retrieved: "2026-08-27",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/users/{user-id}/role-mappings/realm",
+		Fixture:   "admin-token-mapping-realm-write",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path:   "/admin/realms/master/users/{{user_id}}/role-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{realm_role_id}}","name":"gloak-probe-mapping-write-realm-role"}]`),
+		},
+		AssertHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		// The same write with the name left out. Measured 2026-08-27 on all
+		// four write routes: 404 `{"error":"Role not found"}`, whatever the id
+		// is - Keycloak looks the role up by **name** and then requires the id
+		// to name the same one, so an id-only entry resolves to nothing.
+		//
+		// Recorded rather than Implemented because Gloak resolves by id alone
+		// and answers 204 here. Nobody probed this shape before: every measured
+		// body in the observed document sent both keys, so "resolve by id" was
+		// never falsified. Follow-up F33.
+		ID: "admin/role-mapper/assign-realm-id-only",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: add realm-level role mappings to the user, an entry carrying no name",
+			Retrieved: "2026-08-27",
+		},
+		Status:  Recorded,
+		Reason:  "Gloak resolves the entry by id alone and answers 204; Keycloak resolves by name - F33",
+		Fixture: "admin-token-mapping-realm-write",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users/{{user_id}}/role-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{realm_role_id}}"}]`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The combined view, and the only body in this family that is not a
+		// bare array. Two things are asserted here that no other case can:
+		//
+		// **clientMappings' key order.** It is a Java HashMap serialised in
+		// bucket order, so gloak-probe-mapping-side (bucket 1) comes before
+		// gloak-probe-mapping-app (bucket 4) although it sorts after it and was
+		// assigned after it. Sorting the keys - which is what Go does to a map -
+		// would get this backwards, and so would reproducing insertion order.
+		// The two ids were chosen not to share a bucket; see
+		// mappingSubjectFixture for why that matters.
+		//
+		// **That the view is the direct assignments, not the expansion.** The
+		// subject holds default-roles-master, whose composite carries
+		// offline_access and uma_authorization and two account client roles.
+		// None of them is here.
+		ID: "admin/role-mapper/all",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: get role mappings",
+			Retrieved: "2026-08-27",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/users/{user-id}/role-mappings",
+		Fixture:   "admin-token-mapping-subject",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/role-mappings",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		// Only the realm half is a list whose order is unstable. The client
+		// half is an object, and its order is the contract this case exists for.
+		Unordered: []string{"realmMappings"},
+		// The client half's ids are all captured by the fixture, so they are
+		// already masked as {{client_uuid}} and friends and stay readable -
+		// which keeps "the entry's id is that client's UUID" asserted. The realm
+		// half has no such handle on default-roles-master or on the realm
+		// itself.
+		Volatile: []string{"realmMappings/*/id", "realmMappings/*/containerId"},
+	},
+	{
+		// A client role posted to the realm endpoint. It exists, and it is
+		// refused with the same 404 an unknown id gets, because the check is
+		// which container owns the role rather than whether one does.
+		ID: "admin/role-mapper/assign-realm-client-role",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: add realm-level role mappings to the user, a client role",
+			Retrieved: "2026-08-27",
+		},
+		Status: Implemented,
+		// No Operation: a rejection, not a demonstration that the write works.
+		Fixture: "admin-token-mapping-subject",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users/{{user_id}}/role-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{app_role_id}}","name":"gloak-probe-mapping-app-role"}]`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/role-mapper/unknown-user",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: get role mappings, unknown user",
+			Retrieved: "2026-08-27",
+		},
+		Status: Implemented,
+		// No Operation: a rejection.
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/00000000-0000-0000-0000-000000000000/role-mappings",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+
+	// --- Client role mappings on a user ---
+	{
+		ID: "admin/client-role-mappings/list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Role Mappings: get client-level role mappings for the user or group, and the app",
+			Retrieved: "2026-08-27",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/users/{user-id}/role-mappings/clients/{client-id}",
+		Fixture:   "admin-token-mapping-subject",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/clients/{{client_uuid}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id"},
+	},
+	{
+		ID: "admin/client-role-mappings/composite",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Role Mappings: get effective client-level role mappings",
+			Retrieved: "2026-08-27",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/users/{user-id}/role-mappings/clients/{client-id}/composite",
+		Fixture:   "admin-token-mapping-subject",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/clients/{{client_uuid}}/composite",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id"},
+	},
+	{
+		// The client mirror of admin/role-mapper/composite-realm-full: this is
+		// the second of the six reads that honours briefRepresentation, and it
+		// was measured on this route rather than inherited from the realm one.
+		ID: "admin/client-role-mappings/composite-full",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Role Mappings: get effective client-level role mappings, briefRepresentation=false",
+			Retrieved: "2026-08-27",
+		},
+		Status: Implemented,
+		// No Operation: the case above already claims it.
+		Fixture: "admin-token-mapping-subject",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/clients/{{client_uuid}}/composite",
+			Query:   map[string]string{"briefRepresentation": "false"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id"},
+	},
+	{
+		// The complement of the direct list, over one client's roles: the
+		// fixture leaves gloak-probe-mapping-app-free unassigned so this has
+		// something to offer. Read by a full administrator, which is what makes
+		// it the plain complement - the list is also filtered by what the caller
+		// may grant.
+		ID: "admin/client-role-mappings/available",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Role Mappings: get available client-level roles that can be mapped to the user or group",
+			Retrieved: "2026-08-27",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/users/{user-id}/role-mappings/clients/{client-id}/available",
+		Fixture:   "admin-token-mapping-subject",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/clients/{{client_uuid}}/available",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id"},
+	},
+	{
+		// Already assigned by the time this runs, exactly as on the realm
+		// mirror, and measured idempotent on this route too. See
+		// mappingClientWriteFixture. The name beside the id is required here as
+		// well, measured on this route rather than inherited from the realm one.
+		ID: "admin/client-role-mappings/assign",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Role Mappings: add client-level roles to the user or group role mapping",
+			Retrieved: "2026-08-27",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/users/{user-id}/role-mappings/clients/{client-id}",
+		Fixture:   "admin-token-mapping-client-write",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users/{{user_id}}/role-mappings/clients/{{client_uuid}}",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{client_role_id}}","name":"gloak-probe-mapping-write-client-role"}]`),
+		},
+		AssertHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "admin/client-role-mappings/remove",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Role Mappings: delete client-level roles from user or group role mapping",
+			Retrieved: "2026-08-27",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/users/{user-id}/role-mappings/clients/{client-id}",
+		Fixture:   "admin-token-mapping-client-write",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path:   "/admin/realms/master/users/{{user_id}}/role-mappings/clients/{{client_uuid}}",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{client_role_id}}","name":"gloak-probe-mapping-write-client-role"}]`),
+		},
+		AssertHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		// admin/role-mapper/assign-realm-id-only's mirror, measured on this
+		// route rather than inherited from it: the client pair answers the same
+		// 404 for an entry carrying no name, and Gloak answers 204 here too.
+		// Follow-up F33.
+		ID: "admin/client-role-mappings/assign-id-only",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Role Mappings: add client-level roles, an entry carrying no name",
+			Retrieved: "2026-08-27",
+		},
+		Status:  Recorded,
+		Reason:  "Gloak resolves the entry by id alone and answers 204; Keycloak resolves by name - F33",
+		Fixture: "admin-token-mapping-client-write",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users/{{user_id}}/role-mappings/clients/{{client_uuid}}",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{client_role_id}}"}]`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The ninth not-found spelling on this API, and **not** the "Could not
+		// find client" that GET /clients/{uuid} answers for the very same
+		// unknown UUID. The two were measured side by side, since reusing the
+		// existing client resolver here was the obvious move.
+		ID: "admin/client-role-mappings/unknown-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Role Mappings: get client-level role mappings, unknown client",
+			Retrieved: "2026-08-27",
+		},
+		Status: Implemented,
+		// No Operation: a rejection.
+		Fixture: "admin-token-mapping-subject",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/clients/00000000-0000-0000-0000-000000000000",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
 }

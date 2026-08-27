@@ -1,0 +1,12 @@
+# GET /admin/realms/master/users/{{user_id}}/role-mappings
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"realmMappings":[{"id":"{{string}}","name":"default-roles-master","description":"${role_default-roles}","composite":true,"clientRole":false,"containerId":"{{string}}"},{"id":"{{string}}","name":"gloak-probe-mapping-realm","composite":false,"clientRole":false,"containerId":"{{string}}"}],"clientMappings":{"gloak-probe-mapping-side":{"id":"{{side_client_uuid}}","client":"gloak-probe-mapping-side","mappings":[{"id":"{{side_role_id}}","name":"gloak-probe-mapping-side-role","composite":false,"clientRole":true,"containerId":"{{side_client_uuid}}"}]},"gloak-probe-mapping-app":{"id":"{{client_uuid}}","client":"gloak-probe-mapping-app","mappings":[{"id":"{{app_role_id}}","name":"gloak-probe-mapping-app-role","composite":false,"clientRole":true,"containerId":"{{client_uuid}}"}]}}}

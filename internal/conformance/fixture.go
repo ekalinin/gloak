@@ -314,6 +314,215 @@ var Fixtures = map[string]Fixture{
 	// compositeParentFixture's mirror with a client role as the parent, for
 	// the client side of the same endpoints.
 	"admin-token-composite-parent-client": compositeParentClientFixture(),
+
+	// The subject every mapping read is taken on: one user holding one realm
+	// role and one role on each of two clients.
+	"admin-token-mapping-subject": mappingSubjectFixture(),
+
+	// A user holding nothing but the default-roles-master it is created with.
+	// It backs the realm `available` read, which is the one case in this
+	// family that enumerates the realm's own roles rather than one user's -
+	// so its fixture must create no realm role of its own. See that case's
+	// PristineRealm marking.
+	"admin-token-mapping-bare-user": userFixture("gloak-probe-mapping-bare"),
+
+	// One fixture per write pair, each with its own user, role and client -
+	// the uniqueness realmRoleFixture's doc explains. Both end by assigning
+	// the role, so the pair's `DELETE` has something to remove and its `POST`
+	// repeats an assignment that is measured idempotent.
+	"admin-token-mapping-realm-write":  mappingRealmWriteFixture(),
+	"admin-token-mapping-client-write": mappingClientWriteFixture(),
+}
+
+// mappingSubjectFixture builds the subject the mapping reads are taken on: one
+// user holding one realm role and one role on each of two clients, plus a
+// second role on the first client left unassigned so `available` has something
+// to offer.
+//
+// The realm role and the assigned client role carry an attribute value, which
+// is what makes the two `.../composite` reads' briefRepresentation measurable -
+// they are the only two of the six reads that honour it.
+//
+// **The two clientIds must not share a Java HashMap bucket.** The combined view
+// keys `clientMappings` in bucket order and Gloak reproduces it with
+// internal/javamap, which is exact only while every key has a bucket to
+// itself: colliding keys chain in insertion order, which nothing observable
+// reports. At capacity 16 `gloak-probe-mapping-side` is bucket 1 and
+// `gloak-probe-mapping-app` is bucket 4. The pair is also discriminating -
+// bucket order puts `side` first, where sorting and insertion order both put
+// `app` first - so the case would fail rather than pass by accident if the
+// endpoint stopped using javamap.
+//
+// Every create is looked up rather than trusted from Location, for the reason
+// confidentialClientFixture gives: several cases name this fixture, so the
+// recorder runs its creates several times against one container and every run
+// after the first answers 409 with no Location.
+//
+// **The assignment bodies carry the role's name as well as its id**, and that
+// is not decoration: measured 2026-08-27, a mapping write resolves the entry by
+// **name** and then requires the id to name the same role, so an id-only body
+// answers 404 whatever the id is. See "A mapping write resolves the role by
+// name, and the id has to agree" in
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md, and follow-up
+// F33 for the Gloak side.
+func mappingSubjectFixture() Fixture {
+	f := userFixture("gloak-probe-mapping-user")
+	f.Steps = append(f.Steps,
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/roles",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"name":"gloak-probe-mapping-realm","attributes":{"probe":["v1","v2"]}}`),
+			},
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/roles/gloak-probe-mapping-realm",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"realm_role_id": "id"},
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/realm",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`[{"id":"{{realm_role_id}}","name":"gloak-probe-mapping-realm"}]`),
+			},
+		},
+	)
+	f.Steps = append(f.Steps, clientWithRoleSteps("gloak-probe-mapping-app", "client_uuid",
+		`{"name":"gloak-probe-mapping-app-role","attributes":{"probe":["v1","v2"]}}`,
+		"gloak-probe-mapping-app-role", "app_role_id")...)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/roles",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`{"name":"gloak-probe-mapping-app-free"}`),
+		},
+	})
+	f.Steps = append(f.Steps, clientWithRoleSteps("gloak-probe-mapping-side", "side_client_uuid",
+		`{"name":"gloak-probe-mapping-side-role"}`,
+		"gloak-probe-mapping-side-role", "side_role_id")...)
+	f.Steps = append(f.Steps,
+		assignClientRoleStep("{{client_uuid}}", "{{app_role_id}}", "gloak-probe-mapping-app-role"),
+		assignClientRoleStep("{{side_client_uuid}}", "{{side_role_id}}", "gloak-probe-mapping-side-role"),
+	)
+	return f
+}
+
+// mappingRealmWriteFixture is the realm write pair's subject: its own user, its
+// own realm role, and the role already assigned.
+//
+// Already assigned, because the pair shares one fixture. `POST` on a role the
+// user already holds is measured 204 rather than 409, so the assign case
+// repeats what this did; and the remove case's deletion is undone the next
+// time the fixture runs, since its last step re-assigns before every case that
+// names it. That is compositeParentFixture's arrangement, for the same reason.
+func mappingRealmWriteFixture() Fixture {
+	f := userFixture("gloak-probe-mapping-realm-write")
+	f.Steps = append(f.Steps,
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/roles",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"name":"gloak-probe-mapping-write-realm-role"}`),
+			},
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/roles/gloak-probe-mapping-write-realm-role",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"realm_role_id": "id"},
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/realm",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`[{"id":"{{realm_role_id}}","name":"gloak-probe-mapping-write-realm-role"}]`),
+			},
+		},
+	)
+	return f
+}
+
+// mappingClientWriteFixture is mappingRealmWriteFixture's mirror for the client
+// write pair, with the role on a client of its own.
+func mappingClientWriteFixture() Fixture {
+	f := userFixture("gloak-probe-mapping-client-write")
+	f.Steps = append(f.Steps, clientWithRoleSteps("gloak-probe-mapping-write-client", "client_uuid",
+		`{"name":"gloak-probe-mapping-write-client-role"}`,
+		"gloak-probe-mapping-write-client-role", "client_role_id")...)
+	f.Steps = append(f.Steps, assignClientRoleStep("{{client_uuid}}", "{{client_role_id}}",
+		"gloak-probe-mapping-write-client-role"))
+	return f
+}
+
+// clientWithRoleSteps creates one client and one role on it, capturing the
+// client's UUID under uuidVar and the role's id under roleVar. The mapping
+// fixtures need both ids, unlike clientRoleFixture next door which addresses
+// its role by name and so captures only the client.
+func clientWithRoleSteps(clientID, uuidVar, roleBody, roleName, roleVar string) []Step {
+	return []Step{
+		{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"clientId":"` + clientID + `","enabled":true}`),
+			},
+		},
+		{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/clients",
+				Query:   map[string]string{"clientId": clientID},
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{uuidVar: "0/id"},
+		},
+		{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients/{{" + uuidVar + "}}/roles",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(roleBody),
+			},
+		},
+		{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/clients/{{" + uuidVar + "}}/roles/" + roleName,
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{roleVar: "id"},
+		},
+	}
+}
+
+// assignClientRoleStep gives the fixture's user one client role. The endpoint
+// it uses is one of the eleven under test, which is the arrangement
+// compositeParentFixture already takes: there is no other way to reach the
+// state, and a case whose own endpoint cannot serve its setup fails loudly.
+//
+// roleName goes into the body beside the id because the write resolves by name;
+// see mappingSubjectFixture.
+func assignClientRoleStep(uuidRef, roleRef, roleName string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/clients/" + uuidRef,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`[{"id":"` + roleRef + `","name":"` + roleName + `"}]`),
+		},
+	}
 }
 
 // realmRoleFixture creates one realm role and nothing else. Unlike
