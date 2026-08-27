@@ -1223,3 +1223,50 @@ name, which means `resolveCaller` resolving each effective role's owning client,
 and every `has`/`hasAny` call site deciding which container it means. That is
 the whole authorization layer of `internal/admin`, so it wants its own task
 rather than a bolt-on to the one that found it.
+
+## F33: a mapping write resolves the role by id, where Keycloak resolves it by name
+
+Found 2026-08-27 by Task 8 of `feat/p2-role-mappings`, by the conformance
+fixture failing silently: its assignment steps sent `[{"id":"..."}]`, which is
+the shape `POST .../roles/{name}/composites` next door accepts, and every
+recorded body came back as though nothing had been assigned.
+
+Measured on all four write routes - `POST` and `DELETE`, realm and client -
+with three body shapes each:
+
+```
+[{"id":R}]                  -> 404 {"error":"Role not found"}
+[{"name":"role-two"}]       -> 404 {"error":"Role not found"}
+[{"id":R_other,"name":"role-two"}] -> 404 {"error":"Role not found"}
+[{"id":R,"name":"role-two"}]       -> 204
+```
+
+So Keycloak looks the entry up by **name** and then requires `id` to name the
+same role. Gloak's `eachMapping` does `store.Roles().ByID(ctx, realm.ID, rep.ID)`
+and never reads `name`, so it answers **204 where Keycloak answers 404** for an
+id-only body, a name-only body, and a body whose two keys disagree.
+
+Not a privilege escalation: the per-entry `mayGrantRole` check still runs on
+whatever role the id resolved to, so nothing is granted that the caller could
+not grant anyway. It is a laxness - Gloak accepts requests Keycloak refuses -
+and one that a client written against Gloak would not survive being pointed at
+Keycloak.
+
+Why it was missed until now: every body in the "Writing a mapping" sections of
+the observed document sends both keys, so "resolve by id" was consistent with
+every measurement taken and was never probed. Task 8's fixture was the first
+thing to send one key on its own.
+
+Not fixed in the task that found it: Task 8 records contracts and does not
+change handlers, and the fix has a decision in it - whether the 404 for a
+mismatched pair is reached by looking up the name and comparing the id, or by
+looking up the id and comparing the name, which are indistinguishable from
+outside on every body measured so far but not on a body naming a role in one
+container and an id in another.
+
+Recorded as `admin/role-mapper/assign-realm-id-only` and
+`admin/client-role-mappings/assign-id-only`, both `Recorded` - so the day the
+handler is fixed, the verifier's "already matches, promote it" alarm says so.
+
+Transcript: the "A mapping write resolves the role by name, and the id has to
+agree" section of `2026-08-18-keycloak-26.7.1-observed.md`.
