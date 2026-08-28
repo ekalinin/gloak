@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -122,5 +123,53 @@ func TestGroupAccessFollowsTheCaller(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("caller holding %q:\n got  %+v\n want %+v", tc.role, got, tc.want)
 		}
+	}
+}
+
+// The path is the ancestry's names, and renaming an ancestor moves it while the
+// descendants' own names stay put. That cascade is the measured behaviour and
+// the reason the path is not a stored column.
+func TestGroupPathIsDerivedAndFollowsARename(t *testing.T) {
+	_, s, realm := newServer(t)
+	ctx := context.Background()
+	root := &model.Group{ID: model.NewID(), RealmID: realm.ID, Name: "top"}
+	mid := &model.Group{ID: model.NewID(), RealmID: realm.ID, ParentID: root.ID, Name: "mid"}
+	leaf := &model.Group{ID: model.NewID(), RealmID: realm.ID, ParentID: mid.ID, Name: "leaf"}
+	for _, g := range []*model.Group{root, mid, leaf} {
+		if err := s.Groups().Create(ctx, g); err != nil {
+			t.Fatalf("Create(%q): %v", g.Name, err)
+		}
+	}
+
+	path := func(id string) string {
+		chain, err := s.Groups().Ancestry(ctx, realm.ID, id)
+		if err != nil {
+			t.Fatalf("Ancestry: %v", err)
+		}
+		return groupPath(chain)
+	}
+	for _, tc := range []struct{ id, want string }{
+		{root.ID, "/top"}, {mid.ID, "/top/mid"}, {leaf.ID, "/top/mid/leaf"},
+	} {
+		if got := path(tc.id); got != tc.want {
+			t.Errorf("path: got %q, want %q", got, tc.want)
+		}
+	}
+
+	// The rename, and the whole point: two descendants move, neither is
+	// touched, and nothing was rewritten in the store.
+	root.Name = "renamed"
+	if err := s.Groups().Update(ctx, root); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	for _, tc := range []struct{ id, want string }{
+		{root.ID, "/renamed"}, {mid.ID, "/renamed/mid"}, {leaf.ID, "/renamed/mid/leaf"},
+	} {
+		if got := path(tc.id); got != tc.want {
+			t.Errorf("after the rename: got %q, want %q", got, tc.want)
+		}
+	}
+	if got, err := s.Groups().ByID(ctx, realm.ID, leaf.ID); err != nil || got.Name != "leaf" {
+		t.Fatalf("the rename reached a descendant's name: %v %+v", err, got)
 	}
 }

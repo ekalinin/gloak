@@ -1,6 +1,11 @@
 package admin
 
-import "github.com/ekalinin/gloak/internal/model"
+import (
+	"context"
+	"strings"
+
+	"github.com/ekalinin/gloak/internal/model"
+)
 
 // groupRepresentation is Keycloak's GroupRepresentation, in the field order
 // measured 2026-08-28.
@@ -126,4 +131,32 @@ func groupRepresentationOf(g *model.Group, path string, subGroupCount int, c *ca
 		rep.Access = &access
 	}
 	return rep
+}
+
+// groupPath is a group's path: every name from the root down, each preceded by
+// a slash. A top-level group named probe-top is "/probe-top"; a child of it
+// named probe-child is "/probe-top/probe-child".
+//
+// **It is computed, never stored.** Renaming a parent was measured moving every
+// descendant's path while leaving their names alone, so a stored path would
+// have to be rewritten for the whole subtree on every rename and the first
+// missed rewrite is a divergence nothing would catch.
+//
+// ancestry is nearest last, which is what GroupRepo.Ancestry returns.
+func groupPath(ancestry []*model.Group) string {
+	var b strings.Builder
+	for _, g := range ancestry {
+		b.WriteByte('/')
+		b.WriteString(g.Name)
+	}
+	return b.String()
+}
+
+// pathOf resolves one group's path through the store.
+func (h *handler) pathOf(ctx context.Context, realmID, groupID string) (string, error) {
+	chain, err := h.store.Groups().Ancestry(ctx, realmID, groupID)
+	if err != nil {
+		return "", err
+	}
+	return groupPath(chain), nil
 }
