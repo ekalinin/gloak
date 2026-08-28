@@ -27,6 +27,16 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # Both invocations, because neither covers the other. Without a tag, the
+      # docker-tagged files are not even compiled: make record, make oracle and
+      # the Postgres driver suite could stop building and CI would not notice.
+      # With the tag, the files guarded by the default build are still checked,
+      # but nothing here runs them - the spec excludes running Docker, not
+      # compiling against the tag. AGENTS.md's warning that compiling is not
+      # proof cuts the same way: not compiling is strictly worse.
+      - name: Vet the docker-tagged files
+        run: go vet -tags docker ./...
+
       # Nothing behind the docker build tag runs here: not the Postgres driver
       # suite, not make oracle, not make record. A green run does NOT mean the
       # two store drivers agree; that evidence still comes from running the
