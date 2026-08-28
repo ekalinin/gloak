@@ -3138,17 +3138,12 @@ var adminCases = []Case{
 		Volatile:        []string{"id", "parentId"},
 	},
 	{
-		// **An empty group**, and that is the scope rather than an oversight:
-		// the only way to put a user in a group is PUT
-		// /users/{id}/groups/{id}, which is cut B. The first version of this
-		// case used it in the fixture and the replay failed with "Unable to
-		// find matching target resource method" - the route does not exist
-		// yet.
+		// The user representation **without an access block**, where the user
+		// listing next door carries a one-key one.
 		//
-		// So this claims the operation and pins the empty array. The member
-		// representation - the user shape **without an access block**, where
-		// the user listing next door carries a one-key one - is measured in the
-		// design document and gets its case in cut B.
+		// This ran on an empty group through cut A, because the only way to
+		// fill one is the membership write and that was cut B. It is filled
+		// now, so the body is the representation rather than `[]`.
 		ID: "admin/groups/members",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -3157,13 +3152,14 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "GET /admin/realms/{realm}/groups/{group-id}/members",
-		Fixture:   "admin-token-group",
+		Fixture:   "admin-token-group-member",
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/admin/realms/master/groups/{{group_id}}/members",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/createdTimestamp"},
 	},
 	{
 		// **The search rule, and the case the whole cut turns on.** The matches
@@ -3270,6 +3266,129 @@ var adminCases = []Case{
 				"Content-Type":  "application/json",
 			},
 			Body: []byte(`{}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	// ---- a user's group membership, P2's third cut B --------------------
+	{
+		// The **fifth** group shape: no subGroupCount and no access, and
+		// briefRepresentation=false gains the attributes trio without gaining
+		// either. Reported under admin/users because the operation is tagged
+		// Users, and the chapter has to match the tag whose denominator it
+		// counts against.
+		ID: "admin/users/groups",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get the groups the user is a member of",
+			Retrieved: "2026-08-28",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/users/{user-id}/groups",
+		Fixture:   "admin-token-group-member",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/groups",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id"},
+	},
+	{
+		// `{"count":n}`, an object - like the group count and unlike
+		// GET /users/count, which is a bare number.
+		ID: "admin/users/groups-count",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: returns the number of groups the user is a member of",
+			Retrieved: "2026-08-28",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/users/{user-id}/groups/count",
+		Fixture:   "admin-token-group-member",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/groups/count",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The fixture has already joined this group, so this is the **second**
+		// join and it is measured 204 rather than 409.
+		//
+		// Cache-Control: no-cache and **no X-Frame-Options**, because the
+		// request carries no body - where PUT /groups/{id} is the other way
+		// round on both counts.
+		ID: "admin/users/groups-join",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: add the user to the group",
+			Retrieved: "2026-08-28",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/users/{user-id}/groups/{groupId}",
+		Fixture:   "admin-token-group-member",
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/master/users/{{user_id}}/groups/{{group_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "admin/users/groups-leave",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: remove the user from the group",
+			Retrieved: "2026-08-28",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/users/{user-id}/groups/{groupId}",
+		Fixture:   "admin-token-group-member",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/users/{{user_id}}/groups/{{group_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		// **"Group not found", not "Could not find group by id."** The Groups
+		// routes spell the same condition the other way, measured on each. A
+		// shared helper gets one of the two wrong.
+		ID: "admin/users/groups-join-unknown-group",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: add the user to the group, unknown group",
+			Retrieved: "2026-08-28",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-admin-user",
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/master/users/{{user_id}}/groups/00000000-0000-0000-0000-000000000000",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **The subject wins.** Both ids are unknown and the answer is about
+		// the user, which is what says the subject is resolved first.
+		ID: "admin/users/groups-join-unknown-both",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: add the user to the group, neither exists",
+			Retrieved: "2026-08-28",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/master/users/00000000-0000-0000-0000-000000000000" +
+				"/groups/00000000-0000-0000-0000-000000000000",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},

@@ -378,6 +378,42 @@ var Fixtures = map[string]Fixture{
 	"admin-token-group-delete": groupFixture("gloak-probe-group-delete", "group_id"),
 	"admin-token-group-tree":   groupTreeFixture(),
 	"admin-token-group-search": groupSearchFixture(),
+	"admin-token-group-member": groupMemberFixture(),
+}
+
+// groupMemberFixture puts one user in one group, which cut B's membership write
+// made possible. Cut A's members case ran on an empty group because this could
+// not be built; its comment said so and that reason expires here.
+func groupMemberFixture() Fixture {
+	f := userFixture("gloak-probe-group-member")
+	f.Steps = append(f.Steps,
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/groups",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"name":"gloak-probe-group-members"}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/groups",
+				Query:   map[string]string{"search": "gloak-probe-group-members"},
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"group_id": "0/id"},
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodPut,
+				Path:    "/admin/realms/master/users/{{user_id}}/groups/{{group_id}}",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+		},
+	)
+	return f
 }
 
 // groupFixture creates one top-level group and captures its id.
