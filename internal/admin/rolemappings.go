@@ -435,6 +435,26 @@ func (h *handler) eachClientMapping(w http.ResponseWriter, r *http.Request, rc *
 // they all validate. accepts is what the endpoint's own locator will take -
 // the realm's roles for one pair, one client's for the other.
 //
+// **An entry is accepted only when its id and its name resolve to the same
+// role in the route's container.** Anything else is the 404 below, and it is
+// decided *before* the caller check. Measured on a live 26.7.1 on 2026-08-28,
+// 17 cells over both verbs and both containers: an id-only entry is 404, a
+// name-only entry is 404, an id naming nothing beside a real name is 404, and
+// a pair naming two different real roles is 404 **in both directions** - with
+// the id naming a role the caller may grant and the name one it may not, and
+// the other way round. Both 404 rather than 403 is what says the agreement is
+// settled first; the same caller gets 403 when the two agree on a role it may
+// not grant, and 204 when they agree on one it may.
+//
+// This looks the entry up by id and compares the name, where Keycloak looks it
+// up by name and compares the id. **The two cannot be told apart through this
+// API**, which is why the cheaper one is here rather than a rewrite: a name is
+// unique within a container and so is an id, so each key resolves to at most
+// one role, and both orders accept exactly the pairs that resolve to the same
+// one. Follow-up F33 expected this to be a decision about which of the two
+// roles a mismatch authorises. The measurement dissolved it - a mismatch
+// authorises neither.
+//
 // **The batch validates in full before anything is applied, on both verbs.**
 // Measured on a live 26.7.1 in both id orders and for POST and DELETE alike, on
 // the realm pair and again on the client pair: a body of one real role id and
@@ -488,7 +508,7 @@ func (h *handler) eachMapping(w http.ResponseWriter, r *http.Request, rc *reqCon
 			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 			return
 		}
-		if !accepts(role) {
+		if !accepts(role) || role.Name != rep.Name {
 			writeMappingRoleNotFound(w)
 			return
 		}

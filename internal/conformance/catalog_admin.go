@@ -2446,21 +2446,20 @@ var adminCases = []Case{
 	{
 		// The same write with the name left out. Measured 2026-08-27 on all
 		// four write routes: 404 `{"error":"Role not found"}`, whatever the id
-		// is - Keycloak looks the role up by **name** and then requires the id
-		// to name the same one, so an id-only entry resolves to nothing.
+		// is - the entry's id and name must resolve to the same role, so an
+		// id-only entry resolves to nothing.
 		//
-		// Recorded rather than Implemented because Gloak resolves by id alone
-		// and answers 204 here. Nobody probed this shape before: every measured
+		// It was Recorded until 2026-08-28: Gloak resolved by id alone and
+		// answered 204. Nobody probed this shape before, because every measured
 		// body in the observed document sent both keys, so "resolve by id" was
-		// never falsified. Follow-up F33.
+		// never falsified. F33, closed.
 		ID: "admin/role-mapper/assign-realm-id-only",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Role Mapper: add realm-level role mappings to the user, an entry carrying no name",
 			Retrieved: "2026-08-27",
 		},
-		Status:  Recorded,
-		Reason:  "Gloak resolves the entry by id alone and answers 204; Keycloak resolves by name - F33",
+		Status:  Implemented,
 		Fixture: "admin-token-mapping-realm-write",
 		Request: Request{
 			Method: http.MethodPost,
@@ -2470,6 +2469,37 @@ var adminCases = []Case{
 				"Content-Type":  "application/json",
 			},
 			Body: []byte(`[{"id":"{{realm_role_id}}"}]`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The id-only case's sharper twin: **two real realm roles, one named
+		// by each key.** Measured 2026-08-28 - 404, and Gloak answered 204,
+		// writing the role the id named and ignoring the name entirely.
+		//
+		// This is the shape that says the rule is agreement rather than
+		// tolerance. An id-only entry is also 404 under "resolve by name and
+		// find nothing", which is why that case alone did not pin it.
+		//
+		// offline_access is a realm role of the master realm on both sides,
+		// which is what lets this send a second real name without a second
+		// fixture step.
+		ID: "admin/role-mapper/assign-realm-name-disagrees",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: add realm-level role mappings to the user, an entry whose id and name name different roles",
+			Retrieved: "2026-08-28",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-mapping-realm-write",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users/{{user_id}}/role-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{realm_role_id}}","name":"offline_access"}]`),
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},
@@ -2691,16 +2721,15 @@ var adminCases = []Case{
 	{
 		// admin/role-mapper/assign-realm-id-only's mirror, measured on this
 		// route rather than inherited from it: the client pair answers the same
-		// 404 for an entry carrying no name, and Gloak answers 204 here too.
-		// Follow-up F33.
+		// 404 for an entry carrying no name. Gloak answered 204 here too until
+		// 2026-08-28. F33, closed.
 		ID: "admin/client-role-mappings/assign-id-only",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Client Role Mappings: add client-level roles, an entry carrying no name",
 			Retrieved: "2026-08-27",
 		},
-		Status:  Recorded,
-		Reason:  "Gloak resolves the entry by id alone and answers 204; Keycloak resolves by name - F33",
+		Status:  Implemented,
 		Fixture: "admin-token-mapping-client-write",
 		Request: Request{
 			Method: http.MethodPost,
@@ -2710,6 +2739,35 @@ var adminCases = []Case{
 				"Content-Type":  "application/json",
 			},
 			Body: []byte(`[{"id":"{{client_role_id}}"}]`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// admin/role-mapper/assign-realm-name-disagrees' mirror, measured on
+		// this route on 2026-08-28 rather than inherited from it.
+		//
+		// The name here is a **realm** role, so this pins two things at once:
+		// the id and the name must agree, and the name is looked for in the
+		// route's own container. An entry whose two keys agree on a role of
+		// the wrong container is 404 as well, measured in both directions on
+		// the same day - a client role through the realm route and a realm
+		// role through the client route.
+		ID: "admin/client-role-mappings/assign-name-disagrees",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Role Mappings: add client-level roles, an entry whose id and name name different roles",
+			Retrieved: "2026-08-28",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-mapping-client-write",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users/{{user_id}}/role-mappings/clients/{{client_uuid}}",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{client_role_id}}","name":"offline_access"}]`),
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},

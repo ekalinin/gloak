@@ -1448,7 +1448,49 @@ deciding which container it means. That is the whole authorization layer of
 `internal/admin`, so it wants its own task rather than a bolt-on to the one that
 found it. **F28 is qualified on this entry**: see its closing note.
 
-## F33: a mapping write resolves the role by id, where Keycloak resolves it by name
+## F33: a mapping write resolves the role by id, where Keycloak resolves it by name (closed)
+
+Closed 2026-08-28 on `fix/mapping-write-name-and-id`. **The decision this entry
+was held open for does not exist**, and that is the finding rather than the fix.
+
+The discriminating probe below was run, on both verbs and both containers, and
+answered **404 in both directions**: with the `id` naming a role the caller may
+grant and the `name` one it may not, and again the other way round. So the
+disagreement between the two keys is settled *before* the caller check, and a
+mismatch authorises neither role. There is no "which role must a correct
+implementation judge", because on a mismatch it judges none. The controls in the
+same run are 403 when the keys agree on a refused role and 204 when they agree
+on a grantable one, so the caller check was demonstrably reachable.
+
+One rule covers every shape measured, 17 cells: an entry is accepted exactly
+when its `id` and its `name` resolve to the same role in the route's own
+container.
+
+The fix is therefore one comparison beside the container test `eachMapping`
+already ran, not a new lookup path. Keycloak resolves by name and compares the
+id; Gloak resolves by id and compares the name; **the two cannot be told apart
+through this API**, because a name is unique within a container and so is an id,
+so each key resolves to at most one role and both orders accept exactly the
+pairs that agree. That equivalence is argued rather than assumed, and it is
+written into the handler's doc comment so the difference is not later read as a
+divergence.
+
+Both recorded cases are `Implemented` and two more were added for the
+disagreeing pair - `admin/role-mapper/assign-realm-name-disagrees` and
+`admin/client-role-mappings/assign-name-disagrees` - because an id-only entry is
+also 404 under "resolve by name and find nothing", so the id-only cases alone
+never pinned the rule. The four conformance cases run as a full administrator,
+for which every role is grantable, so none of them can pin the *ordering*;
+`TestMappingWriteRequiresTheIdAndNameToAgree` does, on a `manage-users` caller,
+and under the mutation that removes the comparison it reproduces the measured
+before-column exactly - 204 where the id was grantable, 403 where it was not.
+
+The measurement is the "The two keys are reconciled before the caller is judged"
+subsection of `2026-08-18-keycloak-26.7.1-observed.md`.
+
+The original entry follows.
+
+## F33 (original): a mapping write resolves the role by id, where Keycloak resolves it by name
 
 Found 2026-08-27 by Task 8 of `feat/p2-role-mappings`, by the conformance
 fixture failing silently: its assignment steps sent `[{"id":"..."}]`, which is
