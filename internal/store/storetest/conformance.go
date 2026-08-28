@@ -959,4 +959,193 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 			t.Fatalf("want no users in the empty realm, got %d", len(got))
 		}
 	})
+	t.Run("a group tree round-trips, and the count is not the listing", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		top := &model.Group{ID: model.NewID(), RealmID: realm.ID, Name: "top",
+			Attributes: map[string][]string{"k": {"a", "b"}}}
+		child := &model.Group{ID: model.NewID(), RealmID: realm.ID, ParentID: top.ID, Name: "child"}
+		for _, g := range []*model.Group{top, child} {
+			if err := s.Groups().Create(ctx, g); err != nil {
+				t.Fatalf("Groups().Create(%q): %v", g.Name, err)
+			}
+		}
+
+		got, err := s.Groups().ByID(ctx, realm.ID, top.ID)
+		if err != nil {
+			t.Fatalf("ByID: %v", err)
+		}
+		// Attribute order round-trips through the ordinal column, which is why
+		// this asserts the slice rather than its length.
+		if got.Name != "top" || got.ParentID != "" || !slices.Equal(got.Attributes["k"], []string{"a", "b"}) {
+			t.Fatalf("round-trip mismatch: %+v", got)
+		}
+
+		// The listing is top-level and the count is the whole tree. Measured on
+		// a live 26.7.1: one parent and one child give a one-row listing and
+		// {"count":2}.
+		list, err := s.Groups().ListTopLevel(ctx, realm.ID)
+		if err != nil {
+			t.Fatalf("ListTopLevel: %v", err)
+		}
+		if len(list) != 1 || list[0].ID != top.ID {
+			t.Fatalf("want only the top-level group, got %d", len(list))
+		}
+		n, err := s.Groups().CountAll(ctx, realm.ID)
+		if err != nil {
+			t.Fatalf("CountAll: %v", err)
+		}
+		if n != 2 {
+			t.Fatalf("want the whole tree counted, got %d", n)
+		}
+		kids, err := s.Groups().ListChildren(ctx, realm.ID, top.ID)
+		if err != nil || len(kids) != 1 || kids[0].ID != child.ID {
+			t.Fatalf("ListChildren: %v, %d rows", err, len(kids))
+		}
+		chain, err := s.Groups().Ancestry(ctx, realm.ID, child.ID)
+		if err != nil {
+			t.Fatalf("Ancestry: %v", err)
+		}
+		if len(chain) != 2 || chain[0].ID != top.ID || chain[1].ID != child.ID {
+			t.Fatalf("want the chain nearest last, got %+v", chain)
+		}
+	})
+
+	t.Run("deleting a group takes its subtree", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		top := &model.Group{ID: model.NewID(), RealmID: realm.ID, Name: "top"}
+		child := &model.Group{ID: model.NewID(), RealmID: realm.ID, ParentID: top.ID, Name: "child"}
+		for _, g := range []*model.Group{top, child} {
+			if err := s.Groups().Create(ctx, g); err != nil {
+				t.Fatalf("Create(%q): %v", g.Name, err)
+			}
+		}
+
+		if err := s.Groups().Delete(ctx, realm.ID, top.ID); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+
+		if _, err := s.Groups().ByID(ctx, realm.ID, child.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("the child outlived its parent: %v", err)
+		}
+		if err := s.Groups().Delete(ctx, realm.ID, top.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("deleting it twice: want ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("a duplicate name collides within its parent, not the realm", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		top := &model.Group{ID: model.NewID(), RealmID: realm.ID, Name: "top"}
+		if err := s.Groups().Create(ctx, top); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+
+		err := s.Groups().Create(ctx, &model.Group{ID: model.NewID(), RealmID: realm.ID, Name: "top"})
+		if !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("a second top-level \"top\": want ErrConflict, got %v", err)
+		}
+		// The same name one level down is a different group, which is what the
+		// measured 409 says: "Top level group named 'x' already exists".
+		if err := s.Groups().Create(ctx, &model.Group{
+			ID: model.NewID(), RealmID: realm.ID, ParentID: top.ID, Name: "top"}); err != nil {
+			t.Fatalf("a child named after its parent: %v", err)
+		}
+	})
+
+	t.Run("membership is direct and does not reach the parent", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		u := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "member", Enabled: true}
+		if err := s.Users().Create(ctx, u); err != nil {
+			t.Fatalf("Users().Create: %v", err)
+		}
+		top := &model.Group{ID: model.NewID(), RealmID: realm.ID, Name: "top"}
+		child := &model.Group{ID: model.NewID(), RealmID: realm.ID, ParentID: top.ID, Name: "child"}
+		for _, g := range []*model.Group{top, child} {
+			if err := s.Groups().Create(ctx, g); err != nil {
+				t.Fatalf("Create(%q): %v", g.Name, err)
+			}
+		}
+
+		if err := s.Groups().AddMember(ctx, child.ID, u.ID); err != nil {
+			t.Fatalf("AddMember: %v", err)
+		}
+		// Measured idempotent: the PUT answers 204 for a membership already
+		// held, so a second add must not be a conflict.
+		if err := s.Groups().AddMember(ctx, child.ID, u.ID); err != nil {
+			t.Fatalf("AddMember twice: %v", err)
+		}
+
+		in, err := s.Groups().Members(ctx, realm.ID, child.ID)
+		if err != nil || len(in) != 1 || in[0].ID != u.ID {
+			t.Fatalf("Members(child): %v, %d rows", err, len(in))
+		}
+		// **The parent has no members.** A user in a child was measured not
+		// being a member of its parent, so nothing walks downwards here.
+		up, err := s.Groups().Members(ctx, realm.ID, top.ID)
+		if err != nil || len(up) != 0 {
+			t.Fatalf("Members(parent): %v, %d rows - membership reached upwards", err, len(up))
+		}
+		mine, err := s.Groups().ListUserGroups(ctx, realm.ID, u.ID)
+		if err != nil || len(mine) != 1 || mine[0].ID != child.ID {
+			t.Fatalf("ListUserGroups: %v, %d rows", err, len(mine))
+		}
+
+		if err := s.Groups().RemoveMember(ctx, child.ID, u.ID); err != nil {
+			t.Fatalf("RemoveMember: %v", err)
+		}
+		// Removing one that is not there is not an error, the way
+		// RemoveComposite is not.
+		if err := s.Groups().RemoveMember(ctx, child.ID, u.ID); err != nil {
+			t.Fatalf("RemoveMember twice: %v", err)
+		}
+		if left, err := s.Groups().Members(ctx, realm.ID, child.ID); err != nil || len(left) != 0 {
+			t.Fatalf("after removal: %v, %d rows", err, len(left))
+		}
+	})
+
+	t.Run("a group in another realm is invisible", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		mine := &model.Realm{ID: model.NewID(), Name: "mine", Enabled: true}
+		theirs := &model.Realm{ID: model.NewID(), Name: "theirs", Enabled: true}
+		for _, r := range []*model.Realm{mine, theirs} {
+			if err := s.Realms().Create(ctx, r); err != nil {
+				t.Fatalf("Realms().Create(%q): %v", r.Name, err)
+			}
+		}
+		g := &model.Group{ID: model.NewID(), RealmID: theirs.ID, Name: "elsewhere"}
+		if err := s.Groups().Create(ctx, g); err != nil {
+			t.Fatalf("Groups().Create: %v", err)
+		}
+
+		if _, err := s.Groups().ByID(ctx, mine.ID, g.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("ByID across realms: want ErrNotFound, got %v", err)
+		}
+		if list, err := s.Groups().ListTopLevel(ctx, mine.ID); err != nil || len(list) != 0 {
+			t.Fatalf("ListTopLevel: %v, %d rows", err, len(list))
+		}
+		if n, err := s.Groups().CountAll(ctx, mine.ID); err != nil || n != 0 {
+			t.Fatalf("CountAll: %v, %d", err, n)
+		}
+	})
+
 }

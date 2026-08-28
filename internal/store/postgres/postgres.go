@@ -128,6 +128,7 @@ func (s *Store) Realms() store.RealmRepo   { return &realmRepo{s.pool} }
 func (s *Store) Clients() store.ClientRepo { return &clientRepo{s.pool} }
 func (s *Store) Users() store.UserRepo     { return &userRepo{s.pool} }
 func (s *Store) Roles() store.RoleRepo     { return &roleRepo{s.pool} }
+func (s *Store) Groups() store.GroupRepo   { return &groupRepo{s.pool} }
 func (s *Store) Keys() store.KeyRepo       { return &keyRepo{s.pool} }
 
 func (s *Store) Sessions() store.SessionRepo { return &sessionRepo{s.pool} }
@@ -974,6 +975,279 @@ func scanRealmKey(row scanner) (*model.RealmKey, error) {
 	m := &model.RealmKey{}
 	if err := row.Scan(&m.ID, &m.RealmID, &m.Algorithm, &m.Use,
 		&m.PrivateKey, &m.Certificate, &m.CreatedAt); err != nil {
+		return nil, classify(err)
+	}
+	return m, nil
+}
+
+type groupRepo struct{ pool *pgxpool.Pool }
+
+// Create writes the group row and its attributes in one transaction, so a
+// group with attributes never exists half-written.
+func (r *groupRepo) Create(ctx context.Context, m *model.Group) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO keycloak_group (id, realm_id, parent_id, name) VALUES ($1, $2, $3, $4)`,
+		m.ID, m.RealmID, m.ParentID, m.Name); err != nil {
+		return classify(err)
+	}
+	if err := insertGroupAttributes(ctx, tx, m); err != nil {
+		return classify(err)
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *groupRepo) ByID(ctx context.Context, realmID, id string) (*model.Group, error) {
+	row := r.pool.QueryRow(ctx,
+		`SELECT id, realm_id, parent_id, name FROM keycloak_group
+		 WHERE realm_id = $1 AND id = $2`, realmID, id)
+	m, err := scanGroup(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadGroupAttributes(ctx, []*model.Group{m}); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// Update writes name and attributes back. parent_id is not in the statement:
+// nothing in the admin API reparents a group.
+func (r *groupRepo) Update(ctx context.Context, m *model.Group) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx,
+		`UPDATE keycloak_group SET name = $1 WHERE realm_id = $2 AND id = $3`,
+		m.Name, m.RealmID, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	if err := affectedOne(tag.RowsAffected()); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM group_attribute WHERE group_id = $1`, m.ID); err != nil {
+		return classify(err)
+	}
+	if err := insertGroupAttributes(ctx, tx, m); err != nil {
+		return classify(err)
+	}
+	return tx.Commit(ctx)
+}
+
+// Delete removes the group and its whole subtree. The subtree is walked here
+// rather than cascaded by the schema: parent_id is ” for a top-level group and
+// a foreign key cannot point at ” , so the column carries no REFERENCES
+// clause. See the sqlite driver's copy for the defect that found this.
+func (r *groupRepo) Delete(ctx context.Context, realmID, id string) error {
+	if _, err := r.ByID(ctx, realmID, id); err != nil {
+		return err
+	}
+	ids, err := r.subtree(ctx, realmID, id)
+	if err != nil {
+		return err
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	for _, gid := range ids {
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM keycloak_group WHERE realm_id = $1 AND id = $2`, realmID, gid); err != nil {
+			return classify(err)
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// subtree is the group and every group under it, leaves first.
+func (r *groupRepo) subtree(ctx context.Context, realmID, id string) ([]string, error) {
+	out := []string{id}
+	for i := 0; i < len(out); i++ {
+		kids, err := r.ListChildren(ctx, realmID, out[i])
+		if err != nil {
+			return nil, err
+		}
+		for _, k := range kids {
+			out = append(out, k.ID)
+		}
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, nil
+}
+
+// ListTopLevel is what GET /groups answers: the groups with no parent.
+func (r *groupRepo) ListTopLevel(ctx context.Context, realmID string) ([]*model.Group, error) {
+	return r.list(ctx, `WHERE realm_id = $1 AND parent_id = '' ORDER BY name`, realmID)
+}
+
+func (r *groupRepo) ListChildren(ctx context.Context, realmID, parentID string) ([]*model.Group, error) {
+	return r.list(ctx, `WHERE realm_id = $1 AND parent_id = $2 ORDER BY name`, realmID, parentID)
+}
+
+func (r *groupRepo) list(ctx context.Context, where string, args ...any) ([]*model.Group, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT id, realm_id, parent_id, name FROM keycloak_group `+where, args...)
+	if err != nil {
+		return nil, classify(err)
+	}
+	out, err := collectGroups(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadGroupAttributes(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// CountAll counts every group at any depth, which is the measured contract.
+func (r *groupRepo) CountAll(ctx context.Context, realmID string) (int, error) {
+	var n int
+	err := r.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM keycloak_group WHERE realm_id = $1`, realmID).Scan(&n)
+	return n, classify(err)
+}
+
+// Ancestry walks parent_id upwards and returns the chain nearest last.
+func (r *groupRepo) Ancestry(ctx context.Context, realmID, id string) ([]*model.Group, error) {
+	var chain []*model.Group
+	for id != "" {
+		g, err := r.ByID(ctx, realmID, id)
+		if err != nil {
+			return nil, err
+		}
+		chain = append([]*model.Group{g}, chain...)
+		id = g.ParentID
+	}
+	return chain, nil
+}
+
+// Members are the users assigned to this group directly.
+func (r *groupRepo) Members(ctx context.Context, realmID, groupID string) ([]*model.User, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT u.id, u.realm_id, u.username, u.email, u.email_verified, u.enabled,
+		        u.first_name, u.last_name, u.created_timestamp, u.attributes, u.required_actions, u.not_before
+		 FROM user_entity u
+		 JOIN group_membership m ON m.user_id = u.id
+		 WHERE u.realm_id = $1 AND m.group_id = $2
+		 ORDER BY u.username`, realmID, groupID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return scanUsers(rows)
+}
+
+// AddMember is idempotent: the measured PUT answers 204 for a membership the
+// user already had.
+func (r *groupRepo) AddMember(ctx context.Context, groupID, userID string) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO group_membership (group_id, user_id) VALUES ($1, $2)
+		 ON CONFLICT DO NOTHING`, groupID, userID)
+	return classify(err)
+}
+
+// RemoveMember reports no error for a membership that is not there.
+func (r *groupRepo) RemoveMember(ctx context.Context, groupID, userID string) error {
+	_, err := r.pool.Exec(ctx,
+		`DELETE FROM group_membership WHERE group_id = $1 AND user_id = $2`, groupID, userID)
+	return classify(err)
+}
+
+func (r *groupRepo) ListUserGroups(ctx context.Context, realmID, userID string) ([]*model.Group, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT g.id, g.realm_id, g.parent_id, g.name FROM keycloak_group g
+		 JOIN group_membership m ON m.group_id = g.id
+		 WHERE g.realm_id = $1 AND m.user_id = $2 ORDER BY g.name`, realmID, userID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	out, err := collectGroups(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadGroupAttributes(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func insertGroupAttributes(ctx context.Context, tx pgx.Tx, m *model.Group) error {
+	for name, values := range m.Attributes {
+		for i, v := range values {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO group_attribute (group_id, name, value, ordinal) VALUES ($1, $2, $3, $4)`,
+				m.ID, name, v, i); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// loadGroupAttributes fills Attributes on groups already scanned, one query for
+// the whole set.
+func (r *groupRepo) loadGroupAttributes(ctx context.Context, groups []*model.Group) error {
+	if len(groups) == 0 {
+		return nil
+	}
+	byID := make(map[string]*model.Group, len(groups))
+	args := make([]any, 0, len(groups))
+	placeholders := make([]string, 0, len(groups))
+	for i, g := range groups {
+		byID[g.ID] = g
+		args = append(args, g.ID)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", i+1))
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT group_id, name, value FROM group_attribute
+		 WHERE group_id IN (`+strings.Join(placeholders, ",")+`)
+		 ORDER BY group_id, name, ordinal`, args...)
+	if err != nil {
+		return classify(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var groupID, name, value string
+		if err := rows.Scan(&groupID, &name, &value); err != nil {
+			return err
+		}
+		g := byID[groupID]
+		if g.Attributes == nil {
+			g.Attributes = map[string][]string{}
+		}
+		g.Attributes[name] = append(g.Attributes[name], value)
+	}
+	return classify(rows.Err())
+}
+
+func collectGroups(rows pgx.Rows) ([]*model.Group, error) {
+	defer rows.Close()
+	var out []*model.Group
+	for rows.Next() {
+		m, err := scanGroup(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+func scanGroup(row scanner) (*model.Group, error) {
+	m := &model.Group{}
+	if err := row.Scan(&m.ID, &m.RealmID, &m.ParentID, &m.Name); err != nil {
 		return nil, classify(err)
 	}
 	return m, nil
