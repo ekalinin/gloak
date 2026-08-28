@@ -123,22 +123,26 @@ One workflow on `pull_request`, one job, in this order:
 
 1. `go build ./...`
 2. `go vet ./...`
-3. `CGO_ENABLED=0 go test ./...`
-4. the meter on `HEAD`, into a report
-5. the meter on the merge base with `main`, into a second report
-6. compare, render, post
+3. `go vet -tags docker ./...`
+4. `CGO_ENABLED=0 go test ./...`
+5. the meter on `HEAD`, into a report
+6. the meter on the merge base with `main`, into a second report
+7. compare, render, post
 
-Steps 4 and 5 are the same invocation against two checkouts:
+Steps 5 and 6 are the same invocation against two checkouts:
 
 ```
-GLOAK_PARITY_REPORT=<path> CGO_ENABLED=0 go test ./internal/conformance/ -run TestCoverage
+GLOAK_PARITY_REPORT=<path> CGO_ENABLED=0 go test ./internal/conformance/ -run '^TestCoverage$'
 ```
 
 No `-v`: the report goes to the file, and the printed table is not what is read.
 
-Steps 1 to 3 are what the repository already requires of a contributor and
-nothing more. **Nothing behind the `docker` build tag runs**: not the Postgres
-driver suite, not `make oracle`, not `make record`. Those stay local, and this
+Steps 1, 2 and 4 are what the repository already requires of a contributor and
+nothing more. Step 3 is new: it only compiles the docker-tagged files, so a
+break in them stops passing unnoticed here instead of surfacing later in
+`make record`, `make oracle`, or the Postgres suite by hand. **Nothing behind
+the `docker` build tag runs**: not the Postgres driver suite, not `make
+oracle`, not `make record`. Those stay local, and this
 document says so explicitly because the absence is the kind of thing a reader
 infers wrongly. A green run does **not** mean the two store drivers agree; that
 evidence still comes from running the Postgres suite by hand, as `AGENTS.md`
