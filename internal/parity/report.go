@@ -16,9 +16,20 @@ import (
 
 // Chapter is one row of a report.
 type Chapter struct {
-	Name       string
-	Served     int
-	Recorded   int
+	// Name is the chapter slug the meter groups cases under, such as
+	// "admin/roles". It is unique within a report.
+	Name string
+	// Served is what the meter counts as served for this chapter: distinct
+	// operations for a chapter with an OpenAPI tag, and Implemented cases for
+	// one counted from the catalogue. The two are not interchangeable, which
+	// is why nothing here recomputes either.
+	Served int
+	// Recorded is the count of cases whose bytes are measured and committed
+	// but which nothing serves yet. It is reported, never gated: a case moving
+	// from Recorded to Implemented shows up in Served.
+	Recorded int
+	// Documented is the chapter's denominator, from Keycloak's own API
+	// description where there is one and from the catalogue otherwise.
 	Documented int
 	// Enumerated is false for a chapter whose surface nobody has counted.
 	// Documented is 0 for those, and they are excluded from the total.
@@ -52,7 +63,15 @@ func Parse(r io.Reader) (Report, error) {
 	}
 
 	seenTotal := false
+	seen := map[string]bool{}
 	for sc.Scan() {
+		// The total row is the last row the meter writes. Anything after it
+		// means the file is not a report the meter produced, and continuing
+		// would let a second total overwrite the first, or a trailing chapter
+		// row join a tally it was never counted in.
+		if seenTotal {
+			return Report{}, fmt.Errorf("parity: row after the total row: %q", sc.Text())
+		}
 		fields := strings.Split(sc.Text(), "\t")
 		if fields[0] == "total" {
 			if len(fields) != 4 {
@@ -75,6 +94,14 @@ func Parse(r io.Reader) (Report, error) {
 			return Report{}, fmt.Errorf("parity: chapter %q has %d fields, want 5", fields[0], len(fields))
 		}
 		ch := Chapter{Name: fields[0]}
+		// Compare keys chapters by name, so a repeated name makes it disagree
+		// with itself: the map keeps the last row while the loop sees both, and
+		// Compare(r, r) reports a move that never happened. conformance.Chapters
+		// is a hand-maintained slice, so a duplicated entry is a plausible typo.
+		if seen[ch.Name] {
+			return Report{}, fmt.Errorf("parity: chapter %q appears twice", ch.Name)
+		}
+		seen[ch.Name] = true
 		var err error
 		if ch.Served, err = strconv.Atoi(fields[1]); err != nil {
 			return Report{}, fmt.Errorf("parity: %s served: %w", ch.Name, err)

@@ -54,6 +54,23 @@ func TestParseRejectsMalformedInput(t *testing.T) {
 		{"total row too short", "chapter\tserved\trecorded\tdocumented\tenumerated\n" +
 			"admin/roles\t1\t0\t2\ttrue\n" +
 			"total\t1\t2\n"},
+		// The total is the last row. A chapter after it was counted into no
+		// total, and a second total silently replaced the first: fed a report
+		// whose real total was 100, the scan used to answer 0.
+		{"chapter row after the total", "chapter\tserved\trecorded\tdocumented\tenumerated\n" +
+			"admin/roles\t1\t0\t2\ttrue\n" +
+			"total\t1\t2\t0\n" +
+			"admin/users\t9\t0\t20\ttrue\n"},
+		{"a second total row", "chapter\tserved\trecorded\tdocumented\tenumerated\n" +
+			"admin/roles\t1\t0\t2\ttrue\n" +
+			"total\t100\t485\t4\n" +
+			"total\t0\t0\t0\n"},
+		// Compare keys chapters by name, so a repeated one makes Compare(r, r)
+		// report a move: the map keeps the last row and the loop sees both.
+		{"a chapter listed twice", "chapter\tserved\trecorded\tdocumented\tenumerated\n" +
+			"admin/roles\t2\t0\t24\ttrue\n" +
+			"admin/roles\t24\t0\t24\ttrue\n" +
+			"total\t26\t48\t0\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := Parse(strings.NewReader(tc.in)); err == nil {

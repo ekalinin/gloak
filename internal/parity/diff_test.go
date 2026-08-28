@@ -28,6 +28,32 @@ func TestCompareReportsOnlyChaptersThatMoved(t *testing.T) {
 	}
 }
 
+// Appeared and Disappeared are sorted for the same reason Moved is: the comment
+// is rewritten on every push, and an unsorted list reorders itself between two
+// runs that found the same chapters. Both need more than one element and an
+// input order that is not already the answer.
+func TestCompareSortsAppearedAndDisappeared(t *testing.T) {
+	before := report(0, 485,
+		chapter("zzz/gone", 0),
+		chapter("aaa/gone", 0),
+		chapter("mmm/gone", 0),
+	)
+	after := report(0, 485,
+		chapter("zzz/new", 0),
+		chapter("aaa/new", 0),
+		chapter("mmm/new", 0),
+	)
+
+	got := Compare(before, after)
+
+	if want := []string{"aaa/new", "mmm/new", "zzz/new"}; !slices.Equal(got.Appeared, want) {
+		t.Fatalf("appeared: want %v, got %v", want, got.Appeared)
+	}
+	if want := []string{"aaa/gone", "mmm/gone", "zzz/gone"}; !slices.Equal(got.Disappeared, want) {
+		t.Fatalf("disappeared: want %v, got %v", want, got.Disappeared)
+	}
+}
+
 func TestCompareIdenticalReportsMovesNothing(t *testing.T) {
 	r := report(6, 485, chapter("admin/roles", 6))
 

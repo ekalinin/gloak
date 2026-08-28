@@ -22,6 +22,24 @@ func TestRenderCarriesTheMarkerAndTheTotals(t *testing.T) {
 	}
 }
 
+// The table is fixed-width text inside a code fence, so its header is the only
+// thing saying which column is which. Nothing else pins it: reversed labels or
+// widths that no longer line up with the rows are invisible to every other
+// assertion here, and the reader has no second source to check against.
+func TestRenderPinsTheTableHeaderAndColumnWidths(t *testing.T) {
+	d := Diff{BeforeServed: 100, AfterServed: 109, Documented: 485,
+		Moved: []ChapterDelta{{Name: "admin/groups", Before: 0, After: 9}}}
+
+	got := Render(d, "")
+
+	const header = "chapter                         before  after  delta"
+	const row = "admin/groups                         0      9     +9"
+	if !strings.Contains(got, header+"\n"+row+"\n") {
+		t.Fatalf("want the header and a row aligned under it:\nwant\n%s\n%s\ngot\n%s",
+			header, row, got)
+	}
+}
+
 func TestRenderSaysSoWhenNothingMoved(t *testing.T) {
 	got := Render(Diff{BeforeServed: 100, AfterServed: 100, Documented: 485}, "")
 
