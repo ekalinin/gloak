@@ -111,7 +111,7 @@ func TestDeletingARotatedSecretWithoutTheRoleAnswers500(t *testing.T) {
 // conformance suite: its recorded representations mask the secret as volatile,
 // so only the presence of the key is compared and only for one kind of client.
 func TestRepresentationHidesAPublicClientSecret(t *testing.T) {
-	admin := &caller{roles: map[string]bool{"manage-clients": true}}
+	admin := &caller{adminGrants: map[string]bool{"manage-clients": true}}
 
 	public := clientRepresentationOf(
 		&model.Client{ClientID: "pub", PublicClient: true, Secret: "s3cret"}, admin, "master")
