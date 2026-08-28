@@ -182,6 +182,11 @@ mention does not count), so a markdown bullet such as
 `- Parity-decrease: <reason>` does not match either. With several such
 lines, only the first is used.
 
+The same comparison runs locally. `GLOAK_PARITY_REPORT=<path>` makes the meter
+write its tally to that path as tab-separated values, alongside printing it;
+`cmd/parity` compares two of them. AGENTS.md's "Build and test" section spells
+out the three commands.
+
 A case has one of three statuses. `Implemented` is served and compared, and a
 mismatch is a regression. `Pending` is not built and has no contract. `Recorded`
 sits between them: the bytes have been measured and committed, but nothing

@@ -85,6 +85,11 @@ jobs:
         run: |
           set -o pipefail
           status=0
+          # The first pull request carrying this workflow fails here, and that
+          # is correct rather than a bug to chase: its merge base predates the
+          # report mode, so the base meter writes no file and cmd/parity exits 2
+          # with "parity: open .../parity-base.tsv: no such file or directory".
+          # There is no base to compare against. Every later run has one.
           "$RUNNER_TEMP/parity" \
             "$RUNNER_TEMP/parity-base.tsv" "$RUNNER_TEMP/parity-head.tsv" \
             > "$RUNNER_TEMP/comment.md" || status=$?

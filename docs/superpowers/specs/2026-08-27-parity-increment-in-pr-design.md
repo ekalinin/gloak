@@ -44,11 +44,17 @@ compare the meter's own output, not recompute anything.
 total line says how many were left out. A comparison that summed rows would
 silently include them.
 
-**`TestCoverage` always passes.** Its doc comment says so: it exists to print,
-so that a pending count which never moves is visible rather than buried. The
-gate this document adds must therefore live outside it. Making the test fail on
-a decrease would change a reporter into a guard and break the contract its own
-comment states.
+**`TestCoverage` is a reporter, not a gate.** Its doc comment says so: it exists
+to print, so that a pending count which never moves is visible rather than
+buried. It does fail on an inconsistent catalogue - a case filed under an
+undeclared chapter, an unreadable OpenAPI description - but never because the
+number is low. The gate this document adds must therefore live outside it.
+Making the test fail on a decrease would change a reporter into a guard and
+break the contract its own comment states.
+
+("always passes" is what this said first, and what the meter's own comment said
+until the same correction reached it. The absolute is wrong and the wrong part
+matters: a reader who believes it will look for the failure in the wrong place.)
 
 The output is `t.Logf`, visible only under `-v`, and every line carries a
 `coverage_test.go:NN:` prefix whose numbers move when the file is edited. It is
