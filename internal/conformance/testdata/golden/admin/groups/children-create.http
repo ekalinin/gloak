@@ -1,0 +1,13 @@
+# POST /admin/realms/master/groups/{{group_id}}/children
+HTTP/1.1 201 Created
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json
+Location: {{volatile}}
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"id":"{{string}}","name":"gloak-probe-group-made-child","path":"/gloak-probe-group/gloak-probe-group-made-child","parentId":"{{string}}","subGroups":[],"attributes":{},"realmRoles":[],"clientRoles":{},"access":{"view":true,"viewMembers":true,"manageMembers":true,"manage":true,"manageMembership":true}}

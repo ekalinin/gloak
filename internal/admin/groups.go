@@ -397,7 +397,10 @@ func (h *handler) createChild(w http.ResponseWriter, r *http.Request, rc *reqCon
 	}
 	w.Header().Set("Location", h.issuerBase+"/admin/realms/"+rc.realm.Name+"/groups/"+g.ID)
 	w.Header().Set("Cache-Control", "no-cache")
-	httpx.WriteJSONCharset(w, http.StatusCreated,
+	// **application/json with no charset**, where every group read carries
+	// ;charset=UTF-8. Measured on this response; the conformance case caught it
+	// on the first replay.
+	httpx.WriteJSON(w, http.StatusCreated,
 		groupRepresentationOf(g, path, 0, rc.caller, groupCreated))
 }
 
