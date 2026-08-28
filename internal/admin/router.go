@@ -87,6 +87,34 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/realms/{realm}/groups/{groupID}/children", h.guardGroup(groupWriteRoles, h.createChild))
 	mux.HandleFunc("GET /admin/realms/{realm}/groups/{groupID}/members", h.guardGroup(groupReadRoles, h.groupMembers))
 
+	// A group's role mappings, the eleven of cut C. The roles are the user
+	// mapping routes' - view-users or manage-users to read, manage-users to
+	// write - and the **ordering** is this family's: guardGroup, so an unknown
+	// group is 404 to every caller. Both halves measured on these routes
+	// rather than carried over; see internal/admin/groupmappings.go.
+	mux.HandleFunc("GET /admin/realms/{realm}/groups/{groupID}/role-mappings",
+		h.guardGroup(userMappingsReadRoles, h.allGroupMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/groups/{groupID}/role-mappings/realm",
+		h.guardGroup(userMappingsReadRoles, h.listGroupRealmMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/groups/{groupID}/role-mappings/realm/available",
+		h.guardGroup(userMappingsReadRoles, h.availableGroupRealmMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/groups/{groupID}/role-mappings/realm/composite",
+		h.guardGroup(userMappingsReadRoles, h.compositeGroupRealmMappings))
+	mux.HandleFunc("POST /admin/realms/{realm}/groups/{groupID}/role-mappings/realm",
+		h.guardGroup(userMappingsWriteRoles, h.assignGroupRealmMappings))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/groups/{groupID}/role-mappings/realm",
+		h.guardGroup(userMappingsWriteRoles, h.removeGroupRealmMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/groups/{groupID}/role-mappings/clients/{clientUUID}",
+		h.guardGroupClient(userMappingsReadRoles, h.listGroupClientMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/groups/{groupID}/role-mappings/clients/{clientUUID}/available",
+		h.guardGroupClient(userMappingsReadRoles, h.availableGroupClientMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/groups/{groupID}/role-mappings/clients/{clientUUID}/composite",
+		h.guardGroupClient(userMappingsReadRoles, h.compositeGroupClientMappings))
+	mux.HandleFunc("POST /admin/realms/{realm}/groups/{groupID}/role-mappings/clients/{clientUUID}",
+		h.guardGroupClient(userMappingsWriteRoles, h.assignGroupClientMappings))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/groups/{groupID}/role-mappings/clients/{clientUUID}",
+		h.guardGroupClient(userMappingsWriteRoles, h.removeGroupClientMappings))
+
 	// The combined view: both halves of a user's **direct** mappings in one
 	// object. Same guard as the six listings below, and measured on this route
 	// rather than inherited - the same seven single-role callers, a fresh token
@@ -141,11 +169,11 @@ func (h *handler) register(mux *http.ServeMux) {
 	// being read makes no difference to it, which is why the {clientUUID}
 	// segment is the handler's business and not the guard's.
 	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}",
-		h.guardUserSubject(userMappingsReadRoles, h.listClientMappings))
+		h.guardUserSubjectClient(userMappingsReadRoles, h.listClientMappings))
 	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}/available",
-		h.guardUserSubject(userMappingsReadRoles, h.availableClientMappings))
+		h.guardUserSubjectClient(userMappingsReadRoles, h.availableClientMappings))
 	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}/composite",
-		h.guardUserSubject(userMappingsReadRoles, h.compositeClientMappings))
+		h.guardUserSubjectClient(userMappingsReadRoles, h.compositeClientMappings))
 
 	// The two client writes take manage-users **alone** - the realm writes'
 	// guard, and narrower than the client reads directly above, which
@@ -158,9 +186,9 @@ func (h *handler) register(mux *http.ServeMux) {
 	// too. The guard follows the subject on this pair as on every other one in
 	// the family, so the {clientUUID} segment stays the handler's business.
 	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}",
-		h.guardUserSubject(userMappingsWriteRoles, h.assignClientMappings))
+		h.guardUserSubjectClient(userMappingsWriteRoles, h.assignClientMappings))
 	mux.HandleFunc("DELETE /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}",
-		h.guardUserSubject(userMappingsWriteRoles, h.removeClientMappings))
+		h.guardUserSubjectClient(userMappingsWriteRoles, h.removeClientMappings))
 
 	mux.HandleFunc("GET /admin/realms/{realm}/clients", h.guardAny(clientsReadRoles, h.listClients))
 	// {clientUUID}, not {client-uuid}: net/http requires a wildcard name to be
@@ -355,16 +383,26 @@ func (h *handler) guardAnyAndAny(a, b []string, next func(http.ResponseWriter, *
 // fine is what the route itself takes, checked after the subject. The order is
 // what makes 404 reachable for a caller the route refuses.
 func (h *handler) guardUserSubject(fine []string, next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
+	return h.guardUserSubjectResolving(func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+		if !rc.caller.hasAny(fine) {
+			writeForbidden(w)
+			return
+		}
+		next(w, r, rc)
+	})
+}
+
+// guardUserSubjectResolving is the first two stages on their own: the coarse
+// gate and the subject. What follows differs between the plain routes, which
+// check the role next, and the client mapping routes, which resolve a client
+// first.
+func (h *handler) guardUserSubjectResolving(next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
 	return h.guardAnyRejecting(usersReadRoles, writeForbidden, func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 		user, ok := h.userFromPath(w, r, rc)
 		if !ok {
 			return
 		}
 		rc.subject = user
-		if !rc.caller.hasAny(fine) {
-			writeForbidden(w)
-			return
-		}
 		next(w, r, rc)
 	})
 }
@@ -386,6 +424,19 @@ func (h *handler) guardUserSubject(fine []string, next func(http.ResponseWriter,
 // resolve-first behaviour for /roles-by-id/{id}, and notes there too that it is
 // Keycloak's behaviour rather than a safe one.
 func (h *handler) guardGroup(fine []string, next func(http.ResponseWriter, *http.Request, *reqContext, *model.Group)) http.HandlerFunc {
+	return h.guardGroupResolving(func(w http.ResponseWriter, r *http.Request, rc *reqContext, g *model.Group) {
+		if !rc.caller.hasAny(fine) {
+			writeForbidden(w)
+			return
+		}
+		next(w, r, rc, g)
+	})
+}
+
+// guardGroupResolving is the realm, the caller and the group, with no role
+// check. What follows differs between the plain group routes and the six that
+// name a client, which resolve it before judging the caller.
+func (h *handler) guardGroupResolving(next func(http.ResponseWriter, *http.Request, *reqContext, *model.Group)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		realm := h.resolveRealm(w, r)
 		if realm == nil {
@@ -404,11 +455,82 @@ func (h *handler) guardGroup(fine []string, next func(http.ResponseWriter, *http
 			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 			return
 		}
+		next(w, r, &reqContext{realm: realm, caller: c}, group)
+	}
+}
+
+// guardGroupClient is guardGroup for the six group routes that name a client
+// as well: the client is resolved **after the group and before the role check**.
+//
+// Measured 2026-08-28: a real group with an unknown client answers 404
+// "Client not found" to every caller, including one holding no admin role, and
+// an unknown group with an unknown client answers about the **group**. So the
+// order is group, client, roles.
+func (h *handler) guardGroupClient(fine []string, next func(http.ResponseWriter, *http.Request, *reqContext, *model.Group)) http.HandlerFunc {
+	return h.guardGroupResolving(func(w http.ResponseWriter, r *http.Request, rc *reqContext, g *model.Group) {
+		if _, ok := h.mappingClientFromPath(w, r, rc); !ok {
+			return
+		}
+		if !rc.caller.hasAny(fine) {
+			writeForbidden(w)
+			return
+		}
+		next(w, r, rc, g)
+	})
+}
+
+// guardUserSubjectClient is guardUserSubject for the six user mapping routes
+// that name a client: the client is resolved after the subject and **before the
+// route's own role check**.
+//
+// Measured 2026-08-28, and Gloak diverged here before cut C found it. A real
+// user with an unknown client answers 404 "Client not found" to every caller,
+// including one that fails the coarse gate - where an unknown user **and** an
+// unknown client answers 403 to that same caller. So the client's 404 does not
+// depend on the gate and the user's does, which is why this cannot be expressed
+// by moving one check.
+func (h *handler) guardUserSubjectClient(fine []string, next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		realm := h.resolveRealm(w, r)
+		if realm == nil {
+			return
+		}
+		c := h.resolveCaller(w, r, realm)
+		if c == nil {
+			return
+		}
+		rc := &reqContext{realm: realm, caller: c}
+
+		// **The subject's absence is gated and the client's is not**, which is
+		// why this is written out rather than layered on guardUserSubject.
+		// Measured on a caller with no admin role: a real user with an unknown
+		// client answers 404 "Client not found", an unknown user with a real
+		// client answers 403, and an unknown user with an unknown client
+		// answers 403 - so the user is resolved first and the coarse gate
+		// decides only when it is missing.
+		user, err := h.store.Users().ByID(r.Context(), realm.ID, r.PathValue("userID"))
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				if !c.hasAny(usersReadRoles) {
+					writeForbidden(w)
+					return
+				}
+				writeUserNotFound(w)
+				return
+			}
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		rc.subject = user
+
+		if _, ok := h.mappingClientFromPath(w, r, rc); !ok {
+			return
+		}
 		if !c.hasAny(fine) {
 			writeForbidden(w)
 			return
 		}
-		next(w, r, &reqContext{realm: realm, caller: c}, group)
+		next(w, r, rc)
 	}
 }
 
