@@ -67,6 +67,30 @@ var adminCases = []Case{
 	},
 	// --- Clients ---
 	{
+		// The clients-family mirror of admin/users/list-without-view-users:
+		// query-clients is admitted and shown nothing. Measured 2026-08-28,
+		// unfiltered so that "nothing" is the caller's doing and not a
+		// clientId parameter's.
+		//
+		// This route took view-clients alone until that sweep, so it refused
+		// this caller **and** manage-clients, which Keycloak serves in full -
+		// wrong in both directions at once. F17.
+		ID: "admin/clients/list-to-a-query-clients-caller",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get clients belonging to the realm, caller holding query-clients",
+			Retrieved: "2026-08-28",
+		},
+		Status:  Implemented,
+		Fixture: "narrow-caller-query-clients",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients",
+			Headers: map[string]string{"Authorization": "Bearer {{caller_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
 		ID: "admin/clients/list",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -1270,45 +1294,95 @@ var adminCases = []Case{
 	},
 
 	{
-		// The 403 shape is measured - see "Admin API rejection shapes" in
-		// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md, taken
-		// from a live caller holding view-users and nothing else - and it is
-		// served and covered by TestCallerWithoutTheRoleIsForbidden in
-		// internal/admin, which builds that caller through the store.
+		// A caller holding query-users and nothing else: 200 and an empty
+		// array, not 403. The route admits it and the **body** is what
+		// narrows - measured 2026-08-28 on one caller per role, alongside the
+		// count next door, which the same caller gets in full.
 		//
-		// It cannot be a conformance case yet. A fixture runs the same
-		// requests against the reference container and against Gloak, so
-		// reaching a narrow-role caller needs Gloak to serve user creation
-		// (this cut, later) *and* role assignment, which is the Role Mapper
-		// tag and therefore P2's second cut. There is no way to seed the
-		// container except through its API.
+		// This was Pending from 2026-08-22 to 2026-08-28 behind two blockers,
+		// and both are now gone: the harness had no non-admin caller (F37) and
+		// the listing filter was neither measured nor built (F17). The second
+		// is why it stayed Pending after the first was closed.
 		ID: "admin/users/list-without-view-users",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Users: get users, caller lacking view-users",
-			Retrieved: "2026-08-22",
+			Retrieved: "2026-08-28",
 		},
-		Status: Pending,
-		// **The fixture blocker is gone and this is still Pending**, which is
-		// worth stating because the two used to be named together. callerFixture
-		// builds a narrow-role caller end to end, and three cases now use it -
-		// see narrow-caller-manage-users and its siblings in fixture.go, which
-		// also gave F28's caller-relative predicate its first conformance cases.
-		//
-		// What stands on its own is the other blocker: the listing is not
-		// filtered by the caller's visibility, and what a partly sighted caller
-		// sees has never been measured. A `query-users` caller gets 200 and an
-		// empty array from Keycloak and every user from Gloak, and the sweep
-		// that says what a `view-users` caller sees has not been run. See F17,
-		// whose blocker 1 this is.
-		Reason:  "the listing is not filtered by caller visibility, and that filtering is unmeasured - F17",
-		Fixture: "",
+		Status:  Implemented,
+		Fixture: "narrow-caller-query-users",
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/admin/realms/master/users",
-			Headers: map[string]string{"Authorization": "Bearer REPLACE-WITH-A-NARROW-ROLE-TOKEN"},
+			Headers: map[string]string{"Authorization": "Bearer {{caller_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// F30, the sharpest cell of it: **query-users opens no single-user
+		// route at all and still learns that the user does not exist.** The
+		// same caller gets 403 from this path when the user is real, which
+		// admin/users/read-to-a-query-users-caller records.
+		//
+		// So the guard is two stages with the subject resolved between them,
+		// and this is the case that a single-stage guard cannot pass whichever
+		// role it names: name query-users and the real-subject case breaks,
+		// omit it and this one does.
+		ID: "admin/users/read-missing-to-a-query-users-caller",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get representation of the user, unknown id, caller holding query-users",
+			Retrieved: "2026-08-28",
+		},
+		Status:  Implemented,
+		Fixture: "narrow-caller-query-users",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/00000000-0000-0000-0000-000000000000",
+			Headers: map[string]string{"Authorization": "Bearer {{caller_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The other half of the pair above: the same caller, a subject that
+		// exists, 403. Together they are what says the 404 is about the
+		// subject and not about the caller.
+		ID: "admin/users/read-to-a-query-users-caller",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get representation of the user, caller holding query-users",
+			Retrieved: "2026-08-28",
+		},
+		Status:  Implemented,
+		Fixture: "narrow-caller-query-users",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{caller_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// F36's suspicion, settled: manage-users **may** read a user. It has
+		// no composites at all - it is not composite over view-users - so
+		// reading the admin roles by name predicts a caller that can delete a
+		// user it cannot read. Keycloak does not do that, and Gloak did until
+		// 2026-08-28.
+		ID: "admin/users/read-to-a-manage-users-caller",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get representation of the user, caller holding manage-users",
+			Retrieved: "2026-08-28",
+		},
+		Status:  Implemented,
+		Fixture: "narrow-caller-manage-users",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{caller_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"id", "createdTimestamp"},
 	},
 	{
 		// Reported under admin/users rather than admin/realms-admin: the

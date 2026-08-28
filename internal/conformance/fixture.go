@@ -367,6 +367,8 @@ var Fixtures = map[string]Fixture{
 	"narrow-caller-manage-users": callerFixture("gloak-probe-caller-manage-users", "manage-users"),
 	"narrow-caller-view-users":   callerFixture("gloak-probe-caller-view-users", "view-users"),
 	"narrow-caller-impostor":     impostorCallerFixture(),
+	"narrow-caller-query-users":   callerFixture("gloak-probe-caller-query-users", "query-users"),
+	"narrow-caller-query-clients": callerFixture("gloak-probe-caller-query-clients", "query-clients"),
 }
 
 // callerFixture is a caller that is not the administrator: a user created and

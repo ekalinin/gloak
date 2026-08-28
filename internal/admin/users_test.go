@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -397,4 +398,172 @@ func roleNames(rs []*model.Role) []string {
 		out = append(out, r.Name)
 	}
 	return out
+}
+
+// The coarse gate is usersReadRoles, and it is wider than any route in the
+// family. Measured 2026-08-28 on a live 26.7.1 across all 18 routes naming a
+// {userID}: view-users, query-users and manage-users all get 404 "User not
+// found" for a subject that does not exist, whatever the route, and every role
+// outside those three gets 403.
+//
+// query-users is the row that matters. It opens **no** route in the family -
+// not the read, not a write, not one role mapping - and still learns that the
+// user is absent. A single-stage guard cannot produce that: name query-users
+// and the real-subject 403s break, leave it out and these 404s do.
+func TestAMissingSubjectIs404ToTheWholeUsersFamily(t *testing.T) {
+	h, s, realm := newServer(t)
+	missing := "/admin/realms/master/users/00000000-0000-0000-0000-000000000000"
+	cred := missing + "/credentials/00000000-0000-0000-0000-000000000000"
+	routes := []struct{ method, path string }{
+		{http.MethodGet, missing},
+		{http.MethodPut, missing},
+		{http.MethodDelete, missing},
+		{http.MethodGet, missing + "/credentials"},
+		{http.MethodPut, missing + "/reset-password"},
+		{http.MethodDelete, cred},
+		{http.MethodPut, cred + "/userLabel"},
+		{http.MethodPost, cred + "/moveToFirst"},
+		{http.MethodPut, missing + "/disable-credential-types"},
+		{http.MethodPost, missing + "/logout"},
+		{http.MethodGet, missing + "/role-mappings"},
+		{http.MethodGet, missing + "/role-mappings/realm"},
+		{http.MethodGet, missing + "/role-mappings/realm/available"},
+		{http.MethodGet, missing + "/role-mappings/realm/composite"},
+		{http.MethodPost, missing + "/role-mappings/realm"},
+		{http.MethodDelete, missing + "/role-mappings/realm"},
+	}
+	for _, role := range usersReadRoles {
+		tok := tokenForRole(t, h, s, realm, role)
+		for _, rt := range routes {
+			w := sendJSON(t, h, rt.method, rt.path, `[]`, tok)
+			if w.Code != http.StatusNotFound {
+				t.Errorf("%s as %s %s: want 404, got %d: %s", role, rt.method, rt.path, w.Code, w.Body)
+			}
+		}
+	}
+	// The control: outside the coarse gate the subject is never reached, so
+	// the same requests are 403 and say nothing about the user.
+	for _, role := range []string{"view-clients", "manage-clients", "view-realm", "manage-realm"} {
+		tok := tokenForRole(t, h, s, realm, role)
+		for _, rt := range routes {
+			w := sendJSON(t, h, rt.method, rt.path, `[]`, tok)
+			if w.Code != http.StatusForbidden {
+				t.Errorf("%s as %s %s: want 403, got %d: %s", role, rt.method, rt.path, w.Code, w.Body)
+			}
+		}
+	}
+}
+
+// The user listing is filtered by what the caller may view and the count is
+// not, measured on the same realm at the same moment. The two endpoints
+// disagreeing is the contract.
+func TestTheUserListingIsFilteredAndTheCountIsNot(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	for _, u := range []string{"probe-a", "probe-b"} {
+		postJSON(t, h, "/admin/realms/master/users", `{"username":"`+u+`","enabled":true}`, admin)
+	}
+	full := len(listUsernames(t, h, admin))
+	if full < 3 {
+		t.Fatalf("only %d users, so an empty list would not be distinguishable", full)
+	}
+
+	for _, tc := range []struct {
+		role      string
+		seesEvery bool
+	}{
+		{"view-users", true},
+		{"manage-users", true},
+		{"query-users", false},
+	} {
+		tok := tokenForRole(t, h, s, realm, tc.role)
+		// Each caller is a user, so the realm grows as this loop runs. Both
+		// numbers below are taken against the administrator at the same
+		// moment rather than against the count read before the loop.
+		want := 0
+		if tc.seesEvery {
+			want = len(listUsernames(t, h, admin))
+		}
+		if got := len(listUsernames(t, h, tok)); got != want {
+			t.Errorf("%s sees %d users in the listing, want %d", tc.role, got, want)
+		}
+		w := get(t, h, "/admin/realms/master/users/count", tok)
+		if w.Code != http.StatusOK {
+			t.Errorf("%s on the count: %d %s", tc.role, w.Code, w.Body)
+			continue
+		}
+		// The count is unfiltered for all three, including the caller whose
+		// listing is empty. It grows as this test adds callers, so it is
+		// compared against a fresh read rather than against `full`.
+		if want := len(listUsernames(t, h, admin)); w.Body.String() != fmt.Sprint(want) {
+			t.Errorf("%s counts %s, want the unfiltered %d", tc.role, w.Body.String(), want)
+		}
+	}
+}
+
+// The client listing admits three roles and shows two of them everything.
+// Measured 2026-08-28: it took view-clients alone, so it refused query-clients,
+// which Keycloak admits and empties, and manage-clients, which Keycloak serves
+// in full. manage-clients is not composite over view-clients, so nothing in the
+// role graph predicted it.
+func TestTheClientListingAdmitsThreeRolesAndFiltersOne(t *testing.T) {
+	h, s, realm := newServer(t)
+	full := len(listClientIDs(t, h, tokenFor(t, h, "admin", "admin")))
+	if full == 0 {
+		t.Fatal("no clients, so an empty list would not be distinguishable")
+	}
+	for _, tc := range []struct {
+		role string
+		want int
+	}{
+		{"view-clients", full},
+		{"manage-clients", full},
+		{"query-clients", 0},
+	} {
+		if got := len(listClientIDs(t, h, tokenForRole(t, h, s, realm, tc.role))); got != tc.want {
+			t.Errorf("%s sees %d clients, want %d", tc.role, got, tc.want)
+		}
+	}
+	for _, role := range []string{"view-users", "manage-users", "view-realm"} {
+		w := get(t, h, "/admin/realms/master/clients", tokenForRole(t, h, s, realm, role))
+		if w.Code != http.StatusForbidden {
+			t.Errorf("%s on the client listing: want 403, got %d", role, w.Code)
+		}
+	}
+}
+
+func listUsernames(t *testing.T, h http.Handler, token string) []string {
+	t.Helper()
+	w := get(t, h, "/admin/realms/master/users", token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list users: %d %s", w.Code, w.Body)
+	}
+	var out []struct{ Username string }
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("parse user listing: %v", err)
+	}
+	names := make([]string, 0, len(out))
+	for _, u := range out {
+		names = append(names, u.Username)
+	}
+	return names
+}
+
+func listClientIDs(t *testing.T, h http.Handler, token string) []string {
+	t.Helper()
+	w := get(t, h, "/admin/realms/master/clients", token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list clients: %d %s", w.Code, w.Body)
+	}
+	var out []struct {
+		ClientID string `json:"clientId"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("parse client listing: %v", err)
+	}
+	ids := make([]string, 0, len(out))
+	for _, c := range out {
+		ids = append(ids, c.ClientID)
+	}
+	return ids
 }

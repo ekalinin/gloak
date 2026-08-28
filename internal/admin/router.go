@@ -38,20 +38,20 @@ func (h *handler) register(mux *http.ServeMux) {
 	// does not - it answers 403.
 	mux.HandleFunc("GET /admin/realms/{realm}/users", h.guardAny(usersReadRoles, h.listUsers))
 	mux.HandleFunc("GET /admin/realms/{realm}/users/count", h.guardAny(usersReadRoles, h.countUsers))
-	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}", h.guard("view-users", h.readUser))
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}", h.guardUserSubject(userReadRoles, h.readUser))
 	mux.HandleFunc("POST /admin/realms/{realm}/users", h.guard("manage-users", h.createUser))
-	mux.HandleFunc("PUT /admin/realms/{realm}/users/{userID}", h.guard("manage-users", h.updateUser))
-	mux.HandleFunc("DELETE /admin/realms/{realm}/users/{userID}", h.guard("manage-users", h.deleteUser))
+	mux.HandleFunc("PUT /admin/realms/{realm}/users/{userID}", h.guardUserSubject(userWriteRoles, h.updateUser))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/users/{userID}", h.guardUserSubject(userWriteRoles, h.deleteUser))
 	// Reading a credential list needs only view-users: the body carries no
 	// secret. Everything that changes one needs manage-users.
-	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/credentials", h.guard("view-users", h.listCredentials))
-	mux.HandleFunc("PUT /admin/realms/{realm}/users/{userID}/reset-password", h.guard("manage-users", h.resetPassword))
-	mux.HandleFunc("DELETE /admin/realms/{realm}/users/{userID}/credentials/{credentialID}", h.guard("manage-users", h.deleteCredential))
-	mux.HandleFunc("PUT /admin/realms/{realm}/users/{userID}/credentials/{credentialID}/userLabel", h.guard("manage-users", h.setCredentialLabel))
-	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/credentials/{credentialID}/moveToFirst", h.guard("manage-users", h.moveCredentialToFirst))
-	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/credentials/{credentialID}/moveAfter/{previousID}", h.guard("manage-users", h.moveCredentialAfter))
-	mux.HandleFunc("PUT /admin/realms/{realm}/users/{userID}/disable-credential-types", h.guard("manage-users", h.disableCredentialTypes))
-	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/logout", h.guard("manage-users", h.logoutUser))
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/credentials", h.guardUserSubject(userReadRoles, h.listCredentials))
+	mux.HandleFunc("PUT /admin/realms/{realm}/users/{userID}/reset-password", h.guardUserSubject(userWriteRoles, h.resetPassword))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/users/{userID}/credentials/{credentialID}", h.guardUserSubject(userWriteRoles, h.deleteCredential))
+	mux.HandleFunc("PUT /admin/realms/{realm}/users/{userID}/credentials/{credentialID}/userLabel", h.guardUserSubject(userWriteRoles, h.setCredentialLabel))
+	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/credentials/{credentialID}/moveToFirst", h.guardUserSubject(userWriteRoles, h.moveCredentialToFirst))
+	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/credentials/{credentialID}/moveAfter/{previousID}", h.guardUserSubject(userWriteRoles, h.moveCredentialAfter))
+	mux.HandleFunc("PUT /admin/realms/{realm}/users/{userID}/disable-credential-types", h.guardUserSubject(userWriteRoles, h.disableCredentialTypes))
+	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/logout", h.guardUserSubject(userWriteRoles, h.logoutUser))
 
 	// The combined view: both halves of a user's **direct** mappings in one
 	// object. Same guard as the six listings below, and measured on this route
@@ -59,7 +59,7 @@ func (h *handler) register(mux *http.ServeMux) {
 	// minted immediately before each call. view-clients was the plausible one
 	// on a body keyed by clientId, and it is 403 here like the other four.
 	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings",
-		h.guardAny(userMappingsReadRoles, h.allMappings))
+		h.guardUserSubject(userMappingsReadRoles, h.allMappings))
 
 	// A user's realm role mappings: three reads that answer three different
 	// questions. All three take view-users or manage-users - measured against a
@@ -73,11 +73,11 @@ func (h *handler) register(mux *http.ServeMux) {
 	// every one of them, so refusing it would be the too-restrictive direction
 	// this cut has already reverted twice.
 	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/realm",
-		h.guardAny(userMappingsReadRoles, h.listRealmMappings))
+		h.guardUserSubject(userMappingsReadRoles, h.listRealmMappings))
 	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/realm/available",
-		h.guardAny(userMappingsReadRoles, h.availableRealmMappings))
+		h.guardUserSubject(userMappingsReadRoles, h.availableRealmMappings))
 	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/realm/composite",
-		h.guardAny(userMappingsReadRoles, h.compositeRealmMappings))
+		h.guardUserSubject(userMappingsReadRoles, h.compositeRealmMappings))
 
 	// The two writes take manage-users **alone**, which is narrower than the
 	// reads above - measured on both verbs across the same seven single-role
@@ -91,9 +91,9 @@ func (h *handler) register(mux *http.ServeMux) {
 	// manage-realm and nothing else is refused even for a realm role, which is
 	// the opposite of roles-by-id.
 	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/role-mappings/realm",
-		h.guard(userMappingsWriteRole, h.assignRealmMappings))
+		h.guardUserSubject(userMappingsWriteRoles, h.assignRealmMappings))
 	mux.HandleFunc("DELETE /admin/realms/{realm}/users/{userID}/role-mappings/realm",
-		h.guard(userMappingsWriteRole, h.removeRealmMappings))
+		h.guardUserSubject(userMappingsWriteRoles, h.removeRealmMappings))
 
 	// The same three reads for one client's roles. The guard is the realm
 	// triple's, and that is measured on these routes rather than inherited:
@@ -107,11 +107,11 @@ func (h *handler) register(mux *http.ServeMux) {
 	// being read makes no difference to it, which is why the {clientUUID}
 	// segment is the handler's business and not the guard's.
 	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}",
-		h.guardAny(userMappingsReadRoles, h.listClientMappings))
+		h.guardUserSubject(userMappingsReadRoles, h.listClientMappings))
 	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}/available",
-		h.guardAny(userMappingsReadRoles, h.availableClientMappings))
+		h.guardUserSubject(userMappingsReadRoles, h.availableClientMappings))
 	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}/composite",
-		h.guardAny(userMappingsReadRoles, h.compositeClientMappings))
+		h.guardUserSubject(userMappingsReadRoles, h.compositeClientMappings))
 
 	// The two client writes take manage-users **alone** - the realm writes'
 	// guard, and narrower than the client reads directly above, which
@@ -124,11 +124,11 @@ func (h *handler) register(mux *http.ServeMux) {
 	// too. The guard follows the subject on this pair as on every other one in
 	// the family, so the {clientUUID} segment stays the handler's business.
 	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}",
-		h.guard(userMappingsWriteRole, h.assignClientMappings))
+		h.guardUserSubject(userMappingsWriteRoles, h.assignClientMappings))
 	mux.HandleFunc("DELETE /admin/realms/{realm}/users/{userID}/role-mappings/clients/{clientUUID}",
-		h.guard(userMappingsWriteRole, h.removeClientMappings))
+		h.guardUserSubject(userMappingsWriteRoles, h.removeClientMappings))
 
-	mux.HandleFunc("GET /admin/realms/{realm}/clients", h.guard("view-clients", h.listClients))
+	mux.HandleFunc("GET /admin/realms/{realm}/clients", h.guardAny(clientsReadRoles, h.listClients))
 	// {clientUUID}, not {client-uuid}: net/http requires a wildcard name to be
 	// a Go identifier and panics on the hyphen. The OpenAPI description spells
 	// it with one, and Case.Operation keeps that spelling - the route pattern
@@ -300,6 +300,41 @@ func (h *handler) guardAnyAndAny(a, b []string, next func(http.ResponseWriter, *
 	})
 }
 
+// guardUserSubject is the two-stage guard every route naming a {userID} takes:
+// a coarse check, then the subject, then the route's own roles.
+//
+// Keycloak checks twice with the subject resolved in between, so a caller that
+// passes the coarse gate learns whether the user exists even when the route is
+// closed to it, and a caller that fails the coarse gate does not. Measured
+// 2026-08-28 across all 18 routes in the family - the single-user reads and
+// writes, the whole credential family, the logout, and the seven role-mapping
+// routes - on a user id that resolves to nothing, one caller per role and a
+// fresh token minted immediately before every call. Every one of them answers
+// 404 "User not found" to view-users, query-users and manage-users alike, and
+// 403 to every role outside those three.
+//
+// **The coarse gate is usersReadRoles and it is wider than any route's own
+// roles**, which is the whole point: query-users opens no route in the family -
+// not one - and still gets the 404 everywhere. A single-stage guard cannot
+// express that, which is why this exists rather than another guardAny.
+//
+// fine is what the route itself takes, checked after the subject. The order is
+// what makes 404 reachable for a caller the route refuses.
+func (h *handler) guardUserSubject(fine []string, next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
+	return h.guardAnyRejecting(usersReadRoles, writeForbidden, func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+		user, ok := h.userFromPath(w, r, rc)
+		if !ok {
+			return
+		}
+		rc.subject = user
+		if !rc.caller.hasAny(fine) {
+			writeForbidden(w)
+			return
+		}
+		next(w, r, rc)
+	})
+}
+
 // guardByRoleContainer is guard for the roles-by-id routes, whose required
 // role is decided by the **data** rather than by the route: the role has to
 // be resolved before the caller can be judged, because the same path takes
@@ -375,6 +410,10 @@ func (h *handler) guardAnyRejecting(roles []string, reject func(http.ResponseWri
 type reqContext struct {
 	realm  *model.Realm
 	caller *caller
+	// subject is the user named by {userID}, resolved by guardUserSubject
+	// before the route's own role check runs. userFromPath hands it back
+	// rather than looking it up a second time.
+	subject *model.User
 }
 
 // realmIssuer is the iss claim a token from this realm carries, and therefore
@@ -383,10 +422,33 @@ func (h *handler) realmIssuer(realm string) string {
 	return h.issuerBase + "/realms/" + realm
 }
 
-// usersReadRoles is what the user listing and the count accept. Reading one
-// user by ID is not on this list: query-users was measured getting 403 there
-// and 200 on the other two.
+// usersReadRoles is what the user listing and the count accept, and it is also
+// the **coarse gate** guardUserSubject applies to every route naming a
+// {userID}. Reading one user by ID is not opened by all three: query-users was
+// measured getting 403 there and 200 on the other two - but it still gets the
+// 404 for a subject that does not exist, which is the distinction the two
+// stages exist to draw.
 var usersReadRoles = []string{"view-users", "query-users", "manage-users"}
+
+// userReadRoles is what reading one user, and its credential list, accept.
+// Measured 2026-08-28 on both: 200 for view-users and manage-users, 403 for
+// query-users and for every role outside the family.
+//
+// **manage-users is on this list and used not to be.** It has no composites at
+// all - it is not composite over view-users - so a name-by-name reading of the
+// admin roles predicts a caller that may delete a user it may not read. Keycloak
+// does not do that, measured on the whole family in one pass; F36 filed the
+// suspicion and the sweep confirmed it.
+var userReadRoles = []string{"view-users", "manage-users"}
+
+// userWriteRoles is what everything that changes a user takes: the update, the
+// delete, the whole credential family and the logout. manage-users alone,
+// measured across the same nine callers on all nine routes.
+//
+// A slice of one, like userMappingsWriteRoles below, because guardUserSubject
+// takes the fine stage as a set and a route that names one role should not have
+// to say so differently from a route that names two.
+var userWriteRoles = []string{"manage-users"}
 
 // userMappingsReadRoles is what the seven role-mapping reads accept - the three
 // realm ones, the three client ones and the combined view, swept separately and
@@ -406,6 +468,23 @@ var userMappingsReadRoles = []string{"view-users", "manage-users"}
 // re-applies this before judging any individual role. Spelling it once is what
 // stops that filter and this guard from drifting apart.
 const userMappingsWriteRole = "manage-users"
+
+// userMappingsWriteRoles is the same role as a set, which is the shape
+// guardUserSubject's fine stage takes. The constant above stays because
+// grantable asks the question of one role rather than of a route.
+var userMappingsWriteRoles = []string{userMappingsWriteRole}
+
+// clientsReadRoles is what the client listing accepts. Measured 2026-08-28 on
+// one caller per role: view-clients and manage-clients get 200 and all six,
+// query-clients gets 200 and `[]`, everything else 403.
+//
+// It is the clients-family mirror of usersReadRoles, and the route took
+// view-clients alone until that sweep - refusing query-clients, which Keycloak
+// admits and empties, and refusing manage-clients, which Keycloak serves in
+// full. Wrong in both directions on one route, which is what comes of deriving
+// a guard from a role's name: manage-clients is not composite over
+// view-clients, so nothing in the role graph predicts it opens a read.
+var clientsReadRoles = []string{"view-clients", "query-clients", "manage-clients"}
 
 // realmRolesReadRoles is what both realm-role reads accept: view-realm or
 // manage-realm, measured across eight single-role callers.
