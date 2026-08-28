@@ -40,19 +40,25 @@ jobs:
       # leaves this package's import graph untouched) can replay a cached pass
       # without writing the report at all. The compare step would then fail on
       # a missing file with no hint that caching was the cause.
+      #
+      # -run takes an unanchored regex, so a bare TestCoverage would also select
+      # TestCoverageWritesAReportWhenAsked, which re-runs the meter as a subtest:
+      # the same work twice for one report. Anchoring says which test is meant.
       - name: Parity report for this branch
         run: |
           GLOAK_PARITY_REPORT="$RUNNER_TEMP/parity-head.tsv" \
-            CGO_ENABLED=0 go test ./internal/conformance/ -run TestCoverage -count=1
+            CGO_ENABLED=0 go test ./internal/conformance/ -run '^TestCoverage$' -count=1
 
       - name: Parity report for the merge base
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          base=$(git merge-base "origin/${{ github.base_ref }}" HEAD)
+          base=$(git merge-base "origin/$BASE_REF" HEAD)
           git worktree add "$RUNNER_TEMP/base" "$base"
           cd "$RUNNER_TEMP/base"
-          # See the previous step: -count=1 avoids the same cache pitfall.
+          # See the previous step for -count=1 and for the anchored -run.
           GLOAK_PARITY_REPORT="$RUNNER_TEMP/parity-base.tsv" \
-            CGO_ENABLED=0 go test ./internal/conformance/ -run TestCoverage -count=1
+            CGO_ENABLED=0 go test ./internal/conformance/ -run '^TestCoverage$' -count=1
 
       # Built rather than "go run": go run collapses any exit code above 1 down
       # to 1, which would make a real parity decrease (exit 1) indistinguishable
