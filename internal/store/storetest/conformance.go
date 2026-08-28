@@ -1148,4 +1148,60 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	t.Run("a group holds roles, and its composites expand", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		g := &model.Group{ID: model.NewID(), RealmID: realm.ID, Name: "holder"}
+		if err := s.Groups().Create(ctx, g); err != nil {
+			t.Fatalf("Groups().Create: %v", err)
+		}
+		parent := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "parent", Composite: true}
+		child := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "child"}
+		for _, r := range []*model.Role{parent, child} {
+			if err := s.Roles().Create(ctx, r); err != nil {
+				t.Fatalf("Roles().Create(%q): %v", r.Name, err)
+			}
+		}
+		if err := s.Roles().AddComposite(ctx, parent.ID, child.ID); err != nil {
+			t.Fatalf("AddComposite: %v", err)
+		}
+
+		if err := s.Roles().AssignToGroup(ctx, g.ID, parent.ID); err != nil {
+			t.Fatalf("AssignToGroup: %v", err)
+		}
+		// Measured idempotent on the route, so a repeat must not conflict.
+		if err := s.Roles().AssignToGroup(ctx, g.ID, parent.ID); err != nil {
+			t.Fatalf("AssignToGroup twice: %v", err)
+		}
+
+		direct, err := s.Roles().ListGroupRoles(ctx, g.ID)
+		if err != nil || len(direct) != 1 || direct[0].ID != parent.ID {
+			t.Fatalf("ListGroupRoles: %v, %d rows", err, len(direct))
+		}
+		// The group's roles are not the user's: a user holding nothing must
+		// not pick these up, which a shared table would make easy to get wrong.
+		u := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "bystander", Enabled: true}
+		if err := s.Users().Create(ctx, u); err != nil {
+			t.Fatalf("Users().Create: %v", err)
+		}
+		if held, err := s.Roles().ListUserRoles(ctx, u.ID); err != nil || len(held) != 0 {
+			t.Fatalf("a group's roles reached a user: %v, %d rows", err, len(held))
+		}
+
+		if err := s.Roles().RemoveFromGroup(ctx, g.ID, parent.ID); err != nil {
+			t.Fatalf("RemoveFromGroup: %v", err)
+		}
+		// Removing one that is not there is not an error.
+		if err := s.Roles().RemoveFromGroup(ctx, g.ID, parent.ID); err != nil {
+			t.Fatalf("RemoveFromGroup twice: %v", err)
+		}
+		if left, err := s.Roles().ListGroupRoles(ctx, g.ID); err != nil || len(left) != 0 {
+			t.Fatalf("after removal: %v, %d rows", err, len(left))
+		}
+	})
+
 }
