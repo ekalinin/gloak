@@ -995,12 +995,12 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		if len(list) != 1 || list[0].ID != top.ID {
 			t.Fatalf("want only the top-level group, got %d", len(list))
 		}
-		n, err := s.Groups().CountAll(ctx, realm.ID)
+		all, err := s.Groups().ListAll(ctx, realm.ID)
 		if err != nil {
-			t.Fatalf("CountAll: %v", err)
+			t.Fatalf("ListAll: %v", err)
 		}
-		if n != 2 {
-			t.Fatalf("want the whole tree counted, got %d", n)
+		if len(all) != 2 {
+			t.Fatalf("want the whole tree, got %d", len(all))
 		}
 		kids, err := s.Groups().ListChildren(ctx, realm.ID, top.ID)
 		if err != nil || len(kids) != 1 || kids[0].ID != child.ID {
@@ -1143,8 +1143,8 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		if list, err := s.Groups().ListTopLevel(ctx, mine.ID); err != nil || len(list) != 0 {
 			t.Fatalf("ListTopLevel: %v, %d rows", err, len(list))
 		}
-		if n, err := s.Groups().CountAll(ctx, mine.ID); err != nil || n != 0 {
-			t.Fatalf("CountAll: %v, %d", err, n)
+		if all, err := s.Groups().ListAll(ctx, mine.ID); err != nil || len(all) != 0 {
+			t.Fatalf("ListAll: %v, %d rows", err, len(all))
 		}
 	})
 

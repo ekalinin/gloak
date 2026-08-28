@@ -1147,13 +1147,11 @@ func (r *groupRepo) list(ctx context.Context, where string, args ...any) ([]*mod
 	return out, nil
 }
 
-// CountAll counts every group at any depth, which is the measured contract:
-// one top-level group with one child answers 2 where the listing shows one row.
-func (r *groupRepo) CountAll(ctx context.Context, realmID string) (int, error) {
-	var n int
-	err := r.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM keycloak_group WHERE realm_id = ?`, realmID).Scan(&n)
-	return n, classify(err)
+// ListAll is every group at any depth. The count and the search both need the
+// whole tree, so they share this rather than a COUNT that could disagree with a
+// walk.
+func (r *groupRepo) ListAll(ctx context.Context, realmID string) ([]*model.Group, error) {
+	return r.list(ctx, `WHERE realm_id = ? ORDER BY name`, realmID)
 }
 
 // Ancestry walks parent_id upwards and returns the chain nearest last, so the

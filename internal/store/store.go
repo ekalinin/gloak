@@ -105,9 +105,12 @@ type GroupRepo interface {
 	// it counts the whole tree.
 	ListTopLevel(ctx context.Context, realmID string) ([]*model.Group, error)
 	ListChildren(ctx context.Context, realmID, parentID string) ([]*model.Group, error)
-	// CountAll counts every group in the realm, at any depth. One top-level
-	// group with one child was measured answering {"count":2}.
-	CountAll(ctx context.Context, realmID string) (int, error)
+	// ListAll returns every group in the realm at any depth, ordered by name.
+	// The count and the search both need the whole tree - the count of a
+	// realm with one top-level group and one child was measured answering
+	// {"count":2}, and a search matches descendants - so this is one method
+	// rather than a COUNT and a walk that could disagree.
+	ListAll(ctx context.Context, realmID string) ([]*model.Group, error)
 	// Ancestry returns the group and its parents, nearest last, which is what
 	// a path is computed from.
 	Ancestry(ctx context.Context, realmID, id string) ([]*model.Group, error)
