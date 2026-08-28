@@ -465,3 +465,155 @@ func TestGroupGuardsAreTheUsersFamilyPlusQueryGroups(t *testing.T) {
 		}
 	}
 }
+
+// The membership routes resolve the group **last** - after the subject and
+// after the caller check - where the Groups routes resolve it first, before
+// judging anybody. Two families, opposite orders, the same group.
+//
+// Measured 2026-08-28 on seven callers. The two rows that say so are the last
+// two: query-users opens none of the four routes and still gets the 404 for a
+// user that does not exist, and view-users is refused a write before the group
+// is looked at where manage-users reaches the 404.
+func TestMembershipResolvesTheGroupLast(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	ids := groupTree(t, h, admin, map[string][]string{"top": {"kid"}})
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-member","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-member")
+	missing := "00000000-0000-0000-0000-000000000000"
+
+	for _, tc := range []struct {
+		role                                   string
+		list, write, unknownUser, unknownGroup int
+	}{
+		{"view-users", 200, 403, 404, 403},
+		{"manage-users", 200, 204, 404, 404},
+		{"query-users", 403, 403, 404, 403},
+		{"query-groups", 403, 403, 403, 403},
+		{"view-clients", 403, 403, 403, 403},
+		{"manage-realm", 403, 403, 403, 403},
+	} {
+		tok := tokenForRole(t, h, s, realm, tc.role)
+		base := "/admin/realms/master/users/" + uid + "/groups"
+		for _, c := range []struct {
+			what string
+			got  int
+			want int
+		}{
+			{"listing", get(t, h, base, tok).Code, tc.list},
+			{"count", get(t, h, base+"/count", tok).Code, tc.list},
+			{"join", sendJSON(t, h, http.MethodPut, base+"/"+ids["kid"], "", tok).Code, tc.write},
+			// The coarse gate: query-users opens none of these and still
+			// learns the user is absent.
+			{"unknown user", get(t, h, "/admin/realms/master/users/"+missing+"/groups", tok).Code, tc.unknownUser},
+			// The group last: view-users is refused before it is looked at.
+			{"unknown group", sendJSON(t, h, http.MethodPut, base+"/"+missing, "", tok).Code, tc.unknownGroup},
+		} {
+			if c.got != c.want {
+				t.Errorf("%s on the %s: want %d, got %d", tc.role, c.what, c.want, c.got)
+			}
+		}
+	}
+
+	// The user wins when both are missing.
+	w := sendJSON(t, h, http.MethodPut,
+		"/admin/realms/master/users/"+missing+"/groups/"+missing, "", admin)
+	if want := `{"error":"User not found"}`; w.Code != http.StatusNotFound ||
+		strings.TrimSpace(w.Body.String()) != want {
+		t.Errorf("both missing: %d %s, want 404 %s", w.Code, w.Body, want)
+	}
+	// And the group's 404 here is not the Groups routes' spelling.
+	w = sendJSON(t, h, http.MethodPut,
+		"/admin/realms/master/users/"+uid+"/groups/"+missing, "", admin)
+	if want := `{"error":"Group not found"}`; strings.TrimSpace(w.Body.String()) != want {
+		t.Errorf("unknown group: %s, want %s", w.Body, want)
+	}
+}
+
+// The writes are forgiving about the membership and strict about the group: a
+// second join is 204, and so is leaving a group never joined.
+func TestMembershipWritesAreIdempotent(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	ids := groupTree(t, h, admin, map[string][]string{"top": {"kid"}, "other": nil})
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-member","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-member")
+	base := "/admin/realms/master/users/" + uid + "/groups"
+
+	join := func(id string) int { return sendJSON(t, h, http.MethodPut, base+"/"+id, "", admin).Code }
+	leave := func(id string) int { return sendJSON(t, h, http.MethodDelete, base+"/"+id, "", admin).Code }
+
+	for _, tc := range []struct {
+		what string
+		got  int
+	}{
+		{"first join", join(ids["kid"])},
+		{"second join", join(ids["kid"])},
+		{"leave", leave(ids["kid"])},
+		{"leave again", leave(ids["kid"])},
+		{"leave a group never joined", leave(ids["other"])},
+	} {
+		if tc.got != http.StatusNoContent {
+			t.Errorf("%s: want 204, got %d", tc.what, tc.got)
+		}
+	}
+
+	// **Membership does not reach upwards.** Joining the child leaves the
+	// parent's member list empty, measured.
+	if join(ids["kid"]) != http.StatusNoContent {
+		t.Fatal("rejoin")
+	}
+	for _, tc := range []struct {
+		group string
+		want  int
+	}{{"kid", 1}, {"top", 0}} {
+		w := get(t, h, "/admin/realms/master/groups/"+ids[tc.group]+"/members", admin)
+		var members []map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &members); err != nil {
+			t.Fatalf("parse members: %v", err)
+		}
+		if len(members) != tc.want {
+			t.Errorf("%s has %d members, want %d", tc.group, len(members), tc.want)
+		}
+	}
+}
+
+// The membership listing is the fifth shape, and briefRepresentation=false
+// gains the attributes trio without gaining subGroupCount or access.
+func TestTheMembershipListingIsTheFifthShape(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	ids := groupTree(t, h, admin, map[string][]string{"top": {"kid"}})
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-member","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-member")
+	base := "/admin/realms/master/users/" + uid + "/groups"
+	if w := sendJSON(t, h, http.MethodPut, base+"/"+ids["kid"], "", admin); w.Code != http.StatusNoContent {
+		t.Fatalf("join: %d %s", w.Code, w.Body)
+	}
+
+	brief := get(t, h, base, admin).Body.String()
+	for _, absent := range []string{"subGroupCount", "access", "attributes", "realmRoles", "clientRoles"} {
+		if strings.Contains(brief, absent) {
+			t.Errorf("the brief listing carries %q: %s", absent, brief)
+		}
+	}
+	for _, present := range []string{`"parentId"`, `"subGroups":[]`, `"path":"/top/kid"`} {
+		if !strings.Contains(brief, present) {
+			t.Errorf("the brief listing lacks %s: %s", present, brief)
+		}
+	}
+
+	full := get(t, h, base+"?briefRepresentation=false", admin).Body.String()
+	for _, present := range []string{`"attributes":{}`, `"realmRoles":[]`, `"clientRoles":{}`} {
+		if !strings.Contains(full, present) {
+			t.Errorf("the full listing lacks %s: %s", present, full)
+		}
+	}
+	// **Still neither**, which is what makes this a fifth shape rather than
+	// the single read's.
+	for _, absent := range []string{"subGroupCount", "access"} {
+		if strings.Contains(full, absent) {
+			t.Errorf("briefRepresentation=false gained %q: %s", absent, full)
+		}
+	}
+}

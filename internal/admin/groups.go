@@ -97,6 +97,11 @@ const (
 	// groupMembership is a user's groups: the narrowest, with neither
 	// subGroupCount nor access.
 	groupMembership
+	// groupMembershipFull is that listing under briefRepresentation=false: it
+	// gains attributes, realmRoles and clientRoles and gains **neither**
+	// subGroupCount nor access. Measured 2026-08-28, and it is why the four
+	// shapes are five: no other body has the attributes trio without access.
+	groupMembershipFull
 )
 
 // groupRepresentationOf converts a stored group for the wire.
@@ -114,7 +119,7 @@ func groupRepresentationOf(g *model.Group, path string, subGroupCount int, c *ca
 		// is never expanded here, and subGroupCount is what carries the truth.
 		SubGroups: []groupRepresentation{},
 	}
-	if shape != groupCreated && shape != groupMembership {
+	if shape != groupCreated && shape != groupMembership && shape != groupMembershipFull {
 		n := subGroupCount
 		rep.SubGroupCount = &n
 	}
@@ -134,7 +139,7 @@ func groupRepresentationOf(g *model.Group, path string, subGroupCount int, c *ca
 		rep.RealmRoles = &realmRoles
 		rep.ClientRoles = &clientRoles
 	}
-	if shape != groupMembership {
+	if shape != groupMembership && shape != groupMembershipFull {
 		access := groupAccessFor(c)
 		rep.Access = &access
 	}
@@ -558,4 +563,148 @@ func decodeGroup(w http.ResponseWriter, r *http.Request) (groupRepresentation, b
 // deliberately not a shared helper.
 func writeGroupNotFound(w http.ResponseWriter) {
 	httpx.WriteMessageError(w, http.StatusNotFound, "Could not find group by id")
+}
+
+// listUserGroups serves GET /admin/realms/{realm}/users/{user-id}/groups.
+//
+// **Direct memberships only.** A user in a child is not a member of its parent,
+// measured, so nothing here walks upwards.
+//
+// The body is the fifth group shape: no subGroupCount and no access, and
+// briefRepresentation=false adds the attributes trio without adding either.
+func (h *handler) listUserGroups(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	user, ok := h.userFromPath(w, r, rc)
+	if !ok {
+		return
+	}
+	groups, err := h.userGroupsMatching(r, rc, user.ID)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	q := r.URL.Query()
+	groups = pageGroups(groups, q)
+	shape := groupMembership
+	if q.Get("briefRepresentation") == "false" {
+		shape = groupMembershipFull
+	}
+	out := make([]groupRepresentation, 0, len(groups))
+	for _, g := range groups {
+		path, err := h.pathOf(r.Context(), rc.realm.ID, g.ID)
+		if err != nil {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		// subGroupCount is not in this shape, so nothing counts children here.
+		out = append(out, groupRepresentationOf(g, path, 0, rc.caller, shape))
+	}
+	writeAdminJSON(w, out)
+}
+
+// countUserGroups serves .../users/{user-id}/groups/count. `{"count":n}`, an
+// object, like the group count and unlike the user count next door.
+//
+// It honours search and does not page: a count of a page is not a count.
+func (h *handler) countUserGroups(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	user, ok := h.userFromPath(w, r, rc)
+	if !ok {
+		return
+	}
+	groups, err := h.userGroupsMatching(r, rc, user.ID)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	writeAdminJSON(w, map[string]int{"count": len(groups)})
+}
+
+// userGroupsMatching is the membership set narrowed by search, which both reads
+// apply and only the listing pages.
+func (h *handler) userGroupsMatching(r *http.Request, rc *reqContext, userID string) ([]*model.Group, error) {
+	groups, err := h.store.Groups().ListUserGroups(r.Context(), rc.realm.ID, userID)
+	if err != nil {
+		return nil, err
+	}
+	search := r.URL.Query().Get("search")
+	if search == "" {
+		return groups, nil
+	}
+	out := make([]*model.Group, 0, len(groups))
+	for _, g := range groups {
+		if strings.Contains(strings.ToLower(g.Name), strings.ToLower(search)) {
+			out = append(out, g)
+		}
+	}
+	return out, nil
+}
+
+// joinGroup serves PUT .../users/{user-id}/groups/{groupId}: 204, idempotent.
+//
+// **The group is resolved last**, after the subject and after the caller check.
+// Measured: a view-users caller gets 403 for a group that does not exist, where
+// a manage-users caller gets 404 - so the role is judged first here, and the
+// Groups routes one file up do the opposite, resolving the group before judging
+// anybody. Two families, opposite orders, the same group.
+func (h *handler) joinGroup(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	user, group, ok := h.membershipSubject(w, r, rc)
+	if !ok {
+		return
+	}
+	if err := h.store.Groups().AddMember(r.Context(), group.ID, user.ID); err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	writeMembershipNoContent(w, r)
+}
+
+// leaveGroup serves DELETE .../users/{user-id}/groups/{groupId}: 204.
+//
+// **204 for a group the user was never in.** The membership need not be there;
+// the group must, and a group that does not exist is the 404 above. Measured on
+// both.
+func (h *handler) leaveGroup(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	user, group, ok := h.membershipSubject(w, r, rc)
+	if !ok {
+		return
+	}
+	if err := h.store.Groups().RemoveMember(r.Context(), group.ID, user.ID); err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	writeMembershipNoContent(w, r)
+}
+
+// membershipSubject resolves the two objects the writes need, in the measured
+// order: the user first, then the group.
+//
+// **The user wins when both are missing**, measured - a PUT naming an unknown
+// user and an unknown group answers "User not found". And the group's 404 here
+// is "Group not found", not the Groups routes' "Could not find group by id" for
+// the very same condition.
+func (h *handler) membershipSubject(w http.ResponseWriter, r *http.Request, rc *reqContext) (*model.User, *model.Group, bool) {
+	user, ok := h.userFromPath(w, r, rc)
+	if !ok {
+		return nil, nil, false
+	}
+	group, err := h.store.Groups().ByID(r.Context(), rc.realm.ID, r.PathValue("groupID"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			httpx.WriteMessageError(w, http.StatusNotFound, "Group not found")
+			return nil, nil, false
+		}
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return nil, nil, false
+	}
+	return user, group, true
+}
+
+// writeMembershipNoContent is the 204 both writes send: Cache-Control: no-cache
+// and no X-Frame-Options, because neither request carries a body.
+//
+// PUT /groups/{id} one file up is the other way round on both counts - it has a
+// JSON body, so it carries X-Frame-Options, and it carries no Cache-Control.
+// Measured on each rather than shared.
+func writeMembershipNoContent(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-cache")
+	httpx.WriteNoContent(w, r)
 }

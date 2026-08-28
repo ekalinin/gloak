@@ -312,7 +312,11 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `GET /users/count` is a bare number. The count counts the whole tree where the
   listing beside it is top-level only, and `top=true` narrows it **except** when
   `search` is set, where it is ignored. `subGroups` is `[]` everywhere except
-  under `search`, and `subGroupCount` carries the truth. `path` is derived from
+  under `search`, and `subGroupCount` carries the truth. There are **five**
+  representations of one group, and they are not a hierarchy: the child create's
+  response omits `subGroupCount` where the children listing carries it, and the
+  membership listing under `briefRepresentation=false` gains the attributes trio
+  while gaining neither `subGroupCount` nor `access`. `path` is derived from
   the ancestry and cascades on a rename. Membership does not reach upwards: a
   user in a child is not a member of its parent.
 - **`search` on the group listing pages the matches, not the rows.** It matches
@@ -321,6 +325,13 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `?search=alpha&max=1` answering the second row rather than the first is what
   says so. Either bound alone pages, which is neither the role listings' rule
   nor the user listing's - three listings, three paging rules.
+- **The same group is resolved first by one route family and last by the
+  other.** On `/groups/{id}/...` it comes before any caller check; on
+  `/users/{id}/groups/{id}` it comes after the subject **and** after the role
+  check, so a `view-users` caller gets 403 for a group that does not exist where
+  a `manage-users` caller gets 404. When both ids are unknown the **user** wins.
+  And the same missing group is `Could not find group by id` on the first family
+  and `Group not found` on the second.
 - **A group is resolved before the caller is judged at all.** Every route naming
   a `{groupID}` answers 404 for a group that does not exist to **every** caller,
   including one holding no admin role. That is not the user family's shape,
