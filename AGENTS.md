@@ -373,8 +373,10 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
   and fails when the total falls. A deliberate fall is declared with a
   `Parity-decrease: <reason>` line in the pull request description - the
   marker must be the first non-whitespace content on its own line (leading
-  whitespace is fine, case does not matter), so a markdown bullet such as
-  `- Parity-decrease: <reason>` does not count and the gate stays shut.
+  whitespace is fine, case does not matter, and a mid-line mention does not
+  count), so a markdown bullet such as `- Parity-decrease: <reason>` does not
+  match either and the gate stays shut. With several such lines, only the
+  first is used.
 
 ## Where a new case can come from
 

@@ -177,8 +177,10 @@ CI reruns this meter on every pull request and posts the parity increment as
 a comment, failing the pull request when the total falls. A deliberate fall
 is declared with a `Parity-decrease: <reason>` line in the pull request
 description - the marker must be the first non-whitespace content of its
-own line (leading whitespace is fine, case does not matter), so a markdown
-bullet such as `- Parity-decrease: <reason>` does not count.
+own line (leading whitespace is fine, case does not matter, and a mid-line
+mention does not count), so a markdown bullet such as
+`- Parity-decrease: <reason>` does not match either. With several such
+lines, only the first is used.
 
 A case has one of three statuses. `Implemented` is served and compared, and a
 mismatch is a regression. `Pending` is not built and has no contract. `Recorded`
