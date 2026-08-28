@@ -53,6 +53,23 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /admin/realms/{realm}/users/{userID}/disable-credential-types", h.guardUserSubject(userWriteRoles, h.disableCredentialTypes))
 	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/logout", h.guardUserSubject(userWriteRoles, h.logoutUser))
 
+	// A user's group membership. Same combinator and same role sets as the
+	// rest of the user family, which is what the sweep says: the coarse gate
+	// is usersReadRoles - query-users opens none of these four and still gets
+	// the 404 for a user that does not exist - and the group is resolved
+	// **inside the handler**, after the role check.
+	//
+	// That is the opposite order from the Groups routes below, which resolve
+	// the group before judging anybody. Measured on both; see joinGroup.
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/groups",
+		h.guardUserSubject(userReadRoles, h.listUserGroups))
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/groups/count",
+		h.guardUserSubject(userReadRoles, h.countUserGroups))
+	mux.HandleFunc("PUT /admin/realms/{realm}/users/{userID}/groups/{groupID}",
+		h.guardUserSubject(userWriteRoles, h.joinGroup))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/users/{userID}/groups/{groupID}",
+		h.guardUserSubject(userWriteRoles, h.leaveGroup))
+
 	// Groups. They are authorised out of the **users** family and not a family
 	// of their own: manage-realm is 403 on every one of them, measured, and
 	// view-users is what opens the reads.
