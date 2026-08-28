@@ -366,6 +366,47 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
 - Adding a store interface method means implementing it in **both** drivers. The
   conformance suite in `internal/store/storetest` does not exercise every method, so
   compiling is not proof.
+- **CI runs `build`, `vet` and `CGO_ENABLED=0 go test ./...` on every pull
+  request, and nothing behind the `docker` tag.** `vet` runs twice, plain and
+  `-tags docker`, so the three tagged files still compile; nothing runs them.
+  A green run does not mean the two store drivers agree: that evidence still
+  comes only from running the
+  Postgres suite by hand. CI also posts the pull request's parity increment
+  and fails when the total falls. A deliberate fall is declared with a
+  `Parity-decrease: <reason>` line in the pull request description - the
+  marker must be the first non-whitespace content on its own line (leading
+  whitespace is fine, case does not matter, and a mid-line mention does not
+  count), so a markdown bullet such as `- Parity-decrease: <reason>` does not
+  match either and the gate stays shut. With several such lines, only the
+  first is used. **The pull request that introduces this workflow fails its
+  parity step, and that is correct**: its merge base predates the report mode,
+  so the base meter writes nothing and `cmd/parity` exits 2 with
+  `parity: open .../parity-base.tsv: no such file or directory`. There is no
+  base to compare against. Every later pull request has one.
+- **The comparison is reproducible by hand.** `GLOAK_PARITY_REPORT=<path>`
+  makes the meter write its tally to that path as tab-separated values, on top
+  of printing it as usual; unset, nothing changes. It is a transient artifact
+  and never committed. Two of them and `cmd/parity` are the whole of what CI
+  does:
+
+  ```bash
+  GLOAK_PARITY_REPORT=/tmp/head.tsv \
+    CGO_ENABLED=0 go test ./internal/conformance/ -run '^TestCoverage$' -count=1
+  git worktree add /tmp/base "$(git merge-base main HEAD)"
+  ( cd /tmp/base && GLOAK_PARITY_REPORT=/tmp/base.tsv \
+      CGO_ENABLED=0 go test ./internal/conformance/ -run '^TestCoverage$' -count=1 )
+  git worktree remove /tmp/base
+  go build -o /tmp/parity ./cmd/parity && /tmp/parity /tmp/base.tsv /tmp/head.tsv
+  ```
+
+  Built rather than `go run`: `go run` collapses any exit code above 1 down to
+  1, which would make a real parity decrease (exit 1) indistinguishable from
+  the report `cmd/parity` could not read (exit 2) - the exact failure the
+  previous paragraph describes.
+
+  `-run` takes an unanchored regex, so the anchors are not decoration: a bare
+  `TestCoverage` also selects `TestCoverageWritesAReportWhenAsked`, which
+  re-runs the meter and prints the whole table a second time.
 
 ## Where a new case can come from
 

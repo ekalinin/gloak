@@ -9,8 +9,11 @@ build:
 lint:
 	go vet ./...
 
+# -run takes an unanchored regex, so a bare TestCoverage also selects
+# TestCoverageWritesAReportWhenAsked, which re-runs the meter as a subtest and
+# prints the whole table a second time. Anchoring says which test is meant.
 conformance:
-	CGO_ENABLED=0 go test ./internal/conformance/ -run TestCoverage -v
+	CGO_ENABLED=0 go test ./internal/conformance/ -run '^TestCoverage$$' -v
 
 # record rewrites the expected values in internal/conformance/testdata/golden
 # from a live Keycloak 26.7.1. It needs Docker. Read the diff before committing:

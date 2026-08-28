@@ -1,0 +1,155 @@
+name: ci
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The parity step needs the merge base, so the shallow default
+          # clone is not enough.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: CGO_ENABLED=0 go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # Both invocations, because neither covers the other. Without a tag, the
+      # docker-tagged files are not even compiled: make record, make oracle and
+      # the Postgres driver suite could stop building and CI would not notice.
+      # With the tag, the files guarded by the default build are still checked,
+      # but nothing here runs them - the spec excludes running Docker, not
+      # compiling against the tag. AGENTS.md's warning that compiling is not
+      # proof cuts the same way: not compiling is strictly worse.
+      - name: Vet the docker-tagged files
+        run: go vet -tags docker ./...
+
+      # Nothing behind the docker build tag runs here: not the Postgres driver
+      # suite, not make oracle, not make record. A green run does NOT mean the
+      # two store drivers agree; that evidence still comes from running the
+      # Postgres suite by hand, as AGENTS.md requires.
+      - name: Test
+        run: CGO_ENABLED=0 go test ./...
+
+      # -count=1 forces a fresh run. go test's result cache keys on the
+      # GLOAK_PARITY_REPORT value read through os.Getenv, but RUNNER_TEMP is a
+      # stable path on GitHub-hosted runners, so a job re-run (or a push that
+      # leaves this package's import graph untouched) can replay a cached pass
+      # without writing the report at all. The compare step would then fail on
+      # a missing file with no hint that caching was the cause.
+      #
+      # -run takes an unanchored regex, so a bare TestCoverage would also select
+      # TestCoverageWritesAReportWhenAsked, which re-runs the meter as a subtest:
+      # the same work twice for one report. Anchoring says which test is meant.
+      - name: Parity report for this branch
+        run: |
+          GLOAK_PARITY_REPORT="$RUNNER_TEMP/parity-head.tsv" \
+            CGO_ENABLED=0 go test ./internal/conformance/ -run '^TestCoverage$' -count=1
+
+      - name: Parity report for the merge base
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          base=$(git merge-base "origin/$BASE_REF" HEAD)
+          git worktree add "$RUNNER_TEMP/base" "$base"
+          cd "$RUNNER_TEMP/base"
+          # See the previous step for -count=1 and for the anchored -run.
+          GLOAK_PARITY_REPORT="$RUNNER_TEMP/parity-base.tsv" \
+            CGO_ENABLED=0 go test ./internal/conformance/ -run '^TestCoverage$' -count=1
+
+      # Built rather than "go run": go run collapses any exit code above 1 down
+      # to 1, which would make a real parity decrease (exit 1) indistinguishable
+      # from a report that could not be read (exit 2).
+      - name: Build the parity command
+        run: CGO_ENABLED=0 go build -o "$RUNNER_TEMP/parity" ./cmd/parity
+
+      - name: Compare and comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -o pipefail
+          status=0
+          # The first pull request carrying this workflow fails here, and that
+          # is correct rather than a bug to chase: its merge base predates the
+          # report mode, so the base meter writes no file and cmd/parity exits 2
+          # with "parity: open .../parity-base.tsv: no such file or directory".
+          # There is no base to compare against. Every later run has one.
+          "$RUNNER_TEMP/parity" \
+            "$RUNNER_TEMP/parity-base.tsv" "$RUNNER_TEMP/parity-head.tsv" \
+            > "$RUNNER_TEMP/comment.md" || status=$?
+
+          # cmd/parity writes nothing to stdout on the report-unreadable path
+          # (exit 2), so an empty comment.md means there is nothing to post;
+          # posting it would only add confusing noise on top of the failure
+          # "status" already carries.
+          if [ -s "$RUNNER_TEMP/comment.md" ]; then
+            id=$(gh pr view "$PR_NUMBER" \
+              --json comments \
+              --jq '[.comments[] | select(.body | startswith("<!-- gloak-parity -->")) | .url] | last // ""' \
+              | sed 's/.*#issuecomment-//')
+            gh_status=0
+            # Both paths go through gh api, so a refusal is spelled "HTTP 403"
+            # either way. gh pr comment posts over GraphQL, which reports the
+            # same refusal as "Resource not accessible by integration" with no
+            # status in it, and a fallback that has to match two spellings is a
+            # fallback that will one day match neither.
+            if [ -n "$id" ]; then
+              gh api --method PATCH "repos/$REPO/issues/comments/$id" \
+                -F body=@"$RUNNER_TEMP/comment.md" \
+                >/dev/null 2>"$RUNNER_TEMP/gh-err.txt" || gh_status=$?
+            else
+              gh api --method POST "repos/$REPO/issues/$PR_NUMBER/comments" \
+                -F body=@"$RUNNER_TEMP/comment.md" \
+                >/dev/null 2>"$RUNNER_TEMP/gh-err.txt" || gh_status=$?
+            fi
+            if [ "$gh_status" -ne 0 ]; then
+              cat "$RUNNER_TEMP/gh-err.txt" >&2
+            fi
+
+            # A pull request from a fork gets a read-only GITHUB_TOKEN whatever
+            # the permissions block above says, so the post is a 403 the branch
+            # can do nothing about and failing the job would go red on work that
+            # raised parity. Fall back to the run summary, which needs no token,
+            # and let the job pass.
+            #
+            # Only 403 is tolerated. A network error, a bad token or a deleted
+            # comment still fails: the comment is the deliverable, and treating
+            # every gh failure as benign is exactly the silent-failure hole this
+            # step closed.
+            if [ "$gh_status" -ne 0 ] && grep -q 'HTTP 403' "$RUNNER_TEMP/gh-err.txt"; then
+              {
+                echo "### Parity"
+                echo
+                echo "The comment could not be posted: a pull request from a fork"
+                echo "gets a read-only token, so the API answered 403. It is here instead."
+                echo
+                cat "$RUNNER_TEMP/comment.md"
+              } >> "$GITHUB_STEP_SUMMARY"
+              gh_status=0
+            fi
+
+            # The comment is the deliverable, so a failed post must fail the
+            # job too - but when the parity check already failed, that status
+            # is more informative than a bare gh failure, so it wins.
+            if [ "$gh_status" -ne 0 ] && [ "$status" -eq 0 ]; then
+              status=$gh_status
+            fi
+          fi
+
+          exit $status
