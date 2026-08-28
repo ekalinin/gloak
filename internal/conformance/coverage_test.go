@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -122,9 +123,16 @@ func chapterOf(id string) string {
 	return parts[0] + "/" + parts[1]
 }
 
-// TestCoverageWritesAReportWhenAsked pins the format internal/parity parses.
+// TestCoverageWritesAReportWhenAsked pins the format internal/parity parses -
+// the header, the row and field counts, and which number goes in which column.
 // The two packages are deliberately not coupled: this file writes the format
 // and that one reads it, and this test is what keeps them agreeing.
+//
+// The column check is the one that earns its keep. Shape alone passes just as
+// well when two columns are transposed, and a transposed report is not a
+// broken run: it is a wrong parity number posted to a pull request as fact.
+// So the rows are summed and reconciled against the total row, which no
+// transposition survives.
 func TestCoverageWritesAReportWhenAsked(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "parity.tsv")
 	t.Setenv("GLOAK_PARITY_REPORT", path)
@@ -154,22 +162,45 @@ func TestCoverageWritesAReportWhenAsked(t *testing.T) {
 	}
 
 	// An unenumerated chapter writes 0 in the numeric column and says so in
-	// the last, rather than writing "?" where a number belongs.
-	var sawUnenumerated bool
+	// the last, rather than writing "?" where a number belongs. The enumerated
+	// rows are summed as they go: the total row is the meter's own served and
+	// documented, so the sums agreeing with it is what pins the columns.
+	var sumServed, sumDocumented, unenumerated int
 	for _, line := range lines[1 : len(lines)-1] {
 		f := strings.Split(line, "\t")
 		if len(f) != 5 {
 			t.Fatalf("chapter row has %d fields: %q", len(f), line)
 		}
 		if f[4] == "false" {
-			sawUnenumerated = true
+			unenumerated++
 			if f[3] != "0" {
 				t.Fatalf("unenumerated chapter %q has documented %q, want 0", f[0], f[3])
 			}
+			continue
 		}
+		served, err := strconv.Atoi(f[1])
+		if err != nil {
+			t.Fatalf("chapter %q served %q: %v", f[0], f[1], err)
+		}
+		documented, err := strconv.Atoi(f[3])
+		if err != nil {
+			t.Fatalf("chapter %q documented %q: %v", f[0], f[3], err)
+		}
+		sumServed += served
+		sumDocumented += documented
 	}
-	if !sawUnenumerated {
+	if unenumerated == 0 {
 		t.Fatal("no unenumerated chapter in the report; the catalogue has four")
+	}
+
+	if got := fmt.Sprint(sumServed); got != fields[1] {
+		t.Fatalf("enumerated rows serve %s, total row says %s", got, fields[1])
+	}
+	if got := fmt.Sprint(sumDocumented); got != fields[2] {
+		t.Fatalf("enumerated rows document %s, total row says %s", got, fields[2])
+	}
+	if got := fmt.Sprint(unenumerated); got != fields[3] {
+		t.Fatalf("%s unenumerated chapters in the rows, total row says %s", got, fields[3])
 	}
 }
 
