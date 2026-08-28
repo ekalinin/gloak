@@ -129,9 +129,73 @@ about what a count is.
 `{"count":2}`, while the listing shows one row. The listing is top-level and the
 count is not.
 
-**`subGroups` is always `[]` and `subGroupCount` carries the truth.** A parent
-with one child lists as `"subGroupCount":1,"subGroups":[]`. The tree is not
-expanded anywhere; `children` is how it is walked.
+**`subGroups` is `[]` unless `search` is set, and `subGroupCount` carries the
+truth.** A parent with one child lists as `"subGroupCount":1,"subGroups":[]`,
+and `children` is how the tree is walked.
+
+**This paragraph asserted "always" and that was wrong.** Corrected 2026-08-28
+while building cut A, from the measurement in section 5.1: under `search` the
+listing nests the matching descendants inside their ancestor. Section 8's first
+version listed "whether `subGroups` is ever non-empty" as undecided and said
+none was assumed, which is the only reason this cost a measurement rather than a
+wrong implementation.
+
+### 5.1 `search` matches the whole tree and pages the matches, not the rows
+
+Measured 2026-08-28. Three groups match `alpha`: `alpha-one` and `beta-alpha` at
+the top level, and `alpha-kid`, a child of `beta-alpha`.
+
+```
+?search=alpha                -> 2  [alpha-one, beta-alpha]
+?search=alpha&max=1          -> 1  [beta-alpha]
+?search=alpha&max=2          -> 2  [alpha-one, beta-alpha]
+?search=alpha&first=1        -> 2  [alpha-one, beta-alpha]
+?search=alpha&first=2        -> 1  [beta-alpha]
+?search=alpha&first=1&max=1  -> 1  [alpha-one]
+```
+
+`max=1` returning `beta-alpha` rather than `alpha-one` is what gives it away.
+One rule fits all six rows: **match over the whole tree, sort by name, page the
+matches, then return the top-level ancestors of the page.** The matches are
+`[alpha-kid, alpha-one, beta-alpha]`, so `max=1` takes `alpha-kid`, whose
+top-level ancestor is `beta-alpha`.
+
+The matching descendant comes back **nested**:
+
+```json
+[{"id":"...","name":"beta-alpha","path":"/beta-alpha","subGroupCount":1,
+  "subGroups":[{"id":"...","name":"alpha-kid","path":"/beta-alpha/alpha-kid",
+                "parentId":"...","subGroupCount":0,"subGroups":[],"access":{...}}],
+  "access":{...}}]
+```
+
+The match is a case-insensitive substring: `one` matches `alpha-one`, and
+`ALPHA` matches both.
+
+### 5.2 Paging without `search` is a plain slice, and it is a third rule
+
+```
+?max=1   -> 1     ?first=1  -> 2     ?first=1&max=1  -> 1
+?max=0   -> 0     ?first=99 -> 0
+?max=-1  -> 3 (ignored)     ?first=-1&max=1 -> 1 (ignored)
+```
+
+Either bound alone pages. That is **not** the role listings' rule, which pages
+only when `search` is non-empty or both bounds are present, and not the user
+listing's either. Three listings on this API, three paging rules, each measured
+on its own.
+
+### 5.3 `top=true` on the count is ignored when `search` is set
+
+```
+/groups/count                        -> {"count":4}   the whole tree
+/groups/count?top=true               -> {"count":3}   top level only
+/groups/count?search=alpha           -> {"count":3}   matches over the whole tree
+/groups/count?search=alpha&top=true  -> {"count":3}   top ignored
+```
+
+Two of the three top-level groups match `alpha`, so an honoured `top=true` would
+answer 2. It answers 3.
 
 **`path` is derived and cascades.** Renaming a parent from `probe-top` to
 `probe-renamed` changed the child's `path` to `/probe-renamed/probe-child` while
@@ -204,8 +268,10 @@ are measured as `{}`, `[]` and `{}` on a group that has none. What a group that
 has some looks like is not measured, and Cut C is where `realmRoles` and
 `clientRoles` stop being empty. Cut A serves the empty shapes and says so.
 
-**Whether `subGroups` is ever non-empty.** Every measurement here shows `[]`.
-There may be a parameter that expands it; none was found, and none is assumed.
+~~**Whether `subGroups` is ever non-empty.**~~ Decided 2026-08-28: `search`
+expands it, and section 5.1 has the measurement. The original wording said none
+was found and none was assumed, which is why finding one cost a measurement
+rather than a wrong implementation.
 
 **Fine-grained admin permissions**, the two `management/permissions` operations.
 They are P10 and they are excluded from the 9 above by that allocation, not by

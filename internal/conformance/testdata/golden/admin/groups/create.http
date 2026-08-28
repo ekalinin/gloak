@@ -1,0 +1,10 @@
+# POST /admin/realms/master/groups
+HTTP/1.1 201 Created
+Content-Length: {{volatile}}
+Location: {{volatile}}
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+

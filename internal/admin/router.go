@@ -53,6 +53,23 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /admin/realms/{realm}/users/{userID}/disable-credential-types", h.guardUserSubject(userWriteRoles, h.disableCredentialTypes))
 	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/logout", h.guardUserSubject(userWriteRoles, h.logoutUser))
 
+	// Groups. They are authorised out of the **users** family and not a family
+	// of their own: manage-realm is 403 on every one of them, measured, and
+	// view-users is what opens the reads.
+	//
+	// The six routes naming a {groupID} take guardGroup, which resolves the
+	// group before judging the caller - see its doc comment for why that is not
+	// the shape the neighbouring user routes take.
+	mux.HandleFunc("GET /admin/realms/{realm}/groups", h.guardAny(groupsReadRoles, h.listGroups))
+	mux.HandleFunc("GET /admin/realms/{realm}/groups/count", h.guardAny(groupsReadRoles, h.countGroups))
+	mux.HandleFunc("POST /admin/realms/{realm}/groups", h.guard("manage-users", h.createGroup))
+	mux.HandleFunc("GET /admin/realms/{realm}/groups/{groupID}", h.guardGroup(groupReadRoles, h.readGroup))
+	mux.HandleFunc("PUT /admin/realms/{realm}/groups/{groupID}", h.guardGroup(groupWriteRoles, h.updateGroup))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/groups/{groupID}", h.guardGroup(groupWriteRoles, h.deleteGroup))
+	mux.HandleFunc("GET /admin/realms/{realm}/groups/{groupID}/children", h.guardGroup(groupReadRoles, h.listChildren))
+	mux.HandleFunc("POST /admin/realms/{realm}/groups/{groupID}/children", h.guardGroup(groupWriteRoles, h.createChild))
+	mux.HandleFunc("GET /admin/realms/{realm}/groups/{groupID}/members", h.guardGroup(groupReadRoles, h.groupMembers))
+
 	// The combined view: both halves of a user's **direct** mappings in one
 	// object. Same guard as the six listings below, and measured on this route
 	// rather than inherited - the same seven single-role callers, a fresh token
@@ -335,6 +352,49 @@ func (h *handler) guardUserSubject(fine []string, next func(http.ResponseWriter,
 	})
 }
 
+// guardGroup is guard for the routes that name a {groupID}: the group is
+// resolved **before the caller is judged at all**.
+//
+// Measured 2026-08-28 across all six of them, seven callers each: a group that
+// does not exist answers 404 "Could not find group by id" to every caller,
+// including one holding no admin role. The roles only reappear once the group
+// is real. So the order is realm, authentication, group, authorization.
+//
+// **This is not guardUserSubject's shape and the difference is the point.** On
+// /users/{id}/... a coarse gate runs first, so a caller outside the users
+// family gets 403 and learns nothing about the subject. Here there is no coarse
+// gate. query-groups opening the group listing and count and nothing else made
+// the users-family shape look like the obvious fit, and it is wrong; only the
+// missing-group sweep says so. guardByRoleContainer records the same
+// resolve-first behaviour for /roles-by-id/{id}, and notes there too that it is
+// Keycloak's behaviour rather than a safe one.
+func (h *handler) guardGroup(fine []string, next func(http.ResponseWriter, *http.Request, *reqContext, *model.Group)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		realm := h.resolveRealm(w, r)
+		if realm == nil {
+			return
+		}
+		c := h.resolveCaller(w, r, realm)
+		if c == nil {
+			return
+		}
+		group, err := h.store.Groups().ByID(r.Context(), realm.ID, r.PathValue("groupID"))
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeGroupNotFound(w)
+				return
+			}
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		if !c.hasAny(fine) {
+			writeForbidden(w)
+			return
+		}
+		next(w, r, &reqContext{realm: realm, caller: c}, group)
+	}
+}
+
 // guardByRoleContainer is guard for the roles-by-id routes, whose required
 // role is decided by the **data** rather than by the route: the role has to
 // be resolved before the caller can be judged, because the same path takes
@@ -485,6 +545,23 @@ var userMappingsWriteRoles = []string{userMappingsWriteRole}
 // a guard from a role's name: manage-clients is not composite over
 // view-clients, so nothing in the role graph predicts it opens a read.
 var clientsReadRoles = []string{"view-clients", "query-clients", "manage-clients"}
+
+// groupsReadRoles is what the group listing and the count accept. Measured
+// 2026-08-28 on one caller per role.
+//
+// **It is not usersReadRoles**, though it differs by one role in each
+// direction: query-users is 403 on the group listing where query-groups is 200,
+// and the two are otherwise siblings that view-users is composite over. A set
+// carried over from the user routes would have been wrong on both.
+var groupsReadRoles = []string{"view-users", "manage-users", "query-groups"}
+
+// groupReadRoles is what reading one group, its children and its members
+// accept. query-groups opens the listing and the count and none of these.
+var groupReadRoles = []string{"view-users", "manage-users"}
+
+// groupWriteRoles is what creating, updating and deleting a group take:
+// manage-users alone, measured, like the rest of the user family's writes.
+var groupWriteRoles = []string{"manage-users"}
 
 // realmRolesReadRoles is what both realm-role reads accept: view-realm or
 // manage-realm, measured across eight single-role callers.

@@ -364,11 +364,116 @@ var Fixtures = map[string]Fixture{
 	// The three callers that are **not** the bootstrapped administrator. Every
 	// other fixture here authenticates as it, which is why no case in the
 	// catalogue could assert a 403 until now - F37.
-	"narrow-caller-manage-users": callerFixture("gloak-probe-caller-manage-users", "manage-users"),
-	"narrow-caller-view-users":   callerFixture("gloak-probe-caller-view-users", "view-users"),
-	"narrow-caller-impostor":     impostorCallerFixture(),
+	"narrow-caller-manage-users":  callerFixture("gloak-probe-caller-manage-users", "manage-users"),
+	"narrow-caller-view-users":    callerFixture("gloak-probe-caller-view-users", "view-users"),
+	"narrow-caller-impostor":      impostorCallerFixture(),
 	"narrow-caller-query-users":   callerFixture("gloak-probe-caller-query-users", "query-users"),
 	"narrow-caller-query-clients": callerFixture("gloak-probe-caller-query-clients", "query-clients"),
+
+	// The group tree. Each fixture owns its groups: the recorder shares one
+	// container, so a case that renames or deletes must not be reading a group
+	// another case is asserting on.
+	"admin-token-group":        groupFixture("gloak-probe-group", "group_id"),
+	"admin-token-group-update": groupFixture("gloak-probe-group-update", "group_id"),
+	"admin-token-group-delete": groupFixture("gloak-probe-group-delete", "group_id"),
+	"admin-token-group-tree":   groupTreeFixture(),
+	"admin-token-group-search": groupSearchFixture(),
+}
+
+// groupFixture creates one top-level group and captures its id.
+//
+// The id cannot be a literal in a case: it is minted by the server, so the
+// reference container's differs from Gloak's on every run. The listing is
+// filtered by name to find it, the way the client fixtures do.
+func groupFixture(name, idVar string) Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/groups",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"name":"` + name + `"}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/groups",
+					Query:   map[string]string{"search": name},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				// The search matches this name and no other, so index 0 is not
+				// a bet on list order.
+				Capture: map[string]string{idVar: "0/id"},
+			},
+		},
+	}
+}
+
+// groupTreeFixture is a parent with one child, for the children pair and for
+// the single read's subGroupCount.
+func groupTreeFixture() Fixture {
+	f := groupFixture("gloak-probe-group-tree", "group_id")
+	f.Steps = append(f.Steps,
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/groups/{{group_id}}/children",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"name":"gloak-probe-group-child"}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/groups/{{group_id}}/children",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"child_id": "0/id"},
+		},
+	)
+	return f
+}
+
+// groupSearchFixture is the shape the search rule needs: two top-level groups
+// whose names both match, and a child of the second that matches as well and
+// sorts **before** either of them.
+//
+// That ordering is the whole point. The page is taken from the matches, so
+// max=1 returns the child's top-level ancestor rather than the first row.
+func groupSearchFixture() Fixture {
+	f := Fixture{State: "bootstrap", Steps: []Step{adminTokenStep()}}
+	create := func(path, body string) Step {
+		return Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    path,
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(body),
+			},
+			ExpectStatus: idempotentCreate,
+		}
+	}
+	f.Steps = append(f.Steps,
+		create("/admin/realms/master/groups", `{"name":"gloak-srch-one"}`),
+		create("/admin/realms/master/groups", `{"name":"zz-gloak-srch"}`),
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/groups",
+				Query:   map[string]string{"search": "zz-gloak-srch"},
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"group_id": "0/id"},
+		},
+		create("/admin/realms/master/groups/{{group_id}}/children", `{"name":"aa-gloak-srch-kid"}`),
+	)
+	return f
 }
 
 // callerFixture is a caller that is not the administrator: a user created and

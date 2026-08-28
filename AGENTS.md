@@ -296,12 +296,37 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `Could not find client`, `Client not found`, `User not found`,
   `Realm not found.` with its full stop, `Credential not found`,
   `Could not find role`, `Role not found`, `Could not find role with id`,
-  `Could not find composite role`. The first two are the same resource by the
+  `Could not find composite role`, `Could not find group by id`, and
+  `Group not found` for that same missing group from the membership route. The first two are the same resource by the
   same key: the role-mapping routes answer `Client not found` for an unknown
   client UUID where the client and role endpoints answer `Could not find
   client` for that very UUID. The qualifier matters: the protocol side spells a
   tenth, `Realm does not exist` (`internal/oidc/router.go:145`), against the
   admin API's `Realm not found.` for the same missing realm.
+
+- **The group tree disagrees with itself in six places, and with the user
+  routes in three more.** `POST /groups` answers 201 with an empty body and
+  `POST /groups/{id}/children` answers 201 with the group in it - and with
+  `application/json` carrying **no charset**, where every group read carries
+  `;charset=UTF-8`. `GET /groups/count` is an object, `{"count":2}`, where
+  `GET /users/count` is a bare number. The count counts the whole tree where the
+  listing beside it is top-level only, and `top=true` narrows it **except** when
+  `search` is set, where it is ignored. `subGroups` is `[]` everywhere except
+  under `search`, and `subGroupCount` carries the truth. `path` is derived from
+  the ancestry and cascades on a rename. Membership does not reach upwards: a
+  user in a child is not a member of its parent.
+- **`search` on the group listing pages the matches, not the rows.** It matches
+  over the whole tree, sorts, takes `first`/`max` from the **matches**, and
+  returns their top-level ancestors with the matching descendants nested.
+  `?search=alpha&max=1` answering the second row rather than the first is what
+  says so. Either bound alone pages, which is neither the role listings' rule
+  nor the user listing's - three listings, three paging rules.
+- **A group is resolved before the caller is judged at all.** Every route naming
+  a `{groupID}` answers 404 for a group that does not exist to **every** caller,
+  including one holding no admin role. That is not the user family's shape,
+  where a coarse gate runs first; it is `/roles-by-id/{id}`'s. Groups are
+  otherwise authorised out of the users family - `manage-realm` is 403 on all of
+  them - and `query-groups` opens the listing and the count and nothing else.
 
 ## Boundaries
 

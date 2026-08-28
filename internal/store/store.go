@@ -24,6 +24,7 @@ type Store interface {
 	Clients() ClientRepo
 	Users() UserRepo
 	Roles() RoleRepo
+	Groups() GroupRepo
 	Keys() KeyRepo
 	Sessions() SessionRepo
 	Close() error
@@ -78,6 +79,46 @@ type UserRepo interface {
 	// The hash is not among them: nothing but a reset-password may change it,
 	// and that goes through SetCredential.
 	UpdateCredential(ctx context.Context, c *model.Credential) error
+}
+
+// GroupRepo is the group tree and the users in it.
+//
+// Membership is **direct only**: a user in a child was measured not being a
+// member of its parent, so nothing here walks upwards.
+//
+// The last four methods belong to the membership cut rather than to the tree,
+// and they are declared here because the migration carrying the join table
+// belongs with the table it joins. A second migration for one join table is
+// worse than one wide enough.
+type GroupRepo interface {
+	Create(ctx context.Context, g *model.Group) error
+	ByID(ctx context.Context, realmID, id string) (*model.Group, error)
+	// Update writes name and attributes back. It does not move a group: the
+	// admin API has no operation that reparents one, and a repo method nobody
+	// calls is a method nobody has measured.
+	Update(ctx context.Context, g *model.Group) error
+	// Delete removes the group and, through the schema's cascade, its whole
+	// subtree and every membership in it.
+	Delete(ctx context.Context, realmID, id string) error
+	// ListTopLevel returns the groups with no parent, which is what
+	// GET /groups answers - measured top-level only, while the count beside
+	// it counts the whole tree.
+	ListTopLevel(ctx context.Context, realmID string) ([]*model.Group, error)
+	ListChildren(ctx context.Context, realmID, parentID string) ([]*model.Group, error)
+	// ListAll returns every group in the realm at any depth, ordered by name.
+	// The count and the search both need the whole tree - the count of a
+	// realm with one top-level group and one child was measured answering
+	// {"count":2}, and a search matches descendants - so this is one method
+	// rather than a COUNT and a walk that could disagree.
+	ListAll(ctx context.Context, realmID string) ([]*model.Group, error)
+	// Ancestry returns the group and its parents, nearest last, which is what
+	// a path is computed from.
+	Ancestry(ctx context.Context, realmID, id string) ([]*model.Group, error)
+
+	Members(ctx context.Context, realmID, groupID string) ([]*model.User, error)
+	AddMember(ctx context.Context, groupID, userID string) error
+	RemoveMember(ctx context.Context, groupID, userID string) error
+	ListUserGroups(ctx context.Context, realmID, userID string) ([]*model.Group, error)
 }
 
 type RoleRepo interface {

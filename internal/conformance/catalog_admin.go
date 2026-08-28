@@ -2948,4 +2948,329 @@ var adminCases = []Case{
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},
+	// ---- Groups, P2's third cut ----------------------------------------
+	{
+		// Top-level only. The count next door answers 2 for the same realm,
+		// because it counts the whole tree - the two are measured disagreeing.
+		//
+		// briefRepresentation defaults to **true** here, which is the opposite
+		// way from the user listing, so this body carries no attributes.
+		ID: "admin/groups/list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Groups: get group hierarchy",
+			Retrieved: "2026-08-28",
+		},
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/groups",
+		PristineRealm: true,
+		Fixture:       "admin-token-group",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/groups",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id"},
+	},
+	{
+		// **201 with an empty body**, where POST .../children below answers 201
+		// with the group in it. Two creates on one resource, disagreeing.
+		ID: "admin/groups/create",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Groups: create or add a top level realm group",
+			Retrieved: "2026-08-28",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/groups",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/groups",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-group-created"}`),
+		},
+		VolatileHeaders: []string{"Location"},
+		AssertHeaders:   []string{"Location"},
+	},
+	{
+		// `{"count":n}`, an **object**, where GET /users/count next door is a
+		// bare JSON number. The two counts do not agree about what a count is.
+		//
+		// **The number is masked and the shape is what this pins.** The count
+		// is over the whole realm, so any fixture that creates a group moves
+		// it, and the recorder shares one container - the first recording of
+		// this case said 3 where a pristine replay says 2. Masking it is
+		// honest about what a golden can hold here; that the body is an object
+		// rather than a bare number is the measurement worth keeping, and the
+		// numeric rules - whole tree, top=true, top ignored under search - are
+		// pinned by TestGroupCountIsTheTreeAndTopIsIgnoredUnderSearch instead.
+		ID: "admin/groups/count",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Groups: returns the groups counts",
+			Retrieved: "2026-08-28",
+		},
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/groups/count",
+		PristineRealm: true,
+		Fixture:       "admin-token-group-tree",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/groups/count",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"count"},
+	},
+	{
+		// The single read carries three keys the listing does not - attributes,
+		// realmRoles and clientRoles - and subGroupCount is 1 while subGroups
+		// is still `[]`, which is the tree never being expanded.
+		ID: "admin/groups/read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Groups: get group by id",
+			Retrieved: "2026-08-28",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/groups/{group-id}",
+		Fixture:   "admin-token-group-tree",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/groups/{{group_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"id"},
+	},
+	{
+		ID: "admin/groups/update",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Groups: update group, ignores subgroups",
+			Retrieved: "2026-08-28",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/groups/{group-id}",
+		Fixture:   "admin-token-group-update",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/groups/{{group_id}}",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-group-update"}`),
+		},
+		// A JSON request body, so this 204 carries X-Frame-Options - unlike the
+		// delete below, whose request has none.
+		AssertHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		// The 204 omits X-Frame-Options, because the request carried no body,
+		// and carries no Cache-Control either - where DELETE on a client does.
+		ID: "admin/groups/delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Groups: deletes a group",
+			Retrieved: "2026-08-28",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/groups/{group-id}",
+		Fixture:   "admin-token-group-delete",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/groups/{{group_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Cache-Control"},
+	},
+	{
+		// Each row carries parentId **and** subGroupCount, where the create's
+		// response one case down carries the first and not the second.
+		ID: "admin/groups/children-list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Groups: return a paginated list of subgroups",
+			Retrieved: "2026-08-28",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/groups/{group-id}/children",
+		Fixture:   "admin-token-group-tree",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/groups/{{group_id}}/children",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/parentId"},
+	},
+	{
+		// **201 with the group in the body**, and the body is the one shape
+		// carrying no subGroupCount. Both measured on this route rather than
+		// shared with POST /groups, which they disagree with.
+		ID: "admin/groups/children-create",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Groups: set or create child",
+			Retrieved: "2026-08-28",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/groups/{group-id}/children",
+		Fixture:   "admin-token-group",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/groups/{{group_id}}/children",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-group-made-child"}`),
+		},
+		VolatileHeaders: []string{"Location"},
+		AssertHeaders:   []string{"Content-Type", "Cache-Control", "Location"},
+		Volatile:        []string{"id", "parentId"},
+	},
+	{
+		// **An empty group**, and that is the scope rather than an oversight:
+		// the only way to put a user in a group is PUT
+		// /users/{id}/groups/{id}, which is cut B. The first version of this
+		// case used it in the fixture and the replay failed with "Unable to
+		// find matching target resource method" - the route does not exist
+		// yet.
+		//
+		// So this claims the operation and pins the empty array. The member
+		// representation - the user shape **without an access block**, where
+		// the user listing next door carries a one-key one - is measured in the
+		// design document and gets its case in cut B.
+		ID: "admin/groups/members",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Groups: get users in the group",
+			Retrieved: "2026-08-28",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/groups/{group-id}/members",
+		Fixture:   "admin-token-group",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/groups/{{group_id}}/members",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **The search rule, and the case the whole cut turns on.** The matches
+		// are aa-gloak-srch-kid (a child), gloak-srch-one and zz-gloak-srch;
+		// max=1 takes the first by name, which is the child, so what comes back
+		// is its top-level ancestor with it nested.
+		//
+		// This is the only case in the catalogue where subGroups is not `[]`.
+		// The design document said it always was until this was measured.
+		ID: "admin/groups/search-pages-the-matches",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Groups: get group hierarchy, searched and paged",
+			Retrieved: "2026-08-28",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-group-search",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/groups",
+			Query:   map[string]string{"search": "gloak-srch", "max": "1"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+		Volatile:      []string{"*/id", "*/subGroups/*/id", "*/subGroups/*/parentId"},
+	},
+	{
+		ID: "admin/groups/read-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Groups: get group by id, unknown id",
+			Retrieved: "2026-08-28",
+		},
+		Status: Implemented,
+		// No Operation: a rejection. "Could not find group by id" is not the
+		// membership route's "Group not found" - two spellings, measured.
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/groups/00000000-0000-0000-0000-000000000000",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The 409 for a duplicate at the top level, which ends in a full stop
+		// and is **not** the sibling's wording one case down.
+		ID: "admin/groups/create-duplicate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Groups: create a top level group, duplicate name",
+			Retrieved: "2026-08-28",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-group",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/groups",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-group"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The same condition one level down, and a different string for it.
+		ID: "admin/groups/children-create-duplicate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Groups: set or create child, duplicate name",
+			Retrieved: "2026-08-28",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-group-tree",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/groups/{{group_id}}/children",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-group-child"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// Lowercase, no full stop, and the errorMessage shape - where the two
+		// 404s on this resource use `error`. One resource, two error families.
+		ID: "admin/groups/create-without-name",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Groups: create a top level group, no name",
+			Retrieved: "2026-08-28",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/groups",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
 }

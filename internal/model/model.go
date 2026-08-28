@@ -236,6 +236,26 @@ type RealmKey struct {
 }
 
 // Role is a realm role when ClientID is empty, otherwise a client role.
+// Group is a node in the realm's group tree.
+//
+// **Path is not a field.** A group's path is derived from its ancestry:
+// renaming a parent was measured moving every descendant's path while leaving
+// their names alone, so storing it would mean rewriting the whole subtree on
+// every rename. See groupPath in internal/admin.
+//
+// ParentID is empty for a top-level group, the way Role.ClientID is empty for a
+// realm role. The two mean the same thing and are spelled the same way on
+// purpose.
+type Group struct {
+	ID       string
+	RealmID  string
+	ParentID string
+	Name     string
+	// Attributes are stored and read back verbatim, like a role's. A group
+	// with none reads back {} rather than being absent, measured.
+	Attributes map[string][]string
+}
+
 type Role struct {
 	ID          string
 	RealmID     string
