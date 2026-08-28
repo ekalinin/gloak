@@ -136,8 +136,11 @@ func chapterOf(id string) string {
 // The column check is the one that earns its keep. Shape alone passes just as
 // well when two columns are transposed, and a transposed report is not a
 // broken run: it is a wrong parity number posted to a pull request as fact.
-// So the rows are summed and reconciled against the total row, which no
-// transposition survives.
+// So the rows are summed and reconciled against the total row - a check
+// between the two writers, not an absolute pin on either. A transposition in
+// one writer but not the other is caught; the same transposition made in
+// both is not, because summed swapped columns still reconcile against a
+// swapped total.
 func TestCoverageWritesAReportWhenAsked(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "parity.tsv")
 	t.Setenv("GLOAK_PARITY_REPORT", path)
