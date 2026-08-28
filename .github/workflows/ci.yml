@@ -70,6 +70,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -o pipefail
           status=0
@@ -82,18 +84,51 @@ jobs:
           # posting it would only add confusing noise on top of the failure
           # "status" already carries.
           if [ -s "$RUNNER_TEMP/comment.md" ]; then
-            id=$(gh pr view "${{ github.event.pull_request.number }}" \
+            id=$(gh pr view "$PR_NUMBER" \
               --json comments \
               --jq '[.comments[] | select(.body | startswith("<!-- gloak-parity -->")) | .url] | last // ""' \
               | sed 's/.*#issuecomment-//')
             gh_status=0
+            # Both paths go through gh api, so a refusal is spelled "HTTP 403"
+            # either way. gh pr comment posts over GraphQL, which reports the
+            # same refusal as "Resource not accessible by integration" with no
+            # status in it, and a fallback that has to match two spellings is a
+            # fallback that will one day match neither.
             if [ -n "$id" ]; then
-              gh api --method PATCH "repos/${{ github.repository }}/issues/comments/$id" \
-                -F body=@"$RUNNER_TEMP/comment.md" >/dev/null || gh_status=$?
+              gh api --method PATCH "repos/$REPO/issues/comments/$id" \
+                -F body=@"$RUNNER_TEMP/comment.md" \
+                >/dev/null 2>"$RUNNER_TEMP/gh-err.txt" || gh_status=$?
             else
-              gh pr comment "${{ github.event.pull_request.number }}" \
-                --body-file "$RUNNER_TEMP/comment.md" || gh_status=$?
+              gh api --method POST "repos/$REPO/issues/$PR_NUMBER/comments" \
+                -F body=@"$RUNNER_TEMP/comment.md" \
+                >/dev/null 2>"$RUNNER_TEMP/gh-err.txt" || gh_status=$?
             fi
+            if [ "$gh_status" -ne 0 ]; then
+              cat "$RUNNER_TEMP/gh-err.txt" >&2
+            fi
+
+            # A pull request from a fork gets a read-only GITHUB_TOKEN whatever
+            # the permissions block above says, so the post is a 403 the branch
+            # can do nothing about and failing the job would go red on work that
+            # raised parity. Fall back to the run summary, which needs no token,
+            # and let the job pass.
+            #
+            # Only 403 is tolerated. A network error, a bad token or a deleted
+            # comment still fails: the comment is the deliverable, and treating
+            # every gh failure as benign is exactly the silent-failure hole this
+            # step closed.
+            if [ "$gh_status" -ne 0 ] && grep -q 'HTTP 403' "$RUNNER_TEMP/gh-err.txt"; then
+              {
+                echo "### Parity"
+                echo
+                echo "The comment could not be posted: a pull request from a fork"
+                echo "gets a read-only token, so the API answered 403. It is here instead."
+                echo
+                cat "$RUNNER_TEMP/comment.md"
+              } >> "$GITHUB_STEP_SUMMARY"
+              gh_status=0
+            fi
+
             # The comment is the deliverable, so a failed post must fail the
             # job too - but when the parity check already failed, that status
             # is more informative than a bare gh failure, so it wins.
