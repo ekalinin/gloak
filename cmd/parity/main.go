@@ -48,5 +48,13 @@ func read(path string) (parity.Report, error) {
 		return parity.Report{}, fmt.Errorf("parity: %w", err)
 	}
 	defer f.Close()
-	return parity.Parse(f)
+	rep, err := parity.Parse(f)
+	if err != nil {
+		// os.Open above already names the file, through *PathError. Parse does
+		// not, and it is called on both reports with the same wordings, so a
+		// truncated base and a truncated head both read "parity: report has no
+		// total row" with nothing saying which one.
+		return parity.Report{}, fmt.Errorf("%s: %w", path, err)
+	}
+	return rep, nil
 }
