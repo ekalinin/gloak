@@ -617,3 +617,112 @@ func TestTheMembershipListingIsTheFifthShape(t *testing.T) {
 		}
 	}
 }
+
+// The three rules built for a user holder hold on a group, and the sweep of
+// 2026-08-28 is what says so rather than the resemblance of the routes.
+func TestGroupMappingRulesMatchTheUserHalf(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	caller := tokenForRole(t, h, s, realm, "manage-users")
+	ids := groupTree(t, h, admin, map[string][]string{"holder": nil})
+	g := ids["holder"]
+	postJSON(t, h, "/admin/realms/master/roles", `{"name":"probe-one"}`, admin)
+	postJSON(t, h, "/admin/realms/master/roles", `{"name":"probe-two"}`, admin)
+	rid := func(name string) string {
+		return readRole(t, h, "/admin/realms/master/roles/"+name, admin).ID
+	}
+	base := "/admin/realms/master/groups/" + g + "/role-mappings"
+
+	// eachMapping's id-and-name agreement, on a group holder.
+	for _, tc := range []struct {
+		name, body string
+		want       int
+	}{
+		{"id only", `[{"id":"` + rid("probe-one") + `"}]`, http.StatusNotFound},
+		{"name only", `[{"name":"probe-one"}]`, http.StatusNotFound},
+		{"they disagree", `[{"id":"` + rid("probe-one") + `","name":"probe-two"}]`, http.StatusNotFound},
+		{"they agree", `[{"id":"` + rid("probe-one") + `","name":"probe-one"}]`, http.StatusNoContent},
+	} {
+		if w := postJSON(t, h, base+"/realm", tc.body, admin); w.Code != tc.want {
+			t.Errorf("%s: want %d, got %d: %s", tc.name, tc.want, w.Code, w.Body)
+		}
+	}
+
+	// mayGrantRole, on a group holder: a manage-users caller may not hand out
+	// admin, and a mismatched pair whose name is refused is 404 rather than
+	// 403 - the agreement is settled first here too.
+	for _, tc := range []struct {
+		name, body string
+		want       int
+	}{
+		{"admin", `[{"id":"` + rid("admin") + `","name":"admin"}]`, http.StatusForbidden},
+		{"uma_authorization", `[{"id":"` + rid("uma_authorization") + `","name":"uma_authorization"}]`, http.StatusNoContent},
+		{"id grantable, name refused",
+			`[{"id":"` + rid("uma_authorization") + `","name":"admin"}]`, http.StatusNotFound},
+	} {
+		if w := postJSON(t, h, base+"/realm", tc.body, caller); w.Code != tc.want {
+			t.Errorf("manage-users assigning %s: want %d, got %d: %s", tc.name, tc.want, w.Code, w.Body)
+		}
+	}
+
+	// grantable, on a group holder: a view-users caller may read the list and
+	// assign none of it.
+	view := tokenForRole(t, h, s, realm, "view-users")
+	w := get(t, h, base+"/realm/available", view)
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != "[]" {
+		t.Errorf("view-users on available: %d %s, want 200 []", w.Code, w.Body)
+	}
+	if w := get(t, h, base+"/realm/available", caller); w.Code != http.StatusOK ||
+		strings.TrimSpace(w.Body.String()) == "[]" {
+		t.Errorf("manage-users on available: %d %s, want a non-empty list", w.Code, w.Body)
+	}
+}
+
+// The client is resolved before any role check on **both** mapping families,
+// and the subject's absence is gated where the client's is not. Measured on a
+// caller holding no admin role: a real holder with an unknown client is 404
+// "Client not found", and an unknown holder with an unknown client is about the
+// holder.
+func TestAnUnknownClientIs404BeforeTheRoleCheck(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	ids := groupTree(t, h, admin, map[string][]string{"holder": nil})
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-holder","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-holder")
+	missing := "00000000-0000-0000-0000-000000000000"
+	mr := clientUUID(t, s, realm, "master-realm")
+
+	for _, role := range []string{"view-users", "manage-users", "view-clients", "manage-realm"} {
+		tok := tokenForRole(t, h, s, realm, role)
+		for _, tc := range []struct {
+			what, path, want string
+			code             int
+		}{
+			{"user, unknown client",
+				"/admin/realms/master/users/" + uid + "/role-mappings/clients/" + missing,
+				`{"error":"Client not found"}`, http.StatusNotFound},
+			{"group, unknown client",
+				"/admin/realms/master/groups/" + ids["holder"] + "/role-mappings/clients/" + missing,
+				`{"error":"Client not found"}`, http.StatusNotFound},
+			{"unknown group, real client",
+				"/admin/realms/master/groups/" + missing + "/role-mappings/clients/" + mr,
+				`{"error":"Could not find group by id"}`, http.StatusNotFound},
+		} {
+			w := get(t, h, tc.path, tok)
+			if w.Code != tc.code || strings.TrimSpace(w.Body.String()) != tc.want {
+				t.Errorf("%s as %s: %d %s, want %d %s", tc.what, role, w.Code, w.Body, tc.code, tc.want)
+			}
+		}
+		// The subject's absence **is** gated: a caller outside usersReadRoles
+		// gets 403 here where it got 404 above.
+		w := get(t, h, "/admin/realms/master/users/"+missing+"/role-mappings/clients/"+missing, tok)
+		want := http.StatusNotFound
+		if role == "view-clients" || role == "manage-realm" {
+			want = http.StatusForbidden
+		}
+		if w.Code != want {
+			t.Errorf("unknown user and unknown client as %s: want %d, got %d: %s",
+				role, want, w.Code, w.Body)
+		}
+	}
+}
