@@ -102,6 +102,11 @@ test-only and `AGENTS.md` forbids production code importing it. A `cmd/`
 binary would have been more convenient to run and would have collided with that
 boundary for the sake of convenience.
 
+That rejection is about **writing** the report and nothing else. Reading two
+reports and comparing them touches no catalogue, so it does not meet the same
+boundary; section 5 names the binary that does it. Stated because the paragraph
+above reads as a general ban on `cmd/` in this design, and it is not one.
+
 ## 5. Comparing two reports
 
 A new package, `internal/parity`, reads two reports and produces the difference.
@@ -117,6 +122,19 @@ nobody reads.
 format, which is the interface between them. That keeps the test-only boundary
 intact and makes the comparison testable without a catalogue.
 
+A package is not callable from a workflow, so one binary sits over it:
+`cmd/parity`, taking two report paths, printing the comment and setting the
+exit code - 0, 1 when the total fell with no reason given, 2 when the arguments
+or a report are unusable. It holds no logic of its own, which is the rule
+`AGENTS.md` already states for `cmd/gloak`. Without it the argument handling
+and the exit-code decision live in YAML, which section 10 says they must not.
+
+(This paragraph was added after the workflow was built. The first version of
+this document named only the package and left "the workflow calls" pointing at
+nothing, so the binary reached the repository through the implementation plan
+rather than through here. It is a consequence of section 10, not a separate
+decision - but an unnamed consequence is one nobody agreed to.)
+
 ## 6. The workflow
 
 One workflow on `pull_request`, one job, in this order:
@@ -127,7 +145,7 @@ One workflow on `pull_request`, one job, in this order:
 4. `CGO_ENABLED=0 go test ./...`
 5. the meter on `HEAD`, into a report
 6. the meter on the merge base with `main`, into a second report
-7. compare, render, post
+7. compare, render, post - `cmd/parity` for the first two, the workflow for the third
 
 Steps 5 and 6 are the same invocation against two checkouts:
 
