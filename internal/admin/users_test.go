@@ -50,7 +50,7 @@ func TestUserAccessIsTheCallersPermissions(t *testing.T) {
 		},
 	} {
 		t.Run(tc.role, func(t *testing.T) {
-			got := userAccessFor(&caller{roles: map[string]bool{tc.role: true}})
+			got := userAccessFor(&caller{adminGrants: map[string]bool{tc.role: true}})
 			if got != tc.want {
 				t.Fatalf("caller holding %q:\n want %+v\n got  %+v", tc.role, tc.want, got)
 			}

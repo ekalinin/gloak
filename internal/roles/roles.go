@@ -82,14 +82,14 @@ func AssignDefaults(ctx context.Context, repo store.RoleRepo, realmID, realmName
 	return nil
 }
 
-// Names is the effective set reduced to the names an authorization check asks
-// about. Role names are unique within the client that owns them, and the admin
-// API's roles all live on one client, so a name alone identifies a right
-// there.
-func Names(effective []*model.Role) map[string]bool {
-	names := make(map[string]bool, len(effective))
-	for _, r := range effective {
-		names[r.Name] = true
-	}
-	return names
-}
+// Names was the effective set reduced to names, and it is deliberately not
+// here any more. Its premise - "role names are unique within the client that
+// owns them, and the admin API's roles all live on one client, so a name alone
+// identifies a right" - is true of that client and false of the realm, which
+// was F32: an ordinary client role named manage-realm passed every guard that
+// names manage-realm.
+//
+// internal/admin reduces by **container** instead, in adminRoleNames, and it
+// has to be done there because the container test needs the realm and the
+// client store. A name-only reduction has no safe caller left on this API, so
+// leaving one here would only be somewhere for the next one to come from.

@@ -463,3 +463,95 @@ func TestAFailingClientLookupStillStopsTheRequest(t *testing.T) {
 		t.Fatalf("a failing store must not be read as an absent container: want 500, got %d: %s", w.Code, w.Body)
 	}
 }
+
+// F32: the route guards judged the caller by role **name**, with the owning
+// container dropped, so an ordinary client role named after an admin one
+// opened every route that names it.
+//
+// Measured on both sides 2026-08-27: create a client, give it a role named
+// manage-realm, assign that role to a user, and ask for a realm role to be
+// created. Keycloak answers 403 and creates nothing; Gloak answered 201.
+//
+// The caller here holds two real admin roles, which is what it takes to mint
+// the impostor and hand it to itself - a narrow admin widening itself, not an
+// anonymous path. Neither of them opens POST /roles, which the first control
+// below is for.
+func TestAnOrdinaryRoleNamedAfterAnAdminOneOpensNothing(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	caller := tokenForRoles(t, h, s, realm, "manage-clients", "manage-users")
+	callerID := userID(t, s, realm, "only-manage-clients+manage-users")
+	adminCli := clientUUID(t, s, realm, "admin-cli")
+	create := "/admin/realms/master/roles"
+
+	// The control that makes the rest mean something: this caller is refused
+	// the route before any impostor exists, so a later 403 is not simply the
+	// caller being weak in some other way.
+	if w := postJSON(t, h, create, `{"name":"minted-before"}`, caller); w.Code != http.StatusForbidden {
+		t.Fatalf("before the impostor: want 403, got %d: %s", w.Code, w.Body)
+	}
+
+	if w := postJSON(t, h, "/admin/realms/master/clients/"+adminCli+"/roles", `{"name":"manage-realm"}`, caller); w.Code != http.StatusCreated {
+		t.Fatalf("mint an ordinary role named manage-realm: %d %s", w.Code, w.Body)
+	}
+	impostor := readRole(t, h, "/admin/realms/master/clients/"+adminCli+"/roles/manage-realm", caller)
+	self := "/admin/realms/master/users/" + callerID + "/role-mappings/clients/" + adminCli
+	if w := postJSON(t, h, self, `[{"id":"`+impostor.ID+`","name":"manage-realm"}]`, caller); w.Code != http.StatusNoContent {
+		t.Fatalf("self-assign the impostor: %d %s", w.Code, w.Body)
+	}
+
+	// The escalation, if the guard still keyed on the name alone.
+	if w := postJSON(t, h, create, `{"name":"minted-by-an-ordinary-role"}`, caller); w.Code != http.StatusForbidden {
+		t.Fatalf("holding an ordinary role named manage-realm: want 403, got %d: %s", w.Code, w.Body)
+	}
+	if w := get(t, h, create+"/minted-by-an-ordinary-role", admin); w.Code != http.StatusNotFound {
+		t.Fatalf("the refused create still made the role: %d %s", w.Code, w.Body)
+	}
+
+	// And the route is not simply shut: the real role still opens it.
+	real := tokenForRole(t, h, s, realm, "manage-realm")
+	if w := postJSON(t, h, create, `{"name":"minted-by-the-real-role"}`, real); w.Code != http.StatusCreated {
+		t.Fatalf("the real manage-realm: want 201, got %d: %s", w.Code, w.Body)
+	}
+}
+
+// The same hole reached through the roles every user is given, which is F32's
+// own narrowest precondition: **manage-clients alone**, plus default-roles-master.
+//
+// account is not the realm's own client, so its roles are ordinary ones a
+// manage-clients caller may rename. Renaming view-profile to manage-users and
+// manage-account to manage-realm hands the caller both names without any
+// mapping write at all - the caller already holds those two roles through
+// default-roles-master, and renaming a role it holds is renaming its own right.
+func TestRenamingTheAccountClientsRolesConfersNothing(t *testing.T) {
+	h, s, realm := newServer(t)
+	ctx := context.Background()
+	caller := tokenForRole(t, h, s, realm, "manage-clients")
+	callerID := userID(t, s, realm, "only-manage-clients")
+
+	// Every user Keycloak creates holds this; the test helper assigns admin
+	// roles only, so it is granted here rather than assumed.
+	defaults, err := s.Roles().ByName(ctx, realm.ID, "", "default-roles-master")
+	if err != nil {
+		t.Fatalf("ByName(default-roles-master): %v", err)
+	}
+	if err := s.Roles().AssignToUser(ctx, callerID, defaults.ID); err != nil {
+		t.Fatalf("AssignToUser(default-roles-master): %v", err)
+	}
+	account := clientUUID(t, s, realm, "account")
+	base := "/admin/realms/master/clients/" + account + "/roles/"
+	for from, to := range map[string]string{"view-profile": "manage-users", "manage-account": "manage-realm"} {
+		if w := putJSON(t, h, base+from, `{"name":"`+to+`"}`, caller); w.Code != http.StatusNoContent {
+			t.Fatalf("rename %s to %s: %d %s", from, to, w.Code, w.Body)
+		}
+	}
+
+	if w := postJSON(t, h, "/admin/realms/master/roles", `{"name":"minted-by-a-renamed-account-role"}`, caller); w.Code != http.StatusForbidden {
+		t.Fatalf("after the renames: want 403, got %d: %s", w.Code, w.Body)
+	}
+	// The mapping write is guarded by the other renamed name, so it is checked
+	// too rather than left to the one route.
+	if w := postJSON(t, h, "/admin/realms/master/users/"+callerID+"/role-mappings/realm", `[{"id":"x","name":"admin"}]`, caller); w.Code != http.StatusForbidden {
+		t.Fatalf("mapping write after the renames: want 403, got %d: %s", w.Code, w.Body)
+	}
+}

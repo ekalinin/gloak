@@ -1371,7 +1371,43 @@ records what this entry measured and points back here.
 Transcript: the "A wrong method is not always 404" section of
 `2026-08-18-keycloak-26.7.1-observed.md`.
 
-## F32: the caller's roles are flattened by name, so an ordinary client role can impersonate an admin one
+## F32: the caller's roles are flattened by name, so an ordinary client role can impersonate an admin one (closed)
+
+Closed 2026-08-28 on `fix/guard-the-caller-by-container`. `caller` no longer
+carries the name-keyed set at all: `has` and `hasAny` read the container-reduced
+one that `adminRoleNames` already built for F28's grant predicate, and
+`roles.Names` was removed rather than left where the next call site could reach
+for it - its doc comment asserted the very premise this entry refutes.
+
+The entry below says the remaining fix "is not local" and would need every
+`has`/`hasAny` call site to decide which container it means. It does, and the
+answer turned out to be the same at all of them: **every question this API asks
+of a caller is an admin-role question** - the route guards, the `access` claims
+on a user and a client representation, and `mayGrantRole`. So one set answers
+all of them and no call site was left meaning "any container".
+
+Measured on 2026-08-28 by one script run against Keycloak and against two Gloak
+builds, `main` at `dcbcd11` and the fix, on the two paths that reach the name
+from `manage-clients` alone - minting an impostor role on a client of one's own,
+and renaming the `account` client's own roles into admin names. Keycloak refuses
+`POST /roles` with 403 on both and creates nothing; `dcbcd11` answered 201 on
+both and the roles are there afterwards; the fix answers 403 and creates
+nothing. The table is the "The role check is by container, so a role named after
+an admin one opens nothing" section of
+`2026-08-18-keycloak-26.7.1-observed.md`.
+
+Two unit tests carry it, one per path, and under the mutation that drops the
+container test from `adminRoleNames` both fail with the measured symptom - 201
+where 403 is wanted.
+
+**Not covered by a conformance case, deliberately and not silently.** Every
+fixture in the harness mints a full administrator, so there is no non-admin
+caller token to record this against; building one is its own piece of work.
+Filed as F37.
+
+The original entry follows.
+
+## F32 (original): the caller's roles are flattened by name, so an ordinary client role can impersonate an admin one
 
 Found 2026-08-27 by Task 7 of `feat/p2-role-mappings`, while writing F28's
 predicate. It is **older than F28 and wider**: it is the whole guard layer, not
@@ -1709,3 +1745,33 @@ F30 also names `GET /users/{id}` and the credential endpoints, for a different
 question - whether the subject is resolved before the caller is judged, which is
 about the **404-before-403 ordering** rather than about which roles open the
 route. **Do both in the same pass**: same fixtures, same tokens, two columns.
+
+## F37: the harness has no non-admin caller, so no guard refusal can be recorded
+
+Filed 2026-08-28 by `fix/guard-the-caller-by-container`, which wanted a
+conformance case and could not have one.
+
+Every fixture in `internal/conformance` authenticates as the bootstrapped
+administrator. There is no fixture that mints a user holding a chosen admin
+role, gives it a password and captures its token, so **no case in the catalogue
+can assert a 403**. The one case that would - `admin/users/list-without-view-users`
+- is `Pending` with no fixture, and it has been in the skipped list of every
+`make record` run since it was written.
+
+The consequence is not that guards are untested: `internal/admin` tests them
+thoroughly, on a caller built directly through the store. It is that none of it
+is measured against Keycloak *through the harness*, so the guard contract rests
+on hand-run probes recorded in prose - F28's sweep, F32's table - rather than on
+goldens the suite replays. Those probes are real measurements, but nothing
+re-runs them.
+
+What it needs: a fixture that creates a user, sets a password through
+`PUT .../reset-password`, assigns one named role from `master-realm`, and
+captures a token for it. `tokenForRoles` in `internal/admin/auth_test.go` is the
+same shape and can be read for the steps; the harness version has to go through
+the API rather than the store, because the recorder drives a container.
+
+It unlocks more than one case. F28's caller-relative rule, F32's container rule,
+the `available` filtering, `admin/users/list-without-view-users`, and F36's
+sweep over which roles open the user and credential routes are all currently
+unrecordable for the same reason.

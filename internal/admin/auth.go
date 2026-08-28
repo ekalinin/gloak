@@ -24,32 +24,40 @@ import (
 	"github.com/ekalinin/gloak/internal/token"
 )
 
-// caller is an authenticated administrator and the roles it effectively holds:
-// its direct assignments plus everything reachable through composites.
+// caller is an authenticated administrator and the **admin** roles it
+// effectively holds: its direct assignments plus everything reachable through
+// composites, reduced by container to the admin ones - see adminRoleNames.
 //
-// Two name sets, not one, and the split is what keeps F28's predicate honest.
-// roles is every name the caller holds from any container, which is what the
-// route guards ask about. adminGrants is the subset that are **admin** roles by
-// container - see adminRoleNames - and it is the only seed grants() takes, so an
-// ordinary role that happens to be named admin or manage-realm confers nothing.
+// **The container decides, never the name.** This carried a second set until
+// 2026-08-28: every name the caller held from any container, which is what the
+// route guards asked about. That was F32, a privilege escalation - a caller
+// holding manage-clients could mint a client role named manage-realm on any
+// client that is not the realm's own, assign it to itself, and pass every
+// guard that names manage-realm. Measured: Keycloak refuses that caller
+// POST /admin/realms/master/roles with 403, Gloak answered 201.
+//
+// Every question asked of a caller on this API is an admin-role question - the
+// route guards, the access claims on a user and a client representation, and
+// F28's grant predicate - so one set answers all of them and there is no
+// remaining call site that means "any container".
 type caller struct {
 	user        *model.User
-	roles       map[string]bool
 	adminGrants map[string]bool
 	granted     map[string]bool
 }
 
-// has reports whether the caller holds a role by name. Names are unique within
-// the admin role container, so the client a role belongs to does not need
-// naming at the call site.
-func (c *caller) has(role string) bool { return c.roles[role] }
+// has reports whether the caller holds an admin role by name. Names are unique
+// within the admin role container, so the client a role belongs to does not
+// need naming at the call site - but the set this reads has already been
+// narrowed to that container, which is what makes the name safe to ask about.
+func (c *caller) has(role string) bool { return c.adminGrants[role] }
 
 // hasAny reports whether the caller holds at least one of the roles a route
 // accepts. Some routes take more than one: the user listing admits
 // view-users, query-users or manage-users, measured.
 func (c *caller) hasAny(roles []string) bool {
 	for _, role := range roles {
-		if c.roles[role] {
+		if c.adminGrants[role] {
 			return true
 		}
 	}
@@ -217,17 +225,16 @@ func (h *handler) resolveCaller(w http.ResponseWriter, r *http.Request, realm *m
 		return nil
 	}
 
-	held, adminGrants, err := h.effectiveRoles(r, realm, user)
+	adminGrants, err := h.effectiveRoles(r, realm, user)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return nil
 	}
-	return &caller{user: user, roles: held, adminGrants: adminGrants}
+	return &caller{user: user, adminGrants: adminGrants}
 }
 
 // effectiveRoles is the caller's rights: its direct assignments expanded
-// through composites, reduced to the two name sets caller carries - every name
-// it holds, and the admin ones among them.
+// through composites, reduced to the admin role names among them.
 //
 // The expansion is internal/roles' because internal/oidc needs the same one to
 // fill a token's realm_access and resource_access, and the two must not be
@@ -237,16 +244,12 @@ func (h *handler) resolveCaller(w http.ResponseWriter, r *http.Request, realm *m
 // resolveCaller returns nil rather than a caller holding nothing, which would
 // be indistinguishable from a caller that legitimately holds nothing only until
 // the first guard let it through.
-func (h *handler) effectiveRoles(r *http.Request, realm *model.Realm, user *model.User) (map[string]bool, map[string]bool, error) {
+func (h *handler) effectiveRoles(r *http.Request, realm *model.Realm, user *model.User) (map[string]bool, error) {
 	effective, err := roles.Effective(r.Context(), h.store.Roles(), user.ID)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	adminGrants, err := h.adminRoleNames(r.Context(), realm, effective)
-	if err != nil {
-		return nil, nil, err
-	}
-	return roles.Names(effective), adminGrants, nil
+	return h.adminRoleNames(r.Context(), realm, effective)
 }
 
 // adminRoleNames reduces a role set to the names of the **admin** roles in it,
