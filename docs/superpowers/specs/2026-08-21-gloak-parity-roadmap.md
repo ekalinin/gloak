@@ -195,10 +195,10 @@ operations is allocated below; none is left unassigned.
 | # | Sub-project | Depends on | Closes | Size |
 |---|---|---|---|---|
 | **P1** | Token foundation **(done)** | - | `oidc/token` 8 of 17, `userinfo` 4 of 7, `introspection` 1 of 4, `revocation` 4 of 4; closed `oidc/certs` | 17 cases |
-| **P2** | Admin API core | P1 | Users 34, Clients 35, Roles 28, Roles by ID 10, Groups 11, Role Mapper 18, Client Role Mappings 15 | 151 ops |
+| **P2** | Admin API core **(done 2026-08-28)** | P1 | Users 34, Clients 35, Roles 28, Roles by ID 10, Groups 11, Role Mapper 18, Client Role Mappings 15 | 151 ops |
 | P2 first cut | Clients and Users, done 2026-08-23 | | 24 of the 69 in those two tags; the other 45 belong to P5, P6, P7, P9, P10, P13, P14 or the second cut - see §1.1 of the P2 design | 24 ops |
 | P2 second cut | Roles and role mappings on a user, specced 2026-08-23, **done 2026-08-27** | P2 first cut | 43 of the 71 in `Roles`, `Roles (by ID)`, `Role Mapper`, `Client Role Mappings`; the other 28 are groups (11), organizations (11) and P10 (6) - see `2026-08-23-p2-roles-and-role-mappings-design.md`. All 43 are served: the roles half 32 (`Roles` 24, `Roles (by ID)` 8) on 2026-08-25, and the role-mapping half 11 (`Role Mapper` 6, `Client Role Mappings` 5) on 2026-08-27 | 43 ops |
-| P2 third cut | Groups, specced 2026-08-28 | P2 second cut | `Groups` 9, a user's group membership 4, the group halves of the two mapping tags 11. The allocation was checked against the description and holds exactly: the `Groups` tag has 11 and the two `management/permissions` operations are P10, and 11 of the 22 group role-mappings are under `/organizations` and so P12. **Cuts A and B done 2026-08-28**: the group tree 9 and the membership 4, 13 of the 24 | 24 ops |
+| P2 third cut | Groups, specced 2026-08-28 | P2 second cut | `Groups` 9, a user's group membership 4, the group halves of the two mapping tags 11. The allocation was checked against the description and holds exactly: the `Groups` tag has 11 and the two `management/permissions` operations are P10, and 11 of the 22 group role-mappings are under `/organizations` and so P12. **Done 2026-08-28**, all three cuts: the group tree 9, the membership 4 and the group role-mappings 11 | 24 ops |
 | **P3** | Browser code flow | P1 | `oidc/authorization` 11, `oidc/logout` (part) | ~15 cases |
 | **P4** | Multi-realm | P2 | Realms Admin 45, Key 1 | 46 ops |
 | **P5** | Client scopes and protocol mappers | P2 | Client Scopes 10, Protocol Mappers 21, Scope Mappings 33, Client Attribute Certificate 7, Client Initial Access 3, Client Registration Policy 1 | 75 ops |
@@ -214,10 +214,14 @@ operations is allocated below; none is left unassigned.
 
 Denominator today: **413 Admin API operations plus 72 protocol behaviours, 485
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **113** after
-P2's third cut's group tree and membership, up from 8 before P1, 25 after it, 89
-after the second cut's roles half, 100 after that cut was complete and 109 after
-the group tree.
+surface is not counted and which the report says so about. Served: **124**, and
+**P2 is complete** - up from 8 before P1, 25 after it, 89 after the second cut's
+roles half, 100 after that cut was complete, 109 after the group tree and 113
+after the membership.
+
+124 is the number this table predicted for P2 before any of it was built: 100
+plus the third cut's 24. The allocation was checked against the description
+rather than taken on trust when the cut started, and it held to the operation.
 
 Four pull requests between 100 and 109 moved the number not at all, and that is
 worth naming rather than reading as a gap: they closed F17, F30, F32, F33, F36

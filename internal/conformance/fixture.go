@@ -379,6 +379,56 @@ var Fixtures = map[string]Fixture{
 	"admin-token-group-tree":   groupTreeFixture(),
 	"admin-token-group-search": groupSearchFixture(),
 	"admin-token-group-member": groupMemberFixture(),
+
+	// A group holding one realm role and one client role, for the eleven
+	// mapping routes. Its own group and its own client, the uniqueness
+	// realmRoleFixture's doc explains.
+	"admin-token-group-mappings": groupMappingFixture(),
+}
+
+func groupMappingFixture() Fixture {
+	f := groupFixture("gloak-probe-group-mapped", "group_id")
+	f.Steps = append(f.Steps,
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/roles",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"name":"gloak-probe-group-realm-role"}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/roles/gloak-probe-group-realm-role",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"realm_role_id": "id"},
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/groups/{{group_id}}/role-mappings/realm",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`[{"id":"{{realm_role_id}}",` +
+					`"name":"gloak-probe-group-realm-role"}]`),
+			},
+		},
+	)
+	f.Steps = append(f.Steps, clientWithRoleSteps("gloak-probe-group-map-client", "client_uuid",
+		`{"name":"gloak-probe-group-client-role"}`,
+		"gloak-probe-group-client-role", "client_role_id")...)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/groups/{{group_id}}/role-mappings/clients/{{client_uuid}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body: []byte(`[{"id":"{{client_role_id}}",` +
+				`"name":"gloak-probe-group-client-role"}]`),
+		},
+	})
+	return f
 }
 
 // groupMemberFixture puts one user in one group, which cut B's membership write
