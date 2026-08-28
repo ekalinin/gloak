@@ -343,7 +343,39 @@ reading the recording rather than while writing the create handler.
 The golden is in the repository, so the `Recorded` alarm fires the moment all
 three line up.
 
-## F17: the listings are gated where Keycloak filters
+## F17: the listings are gated where Keycloak filters (closed)
+
+Closed 2026-08-28 on `fix/guard-sweep-users-and-listings`. Blocker 1, the one
+this entry said was sufficient on its own, was the measurement; it was taken.
+
+The user listing is filtered by what the caller may view and the count is not,
+on the same realm at the same moment - so the two endpoints disagreeing is the
+contract, exactly as this entry recorded. `query-users` is admitted and shown
+`[]`; `view-users` and `manage-users` see everybody.
+
+The clients half was **wrong in both directions at once** and this entry had
+only half of it. `GET /clients` took `view-clients` alone, so it refused
+`query-clients`, which Keycloak admits and empties, and it refused
+`manage-clients`, which Keycloak serves in full. `manage-clients` is not
+composite over `view-clients`, so nothing in the role graph predicted the
+second; only the sweep did.
+
+What the entry warned against - "should not be closed by wiring up a predicate
+nobody measured" - is respected: the predicate is `userAccessFor(...).View` and
+`clientAccessFor(...).View`, and the sweep says those two are exactly right on a
+default 26.7.1. Fine-grained admin permissions can make visibility per user
+rather than per caller; they are off by default, nothing here measures them, and
+both call sites say so.
+
+`admin/users/list-without-view-users` is `Implemented`, on a `query-users`
+caller, 200 and `[]`.
+
+The measurement is the "The whole users family takes the same two stages, and
+the listings filter" section of `2026-08-18-keycloak-26.7.1-observed.md`.
+
+The original entry follows.
+
+## F17 (original): the listings are gated where Keycloak filters
 
 Measured 2026-08-23. A caller holding only the `query-` role gets **200 and an
 empty array** from a listing, even filtering to an object that exists. Keycloak
@@ -1224,7 +1256,34 @@ operator can still remove the orphan and is not stuck.
 None of this reduces F29's priority. Fixing F29 removes the state, and this
 paragraph with it.
 
-## F30: the role-mapping guards are one stage where Keycloak has two
+## F30: the role-mapping guards are one stage where Keycloak has two (closed)
+
+Closed 2026-08-28 on `fix/guard-sweep-users-and-listings`, swept together with
+F36 as this entry asked.
+
+`guardUserSubject` is the combinator the entry said was missing: coarse gate,
+resolve the subject, fine check. The coarse gate is `usersReadRoles` and the
+fine stage is what the route itself takes.
+
+The sweep widened the entry's own claim. It measured the role-mapping routes;
+the same rule holds on **all 18** routes naming a `{userID}` - the single-user
+reads and writes, the whole credential family and the logout as well - which is
+why the entry told whoever fixed it to sweep those rather than assume the same
+gate. They do behave the same; that is now measured rather than extended.
+
+`query-users` is the row that makes it two stages. It opens no route in the
+family and still gets the 404, so no single-stage guard can produce the
+contract: name `query-users` and every real-subject 403 breaks, leave it out and
+every 404 does.
+
+`admin/users/read-missing-to-a-query-users-caller` and
+`admin/users/read-to-a-query-users-caller` are the pair that records it, and
+`TestAMissingSubjectIs404ToTheWholeUsersFamily` covers all 16 route shapes
+against both sides of the gate.
+
+The original entry follows.
+
+## F30 (original): the role-mapping guards are one stage where Keycloak has two
 
 Found and measured 2026-08-26 by Task 3 of `feat/p2-role-mappings`, while
 sweeping the write guards. Not what the task was looking for.
@@ -1720,7 +1779,29 @@ row's write line. The claim is true only if each list equals that row's `204`
 columns exactly; if it does not, the read filter and the write check are two
 predicates and `grantable` is wrong to share `mayGrantRole`.
 
-## F36: `manage-users` opens all seven mapping reads and is refused `GET /users/{id}`
+## F36: `manage-users` opens all seven mapping reads and is refused `GET /users/{id}` (closed)
+
+Closed 2026-08-28 on `fix/guard-sweep-users-and-listings`, in the same pass as
+F30 as both entries asked.
+
+The suspicion was right and the shape was the one this entry called unlikely:
+**Keycloak lets `manage-users` read.** `GET /users/{id}` and
+`GET /users/{id}/credentials` both answer 200 to it, so the caller that could
+update and delete a user it could not read was Gloak's invention, not
+Keycloak's. Both routes now take `view-users` or `manage-users`.
+
+The rest of the credential family - `reset-password`, `userLabel`,
+`moveToFirst`, `moveAfter`, `disable-credential-types` - is `manage-users`
+alone, and so are the update and the delete. Every other role, `query-users`
+included, is 403 on all nine. The whole family was swept rather than the two
+routes this entry named, because assuming the neighbours agree is what put the
+divergence there.
+
+`admin/users/read-to-a-manage-users-caller` records it.
+
+The original entry follows.
+
+## F36 (original): `manage-users` opens all seven mapping reads and is refused `GET /users/{id}`
 
 Filed 2026-08-27 by review of `feat/p2-role-mappings`. Pre-existing, needs a
 container, and it is the **too-restrictive** direction this cut has already

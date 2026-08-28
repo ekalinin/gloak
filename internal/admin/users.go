@@ -102,6 +102,22 @@ func (h *handler) listUsers(w http.ResponseWriter, r *http.Request, rc *reqConte
 	}
 	users = page(users, r.URL.Query())
 
+	// **The listing is filtered by what the caller may view; the count is
+	// not.** Measured 2026-08-28 on one caller per role: query-users gets 200
+	// and `[]` from this route and 200 and the full count from the route next
+	// door, while view-users and manage-users get everybody from both. So
+	// query-users opens the route and sees nothing - a filter, not a guard:
+	// the route stays open and the body empties.
+	//
+	// The predicate is caller-wide rather than per user, which is what
+	// userAccessFor expresses and what a default 26.7.1 does. Keycloak's
+	// fine-grained admin permissions can make it per user; they are off by
+	// default, nothing here measures them, and this must not be read as
+	// modelling them.
+	if !userAccessFor(rc.caller).View {
+		users = nil
+	}
+
 	brief := r.URL.Query().Get("briefRepresentation") == "true"
 	out := make([]userRepresentation, 0, len(users))
 	for _, u := range users {
@@ -119,9 +135,13 @@ func (h *handler) listUsers(w http.ResponseWriter, r *http.Request, rc *reqConte
 //
 // It applies the same filters as the listing but **not** the same visibility:
 // a caller holding only query-users was measured getting [] from the listing
-// and 7 from the count, on the same realm at the same moment. Gloak does not
-// filter the listing by visibility either - see follow-up F17 - so the two
-// agree here for a different reason than Keycloak's.
+// and 7 from the count, on the same realm at the same moment. Re-measured
+// 2026-08-28 across nine callers and it still holds, so the two endpoints
+// disagreeing is the contract and not an artefact of one reading.
+//
+// This used to note that Gloak did not filter the listing either, so the two
+// agreed here for a different reason than Keycloak's. The listing filters now,
+// and this one deliberately still does not.
 func (h *handler) countUsers(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 	users, err := h.matchingUsers(r, rc)
 	if err != nil {
@@ -142,6 +162,14 @@ func (h *handler) countUsers(w http.ResponseWriter, r *http.Request, rc *reqCont
 // spelling of "User not found" would have been indistinguishable from a real
 // divergence, which is why there is exactly one.
 func (h *handler) userFromPath(w http.ResponseWriter, r *http.Request, rc *reqContext) (*model.User, bool) {
+	// guardUserSubject resolves the subject before the route's own role check,
+	// because Keycloak answers 404 for a missing user to any caller inside the
+	// users family whether or not it may use the route. Every handler in the
+	// family still asks for the subject here, so this hands back what the
+	// guard already found rather than reading the store twice.
+	if rc.subject != nil {
+		return rc.subject, true
+	}
 	user, err := h.store.Users().ByID(r.Context(), rc.realm.ID, r.PathValue("userID"))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {

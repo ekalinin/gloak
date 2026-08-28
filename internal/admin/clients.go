@@ -30,6 +30,19 @@ func (h *handler) listClients(w http.ResponseWriter, r *http.Request, rc *reqCon
 		if wanted != "" && c.ClientID != wanted {
 			continue
 		}
+		// Filtered by what the caller may view, the same way the user listing
+		// is. Measured 2026-08-28: query-clients gets 200 and `[]` here, where
+		// view-clients and manage-clients get all six. This route used to
+		// refuse query-clients and manage-clients outright, which was wrong in
+		// both directions at once.
+		//
+		// Per client rather than caller-wide because clientAccessFor takes the
+		// client - the realm's own client answers a different shape. Its View
+		// does not vary by client today, so this is not measured to differ; it
+		// is written per client because that is where the predicate lives.
+		if !clientAccessFor(rc.caller, c, rc.realm.Name).View {
+			continue
+		}
 		out = append(out, clientRepresentationOf(c, rc.caller, rc.realm.Name))
 	}
 	writeAdminJSON(w, out)
