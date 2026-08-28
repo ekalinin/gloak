@@ -1658,3 +1658,87 @@ func TestOrdinaryNamesDoNotSeedTheImplicationClosure(t *testing.T) {
 		t.Fatalf("ordinary role names widened available from %v to %v", before, got)
 	}
 }
+
+// An entry's id and name must name the same role, and the disagreement is
+// decided **before** the caller check. Measured on a live 26.7.1 on 2026-08-28
+// on both verbs and both containers: a pair whose id names a role the caller
+// may grant and whose name names one it may not is 404, and so is the same
+// pair the other way round. Neither is 403, which is what says nothing was
+// authorised - and the controls in the same table are 403 and 204, so the
+// caller check is demonstrably reachable on these routes.
+//
+// This is the ordering the four conformance cases cannot pin: they run as a
+// full administrator, for which every role is grantable, so a 403 could never
+// appear there whichever way round the two checks sat.
+func TestMappingWriteRequiresTheIdAndNameToAgree(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	caller := tokenForRole(t, h, s, realm, "manage-users")
+	postJSON(t, h, "/admin/realms/master/users", `{"username":"probe-mapped","enabled":true}`, admin)
+	uid := userID(t, s, realm, "probe-mapped")
+	mrUUID := clientUUID(t, s, realm, "master-realm")
+
+	realmBase := "/admin/realms/master/users/" + uid + "/role-mappings/realm"
+	clientBase := "/admin/realms/master/users/" + uid + "/role-mappings/clients/" + mrUUID
+	realmRole := func(name string) string {
+		return readRole(t, h, "/admin/realms/master/roles/"+name, admin).ID
+	}
+	clientRole := func(name string) string {
+		return readRole(t, h, "/admin/realms/master/clients/"+mrUUID+"/roles/"+name, admin).ID
+	}
+
+	// grantable by manage-users / refused to it, on each container.
+	offline, adminRole := realmRole("uma_authorization"), realmRole("admin")
+	viewUsers, manageRealm := clientRole("view-users"), clientRole("manage-realm")
+
+	for _, tc := range []struct {
+		name   string
+		base   string
+		method string
+		body   string
+		want   int
+	}{
+		{"realm: id grantable, name refused", realmBase, http.MethodPost,
+			`[{"id":"` + offline + `","name":"admin"}]`, http.StatusNotFound},
+		{"realm: id refused, name grantable", realmBase, http.MethodPost,
+			`[{"id":"` + adminRole + `","name":"uma_authorization"}]`, http.StatusNotFound},
+		{"realm: no name at all", realmBase, http.MethodPost,
+			`[{"id":"` + offline + `"}]`, http.StatusNotFound},
+		{"realm control: both refused", realmBase, http.MethodPost,
+			`[{"id":"` + adminRole + `","name":"admin"}]`, http.StatusForbidden},
+		{"realm control: both grantable", realmBase, http.MethodPost,
+			`[{"id":"` + offline + `","name":"uma_authorization"}]`, http.StatusNoContent},
+
+		{"client: id grantable, name refused", clientBase, http.MethodPost,
+			`[{"id":"` + viewUsers + `","name":"manage-realm"}]`, http.StatusNotFound},
+		{"client: id refused, name grantable", clientBase, http.MethodPost,
+			`[{"id":"` + manageRealm + `","name":"view-users"}]`, http.StatusNotFound},
+		{"client control: both refused", clientBase, http.MethodPost,
+			`[{"id":"` + manageRealm + `","name":"manage-realm"}]`, http.StatusForbidden},
+		{"client control: both grantable", clientBase, http.MethodPost,
+			`[{"id":"` + viewUsers + `","name":"view-users"}]`, http.StatusNoContent},
+
+		// The removal takes the same rule. uma_authorization is held by now,
+		// assigned by the realm control above, so a 404 here is the
+		// disagreement and not an absent mapping.
+		{"realm DELETE: id grantable and held, name refused", realmBase, http.MethodDelete,
+			`[{"id":"` + offline + `","name":"admin"}]`, http.StatusNotFound},
+		{"realm DELETE control: both grantable", realmBase, http.MethodDelete,
+			`[{"id":"` + offline + `","name":"uma_authorization"}]`, http.StatusNoContent},
+	} {
+		w := sendJSON(t, h, tc.method, tc.base, tc.body, caller)
+		if w.Code != tc.want {
+			t.Errorf("%s: want %d, got %d: %s", tc.name, tc.want, w.Code, w.Body)
+		}
+	}
+
+	// Nothing a 404 or a 403 touched came away written. The two controls that
+	// answered 204 assigned view-users and then assigned and removed
+	// uma_authorization, so the subject holds exactly the one.
+	if got := mappingNames(t, h, realmBase, admin); slices.Contains(got, "admin") || slices.Contains(got, "uma_authorization") {
+		t.Errorf("a refused or mismatched realm write still applied: %v", got)
+	}
+	if got := mappingNames(t, h, clientBase, admin); slices.Contains(got, "manage-realm") || !slices.Contains(got, "view-users") {
+		t.Errorf("client mappings after the table: %v", got)
+	}
+}
