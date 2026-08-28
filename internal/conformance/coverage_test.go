@@ -12,9 +12,14 @@ import (
 	"testing"
 )
 
-// TestCoverage always passes. It exists to print how much of the documented
-// surface is served, so that a pending count which never moves is visible
-// rather than buried. `make conformance` runs it.
+// TestCoverage is a reporter, not a gate. It exists to print how much of the
+// documented surface is served, so that a pending count which never moves is
+// visible rather than buried. `make conformance` runs it.
+//
+// It fails only when the catalogue is inconsistent - a case filed under an
+// undeclared chapter, an unreadable OpenAPI description - never because the
+// number is low. Making it fail on a low or falling number would turn the
+// reporter into a guard; that gate lives in cmd/parity instead.
 //
 // It prints rather than writing a checked-in file: a generated file drifts
 // from the tests that generate it.
@@ -204,13 +209,24 @@ func TestCoverageWritesAReportWhenAsked(t *testing.T) {
 	}
 }
 
+// parityReportAtStart is GLOAK_PARITY_REPORT as the process was launched with,
+// read before any test can touch it.
+//
+// The guard below has to compare against this rather than against "". Setting
+// the variable is the supported way to run the meter for a report, which CI
+// does and a contributor reproducing CI does too, and comparing against ""
+// called that a leak from another test - a claim that is both false and points
+// at the wrong file.
+var parityReportAtStart = os.Getenv("GLOAK_PARITY_REPORT")
+
 // TestParityReportVariableDoesNotLeak guards the one way the test above can
 // corrupt the rest of the package: t.Setenv restores on return, and if it ever
 // stopped doing so every later TestCoverage run would silently overwrite a
 // report. It asserts the restoration, not the meter.
 func TestParityReportVariableDoesNotLeak(t *testing.T) {
-	if got := os.Getenv("GLOAK_PARITY_REPORT"); got != "" {
-		t.Fatalf("GLOAK_PARITY_REPORT leaked from another test: %q", got)
+	if got := os.Getenv("GLOAK_PARITY_REPORT"); got != parityReportAtStart {
+		t.Fatalf("GLOAK_PARITY_REPORT is %q, want the value the process started with, %q",
+			got, parityReportAtStart)
 	}
 }
 
@@ -222,9 +238,11 @@ func TestParityReportVariableDoesNotLeak(t *testing.T) {
 // because a generated file drifts from the tests that generate it. Two of
 // these are produced inside one CI run, compared, and thrown away.
 //
-// It is a side effect, not a verdict. TestCoverage always passes, and a
-// failure to write is reported through t.Errorf rather than by changing what
-// the meter concludes.
+// It is a side effect, not a verdict. The parity gate does not live in this
+// test: cmd/parity compares two reports and decides, so nothing here judges
+// whether the number is acceptable. A failure to write is a test failure like
+// any other - t.Errorf does fail the test - and it changes nothing about what
+// the meter concluded.
 func writeParityReport(t *testing.T, rows []string, served, documented, unenumerated int) {
 	t.Helper()
 	path := os.Getenv("GLOAK_PARITY_REPORT")
