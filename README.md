@@ -173,6 +173,13 @@ would inflate the percentage by hiding the parts nobody has counted. It reads:
 total: 100 of 485 enumerated behaviours served; 4 chapters not enumerated
 ```
 
+CI reruns this meter on every pull request and posts the parity increment as
+a comment, failing the pull request when the total falls. A deliberate fall
+is declared with a `Parity-decrease: <reason>` line in the pull request
+description - the marker must be the first non-whitespace content of its
+own line (leading whitespace is fine, case does not matter), so a markdown
+bullet such as `- Parity-decrease: <reason>` does not count.
+
 A case has one of three statuses. `Implemented` is served and compared, and a
 mismatch is a regression. `Pending` is not built and has no contract. `Recorded`
 sits between them: the bytes have been measured and committed, but nothing

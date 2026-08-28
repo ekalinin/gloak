@@ -366,6 +366,15 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
 - Adding a store interface method means implementing it in **both** drivers. The
   conformance suite in `internal/store/storetest` does not exercise every method, so
   compiling is not proof.
+- **CI runs `build`, `vet` and `CGO_ENABLED=0 go test ./...` on every pull
+  request, and nothing behind the `docker` tag.** A green run does not mean the
+  two store drivers agree: that evidence still comes only from running the
+  Postgres suite by hand. CI also posts the pull request's parity increment
+  and fails when the total falls. A deliberate fall is declared with a
+  `Parity-decrease: <reason>` line in the pull request description - the
+  marker must be the first non-whitespace content on its own line (leading
+  whitespace is fine, case does not matter), so a markdown bullet such as
+  `- Parity-decrease: <reason>` does not count and the gate stays shut.
 
 ## Where a new case can come from
 
