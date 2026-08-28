@@ -360,6 +360,115 @@ var Fixtures = map[string]Fixture{
 	// repeats an assignment that is measured idempotent.
 	"admin-token-mapping-realm-write":  mappingRealmWriteFixture(),
 	"admin-token-mapping-client-write": mappingClientWriteFixture(),
+
+	// The three callers that are **not** the bootstrapped administrator. Every
+	// other fixture here authenticates as it, which is why no case in the
+	// catalogue could assert a 403 until now - F37.
+	"narrow-caller-manage-users": callerFixture("gloak-probe-caller-manage-users", "manage-users"),
+	"narrow-caller-view-users":   callerFixture("gloak-probe-caller-view-users", "view-users"),
+	"narrow-caller-impostor":     impostorCallerFixture(),
+}
+
+// callerFixture is a caller that is not the administrator: a user created and
+// given a password through the API, assigned the named admin roles from the
+// realm's own `master-realm` client, and then password-granted on admin-cli.
+// Its access token is `caller_token`, so a case picks the caller it means by
+// which of the two tokens it sends.
+//
+// **The roles come from `master-realm` by container, not by name**, which is
+// the same distinction F32 turned out to be about: a fixture that minted a role
+// of its own named `manage-users` would be building the impostor rather than
+// the caller.
+//
+// The token is minted **after** the assignments. Both servers resolve a
+// caller's roles from the session on every request rather than from the token -
+// there is nothing in an admin-cli token to authorise against, see
+// internal/admin's package comment - so the order is not load-bearing, and it
+// is this way round because a fixture that reads as though it were is a fixture
+// somebody will later reorder.
+//
+// It also captures `admin_client_uuid` and `realm_role_admin_id`, which the
+// cases need to name a role the caller may not be given.
+func callerFixture(username string, roles ...string) Fixture {
+	f := passwordFixture(username, false, "")
+	f.Steps = append(f.Steps,
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/clients",
+				Query:   map[string]string{"clientId": "master-realm"},
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"admin_client_uuid": "0/id"},
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/roles/admin",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"realm_role_admin_id": "id"},
+		},
+	)
+	for i, role := range roles {
+		v := "caller_role_" + strconv.Itoa(i)
+		f.Steps = append(f.Steps,
+			Step{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients/{{admin_client_uuid}}/roles/" + role,
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{v: "id"},
+			},
+			assignClientRoleStep("{{admin_client_uuid}}", "{{"+v+"}}", role),
+		)
+	}
+	f.Steps = append(f.Steps, callerTokenStep(username))
+	return f
+}
+
+// callerTokenStep password-grants the fixture's own user on admin-cli and
+// captures its access token. Separate from callerFixture because a fixture that
+// goes on assigning roles has to mint again afterwards to read as though the
+// token carried them.
+func callerTokenStep(username string) Step {
+	return Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type": "password",
+				"client_id":  "admin-cli",
+				"username":   username,
+				"password":   "s3cret",
+			},
+		},
+		Capture: map[string]string{"caller_token": "access_token"},
+	}
+}
+
+// impostorCallerFixture is F32's caller: one holding a perfectly ordinary
+// client role that happens to be **named** manage-realm, and no admin role that
+// opens the realm-role routes.
+//
+// manage-clients and manage-users are what it takes to mint such a role and
+// hand it to somebody, which is why the caller holds them - it is a narrow
+// admin widening itself, not an anonymous path. Neither of the two opens
+// POST /roles, which is what makes the case that uses this a test of the name
+// and not of the caller being weak.
+//
+// The impostor is minted by the administrator rather than by the caller. Who
+// mints it is not what the case is about, and doing it here keeps the fixture
+// to the steps whose failure would matter.
+func impostorCallerFixture() Fixture {
+	f := callerFixture("gloak-probe-caller-impostor", "manage-clients", "manage-users")
+	f.Steps = append(f.Steps, clientWithRoleSteps("gloak-probe-impostor-client",
+		"impostor_client_uuid", `{"name":"manage-realm"}`, "manage-realm", "impostor_role_id")...)
+	f.Steps = append(f.Steps,
+		assignClientRoleStep("{{impostor_client_uuid}}", "{{impostor_role_id}}", "manage-realm"),
+		callerTokenStep("gloak-probe-caller-impostor"))
+	return f
 }
 
 // mappingSubjectFixture builds the subject the mapping reads are taken on: one

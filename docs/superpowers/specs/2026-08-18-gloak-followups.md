@@ -384,8 +384,16 @@ first is a blocker; the second is two steps of fixture work:
    Gloak's own notions; the sweep that says what Keycloak puts in those lists
    has not been run. This entry should not be closed by wiring up a predicate
    nobody measured.
-2. **No fixture yet captures a narrow-role caller's access token.** This is a
-   smaller gap than it first looks. `loggedOutUserFixture`
+2. ~~**No fixture yet captures a narrow-role caller's access token.**~~ Done
+   2026-08-28: `callerFixture` in `internal/conformance/fixture.go`, registered
+   as `narrow-caller-manage-users`, `narrow-caller-view-users` and
+   `narrow-caller-impostor`. It creates the user, sets a password, assigns the
+   named roles **from `master-realm` by container**, and password-grants it,
+   capturing `caller_token`. F37 has the detail. Blocker 1 below is untouched
+   and is why `admin/users/list-without-view-users` is still `Pending`. The
+   original wording follows, because it is the reasoning that got here.
+
+   This is a smaller gap than it first looks. `loggedOutUserFixture`
    (`internal/conformance/fixture.go`, registered as `logged-out-user`) already
    creates `gloak-probe-logged-out` through the API, sets a password on it and
    password-grants **that user** on `admin-cli` - so minting a token for
@@ -1746,7 +1754,55 @@ question - whether the subject is resolved before the caller is judged, which is
 about the **404-before-403 ordering** rather than about which roles open the
 route. **Do both in the same pass**: same fixtures, same tokens, two columns.
 
-## F37: the harness has no non-admin caller, so no guard refusal can be recorded
+## F37: the harness has no non-admin caller, so no guard refusal can be recorded (closed)
+
+Closed 2026-08-28 on `feat/non-admin-caller-fixture`, the same day it was filed.
+
+`callerFixture(username, roles...)` in `internal/conformance/fixture.go` creates
+the user, sets a password through `PUT .../reset-password`, assigns the named
+roles **from `master-realm` by container**, and password-grants it on
+`admin-cli`, capturing `caller_token`. A case picks the caller it means by which
+of the two tokens it sends. Three registrations use it:
+`narrow-caller-manage-users`, `narrow-caller-view-users`, and
+`narrow-caller-impostor`, which additionally holds an ordinary client role named
+`manage-realm`.
+
+Three contracts that were prose are now goldens recorded from the reference
+container:
+
+- `admin/role-mapper/assign-refused-to-a-manage-users-caller` - 403. F28's
+  caller-relative rule, which had no case at all.
+- `admin/role-mapper/available-to-a-view-users-caller` - `[]`. The `available`
+  filtering, which until now was scored on the administrator's answer, and an
+  implementation ignoring the caller entirely passed every other case on the
+  route.
+- `admin/roles/create-refused-to-an-impostor-role` - 403. F32's container rule,
+  the fix from the day before, which shipped without one.
+
+Each was mutation-tested against the branch its own claim lives in, and the
+third round mattered: dropping `mayGrantRole` killed two of the three and left
+the `available` case passing, because `grantable` returns early on the write
+guard before any role is judged. That case is pinned by removing **that** early
+return instead. A case that cannot fail is a case that is not evidence, and one
+mutation per file would have missed it.
+
+**Parity did not move**, and the roles come from the container test rather than
+by name, which is the distinction F32 turned out to be about: a fixture minting
+a role of its own named `manage-users` would have been building the impostor.
+
+What this does **not** unblock: `admin/users/list-without-view-users` stays
+`Pending`. Its other blocker is F17's first - the listing is not filtered by
+caller visibility and that filtering is unmeasured - and no fixture fixes that.
+F17's blocker 2 is struck through; blocker 1 is untouched.
+
+Still unrecordable for want of the measurement rather than the fixture: F36's
+sweep over which roles open the user and credential routes, and F30's
+404-before-403 ordering. Both now need only a live pass, and the fixture is
+there when they have one.
+
+The original entry follows.
+
+## F37 (original): the harness has no non-admin caller, so no guard refusal can be recorded
 
 Filed 2026-08-28 by `fix/guard-the-caller-by-container`, which wanted a
 conformance case and could not have one.

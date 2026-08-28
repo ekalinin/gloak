@@ -1289,18 +1289,18 @@ var adminCases = []Case{
 			Retrieved: "2026-08-22",
 		},
 		Status: Pending,
-		// Role assignment landed with P2's second cut, so the step this
-		// fixture was waiting for exists now. Minting a token for somebody
-		// other than the bootstrap administrator is established too -
-		// loggedOutUserFixture password-grants gloak-probe-logged-out on
-		// admin-cli. What is missing is narrower: that fixture captures the
-		// refresh token, not the access token, and no fixture assigns the
-		// user a role before minting. Those two steps would also give F28's
-		// caller-relative predicate its first conformance case.
+		// **The fixture blocker is gone and this is still Pending**, which is
+		// worth stating because the two used to be named together. callerFixture
+		// builds a narrow-role caller end to end, and three cases now use it -
+		// see narrow-caller-manage-users and its siblings in fixture.go, which
+		// also gave F28's caller-relative predicate its first conformance cases.
 		//
-		// The blocker that stands on its own is the other one: the listing
-		// is not filtered by the caller's visibility, and what a partly
-		// sighted caller sees has never been measured. See F17.
+		// What stands on its own is the other blocker: the listing is not
+		// filtered by the caller's visibility, and what a partly sighted caller
+		// sees has never been measured. A `query-users` caller gets 200 and an
+		// empty array from Keycloak and every user from Gloak, and the sweep
+		// that says what a `view-users` caller sees has not been run. See F17,
+		// whose blocker 1 this is.
 		Reason:  "the listing is not filtered by caller visibility, and that filtering is unmeasured - F17",
 		Fixture: "",
 		Request: Request{
@@ -1664,6 +1664,36 @@ var adminCases = []Case{
 				"Content-Type":  "application/json",
 			},
 			Body: []byte(`{"description":"no name"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// F32's rule: the guard reads the role's **container**, so a caller
+		// holding a perfectly ordinary client role that happens to be named
+		// manage-realm is refused this route.
+		//
+		// The caller does hold manage-clients and manage-users, which is what
+		// it takes to mint such a role and hand it out - a narrow admin
+		// widening itself. Neither of those opens this route, and that is what
+		// makes the case a test of the name rather than of a weak caller:
+		// admin/roles/create next door is the same request as the
+		// administrator, answering 201.
+		ID: "admin/roles/create-refused-to-an-impostor-role",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: create a new role, a caller holding an ordinary role named manage-realm",
+			Retrieved: "2026-08-28",
+		},
+		Status:  Implemented,
+		Fixture: "narrow-caller-impostor",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/roles",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{caller_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-minted-by-an-impostor"}`),
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},
@@ -2500,6 +2530,58 @@ var adminCases = []Case{
 				"Content-Type":  "application/json",
 			},
 			Body: []byte(`[{"id":"{{realm_role_id}}","name":"offline_access"}]`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// F28's caller-relative rule, recorded rather than argued for the first
+		// time. The caller holds manage-users, which opens this route - the
+		// available read below is the control that says so - and is refused the
+		// realm role admin, which it may not hand out.
+		//
+		// The subject is the caller itself. Nothing in the predicate looks at
+		// the subject, measured on the sweep this came from, so a second user
+		// would be a step whose failure could not change the answer.
+		ID: "admin/role-mapper/assign-refused-to-a-manage-users-caller",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: add realm-level role mappings, a role the caller may not grant",
+			Retrieved: "2026-08-28",
+		},
+		Status:  Implemented,
+		Fixture: "narrow-caller-manage-users",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users/{{user_id}}/role-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{caller_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{realm_role_admin_id}}","name":"admin"}]`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The other half of the same rule: `available` is filtered by what the
+		// caller may grant, not merely by what the subject lacks. A view-users
+		// caller may read this list and assign none of it, so the body is `[]`
+		// although the subject holds almost no realm role.
+		//
+		// This is the case that stops the read being scored on the
+		// administrator's answer alone. An implementation that ignored the
+		// caller entirely would pass every other case on this route.
+		ID: "admin/role-mapper/available-to-a-view-users-caller",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: get available realm-level role mappings, a caller that may grant none of them",
+			Retrieved: "2026-08-28",
+		},
+		Status:  Implemented,
+		Fixture: "narrow-caller-view-users",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/realm/available",
+			Headers: map[string]string{"Authorization": "Bearer {{caller_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},
