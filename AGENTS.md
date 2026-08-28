@@ -395,8 +395,14 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
   git worktree add /tmp/base "$(git merge-base main HEAD)"
   ( cd /tmp/base && GLOAK_PARITY_REPORT=/tmp/base.tsv \
       CGO_ENABLED=0 go test ./internal/conformance/ -run '^TestCoverage$' -count=1 )
-  go run ./cmd/parity /tmp/base.tsv /tmp/head.tsv
+  git worktree remove /tmp/base
+  go build -o /tmp/parity ./cmd/parity && /tmp/parity /tmp/base.tsv /tmp/head.tsv
   ```
+
+  Built rather than `go run`: `go run` collapses any exit code above 1 down to
+  1, which would make a real parity decrease (exit 1) indistinguishable from
+  the report `cmd/parity` could not read (exit 2) - the exact failure the
+  previous paragraph describes.
 
   `-run` takes an unanchored regex, so the anchors are not decoration: a bare
   `TestCoverage` also selects `TestCoverageWritesAReportWhenAsked`, which
