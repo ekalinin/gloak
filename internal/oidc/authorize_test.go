@@ -583,6 +583,45 @@ func TestAuthorizeResponseModeSet(t *testing.T) {
 	}
 }
 
+// TestAuthorizeUnservableResponseModesAnswerThePageFamily. Five of the seven
+// accepted modes carry a rejection Gloak cannot write - form_post and
+// form_post.jwt answer 200 with an HTML form, and the three other jwt spellings
+// answer with a signed JARM assertion in a `response` parameter. Every one of
+// those was measured on a request with **no response_type**, so this is the
+// error path.
+//
+// Gloak answers the page family rather than emitting the plain parameters,
+// which would hand a JARM client an unsigned error where it asked for a signed
+// one. The test's job is to catch that fabrication reappearing.
+func TestAuthorizeUnservableResponseModesAnswerThePageFamily(t *testing.T) {
+	h := authServer(t)
+	for _, mode := range []string{"form_post", "form_post.jwt", "jwt", "query.jwt", "fragment.jwt"} {
+		t.Run(mode, func(t *testing.T) {
+			w := authorize(t, h, baseQuery(map[string]string{
+				"response_mode": mode, "response_type": absent,
+			}))
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want the page family's 400", w.Code)
+			}
+			if got := w.Header().Get("Location"); got != "" {
+				t.Fatalf("Location = %q, want none - the parameters must not be fabricated", got)
+			}
+		})
+	}
+	// The two Gloak can transport still redirect, so the gate above is not a
+	// blanket refusal of every named mode.
+	for _, mode := range []string{"query", "fragment"} {
+		t.Run(mode+" still redirects", func(t *testing.T) {
+			w := authorize(t, h, baseQuery(map[string]string{
+				"response_mode": mode, "response_type": absent,
+			}))
+			if w.Code != http.StatusFound {
+				t.Fatalf("status = %d, want 302", w.Code)
+			}
+		})
+	}
+}
+
 // TestAuthorizeDuplicateAppliesToEveryParameter, including ones the endpoint
 // never reads.
 func TestAuthorizeDuplicateAppliesToEveryParameter(t *testing.T) {

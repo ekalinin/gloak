@@ -84,6 +84,30 @@ var responseModes = map[string]bool{
 	"form_post.jwt": true,
 }
 
+// servableResponseModes is the subset whose transport Gloak can produce today,
+// and the gap between it and responseModes is measured rather than assumed.
+//
+// The other five carry a **rejection** Gloak cannot write:
+//
+//	form_post, form_post.jwt   200, Content-Type text/html with no charset,
+//	                           an auto-submitting HTML form
+//	jwt, query.jwt             302 whose query is response=<a signed JWT>
+//	fragment.jwt               the same in the fragment
+//
+// All five measured 2026-08-29 on a request with no response_type, so this is
+// the error path and not an extrapolation from the success one. The jwt
+// spellings are real JARM: the parameters are gone and a signed assertion is in
+// their place.
+//
+// A request naming one of them answers the page family, which is what every
+// branch Gloak cannot serve answers. Emitting the plain parameters instead
+// would hand a JARM client an unsigned error where it asked for a signed one,
+// which is worse than answering nothing.
+var servableResponseModes = map[string]bool{
+	"query":    true,
+	"fragment": true,
+}
+
 // authorize serves GET and POST /realms/{realm}/protocol/openid-connect/auth.
 //
 // **It serves the rejections and not yet the login.** A request that survives
@@ -123,6 +147,18 @@ func (h *handler) authorize(w http.ResponseWriter, r *http.Request) {
 	// Step 3. From here on the client can be told what went wrong.
 	redirectURI := params.Get("redirect_uri")
 	if !matchRedirectURI(client.RedirectURIs, redirectURI) {
+		h.writeErrorPage(w, http.StatusBadRequest)
+		return
+	}
+
+	// A response mode Gloak cannot transport stops here, before any rejection
+	// is written. It has to be before rather than beside the checks below,
+	// because the mode governs **every** rejection from here on: measured,
+	// response_mode=form_post with no response_type answers 200 with a form
+	// rather than the 302 the same request gets under query. See
+	// servableResponseModes.
+	if raw, present := params["response_mode"]; present &&
+		responseModes[raw[0]] && !servableResponseModes[raw[0]] {
 		h.writeErrorPage(w, http.StatusBadRequest)
 		return
 	}
