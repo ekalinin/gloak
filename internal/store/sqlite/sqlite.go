@@ -138,10 +138,13 @@ func applyMigration(ctx context.Context, db *sql.DB, name, sqlText string) error
 func (s *Store) Close() error              { return s.db.Close() }
 func (s *Store) Realms() store.RealmRepo   { return &realmRepo{s.db} }
 func (s *Store) Clients() store.ClientRepo { return &clientRepo{s.db} }
-func (s *Store) Users() store.UserRepo     { return &userRepo{s.db} }
-func (s *Store) Roles() store.RoleRepo     { return &roleRepo{s.db} }
-func (s *Store) Groups() store.GroupRepo   { return &groupRepo{s.db} }
-func (s *Store) Keys() store.KeyRepo       { return &keyRepo{s.db} }
+
+func (s *Store) ClientScopes() store.ClientScopeRepo { return &clientScopeRepo{s.db} }
+
+func (s *Store) Users() store.UserRepo   { return &userRepo{s.db} }
+func (s *Store) Roles() store.RoleRepo   { return &roleRepo{s.db} }
+func (s *Store) Groups() store.GroupRepo { return &groupRepo{s.db} }
+func (s *Store) Keys() store.KeyRepo     { return &keyRepo{s.db} }
 
 func (s *Store) Sessions() store.SessionRepo { return &sessionRepo{s.db} }
 
@@ -177,6 +180,16 @@ func nonNilStrings(s []string) []string {
 		return []string{}
 	}
 	return s
+}
+
+// boolToInt writes a flag as an integer in both drivers rather than as each
+// dialect's own boolean. The two membership tables carry one, and storing it
+// the same way in both is what keeps the migration files identical.
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // scanner is satisfied by both *sql.Row and *sql.Rows, so single-row getters
@@ -267,16 +280,48 @@ func (r *clientRepo) Create(ctx context.Context, m *model.Client) error {
 		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
 		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
 		 full_scope_allowed, not_before, node_re_registration_timeout,
-		 redirect_uris, web_origins, default_client_scopes, optional_client_scopes, attributes)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 redirect_uris, web_origins, attributes)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.RealmID, m.ClientID, m.Name, m.Description, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
 		m.Protocol, m.ClientAuthenticatorType, m.SurrogateAuthRequired, m.AlwaysDisplayInConsole,
 		m.BearerOnly, m.ConsentRequired, m.StandardFlowEnabled, m.ImplicitFlowEnabled,
 		m.DirectAccessGrantsEnabled, m.ServiceAccountsEnabled, m.FrontchannelLogout,
 		m.FullScopeAllowed, m.NotBefore, m.NodeReRegistrationTimeout,
-		encode(m.RedirectURIs), encode(m.WebOrigins), encode(m.DefaultClientScopes),
-		encode(m.OptionalClientScopes), encode(m.Attributes))
-	return classify(err)
+		encode(m.RedirectURIs), encode(m.WebOrigins), encode(m.Attributes))
+	if err != nil {
+		return classify(err)
+	}
+	return r.attachClientScopes(ctx, m)
+}
+
+// attachClientScopes turns the two name lists a caller set on the model into
+// rows in client_client_scope, which is where a client's scopes actually live.
+//
+// It runs on Create and **not** on Update, measured: PUT /clients/{uuid} with
+// `defaultClientScopes:["email"]` answered 204 and changed nothing, and so did
+// the same PUT with `[]`. The two lists are write-once at create; afterwards
+// only the four dedicated routes move them.
+//
+// A name the realm does not have is skipped rather than reported, measured: a
+// client created naming "nosuchscope" answered 201 and read back with an empty
+// list.
+func (r *clientRepo) attachClientScopes(ctx context.Context, m *model.Client) error {
+	add := func(names []string, defaultScope bool) error {
+		for _, name := range names {
+			if _, err := r.db.ExecContext(ctx,
+				`INSERT INTO client_client_scope (client_id, client_scope_id, default_scope)
+				 SELECT ?, id, ? FROM client_scope WHERE realm_id = ? AND name = ?
+				 ON CONFLICT DO NOTHING`,
+				m.ID, boolToInt(defaultScope), m.RealmID, name); err != nil {
+				return classify(err)
+			}
+		}
+		return nil
+	}
+	if err := add(m.DefaultClientScopes, true); err != nil {
+		return err
+	}
+	return add(m.OptionalClientScopes, false)
 }
 
 func (r *clientRepo) ByClientID(ctx context.Context, realmID, clientID string) (*model.Client, error) {
@@ -286,9 +331,9 @@ func (r *clientRepo) ByClientID(ctx context.Context, realmID, clientID string) (
 		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
 		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
 		 full_scope_allowed, not_before, node_re_registration_timeout,
-		 redirect_uris, web_origins, default_client_scopes, optional_client_scopes, attributes
+		 redirect_uris, web_origins, attributes
 		 FROM client WHERE realm_id = ? AND client_id = ?`, realmID, clientID)
-	return scanClient(row)
+	return r.scanWithScopes(ctx, row)
 }
 
 func (r *clientRepo) ByID(ctx context.Context, realmID, id string) (*model.Client, error) {
@@ -298,9 +343,9 @@ func (r *clientRepo) ByID(ctx context.Context, realmID, id string) (*model.Clien
 		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
 		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
 		 full_scope_allowed, not_before, node_re_registration_timeout,
-		 redirect_uris, web_origins, default_client_scopes, optional_client_scopes, attributes
+		 redirect_uris, web_origins, attributes
 		 FROM client WHERE realm_id = ? AND id = ?`, realmID, id)
-	return scanClient(row)
+	return r.scanWithScopes(ctx, row)
 }
 
 func (r *clientRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.Client, error) {
@@ -310,7 +355,7 @@ func (r *clientRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.
 		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
 		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
 		 full_scope_allowed, not_before, node_re_registration_timeout,
-		 redirect_uris, web_origins, default_client_scopes, optional_client_scopes, attributes
+		 redirect_uris, web_origins, attributes
 		 FROM client WHERE realm_id = ? ORDER BY client_id`, realmID)
 	if err != nil {
 		return nil, classify(err)
@@ -325,7 +370,15 @@ func (r *clientRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.
 		}
 		out = append(out, m)
 	}
-	return out, classify(rows.Err())
+	if err := rows.Err(); err != nil {
+		return nil, classify(err)
+	}
+	for _, m := range out {
+		if err := r.loadClientScopeNames(ctx, m); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // Update replaces every mutable column. The admin API's PUT carries a whole
@@ -339,8 +392,7 @@ func (r *clientRepo) Update(ctx context.Context, m *model.Client) error {
 			 standard_flow_enabled = ?, implicit_flow_enabled = ?, direct_access_grants_enabled = ?,
 			 service_accounts_enabled = ?, frontchannel_logout = ?, full_scope_allowed = ?,
 			 not_before = ?, node_re_registration_timeout = ?,
-			 redirect_uris = ?, web_origins = ?, default_client_scopes = ?,
-			 optional_client_scopes = ?, attributes = ?
+			 redirect_uris = ?, web_origins = ?, attributes = ?
 			 WHERE realm_id = ? AND id = ?`,
 		m.ClientID, m.Name, m.Description, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
 		m.Protocol, m.ClientAuthenticatorType, m.SurrogateAuthRequired,
@@ -348,8 +400,7 @@ func (r *clientRepo) Update(ctx context.Context, m *model.Client) error {
 		m.StandardFlowEnabled, m.ImplicitFlowEnabled, m.DirectAccessGrantsEnabled,
 		m.ServiceAccountsEnabled, m.FrontchannelLogout, m.FullScopeAllowed,
 		m.NotBefore, m.NodeReRegistrationTimeout,
-		encode(m.RedirectURIs), encode(m.WebOrigins), encode(m.DefaultClientScopes),
-		encode(m.OptionalClientScopes), encode(m.Attributes),
+		encode(m.RedirectURIs), encode(m.WebOrigins), encode(m.Attributes),
 		m.RealmID, m.ID)
 	if err != nil {
 		return classify(err)
@@ -366,16 +417,63 @@ func (r *clientRepo) Delete(ctx context.Context, realmID, id string) error {
 	return affectedOne(res)
 }
 
+// scanWithScopes reads one client and fills its two client-scope name lists.
+//
+// The names are **derived**, not stored. The client row carried them as two
+// JSON columns until 0014, and a client's attachment has to survive a client
+// scope being renamed - measured: renaming a scope changed the name in every
+// client's list and kept the attachment - which a name cannot do. So
+// client_client_scope holds ids and is the only truth, and model.Client keeps
+// carrying names because that is what the representation serialises and what
+// internal/oidc validates a requested scope against.
+func (r *clientRepo) scanWithScopes(ctx context.Context, row scanner) (*model.Client, error) {
+	m, err := scanClient(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadClientScopeNames(ctx, m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (r *clientRepo) loadClientScopeNames(ctx context.Context, m *model.Client) error {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT s.name, c.default_scope FROM client_scope s
+		 JOIN client_client_scope c ON c.client_scope_id = s.id
+		 WHERE c.client_id = ? ORDER BY s.name`, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	defer rows.Close()
+
+	m.DefaultClientScopes = []string{}
+	m.OptionalClientScopes = []string{}
+	for rows.Next() {
+		var name string
+		var defaultScope int
+		if err := rows.Scan(&name, &defaultScope); err != nil {
+			return classify(err)
+		}
+		if defaultScope == 1 {
+			m.DefaultClientScopes = append(m.DefaultClientScopes, name)
+		} else {
+			m.OptionalClientScopes = append(m.OptionalClientScopes, name)
+		}
+	}
+	return classify(rows.Err())
+}
+
 func scanClient(row scanner) (*model.Client, error) {
 	m := &model.Client{}
-	var redirectURIs, webOrigins, defaultScopes, optionalScopes, attributes string
+	var redirectURIs, webOrigins, attributes string
 	err := row.Scan(&m.ID, &m.RealmID, &m.ClientID, &m.Name, &m.Description, &m.RootURL, &m.BaseURL,
 		&m.Enabled, &m.PublicClient, &m.Secret,
 		&m.Protocol, &m.ClientAuthenticatorType, &m.SurrogateAuthRequired, &m.AlwaysDisplayInConsole,
 		&m.BearerOnly, &m.ConsentRequired, &m.StandardFlowEnabled, &m.ImplicitFlowEnabled,
 		&m.DirectAccessGrantsEnabled, &m.ServiceAccountsEnabled, &m.FrontchannelLogout,
 		&m.FullScopeAllowed, &m.NotBefore, &m.NodeReRegistrationTimeout,
-		&redirectURIs, &webOrigins, &defaultScopes, &optionalScopes, &attributes)
+		&redirectURIs, &webOrigins, &attributes)
 	if err != nil {
 		return nil, classify(err)
 	}
@@ -386,8 +484,6 @@ func scanClient(row scanner) (*model.Client, error) {
 	}{
 		{redirectURIs, &m.RedirectURIs, "redirect_uris"},
 		{webOrigins, &m.WebOrigins, "web_origins"},
-		{defaultScopes, &m.DefaultClientScopes, "default_client_scopes"},
-		{optionalScopes, &m.OptionalClientScopes, "optional_client_scopes"},
 		{attributes, &m.Attributes, "attributes"},
 	} {
 		if err := decode(f.raw, f.into); err != nil {
@@ -1384,4 +1480,145 @@ func (r *roleRepo) ListGroupRoles(ctx context.Context, groupID string) ([]*model
 		return nil, err
 	}
 	return out, nil
+}
+
+// clientScopeColumns is spelled once so the statements below cannot drift apart
+// on the order scanClientScope depends on. prefixedClientScopeColumns is the
+// same list qualified for the two joins.
+const (
+	clientScopeColumns         = `id, realm_id, name, description, protocol, attributes, protocol_mappers`
+	prefixedClientScopeColumns = `s.id, s.realm_id, s.name, s.description, s.protocol, s.attributes, s.protocol_mappers`
+)
+
+type clientScopeRepo struct{ db *sql.DB }
+
+func (r *clientScopeRepo) Create(ctx context.Context, m *model.ClientScope) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO client_scope (`+clientScopeColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.RealmID, m.Name, m.Description, m.Protocol,
+		encode(m.Attributes), encode(m.ProtocolMappers))
+	return classify(err)
+}
+
+func (r *clientScopeRepo) ByID(ctx context.Context, realmID, id string) (*model.ClientScope, error) {
+	return scanClientScope(r.db.QueryRowContext(ctx,
+		`SELECT `+clientScopeColumns+` FROM client_scope WHERE realm_id = ? AND id = ?`,
+		realmID, id))
+}
+
+func (r *clientScopeRepo) ByName(ctx context.Context, realmID, name string) (*model.ClientScope, error) {
+	return scanClientScope(r.db.QueryRowContext(ctx,
+		`SELECT `+clientScopeColumns+` FROM client_scope WHERE realm_id = ? AND name = ?`,
+		realmID, name))
+}
+
+func (r *clientScopeRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.ClientScope, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+clientScopeColumns+` FROM client_scope WHERE realm_id = ? ORDER BY name`, realmID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return collectClientScopes(rows)
+}
+
+func (r *clientScopeRepo) Update(ctx context.Context, m *model.ClientScope) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE client_scope SET name = ?, description = ?, protocol = ?, attributes = ?,
+		 protocol_mappers = ? WHERE realm_id = ? AND id = ?`,
+		m.Name, m.Description, m.Protocol, encode(m.Attributes), encode(m.ProtocolMappers), m.RealmID, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
+}
+
+func (r *clientScopeRepo) Delete(ctx context.Context, realmID, id string) error {
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM client_scope WHERE realm_id = ? AND id = ?`, realmID, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
+}
+
+func (r *clientScopeRepo) ListRealmDefaults(ctx context.Context, realmID string, defaultScope bool) ([]*model.ClientScope, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+prefixedClientScopeColumns+` FROM client_scope s
+		 JOIN realm_default_client_scope d ON d.client_scope_id = s.id
+		 WHERE d.realm_id = ? AND d.default_scope = ? ORDER BY s.name`,
+		realmID, boolToInt(defaultScope))
+	if err != nil {
+		return nil, classify(err)
+	}
+	return collectClientScopes(rows)
+}
+
+func (r *clientScopeRepo) AddRealmDefault(ctx context.Context, realmID, scopeID string, defaultScope bool) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO realm_default_client_scope (realm_id, client_scope_id, default_scope)
+		 VALUES (?, ?, ?)`, realmID, scopeID, boolToInt(defaultScope))
+	return classify(err)
+}
+
+func (r *clientScopeRepo) RemoveRealmDefault(ctx context.Context, realmID, scopeID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM realm_default_client_scope WHERE realm_id = ? AND client_scope_id = ?`,
+		realmID, scopeID)
+	return classify(err)
+}
+
+func (r *clientScopeRepo) ListClientScopes(ctx context.Context, clientID string, defaultScope bool) ([]*model.ClientScope, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+prefixedClientScopeColumns+` FROM client_scope s
+		 JOIN client_client_scope c ON c.client_scope_id = s.id
+		 WHERE c.client_id = ? AND c.default_scope = ? ORDER BY s.name`,
+		clientID, boolToInt(defaultScope))
+	if err != nil {
+		return nil, classify(err)
+	}
+	return collectClientScopes(rows)
+}
+
+func (r *clientScopeRepo) AddClientScope(ctx context.Context, clientID, scopeID string, defaultScope bool) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO client_client_scope (client_id, client_scope_id, default_scope)
+		 VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
+		clientID, scopeID, boolToInt(defaultScope))
+	return classify(err)
+}
+
+func (r *clientScopeRepo) RemoveClientScope(ctx context.Context, clientID, scopeID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM client_client_scope WHERE client_id = ? AND client_scope_id = ?`,
+		clientID, scopeID)
+	return classify(err)
+}
+
+func scanClientScope(row scanner) (*model.ClientScope, error) {
+	m := &model.ClientScope{}
+	var attributes, mappers string
+	if err := row.Scan(&m.ID, &m.RealmID, &m.Name, &m.Description, &m.Protocol,
+		&attributes, &mappers); err != nil {
+		return nil, classify(err)
+	}
+	if err := decode(attributes, &m.Attributes); err != nil {
+		return nil, err
+	}
+	if err := decode(mappers, &m.ProtocolMappers); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func collectClientScopes(rows *sql.Rows) ([]*model.ClientScope, error) {
+	defer rows.Close()
+	out := []*model.ClientScope{}
+	for rows.Next() {
+		m, err := scanClientScope(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }

@@ -40,14 +40,13 @@ const (
 	refreshTokenLifespan = 1800 * time.Second
 )
 
-// Client scope names every bootstrapped client carries, measured identically
-// on all six. They are names only: the client-scope objects behind them are
-// P5. See section 1.1 of
-// docs/superpowers/specs/2026-08-22-p2-admin-api-core-design.md.
-var (
-	defaultScopeNames  = []string{"web-origins", "acr", "profile", "roles", "basic", "email"}
-	optionalScopeNames = []string{"address", "phone", "organization", "offline_access", "microprofile-jwt"}
-)
+// The two client-scope name lists that used to live here are gone. They were
+// the six and the five every bootstrapped client carries, written as constants
+// because the client-scope objects behind them did not exist. They do now:
+// clientscopes.go creates the realm's fifteen and its own two default sets, and
+// a client's six and five fall out of inheriting from those filtered by its
+// protocol. Keeping the constants beside the sets they are derived from would
+// be two truths, and the derivation is what closes follow-up F49.
 
 // realmClients is the measured configuration of the six clients Keycloak
 // creates in a realm, transcribed from recordings of
@@ -418,6 +417,13 @@ func CreateRealm(ctx context.Context, s store.Store, name string, want *model.Re
 		return nil, err
 	}
 
+	// The scopes come before the clients: every client attaches to them, and
+	// what a client with no lists of its own inherits is read out of the
+	// realm's two default sets rather than written from a constant.
+	if err := ensureClientScopes(ctx, s, realm.ID); err != nil {
+		return nil, err
+	}
+
 	for _, c := range realmClients(name) {
 		if err := createClient(ctx, s, realm.ID, c); err != nil {
 			return nil, err
@@ -446,29 +452,27 @@ func CreateRealm(ctx context.Context, s store.Store, name string, want *model.Re
 	return realm, nil
 }
 
-// createClient fills in the seven fields measured identical on every
-// bootstrapped client and stores it, ignoring one that is already there.
+// createClient fills in the fields measured identical on every bootstrapped
+// client, stores it, and attaches its client scopes.
 //
 // The two scope lists are **not** forced: masterContainerClient carries them
-// empty, measured, where the other six carry six and five. Overwriting them
-// here unconditionally is what the earlier single-realm version did, and it
-// would be wrong on the one client this cut adds.
+// empty, measured, where the other six inherit the realm's. AttachClientScopes
+// draws exactly that distinction - nil inherits and an empty slice attaches
+// nothing - so the shape this comment used to defend is now the shape a client
+// created through the Admin API gets too, and it is written down once.
 func createClient(ctx context.Context, s store.Store, realmID string, c model.Client) error {
 	c.ID = model.NewID()
 	c.RealmID = realmID
 	c.Enabled = true
 	c.ClientAuthenticatorType = "client-secret"
-	if c.DefaultClientScopes == nil {
-		c.DefaultClientScopes = defaultScopeNames
-	}
-	if c.OptionalClientScopes == nil {
-		c.OptionalClientScopes = optionalScopeNames
-	}
 	if c.RedirectURIs == nil {
 		c.RedirectURIs = []string{}
 	}
 	if c.WebOrigins == nil {
 		c.WebOrigins = []string{}
+	}
+	if err := InheritClientScopes(ctx, s, realmID, &c); err != nil {
+		return err
 	}
 	if err := s.Clients().Create(ctx, &c); err != nil && !errors.Is(err, store.ErrConflict) {
 		return fmt.Errorf("bootstrap: create client %q: %w", c.ClientID, err)

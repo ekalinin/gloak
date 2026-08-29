@@ -22,6 +22,7 @@ var (
 type Store interface {
 	Realms() RealmRepo
 	Clients() ClientRepo
+	ClientScopes() ClientScopeRepo
 	Users() UserRepo
 	Roles() RoleRepo
 	Groups() GroupRepo
@@ -60,6 +61,61 @@ type ClientRepo interface {
 	ListByRealm(ctx context.Context, realmID string) ([]*model.Client, error)
 	Update(ctx context.Context, c *model.Client) error
 	Delete(ctx context.Context, realmID, id string) error
+}
+
+// ClientScopeRepo stores a realm's client scopes and the two membership sets
+// that hang off them: the realm's own defaults, and each client's.
+//
+// Both memberships are one table with a boolean, not two tables, because
+// Keycloak stores them that way and it shows: `PUT
+// .../default-client-scopes/{id}` naming a scope the client already holds as an
+// **optional** scope answers 204 and moves nothing. Two tables would let a
+// scope be in both at once, which no measurement can produce.
+type ClientScopeRepo interface {
+	Create(ctx context.Context, s *model.ClientScope) error
+	ByID(ctx context.Context, realmID, id string) (*model.ClientScope, error)
+	ByName(ctx context.Context, realmID, name string) (*model.ClientScope, error)
+	// ListByRealm returns every client scope in the realm. Keycloak's own
+	// listing order is a Java set's and is not reproducible, so the ORDER BY
+	// exists only to make the two drivers agree with each other; the
+	// conformance cases compare it unordered.
+	ListByRealm(ctx context.Context, realmID string) ([]*model.ClientScope, error)
+	// Update writes name, description, protocol, attributes and mappers back.
+	// A rename onto a taken name reports ErrConflict, which is the measured
+	// 409 `Client Scope <name> already exists`.
+	Update(ctx context.Context, s *model.ClientScope) error
+	// Delete removes the scope and, through the schema's cascades, its
+	// membership of the realm's default sets and of every client's. Measured:
+	// deleting a scope that was a realm default and attached to a client left
+	// both listings without it.
+	Delete(ctx context.Context, realmID, id string) error
+
+	// ListRealmDefaults returns the realm's own default (defaultScope true) or
+	// optional (false) client scopes - what a client with no lists of its own
+	// inherits, before the protocol filter.
+	ListRealmDefaults(ctx context.Context, realmID string, defaultScope bool) ([]*model.ClientScope, error)
+	// AddRealmDefault puts a scope into one of the realm's two sets. It reports
+	// ErrConflict when the scope is already in **either** of them: the measured
+	// 409 fires for a repeat and for a scope moving from one list to the other
+	// alike, which is what says the two sets are one row with a flag.
+	AddRealmDefault(ctx context.Context, realmID, scopeID string, defaultScope bool) error
+	// RemoveRealmDefault takes a scope out of the realm's sets. It does not
+	// take the set as an argument on purpose: `DELETE
+	// .../default-default-client-scopes/{id}` was measured removing a scope
+	// that was in the **optional** list. The path names a list and the delete
+	// ignores it.
+	RemoveRealmDefault(ctx context.Context, realmID, scopeID string) error
+
+	// ListClientScopes returns a client's default or optional client scopes.
+	ListClientScopes(ctx context.Context, clientID string, defaultScope bool) ([]*model.ClientScope, error)
+	// AddClientScope attaches a scope to a client. Unlike the realm's, this one
+	// is idempotent and silent: attaching twice, and attaching a scope already
+	// held in the other list, were both measured answering 204 and changing
+	// nothing.
+	AddClientScope(ctx context.Context, clientID, scopeID string, defaultScope bool) error
+	// RemoveClientScope detaches a scope from a client, ignoring which list the
+	// caller's path named - the same asymmetry RemoveRealmDefault records.
+	RemoveClientScope(ctx context.Context, clientID, scopeID string) error
 }
 
 type UserRepo interface {

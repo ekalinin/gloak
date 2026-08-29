@@ -3,8 +3,11 @@
 package model
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -284,4 +287,152 @@ type Role struct {
 	// rejects unmanaged attributes. Nothing here reads one; Keycloak gives
 	// some of them meaning and that is P5's problem.
 	Attributes map[string][]string
+}
+
+// StringPair is one entry of a Keycloak map, kept beside its neighbours in the
+// order the map was serialised in.
+type StringPair struct {
+	Key   string
+	Value string
+}
+
+// StringMap is a Java map whose serialised key order is part of the contract.
+//
+// A client scope's `attributes` and a protocol mapper's `config` are Java maps
+// emitted in HashMap bucket order. The conformance suite can sort both sides of
+// such an object (Case.UnorderedKeys), but the fifteen client scopes a realm is
+// bootstrapped with are recorded bodies rather than data a client supplied, and
+// for those the order is reproducible: it is whatever the recording says. Going
+// through a Go map would sort it alphabetically and lose that for nothing.
+//
+// This is the same technique internal/admin already uses for the five argon2
+// keys inside a credential's credentialData.
+//
+// UnmarshalJSON preserves the order it is given, so a scope created through the
+// API reads back with its attributes in the order the request wrote them.
+type StringMap []StringPair
+
+// Get returns the value stored under key, and whether it was present.
+func (m StringMap) Get(key string) (string, bool) {
+	for _, p := range m {
+		if p.Key == key {
+			return p.Value, true
+		}
+	}
+	return "", false
+}
+
+// Set replaces the value under key in place, or appends it if it is new.
+// Appending rather than sorting is what keeps a merge's key order stable.
+func (m *StringMap) Set(key, value string) {
+	for i := range *m {
+		if (*m)[i].Key == key {
+			(*m)[i].Value = value
+			return
+		}
+	}
+	*m = append(*m, StringPair{Key: key, Value: value})
+}
+
+// MarshalJSON writes the pairs as a JSON object in the order they are held.
+// A nil StringMap is `{}` rather than `null`: an attribute-less client scope
+// was measured carrying `"attributes":{}`, never omitting the key.
+func (m StringMap) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, p := range m {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		k, err := json.Marshal(p.Key)
+		if err != nil {
+			return nil, err
+		}
+		v, err := json.Marshal(p.Value)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(k)
+		buf.WriteByte(':')
+		buf.Write(v)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
+// UnmarshalJSON reads a JSON object token by token so the pairs keep the order
+// they arrived in. Decoding into a map[string]string and ranging over it would
+// not: Go randomises map iteration and encoding/json sorts on the way out.
+func (m *StringMap) UnmarshalJSON(data []byte) error {
+	if string(bytes.TrimSpace(data)) == "null" {
+		*m = nil
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return fmt.Errorf("model: StringMap: expected an object, got %v", tok)
+	}
+	out := StringMap{}
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := keyTok.(string)
+		if !ok {
+			return fmt.Errorf("model: StringMap: expected a key, got %v", keyTok)
+		}
+		var value string
+		if err := dec.Decode(&value); err != nil {
+			return err
+		}
+		out.Set(key, value)
+	}
+	if _, err := dec.Token(); err != nil {
+		return err
+	}
+	*m = out
+	return nil
+}
+
+// ProtocolMapper is one entry of a client scope's protocolMappers array.
+//
+// Nothing reads a mapper yet: token issuance still reproduces the measured
+// claim set directly, which is the staging the parity roadmap's section 6
+// records. Storing them is what lets a client scope be served from stored state
+// rather than spliced together from a constant at write time, and it is the
+// prerequisite for the engine rather than the engine.
+//
+// Field order is the measured serialisation order.
+type ProtocolMapper struct {
+	ID              string
+	Name            string
+	Protocol        string
+	ProtocolMapper  string
+	ConsentRequired bool
+	Config          StringMap
+}
+
+// ClientScope is a named bundle of protocol mappers and role scope that a
+// client can carry by default or optionally.
+//
+// Field order is the measured serialisation order:
+// `id, name, description, protocol, attributes, protocolMappers`.
+type ClientScope struct {
+	ID          string
+	RealmID     string
+	Name        string
+	Description string
+	Protocol    string
+	// Attributes is always serialised, `{}` when empty.
+	Attributes StringMap
+	// ProtocolMappers is **omitted** from the representation when empty rather
+	// than serialised as `[]`. Measured: `offline_access` is the one
+	// bootstrapped scope with no mappers and its body has five keys where every
+	// other scope's has six.
+	ProtocolMappers []ProtocolMapper
 }
