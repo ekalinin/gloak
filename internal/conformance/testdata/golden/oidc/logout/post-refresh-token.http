@@ -1,0 +1,10 @@
+# POST /realms/master/protocol/openid-connect/logout
+HTTP/1.1 204 No Content
+Cache-Control: no-cache
+Content-Security-Policy: frame-src 'self'; frame-ancestors 'self'; object-src 'none';
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+

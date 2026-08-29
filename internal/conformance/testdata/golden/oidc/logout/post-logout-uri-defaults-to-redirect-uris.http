@@ -2,7 +2,7 @@
 HTTP/1.1 302 Found
 Cache-Control: no-cache
 Content-Length: {{volatile}}
-Location: http://localhost:9999/callback?state=xyz123
+Location: http://localhost:9999/callback
 Referrer-Policy: no-referrer
 Set-Cookie: {{volatile}}
 Strict-Transport-Security: max-age=31536000; includeSubDomains
