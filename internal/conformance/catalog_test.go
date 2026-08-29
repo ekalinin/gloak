@@ -37,6 +37,14 @@ func TestCatalogIsWellFormed(t *testing.T) {
 		if c.Request.Method == "" || c.Request.Path == "" {
 			t.Errorf("%q: Request needs a method and a path", c.ID)
 		}
+		// Expand does not reach RawQuery - it lives in fixture.go and rewrites
+		// Path, Query, Headers, Form and Body. A {{name}} left in here would be
+		// sent to the server with its braces on, and the case would measure a
+		// request nobody meant to make.
+		if strings.Contains(c.Request.RawQuery, "{{") {
+			t.Errorf("%q: RawQuery is not expanded, so it cannot refer to %q",
+				c.ID, c.Request.RawQuery)
+		}
 		switch c.Status {
 		case Pending:
 			if c.Reason == "" {
@@ -59,6 +67,31 @@ func TestCatalogIsWellFormed(t *testing.T) {
 			}
 		default:
 			t.Errorf("%q: unknown status %d", c.ID, c.Status)
+		}
+
+		// A volatile tail is only a mask; diff compares nothing a case does not
+		// assert, so declaring one without asserting the header masks a value
+		// nobody looks at. That is the shape of hole F46 is about, one level up.
+		asserted := map[string]bool{}
+		for _, name := range c.AssertHeaders {
+			asserted[http.CanonicalHeaderKey(name)] = true
+		}
+		blanked := map[string]bool{}
+		for _, name := range c.VolatileHeaders {
+			blanked[http.CanonicalHeaderKey(name)] = true
+		}
+		for _, name := range c.VolatileTailHeaders {
+			canonical := http.CanonicalHeaderKey(name)
+			if !asserted[canonical] {
+				t.Errorf("%q: %s is a volatile tail and is not asserted, so nothing compares it",
+					c.ID, name)
+			}
+			// Both masks on one header would be decided by whichever branch
+			// recordedHeaders and diff happen to test first, in two files.
+			if blanked[canonical] {
+				t.Errorf("%q: %s is masked whole and by its tail; the two disagree about what is compared",
+					c.ID, name)
+			}
 		}
 	}
 }
@@ -151,6 +184,47 @@ func TestPristineRealmGoldensAreNotPolluted(t *testing.T) {
 		for _, o := range pollution(raw, created, c.Fixture, c.ID) {
 			t.Errorf("%q: golden holds %s %q, which %q created - "+
 				"this case has to be recorded against a realm nothing else has touched",
+				c.ID, o.key, o.name, o.creator)
+		}
+	}
+}
+
+// TestNoGoldenHoldsAnObjectItDidNotCreate is the test above, applied to the
+// 260-odd cases that are not PristineRealm.
+//
+// The invariant is the whole harness's, not the pristine group's: a golden may
+// hold only what bootstrap, the case's own fixture and the case's own request
+// produced, because those three are exactly what the verifier reproduces. A
+// non-pristine golden holding a sibling fixture's object is order-dependent
+// whether or not it enumerates anything, and it says so in bytes a reviewer can
+// read.
+//
+// It is separate from the pristine test rather than a widening of it because
+// the two say different things when they fail. The pristine one names its
+// remedy - record against a realm nothing else has touched - and this one has
+// no single remedy: the case may need the flag, or a narrower fixture, or it
+// may be reading state it never meant to.
+//
+// **It is a ratchet, not a finder.** Every golden in the repository passes it
+// today, which is the point: F53's set is the cases that are order-dependent
+// and *currently clean*, and no test that reads committed bytes can see those.
+// This one fires the moment a re-record puts a new fixture's object in a
+// golden, which is one step earlier than TestConformance noticing that the
+// verifier cannot reproduce it.
+func TestNoGoldenHoldsAnObjectItDidNotCreate(t *testing.T) {
+	created := createdObjects()
+	for _, c := range Catalog {
+		if c.PristineRealm {
+			continue // covered above, with a sharper message
+		}
+		raw, err := os.ReadFile(GoldenPath(goldenDir, c.ID))
+		if err != nil {
+			continue // Pending cases have no golden, and that is not a failure here
+		}
+		for _, o := range pollution(raw, created, c.Fixture, c.ID) {
+			t.Errorf("%q: golden holds %s %q, which %q created - "+
+				"neither this case's fixture nor its own request makes it, so the "+
+				"verifier cannot reproduce this body",
 				c.ID, o.key, o.name, o.creator)
 		}
 	}

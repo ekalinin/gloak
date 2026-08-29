@@ -1,7 +1,7 @@
 # POST /admin/realms
 HTTP/1.1 201 Created
 Content-Length: {{volatile}}
-Location: {{volatile}}
+Location: {{issuer}}/admin/realms/gloak-probe-realm-created
 Referrer-Policy: no-referrer
 Strict-Transport-Security: max-age=31536000; includeSubDomains
 X-Content-Type-Options: nosniff
