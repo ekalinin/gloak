@@ -323,6 +323,11 @@ func TestAuthorizeRedirectHeaders(t *testing.T) {
 // TestAuthorizePageFamily pins the other family: the rejections that cannot be
 // reported to the client, because the client or its redirect URI is what
 // failed. Everything here is a page, and the page carries **no Cache-Control**.
+//
+// Every row omits response_type as well, for the reason
+// TestAuthorizeRedirectURIIsCompared gives: a fully validated request is a 400
+// too until there is a login page, so without a second fault a check that
+// stopped running would still answer 400 and pass.
 func TestAuthorizePageFamily(t *testing.T) {
 	h := authServer(t)
 	for _, tc := range []struct {
@@ -344,7 +349,11 @@ func TestAuthorizePageFamily(t *testing.T) {
 			http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			w := authorize(t, h, baseQuery(tc.overrides))
+			overrides := map[string]string{"response_type": absent}
+			for k, v := range tc.overrides {
+				overrides[k] = v
+			}
+			w := authorize(t, h, baseQuery(overrides))
 
 			if w.Code != tc.status {
 				t.Fatalf("status = %d, want %d", w.Code, tc.status)
@@ -376,6 +385,14 @@ func TestAuthorizePageFamily(t *testing.T) {
 // http://localhost:9999/callback, so any implementation that parses either side
 // as a URL - and so folds a trailing slash, a case difference or a percent
 // escape - fails here.
+//
+// **Every request here also omits response_type**, and that is not decoration.
+// A request Gloak validates completely is answered with the page family's 400
+// too, until there is a login page, so a matching redirect URI and a rejected
+// one would otherwise be the same status and the test could not tell them
+// apart. A mutation making the comparison case-insensitive survived exactly
+// that way before this was added. With response_type gone, a match is a 302
+// and only a rejection is a 400.
 func TestAuthorizeRedirectURIIsCompared(t *testing.T) {
 	h := authServer(t)
 	for _, uri := range []string{
@@ -391,7 +408,9 @@ func TestAuthorizeRedirectURIIsCompared(t *testing.T) {
 		"https://localhost:9999/callback",
 	} {
 		t.Run(uri, func(t *testing.T) {
-			w := authorize(t, h, baseQuery(map[string]string{"redirect_uri": uri}))
+			w := authorize(t, h, baseQuery(map[string]string{
+				"redirect_uri": uri, "response_type": absent,
+			}))
 			if w.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400 - %q must not match %q",
 					w.Code, uri, probeRedirectURI)
@@ -399,9 +418,9 @@ func TestAuthorizeRedirectURIIsCompared(t *testing.T) {
 		})
 	}
 	t.Run("the registered URI itself", func(t *testing.T) {
-		w := authorize(t, h, baseQuery(nil))
-		if w.Header().Get("Location") != "" {
-			t.Fatalf("the registered URI was rejected: %q", w.Header().Get("Location"))
+		w := authorize(t, h, baseQuery(map[string]string{"response_type": absent}))
+		if w.Code != http.StatusFound {
+			t.Fatalf("status = %d, want 302 - the registered URI was rejected", w.Code)
 		}
 	})
 }
