@@ -108,6 +108,21 @@ func (f *faultyClients) ByID(ctx context.Context, realmID, id string) (*model.Cl
 	return f.ClientRepo.ByID(ctx, realmID, id)
 }
 
+// ByClientID consults the same fail, with the client's **name** where ByID
+// passes its UUID. Since realm creation, the caller's admin container is
+// resolved by name rather than by id, so a test aiming at "the container lookup
+// failed" has to reach this method too. The two tests that aim at one UUID are
+// unaffected: they compare the argument against a UUID they captured, and a
+// name is never equal to one, so they consume no skip here.
+func (f *faultyClients) ByClientID(ctx context.Context, realmID, clientID string) (*model.Client, error) {
+	if f.fail != nil {
+		if err := f.fail(clientID); err != nil {
+			return nil, err
+		}
+	}
+	return f.ClientRepo.ByClientID(ctx, realmID, clientID)
+}
+
 // failingClientLookup builds newServerWrapping's argument: a store whose client
 // lookup fails according to fail.
 func failingClientLookup(fail func(id string) error) func(store.Store) store.Store {

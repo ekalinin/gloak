@@ -1,8 +1,10 @@
 package token
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	jose "github.com/go-jose/go-jose/v4"
@@ -39,6 +41,37 @@ type Parsed struct {
 	Scope     string
 	IssuedAt  time.Time
 	ExpiresAt time.Time
+}
+
+// UnverifiedIssuer reads the iss claim **without checking the signature**, so
+// that a caller holding a token from an unknown realm can find out which
+// realm's key to verify it with.
+//
+// It is safe for that one use and for nothing else. Nothing may be authorised
+// on its result: it selects a key, and ParseAccess then rejects the token if
+// the signature, the issuer, the type or the expiry disagrees. A caller that
+// trusted this value instead of verifying afterwards would accept any token
+// anybody wrote.
+//
+// The admin API needs it because a request to /admin/realms/{realm} may carry a
+// token from that realm or from master - measured - and neither the path nor
+// the key is known before the issuer is.
+func UnverifiedIssuer(raw string) (string, error) {
+	parts := strings.Split(raw, ".")
+	if len(parts) != 3 {
+		return "", ErrInvalidToken
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", ErrInvalidToken
+	}
+	var claims struct {
+		Iss string `json:"iss"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || claims.Iss == "" {
+		return "", ErrInvalidToken
+	}
+	return claims.Iss, nil
 }
 
 // ParseAccess verifies an RS256 access token issued by this realm.

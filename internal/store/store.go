@@ -33,7 +33,24 @@ type Store interface {
 type RealmRepo interface {
 	Create(ctx context.Context, r *model.Realm) error
 	ByName(ctx context.Context, name string) (*model.Realm, error)
+	// List returns every realm. It is **not sorted**: Keycloak's own listing
+	// came back neither alphabetically nor in creation order - ten realms
+	// answered `probe-new-3, p4id, p4off, p4c, p4e, p4put, master, p4rich,
+	// p4a, p4d`, twice - so the conformance cases compare it unordered and no
+	// order here would be the measured one. The ORDER BY is kept only so the
+	// two drivers agree with each other.
 	List(ctx context.Context) ([]*model.Realm, error)
+	// Update writes a realm back, **including its name**: PUT was measured
+	// renaming a realm while keeping its id, which no other resource on this
+	// API allows - a role can be renamed and a username explicitly cannot.
+	// A rename onto a taken name reports ErrConflict, which is the measured
+	// 409.
+	Update(ctx context.Context, r *model.Realm) error
+	// Delete removes a realm and, through the schema's cascades, its clients,
+	// users, roles, groups, sessions and keys. Every root table already
+	// references realm(id) ON DELETE CASCADE; storetest proves both drivers
+	// act on it rather than trusting that the DDL says so.
+	Delete(ctx context.Context, id string) error
 }
 
 type ClientRepo interface {

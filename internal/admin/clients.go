@@ -155,7 +155,14 @@ func (h *handler) updateClient(w http.ResponseWriter, r *http.Request, rc *reqCo
 
 	updated := newClientFrom(merged, rc.realm.ID)
 	// Identity is not the caller's to change through this endpoint.
+	//
+	// ClientID is pinned here and not in the store: RealmRepo's rename has to
+	// move a {realm}-realm client to its new name, so ClientRepo.Update writes
+	// the column. Whether Keycloak lets a PUT change a clientId is **not
+	// measured**, and until it is, this endpoint keeps the behaviour it had
+	// when the column was not written at all.
 	updated.ID = current.ID
+	updated.ClientID = current.ClientID
 	updated.Secret = current.Secret
 	if err := h.store.Clients().Update(r.Context(), updated); err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")

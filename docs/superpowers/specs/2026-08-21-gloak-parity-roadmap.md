@@ -201,7 +201,7 @@ operations is allocated below; none is left unassigned.
 | P2 third cut | Groups, specced 2026-08-28 | P2 second cut | `Groups` 9, a user's group membership 4, the group halves of the two mapping tags 11. The allocation was checked against the description and holds exactly: the `Groups` tag has 11 and the two `management/permissions` operations are P10, and 11 of the 22 group role-mappings are under `/organizations` and so P12. **Done 2026-08-28**, all three cuts: the group tree 9, the membership 4 and the group role-mappings 11 | 24 ops |
 | **P3** | Browser code flow | P1, **P2** | `oidc/authorization` 11, `oidc/logout` (part) | ~15 cases |
 | P3 first cut | The recorder learns to log in, **done 2026-08-29** | P2 | no operations: the fixture machinery, and 11 cases moved from `Pending` to `Recorded` | 0 ops |
-| **P4** | Multi-realm | P2 | Realms Admin 45, Key 1 | 46 ops |
+| **P4** | Multi-realm, specced 2026-08-29 | P2 | Realms Admin 45, Key 1. The tag's 45 is a denominator and **16** is what P4 builds: the rest is P5's client scopes, P8's authentication, P12's organizations and P14's events, export and import, and the roadmap already said the last of those. **First cut done 2026-08-29**: the realm as a resource, 5 ops | 46 ops |
 | **P5** | Client scopes and protocol mappers | P2 | Client Scopes 10, Protocol Mappers 21, Scope Mappings 33, Client Attribute Certificate 7, Client Initial Access 3, Client Registration Policy 1 | 75 ops |
 | **P6** | Sessions and logout in full | P3 | back-channel, front-channel, session iframe, offline sessions, Attack Detection 3 | 3 ops + cases |
 | **P7** | Advanced grants | P1, P5 | `device` 5, `ciba` 3, `registration` 6, token exchange, JWT bearer, DPoP, PAR | ~20 cases |
@@ -215,8 +215,8 @@ operations is allocated below; none is left unassigned.
 
 Denominator today: **413 Admin API operations plus 72 protocol behaviours, 485
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **124**, and
-**P2 is complete** - up from 8 before P1, 25 after it, 89 after the second cut's
+surface is not counted and which the report says so about. Served: **129** after
+P4's first cut, and **P2 is complete** - up from 8 before P1, 25 after it, 89 after the second cut's
 roles half, 100 after that cut was complete, 109 after the group tree and 113
 after the membership.
 

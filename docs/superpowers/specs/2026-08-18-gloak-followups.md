@@ -1352,6 +1352,18 @@ users family" section of `2026-08-18-keycloak-26.7.1-observed.md`.
 
 ## F31: a real 405 exists, and the "wrong method is always 404" rule is too broad
 
+**A second counter-example, measured 2026-08-29 by P4's first cut**, and it
+refutes the rule that replaced the first one. `DELETE /admin/realms` and
+`PUT /admin/realms` answer **405**, and so does `PATCH /admin/realms/{realm}` -
+while `DELETE` on a role-mapping path answers 404 for the same class of
+mistake. So "the verb decides" does not fit either: the same verb answers 404 on
+one path and 405 on another. Neither rule this entry has tried holds, and the
+sweep that would settle it has still not been run.
+
+The original entry follows.
+
+### F31 (original): a real 405 exists, and the "wrong method is always 404" rule is too broad
+
 Found and measured 2026-08-26 by Task 6 of `feat/p2-role-mappings`, while
 checking whether `POST /users/{id}/role-mappings` is an operation before writing
 down that it is not. It is not - but the way it is not turned up something else.

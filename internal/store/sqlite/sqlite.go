@@ -185,25 +185,27 @@ type scanner interface{ Scan(dest ...any) error }
 
 type realmRepo struct{ db *sql.DB }
 
+// realmColumns is spelled once so the four statements below cannot drift apart
+// on the order the scan depends on.
+const realmColumns = `id, name, enabled, access_token_lifespan, refresh_token_lifespan, settings`
+
 func (r *realmRepo) Create(ctx context.Context, m *model.Realm) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO realm (id, name, enabled, access_token_lifespan, refresh_token_lifespan)
-		 VALUES (?, ?, ?, ?, ?)`,
-		m.ID, m.Name, m.Enabled, int64(m.AccessTokenLifespan.Seconds()), int64(m.RefreshTokenLifespan.Seconds()))
+		`INSERT INTO realm (`+realmColumns+`) VALUES (?, ?, ?, ?, ?, ?)`,
+		m.ID, m.Name, m.Enabled, int64(m.AccessTokenLifespan.Seconds()),
+		int64(m.RefreshTokenLifespan.Seconds()), string(m.Settings))
 	return classify(err)
 }
 
 func (r *realmRepo) ByName(ctx context.Context, name string) (*model.Realm, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, name, enabled, access_token_lifespan, refresh_token_lifespan
-		 FROM realm WHERE name = ?`, name)
+		`SELECT `+realmColumns+` FROM realm WHERE name = ?`, name)
 	return scanRealm(row)
 }
 
 func (r *realmRepo) List(ctx context.Context) ([]*model.Realm, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, name, enabled, access_token_lifespan, refresh_token_lifespan
-		 FROM realm ORDER BY name`)
+		`SELECT `+realmColumns+` FROM realm ORDER BY name`)
 	if err != nil {
 		return nil, classify(err)
 	}
@@ -220,14 +222,39 @@ func (r *realmRepo) List(ctx context.Context) ([]*model.Realm, error) {
 	return out, classify(rows.Err())
 }
 
+func (r *realmRepo) Update(ctx context.Context, m *model.Realm) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE realm SET name = ?, enabled = ?, access_token_lifespan = ?,
+		        refresh_token_lifespan = ?, settings = ?
+		 WHERE id = ?`,
+		m.Name, m.Enabled, int64(m.AccessTokenLifespan.Seconds()),
+		int64(m.RefreshTokenLifespan.Seconds()), string(m.Settings), m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
+}
+
+func (r *realmRepo) Delete(ctx context.Context, id string) error {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM realm WHERE id = ?`, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
+}
+
 func scanRealm(row scanner) (*model.Realm, error) {
 	m := &model.Realm{}
 	var accessSeconds, refreshSeconds int64
-	if err := row.Scan(&m.ID, &m.Name, &m.Enabled, &accessSeconds, &refreshSeconds); err != nil {
+	var settings string
+	if err := row.Scan(&m.ID, &m.Name, &m.Enabled, &accessSeconds, &refreshSeconds, &settings); err != nil {
 		return nil, classify(err)
 	}
 	m.AccessTokenLifespan = time.Duration(accessSeconds) * time.Second
 	m.RefreshTokenLifespan = time.Duration(refreshSeconds) * time.Second
+	if settings != "" {
+		m.Settings = []byte(settings)
+	}
 	return m, nil
 }
 
@@ -306,7 +333,7 @@ func (r *clientRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.
 func (r *clientRepo) Update(ctx context.Context, m *model.Client) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE client SET
-			 name = ?, description = ?, root_url = ?, base_url = ?, enabled = ?, public_client = ?, secret = ?,
+			 client_id = ?, name = ?, description = ?, root_url = ?, base_url = ?, enabled = ?, public_client = ?, secret = ?,
 			 protocol = ?, client_authenticator_type = ?, surrogate_auth_required = ?,
 			 always_display_in_console = ?, bearer_only = ?, consent_required = ?,
 			 standard_flow_enabled = ?, implicit_flow_enabled = ?, direct_access_grants_enabled = ?,
@@ -315,7 +342,7 @@ func (r *clientRepo) Update(ctx context.Context, m *model.Client) error {
 			 redirect_uris = ?, web_origins = ?, default_client_scopes = ?,
 			 optional_client_scopes = ?, attributes = ?
 			 WHERE realm_id = ? AND id = ?`,
-		m.Name, m.Description, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
+		m.ClientID, m.Name, m.Description, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
 		m.Protocol, m.ClientAuthenticatorType, m.SurrogateAuthRequired,
 		m.AlwaysDisplayInConsole, m.BearerOnly, m.ConsentRequired,
 		m.StandardFlowEnabled, m.ImplicitFlowEnabled, m.DirectAccessGrantsEnabled,

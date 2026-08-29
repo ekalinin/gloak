@@ -51,7 +51,7 @@ Working today:
   Gloak's responses byte-for-byte against bytes recorded from a live
   Keycloak 26.7.1
 - a parity meter whose denominator comes from Keycloak's own OpenAPI description
-  rather than from a hand-kept list: **124 of 485 enumerated behaviours served**,
+  rather than from a hand-kept list: **129 of 485 enumerated behaviours served**,
   plus four chapters whose surface has not been counted
 - an external oracle: `make oracle` drives Gloak with `kcadm.sh`, Keycloak's own
   admin CLI, which asks for things no recorded case asks for
@@ -170,7 +170,7 @@ and stay out of the total rather than being dropped from it silently, which
 would inflate the percentage by hiding the parts nobody has counted. It reads:
 
 ```
-total: 124 of 485 enumerated behaviours served; 4 chapters not enumerated
+total: 129 of 485 enumerated behaviours served; 4 chapters not enumerated
 ```
 
 CI reruns this meter on every pull request and posts the parity increment as

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ekalinin/gloak/internal/bootstrap"
 	"github.com/ekalinin/gloak/internal/httpx"
 	"github.com/ekalinin/gloak/internal/model"
 	"github.com/ekalinin/gloak/internal/store"
@@ -345,21 +346,28 @@ func (h *handler) clientRoleContainer(w http.ResponseWriter, r *http.Request, rc
 	return c, true
 }
 
-// ownedByRealmOwnClient reports whether role belongs to the realm's own
-// "{realm}-realm" client - the container Keycloak refuses to reconfigure.
+// ownedByRealmOwnClient reports whether role belongs to a client that carries a
+// realm's admin roles - the container Keycloak refuses to reconfigure.
 //
-// internal/bootstrap names that client, in an unexported adminRoleContainer,
-// so the name is rebuilt here the same way createClientRole rebuilds it. A
-// realm role can never be owned by a client, so it answers false without a
+// **Two spellings, and a suffix.** Keycloak keeps the master realm's admin roles
+// on `master-realm` and every other realm's on that realm's own
+// `realm-management` client, which internal/bootstrap.AdminContainerFor names.
+// Master also holds a `{realm}-realm` client per realm, carrying the rights to
+// administer it from outside. Until this cut Gloak bootstrapped only master, so
+// only the first spelling was reachable and this function tested only it; the
+// comment here said in as many words that whoever added realm creation had to
+// add the others in the same change, because every admin role outside master
+// would otherwise answer false and become grantable to anyone.
+//
+// The suffix half is measured, and it is wider than "names a realm that
+// exists": a client called `nosuch-realm` created by hand in master, naming no
+// realm at all, answers 403 to `POST .../roles` and carries
+// `"configure":false` exactly as `master-realm` does. So the test is on the
+// name and not on the realm behind it, and adding a realm lookup here would be
+// stricter than Keycloak.
+//
+// A realm role can never be owned by a client, so it answers false without a
 // lookup.
-//
-// **"{realm}-realm" is a master-realm construct.** Keycloak keeps the master
-// realm's admin roles on `master-realm` and every *other* realm's on that
-// realm's own `realm-management` client. Gloak bootstraps no realm but master,
-// so the second spelling is unreachable today - but when Realms Admin lands,
-// every admin role outside master would silently answer false here and become
-// grantable to anyone. Whoever adds realm creation adds the second name to this
-// test in the same change.
 func (h *handler) ownedByRealmOwnClient(ctx context.Context, realm *model.Realm, role *model.Role) (bool, error) {
 	if role.ClientID == "" {
 		return false, nil
@@ -368,7 +376,20 @@ func (h *handler) ownedByRealmOwnClient(ctx context.Context, realm *model.Realm,
 	if err != nil {
 		return false, err
 	}
-	return c.ClientID == realm.Name+"-realm", nil
+	return isAdminContainerName(realm.Name, c.ClientID), nil
+}
+
+// isAdminContainerName reports whether a clientId names a client that carries
+// admin roles, as seen from within realmName.
+//
+// Measured on seven clients across two realms: master-realm, other-realm and
+// nosuch-realm in master all answer `"configure":false`, realm-management in a
+// created realm does too, and broker and account in both realms are fully
+// manageable although broker carries `realm_client: "true"` - so the attribute
+// is not the test and the name is.
+func isAdminContainerName(realmName, clientID string) bool {
+	return clientID == bootstrap.AdminContainerFor(realmName) ||
+		strings.HasSuffix(clientID, "-realm")
 }
 
 // listClientRoles serves GET /admin/realms/{realm}/clients/{client-uuid}/roles.

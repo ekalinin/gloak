@@ -60,6 +60,209 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	t.Run("realm settings survive the round-trip byte for byte", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		// Two keys in an order neither driver would produce by sorting, because
+		// the whole point of storing the representation as text rather than as
+		// a structured type is that its key order is the contract.
+		const settings = `{"zzz":1,"aaa":2}`
+		r := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true, Settings: []byte(settings)}
+		if err := s.Realms().Create(ctx, r); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+
+		got, err := s.Realms().ByName(ctx, "master")
+		if err != nil {
+			t.Fatalf("ByName: %v", err)
+		}
+		if string(got.Settings) != settings {
+			t.Fatalf("settings: got %q, want %q", got.Settings, settings)
+		}
+	})
+
+	t.Run("a realm with no settings reads back nil, not empty", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		if err := s.Realms().Create(ctx, &model.Realm{ID: model.NewID(), Name: "master"}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+
+		got, err := s.Realms().ByName(ctx, "master")
+		if err != nil {
+			t.Fatalf("ByName: %v", err)
+		}
+		// nil rather than []byte{} so the admin layer can tell "never written"
+		// from "written as nothing" with one test. The two drivers store an
+		// empty string either way, so this is the one place they could disagree.
+		if got.Settings != nil {
+			t.Fatalf("settings: got %q, want nil", got.Settings)
+		}
+	})
+
+	t.Run("a realm can be renamed, keeping its id", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		r := &model.Realm{ID: model.NewID(), Name: "before", Enabled: false}
+		if err := s.Realms().Create(ctx, r); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+
+		r.Name = "after"
+		r.Enabled = true
+		r.Settings = []byte(`{"x":1}`)
+		if err := s.Realms().Update(ctx, r); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+
+		if _, err := s.Realms().ByName(ctx, "before"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("old name still resolves: %v", err)
+		}
+		got, err := s.Realms().ByName(ctx, "after")
+		if err != nil {
+			t.Fatalf("ByName: %v", err)
+		}
+		if got.ID != r.ID || !got.Enabled || string(got.Settings) != `{"x":1}` {
+			t.Fatalf("after rename: %+v", got)
+		}
+	})
+
+	t.Run("renaming onto a taken name reports ErrConflict", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		for _, name := range []string{"master", "other"} {
+			if err := s.Realms().Create(ctx, &model.Realm{ID: model.NewID(), Name: name}); err != nil {
+				t.Fatalf("Create %s: %v", name, err)
+			}
+		}
+		other, err := s.Realms().ByName(ctx, "other")
+		if err != nil {
+			t.Fatalf("ByName: %v", err)
+		}
+
+		other.Name = "master"
+		err = s.Realms().Update(ctx, other)
+
+		if !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("want ErrConflict, got %v", err)
+		}
+	})
+
+	t.Run("updating a realm that is gone reports ErrNotFound", func(t *testing.T) {
+		s := newStore(t)
+
+		err := s.Realms().Update(context.Background(), &model.Realm{ID: model.NewID(), Name: "gone"})
+
+		if !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("want ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("deleting a realm takes everything in it", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		doomed := &model.Realm{ID: model.NewID(), Name: "doomed", Enabled: true}
+		keep := &model.Realm{ID: model.NewID(), Name: "keep", Enabled: true}
+		for _, r := range []*model.Realm{doomed, keep} {
+			if err := s.Realms().Create(ctx, r); err != nil {
+				t.Fatalf("Create %s: %v", r.Name, err)
+			}
+		}
+		// One row in every table that hangs off a realm, so the cascade is
+		// asserted rather than read off the DDL. Both drivers declare it;
+		// SQLite only acts on it because Open sets the foreign_keys pragma,
+		// which is exactly the kind of difference this suite exists to catch.
+		client := &model.Client{ID: model.NewID(), RealmID: doomed.ID, ClientID: "c", Enabled: true}
+		if err := s.Clients().Create(ctx, client); err != nil {
+			t.Fatalf("Create client: %v", err)
+		}
+		user := &model.User{ID: model.NewID(), RealmID: doomed.ID, Username: "u", Enabled: true}
+		if err := s.Users().Create(ctx, user); err != nil {
+			t.Fatalf("Create user: %v", err)
+		}
+		role := &model.Role{ID: model.NewID(), RealmID: doomed.ID, Name: "r"}
+		if err := s.Roles().Create(ctx, role); err != nil {
+			t.Fatalf("Create role: %v", err)
+		}
+		group := &model.Group{ID: model.NewID(), RealmID: doomed.ID, Name: "g"}
+		if err := s.Groups().Create(ctx, group); err != nil {
+			t.Fatalf("Create group: %v", err)
+		}
+		if err := s.Keys().Create(ctx, &model.RealmKey{
+			ID: model.NewID(), RealmID: doomed.ID, Algorithm: "RS256", Use: "SIG",
+			PrivateKey: []byte("p"), Certificate: []byte("c"),
+		}); err != nil {
+			t.Fatalf("Create key: %v", err)
+		}
+
+		if err := s.Realms().Delete(ctx, doomed.ID); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+
+		if _, err := s.Realms().ByName(ctx, "doomed"); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("realm survived: %v", err)
+		}
+		if _, err := s.Clients().ByID(ctx, doomed.ID, client.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("client survived: %v", err)
+		}
+		if _, err := s.Users().ByID(ctx, doomed.ID, user.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("user survived: %v", err)
+		}
+		if _, err := s.Roles().ByID(ctx, doomed.ID, role.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("role survived: %v", err)
+		}
+		if _, err := s.Groups().ByID(ctx, doomed.ID, group.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("group survived: %v", err)
+		}
+		keys, err := s.Keys().ListByRealm(ctx, doomed.ID)
+		if err != nil {
+			t.Fatalf("ListByRealm: %v", err)
+		}
+		if len(keys) != 0 {
+			t.Fatalf("keys survived: %d", len(keys))
+		}
+		if _, err := s.Realms().ByName(ctx, "keep"); err != nil {
+			t.Fatalf("the other realm went too: %v", err)
+		}
+	})
+
+	t.Run("deleting a realm that is gone reports ErrNotFound", func(t *testing.T) {
+		s := newStore(t)
+
+		err := s.Realms().Delete(context.Background(), model.NewID())
+
+		if !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("want ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("the realm listing carries every realm", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		// Created out of alphabetical order deliberately. The listing's order
+		// is not asserted - Keycloak's own is neither sorted nor by creation -
+		// only that both drivers return the same set.
+		for _, name := range []string{"zeta", "master", "alpha"} {
+			if err := s.Realms().Create(ctx, &model.Realm{ID: model.NewID(), Name: name}); err != nil {
+				t.Fatalf("Create %s: %v", name, err)
+			}
+		}
+
+		got, err := s.Realms().List(ctx)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+
+		var names []string
+		for _, r := range got {
+			names = append(names, r.Name)
+		}
+		slices.Sort(names)
+		if !slices.Equal(names, []string{"alpha", "master", "zeta"}) {
+			t.Fatalf("List = %v", names)
+		}
+	})
+
 	t.Run("client attributes and slices survive the round-trip", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

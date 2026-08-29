@@ -174,25 +174,27 @@ type scanner interface{ Scan(dest ...any) error }
 
 type realmRepo struct{ pool *pgxpool.Pool }
 
+// realmColumns is spelled once so the four statements below cannot drift apart
+// on the order the scan depends on.
+const realmColumns = `id, name, enabled, access_token_lifespan, refresh_token_lifespan, settings`
+
 func (r *realmRepo) Create(ctx context.Context, m *model.Realm) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO realm (id, name, enabled, access_token_lifespan, refresh_token_lifespan)
-		 VALUES ($1, $2, $3, $4, $5)`,
-		m.ID, m.Name, m.Enabled, int64(m.AccessTokenLifespan.Seconds()), int64(m.RefreshTokenLifespan.Seconds()))
+		`INSERT INTO realm (`+realmColumns+`) VALUES ($1, $2, $3, $4, $5, $6)`,
+		m.ID, m.Name, m.Enabled, int64(m.AccessTokenLifespan.Seconds()),
+		int64(m.RefreshTokenLifespan.Seconds()), string(m.Settings))
 	return classify(err)
 }
 
 func (r *realmRepo) ByName(ctx context.Context, name string) (*model.Realm, error) {
 	row := r.pool.QueryRow(ctx,
-		`SELECT id, name, enabled, access_token_lifespan, refresh_token_lifespan
-		 FROM realm WHERE name = $1`, name)
+		`SELECT `+realmColumns+` FROM realm WHERE name = $1`, name)
 	return scanRealm(row)
 }
 
 func (r *realmRepo) List(ctx context.Context) ([]*model.Realm, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, name, enabled, access_token_lifespan, refresh_token_lifespan
-		 FROM realm ORDER BY name`)
+		`SELECT `+realmColumns+` FROM realm ORDER BY name`)
 	if err != nil {
 		return nil, classify(err)
 	}
@@ -209,14 +211,39 @@ func (r *realmRepo) List(ctx context.Context) ([]*model.Realm, error) {
 	return out, classify(rows.Err())
 }
 
+func (r *realmRepo) Update(ctx context.Context, m *model.Realm) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE realm SET name = $1, enabled = $2, access_token_lifespan = $3,
+		        refresh_token_lifespan = $4, settings = $5
+		 WHERE id = $6`,
+		m.Name, m.Enabled, int64(m.AccessTokenLifespan.Seconds()),
+		int64(m.RefreshTokenLifespan.Seconds()), string(m.Settings), m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(tag.RowsAffected())
+}
+
+func (r *realmRepo) Delete(ctx context.Context, id string) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM realm WHERE id = $1`, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(tag.RowsAffected())
+}
+
 func scanRealm(row scanner) (*model.Realm, error) {
 	m := &model.Realm{}
 	var accessSeconds, refreshSeconds int64
-	if err := row.Scan(&m.ID, &m.Name, &m.Enabled, &accessSeconds, &refreshSeconds); err != nil {
+	var settings string
+	if err := row.Scan(&m.ID, &m.Name, &m.Enabled, &accessSeconds, &refreshSeconds, &settings); err != nil {
 		return nil, classify(err)
 	}
 	m.AccessTokenLifespan = time.Duration(accessSeconds) * time.Second
 	m.RefreshTokenLifespan = time.Duration(refreshSeconds) * time.Second
+	if settings != "" {
+		m.Settings = []byte(settings)
+	}
 	return m, nil
 }
 
@@ -295,16 +322,17 @@ func (r *clientRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.
 func (r *clientRepo) Update(ctx context.Context, m *model.Client) error {
 	tag, err := r.pool.Exec(ctx,
 		`UPDATE client SET
-			 name = $1, description = $2, root_url = $3, base_url = $4, enabled = $5, public_client = $6,
-			 secret = $7, protocol = $8, client_authenticator_type = $9, surrogate_auth_required = $10,
-			 always_display_in_console = $11, bearer_only = $12, consent_required = $13,
-			 standard_flow_enabled = $14, implicit_flow_enabled = $15, direct_access_grants_enabled = $16,
-			 service_accounts_enabled = $17, frontchannel_logout = $18, full_scope_allowed = $19,
-			 not_before = $20, node_re_registration_timeout = $21,
-			 redirect_uris = $22, web_origins = $23, default_client_scopes = $24,
-			 optional_client_scopes = $25, attributes = $26
-			 WHERE realm_id = $27 AND id = $28`,
-		m.Name, m.Description, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
+			 client_id = $1, name = $2, description = $3, root_url = $4, base_url = $5, enabled = $6,
+			 public_client = $7,
+			 secret = $8, protocol = $9, client_authenticator_type = $10, surrogate_auth_required = $11,
+			 always_display_in_console = $12, bearer_only = $13, consent_required = $14,
+			 standard_flow_enabled = $15, implicit_flow_enabled = $16, direct_access_grants_enabled = $17,
+			 service_accounts_enabled = $18, frontchannel_logout = $19, full_scope_allowed = $20,
+			 not_before = $21, node_re_registration_timeout = $22,
+			 redirect_uris = $23, web_origins = $24, default_client_scopes = $25,
+			 optional_client_scopes = $26, attributes = $27
+			 WHERE realm_id = $28 AND id = $29`,
+		m.ClientID, m.Name, m.Description, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
 		m.Protocol, m.ClientAuthenticatorType, m.SurrogateAuthRequired,
 		m.AlwaysDisplayInConsole, m.BearerOnly, m.ConsentRequired,
 		m.StandardFlowEnabled, m.ImplicitFlowEnabled, m.DirectAccessGrantsEnabled,

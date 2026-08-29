@@ -440,6 +440,42 @@ var Fixtures = map[string]Fixture{
 	// mapping routes. Its own group and its own client, the uniqueness
 	// realmRoleFixture's doc explains.
 	"admin-token-group-mappings": groupMappingFixture(),
+
+	// A realm of its own for each case that changes one, because the recorder
+	// shares a container: an update and a delete on the same realm would make
+	// the second depend on whether the first ran.
+	"admin-token-realm":        realmFixture("gloak-probe-realm"),
+	"admin-token-realm-update": realmFixture("gloak-probe-realm-update"),
+	"admin-token-realm-delete": realmFixture("gloak-probe-realm-delete"),
+}
+
+// realmFixture creates one realm through POST /admin/realms and captures its
+// name, which is what every route below addresses it by.
+//
+// A second State was the other option and it is the wrong one: every other
+// resource in this file is built through Steps against the API, and a State
+// that seeded a realm behind the API's back would be seeding it differently
+// from the way a caller does.
+//
+// The name is a literal rather than a capture. Unlike a client or a group, a
+// realm is addressed by the name the caller chose and not by a server-minted
+// id, so there is nothing to look up.
+func realmFixture(name string) Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"realm":"` + name + `","enabled":true}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+		},
+	}
 }
 
 func groupMappingFixture() Fixture {
