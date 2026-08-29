@@ -37,6 +37,14 @@ func TestCatalogIsWellFormed(t *testing.T) {
 		if c.Request.Method == "" || c.Request.Path == "" {
 			t.Errorf("%q: Request needs a method and a path", c.ID)
 		}
+		// Expand does not reach RawQuery - it lives in fixture.go and rewrites
+		// Path, Query, Headers, Form and Body. A {{name}} left in here would be
+		// sent to the server with its braces on, and the case would measure a
+		// request nobody meant to make.
+		if strings.Contains(c.Request.RawQuery, "{{") {
+			t.Errorf("%q: RawQuery is not expanded, so it cannot refer to %q",
+				c.ID, c.Request.RawQuery)
+		}
 		switch c.Status {
 		case Pending:
 			if c.Reason == "" {
