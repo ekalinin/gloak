@@ -505,6 +505,11 @@ var Fixtures = map[string]Fixture{
 		probeScopeClientDetachOptID, "gloak-probe-cs-detach-opt",
 		probeDetachOptID, "gloak-probe-cs-detach-opt-scope", true, false),
 
+	// A client scope that has been through a partial PUT, so a case can read
+	// back what the PUT left alone. `admin-token-user-updated`'s shape, for
+	// the same reason: a 204 says nothing about what it wrote.
+	"admin-token-client-scope-merged": mergedClientScopeFixture(),
+
 	"admin-token-client-named-scopes": namedScopesClientFixture(
 		probeScopeClientNamedID, "gloak-probe-cs-named", "", "", false),
 	"admin-token-client-saml-scope": namedScopesClientFixture(
@@ -541,6 +546,7 @@ const (
 	probeScopeClientNamedID     = "c11e0000-0000-4000-8000-00000000000f"
 	probeScopeClientSAMLID      = "c11e0000-0000-4000-8000-000000000010"
 	probeSAMLScopeID            = "a5c09e00-0000-4000-8000-00000000000f"
+	probeScopeMergedID          = "a5c09e00-0000-4000-8000-000000000010"
 )
 
 // clientScopeFixture creates one client scope in master with a fixed id.
@@ -557,6 +563,43 @@ func clientScopeFixture(id, name string) Fixture {
 
 func clientScopeStep(id, name string) Step {
 	return protocolScopeStep(id, name, "openid-connect")
+}
+
+// mergedClientScopeFixture creates a scope carrying a description and two
+// attributes and then PUTs a body naming only its `name`.
+//
+// The case that reads it afterwards is what says the PUT **merged**: a client
+// scope keeps the description and the attributes the body did not mention,
+// where a role updated the same way loses its description. The update case's
+// own 204 cannot see that, and a mutation replacing the merge with a
+// replacement survived every other case in this cut.
+func mergedClientScopeFixture() Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/client-scopes",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"id":"` + probeScopeMergedID +
+						`","name":"gloak-probe-scope-merged","description":"before",` +
+						`"protocol":"openid-connect","attributes":` +
+						`{"include.in.token.scope":"true","display.on.consent.screen":"false"}}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPut,
+					Path:    "/admin/realms/master/client-scopes/" + probeScopeMergedID,
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"name":"gloak-probe-scope-merged"}`),
+				},
+			},
+		},
+	}
 }
 
 func protocolScopeStep(id, name, protocol string) Step {

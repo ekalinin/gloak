@@ -5149,4 +5149,25 @@ var adminCases = []Case{
 		Volatile:      []string{"*/id"},
 		Unordered:     []string{"."},
 	},
+	{
+		// **The PUT merged.** The fixture created this scope with a description
+		// and two attributes and then sent a body naming only its `name`; both
+		// survived. A role updated the same way loses its description, so
+		// copying updateRealmRole's shape here is the mistake this case
+		// catches - and the update case's own 204 cannot see it.
+		ID: "admin/client-scopes/read-merged",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: read a client scope after a partial update",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-client-scope-merged",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000010",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
 }
