@@ -490,15 +490,20 @@ var Fixtures = map[string]Fixture{
 	// well as its own scope, because attaching to a shared client would make
 	// the listing case depend on whether the attach case had run.
 	"admin-token-client-scopes-read": clientScopeAttachFixture(
-		"gloak-probe-cs-read", probeAttachReadID, "gloak-probe-cs-read-scope", false, true),
+		probeScopeClientReadID, "gloak-probe-cs-read",
+		probeAttachReadID, "gloak-probe-cs-read-scope", false, true),
 	"admin-token-client-scope-attach": clientScopeAttachFixture(
-		"gloak-probe-cs-attach", probeAttachID, "gloak-probe-cs-attach-scope", false, true),
+		probeScopeClientAttachID, "gloak-probe-cs-attach",
+		probeAttachID, "gloak-probe-cs-attach-scope", false, true),
 	"admin-token-client-scope-detach": clientScopeAttachFixture(
-		"gloak-probe-cs-detach", probeDetachID, "gloak-probe-cs-detach-scope", true, true),
+		probeScopeClientDetachID, "gloak-probe-cs-detach",
+		probeDetachID, "gloak-probe-cs-detach-scope", true, true),
 	"admin-token-client-scope-attach-opt": clientScopeAttachFixture(
-		"gloak-probe-cs-attach-opt", probeAttachOptID, "gloak-probe-cs-attach-opt-scope", false, false),
+		probeScopeClientAttachOptID, "gloak-probe-cs-attach-opt",
+		probeAttachOptID, "gloak-probe-cs-attach-opt-scope", false, false),
 	"admin-token-client-scope-detach-opt": clientScopeAttachFixture(
-		"gloak-probe-cs-detach-opt", probeDetachOptID, "gloak-probe-cs-detach-opt-scope", true, false),
+		probeScopeClientDetachOptID, "gloak-probe-cs-detach-opt",
+		probeDetachOptID, "gloak-probe-cs-detach-opt-scope", true, false),
 }
 
 // The fixed client-scope ids P5's fixtures create their scopes with. They are
@@ -519,6 +524,14 @@ const (
 	probeDetachID         = "a5c09e00-0000-4000-8000-00000000000c"
 	probeAttachOptID      = "a5c09e00-0000-4000-8000-00000000000d"
 	probeDetachOptID      = "a5c09e00-0000-4000-8000-00000000000e"
+
+	// The clients those last five hang their scopes on, fixed for the same
+	// reason - see clientScopeAttachFixture.
+	probeScopeClientReadID      = "c11e0000-0000-4000-8000-00000000000a"
+	probeScopeClientAttachID    = "c11e0000-0000-4000-8000-00000000000b"
+	probeScopeClientDetachID    = "c11e0000-0000-4000-8000-00000000000c"
+	probeScopeClientAttachOptID = "c11e0000-0000-4000-8000-00000000000d"
+	probeScopeClientDetachOptID = "c11e0000-0000-4000-8000-00000000000e"
 )
 
 // clientScopeFixture creates one client scope in master with a fixed id.
@@ -576,11 +589,28 @@ func realmDefaultScopeFixture(id, name string, added, defaultScope bool) Fixture
 // clientScopeAttachFixture is a client of its own plus a client scope of its
 // own, optionally already attached to it.
 //
-// The client's id is captured from Location rather than fixed, because this
-// fixture is never shared: each case that names it mutates either the client's
-// scope lists or nothing at all.
-func clientScopeAttachFixture(clientID, scopeID, scopeName string, attached, defaultScope bool) Fixture {
-	f := clientFixture(clientID)
+// The **client** carries a fixed id here where clientFixture captures one from
+// Location, and that is not a preference: `admin-token-client-scopes-read` is
+// named by three cases, the recorder runs a fixture once per case against one
+// shared container, and the second create answers 409 with no Location to
+// capture. Measured on both sides: POST /clients honours an `id` in the body,
+// so the id is known before the request rather than after it and the repeat is
+// a tolerated 409. It is the same reason confidentialClientFixture looks its
+// UUID up, reached by the cheaper route.
+func clientScopeAttachFixture(clientUUID, clientID, scopeID, scopeName string,
+	attached, defaultScope bool) Fixture {
+	f := Fixture{
+		State: "bootstrap",
+		Steps: []Step{adminTokenStep(), {
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"id":"` + clientUUID + `","clientId":"` + clientID + `","enabled":true}`),
+			},
+			ExpectStatus: idempotentCreate,
+		}},
+	}
 	f.Steps = append(f.Steps, clientScopeStep(scopeID, scopeName))
 	if !attached {
 		return f
@@ -592,7 +622,7 @@ func clientScopeAttachFixture(clientID, scopeID, scopeName string, attached, def
 	f.Steps = append(f.Steps, Step{
 		Request: Request{
 			Method: http.MethodPut,
-			Path: "/admin/realms/master/clients/{{client_uuid}}/" + list +
+			Path: "/admin/realms/master/clients/" + clientUUID + "/" + list +
 				"/" + scopeID,
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},

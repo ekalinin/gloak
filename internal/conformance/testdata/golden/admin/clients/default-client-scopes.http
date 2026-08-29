@@ -1,0 +1,12 @@
+# GET /admin/realms/master/clients/c11e0000-0000-4000-8000-00000000000a/default-client-scopes
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"id":"{{string}}","name":"acr"},{"id":"{{string}}","name":"basic"},{"id":"{{string}}","name":"email"},{"id":"{{string}}","name":"gloak-probe-realm-add"},{"id":"{{string}}","name":"gloak-probe-realm-drop"},{"id":"{{string}}","name":"profile"},{"id":"{{string}}","name":"roles"},{"id":"{{string}}","name":"web-origins"}]

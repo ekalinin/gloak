@@ -1,0 +1,12 @@
+# GET /admin/realms/master/default-default-client-scopes
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"id":"{{string}}","name":"role_list","protocol":"saml"},{"id":"{{string}}","name":"saml_organization","protocol":"saml"},{"id":"{{string}}","name":"AuthnContextClassRef","protocol":"saml"},{"id":"{{string}}","name":"profile","protocol":"openid-connect"},{"id":"{{string}}","name":"email","protocol":"openid-connect"},{"id":"{{string}}","name":"roles","protocol":"openid-connect"},{"id":"{{string}}","name":"web-origins","protocol":"openid-connect"},{"id":"{{string}}","name":"acr","protocol":"openid-connect"},{"id":"{{string}}","name":"basic","protocol":"openid-connect"}]

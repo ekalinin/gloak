@@ -1,0 +1,8 @@
+# DELETE /admin/realms/master/default-optional-client-scopes/a5c09e00-0000-4000-8000-000000000009
+HTTP/1.1 204 No Content
+Cache-Control: no-cache
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Robots-Tag: none
+

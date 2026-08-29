@@ -4889,7 +4889,7 @@ var adminCases = []Case{
 		Fixture:   "admin-token-client-scopes-read",
 		Request: Request{
 			Method:  http.MethodGet,
-			Path:    "/admin/realms/master/clients/{{client_uuid}}/default-client-scopes",
+			Path:    "/admin/realms/master/clients/c11e0000-0000-4000-8000-00000000000a/default-client-scopes",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
@@ -4908,7 +4908,7 @@ var adminCases = []Case{
 		Fixture:   "admin-token-client-scopes-read",
 		Request: Request{
 			Method:  http.MethodGet,
-			Path:    "/admin/realms/master/clients/{{client_uuid}}/optional-client-scopes",
+			Path:    "/admin/realms/master/clients/c11e0000-0000-4000-8000-00000000000a/optional-client-scopes",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
@@ -4927,7 +4927,7 @@ var adminCases = []Case{
 		Fixture:   "admin-token-client-scope-attach",
 		Request: Request{
 			Method: http.MethodPut,
-			Path: "/admin/realms/master/clients/{{client_uuid}}/default-client-scopes/" +
+			Path: "/admin/realms/master/clients/c11e0000-0000-4000-8000-00000000000b/default-client-scopes/" +
 				"a5c09e00-0000-4000-8000-00000000000b",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
@@ -4946,7 +4946,7 @@ var adminCases = []Case{
 		Fixture:   "admin-token-client-scope-detach",
 		Request: Request{
 			Method: http.MethodDelete,
-			Path: "/admin/realms/master/clients/{{client_uuid}}/default-client-scopes/" +
+			Path: "/admin/realms/master/clients/c11e0000-0000-4000-8000-00000000000c/default-client-scopes/" +
 				"a5c09e00-0000-4000-8000-00000000000c",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
@@ -4965,7 +4965,7 @@ var adminCases = []Case{
 		Fixture:   "admin-token-client-scope-attach-opt",
 		Request: Request{
 			Method: http.MethodPut,
-			Path: "/admin/realms/master/clients/{{client_uuid}}/optional-client-scopes/" +
+			Path: "/admin/realms/master/clients/c11e0000-0000-4000-8000-00000000000d/optional-client-scopes/" +
 				"a5c09e00-0000-4000-8000-00000000000d",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
@@ -4984,7 +4984,7 @@ var adminCases = []Case{
 		Fixture:   "admin-token-client-scope-detach-opt",
 		Request: Request{
 			Method: http.MethodDelete,
-			Path: "/admin/realms/master/clients/{{client_uuid}}/optional-client-scopes/" +
+			Path: "/admin/realms/master/clients/c11e0000-0000-4000-8000-00000000000e/optional-client-scopes/" +
 				"a5c09e00-0000-4000-8000-00000000000e",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
@@ -5024,7 +5024,7 @@ var adminCases = []Case{
 		Fixture: "admin-token-client-scopes-read",
 		Request: Request{
 			Method: http.MethodPut,
-			Path: "/admin/realms/master/clients/{{client_uuid}}/default-client-scopes/" +
+			Path: "/admin/realms/master/clients/c11e0000-0000-4000-8000-00000000000a/default-client-scopes/" +
 				"00000000-0000-0000-0000-000000000000",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
