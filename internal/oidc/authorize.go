@@ -117,14 +117,22 @@ var servableResponseModes = map[string]bool{
 
 // authorize serves GET and POST /realms/{realm}/protocol/openid-connect/auth.
 //
-// **It serves the rejections and not yet the login.** A request that survives
-// every check reaches the point where Keycloak renders its login page, which is
-// P13's theme work, so it is answered with the page family's 400 - the same
-// envelope the unknown-client and bad-redirect rejections take, whose body is
-// equally Gloak's placeholder until P13. That is a real divergence from
-// Keycloak, which answers 200 with a login form, and it is recorded as a
-// follow-up rather than hidden: the alternatives were a login form whose POST
-// target does not exist, or a status no measurement supports.
+// A request that survives all ten checks now opens an authentication session
+// and renders the login form, which is what closes follow-up F50: this endpoint
+// answered its own success with the page family's 400 for a day, because
+// Keycloak renders a login page there and Gloak had none.
+//
+// **The body is still a placeholder and the envelope is measured.** Reproducing
+// keycloak.v2's Freemarker output is the rest of P13; what is served here is
+// the 200's headers, its three cookies and a form carrying the five parameters
+// the measured one carries - which is what a browser, and the conformance
+// fixtures, actually need to get to the next request.
+//
+// What it still does not do is recognise a browser that is **already** signed
+// in. Gloak sets KEYCLOAK_IDENTITY and does not read it, so a second
+// authorization request on a live session serves the form again where Keycloak
+// redirects with a code, and prompt=none still answers login_required. That is
+// a follow-up rather than a hidden gap.
 func (h *handler) authorize(w http.ResponseWriter, r *http.Request) {
 	realm := h.resolveRealm(w, r)
 	if realm == nil {
@@ -252,7 +260,7 @@ func (h *handler) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validated. Open an authentication session and render the login page.
-	h.beginLogin(w, realm, client, redirectURI, mode, params, state, hasState)
+	h.beginLogin(w, r, realm, client, redirectURI, mode, params, state, hasState)
 }
 
 // beginLogin is what a request that survived all ten checks gets: an
@@ -267,8 +275,8 @@ func (h *handler) authorize(w http.ResponseWriter, r *http.Request) {
 // mode is the already-resolved mode rather than the raw parameter, so a request
 // that named none stores the empty string and client_data omits `rm`, which is
 // what the measured client_data does.
-func (h *handler) beginLogin(w http.ResponseWriter, realm *model.Realm, client *model.Client,
-	redirectURI, mode string, params url.Values, state string, hasState bool) {
+func (h *handler) beginLogin(w http.ResponseWriter, r *http.Request, realm *model.Realm,
+	client *model.Client, redirectURI, mode string, params url.Values, state string, hasState bool) {
 	named := ""
 	if _, present := params["response_mode"]; present {
 		named = mode
@@ -281,7 +289,7 @@ func (h *handler) beginLogin(w http.ResponseWriter, realm *model.Realm, client *
 		State:        state,
 		HasState:     hasState,
 	}
-	sess, err := h.beginAuthSession(w, realm, tab, &restartRecord{
+	sess, err := h.beginAuthSession(w, r, realm, tab, &restartRecord{
 		Realm:        realm.Name,
 		ClientID:     client.ClientID,
 		RedirectURI:  redirectURI,
@@ -296,39 +304,55 @@ func (h *handler) beginLogin(w http.ResponseWriter, realm *model.Realm, client *
 	h.serveLoginPage(w, realm, sess, tab, "", "")
 }
 
-// beginAuthSession mints an authentication session for a tab and writes the
-// cookies that carry it.
+// beginAuthSession puts a tab into an authentication session - **the browser's
+// existing one when it has a live one** - and writes only the cookies that
+// request actually moves.
 //
-// The Set-Cookie order is measured: AUTH_SESSION_ID, KC_AUTH_SESSION_HASH, then
-// KC_RESTART. Their attribute spellings differ from one another in ways that
-// look accidental and are the contract - KC_AUTH_SESSION_HASH's value is
-// **quoted** and it alone omits HttpOnly, and it carries Max-Age=60 where the
-// session it names lives for half an hour.
+// Which cookies those are is measured, and it is not "always three":
 //
-// restart is nil on the restart path itself, which measured sets AUTH_SESSION_ID
-// and KC_AUTH_SESSION_HASH and does **not** set a second KC_RESTART: the one the
-// browser already holds is what it restarted from.
-func (h *handler) beginAuthSession(w http.ResponseWriter, realm *model.Realm, tab *authTab,
-	restart *restartRecord) (*authSession, error) {
+//	GET /auth, first request        AUTH_SESSION_ID, KC_AUTH_SESSION_HASH, KC_RESTART
+//	GET /auth, second tab, same jar KC_RESTART alone
+//	the restart 302, live session   none at all
+//	the restart 302, no live session AUTH_SESSION_ID, KC_AUTH_SESSION_HASH
+//
+// So two browser tabs share one root id - measured, and both tabs then log in
+// and report the **same** session_state - and a handler that minted a session
+// per authorization request would move AUTH_SESSION_ID on every one of them and
+// give the two tabs different session states.
+//
+// KC_AUTH_SESSION_HASH's spelling is the odd one of the three: its value is
+// quoted, it alone omits HttpOnly, and it carries Max-Age=60 where the session
+// it names lives for half an hour.
+//
+// restart is nil on the restart path itself: the KC_RESTART the browser already
+// holds is what it restarted from, and measured, no second one is set.
+func (h *handler) beginAuthSession(w http.ResponseWriter, r *http.Request, realm *model.Realm,
+	tab *authTab, restart *restartRecord) (*authSession, error) {
 	tabID, err := randomBase64URL(tabIDBytes)
 	if err != nil {
 		return nil, err
 	}
 	tab.TabID = tabID
-	sess, err := h.auth.newAuthSession(realm.Name, tab)
-	if err != nil {
-		return nil, err
-	}
 	path := realmCookiePath(realm.Name)
-	httpx.SetKeycloakCookie(w, httpx.Cookie{
-		Name: authSessionCookie, Value: encodeAuthSessionID(sess.RootID, sess.Secret),
-		Path: path, Secure: true, HTTPOnly: true, SameSite: "None",
-	})
-	httpx.SetKeycloakCookie(w, httpx.Cookie{
-		Name: authHashCookie, Value: sess.Hash, Quoted: true, Path: path,
-		MaxAge: int(authHashMaxAge.Seconds()), SetMaxAge: true,
-		Secure: true, SameSite: "None",
-	})
+
+	sess, reused := h.liveAuthSession(r, realm)
+	if reused {
+		h.auth.addTab(sess, tab)
+	} else {
+		sess, err = h.auth.newAuthSession(realm.Name, tab)
+		if err != nil {
+			return nil, err
+		}
+		httpx.SetKeycloakCookie(w, httpx.Cookie{
+			Name: authSessionCookie, Value: encodeAuthSessionID(sess.RootID, sess.Secret),
+			Path: path, Secure: true, HTTPOnly: true, SameSite: "None",
+		})
+		httpx.SetKeycloakCookie(w, httpx.Cookie{
+			Name: authHashCookie, Value: sess.Hash, Quoted: true, Path: path,
+			MaxAge: int(authHashMaxAge.Seconds()), SetMaxAge: true,
+			Secure: true, SameSite: "None",
+		})
+	}
 	if restart == nil {
 		return sess, nil
 	}
@@ -341,6 +365,21 @@ func (h *handler) beginAuthSession(w http.ResponseWriter, realm *model.Realm, ta
 		Secure: true, HTTPOnly: true, SameSite: "None",
 	})
 	return sess, nil
+}
+
+// liveAuthSession resolves the authentication session a request's
+// AUTH_SESSION_ID names, when it names one that is still usable.
+//
+// A cookie naming a session that has been **consumed by a completed login** is
+// not live, and that is measured on both sides of the same value: a restart
+// carrying such a cookie mints a new AUTH_SESSION_ID where a restart carrying a
+// live one sets no cookie at all.
+func (h *handler) liveAuthSession(r *http.Request, realm *model.Realm) (*authSession, bool) {
+	cookie, err := r.Cookie(authSessionCookie)
+	if err != nil {
+		return nil, false
+	}
+	return h.auth.sessionByCookie(realm.Name, cookie.Value)
 }
 
 // responseFlow is which of the client's flow flags a response_type asks for.

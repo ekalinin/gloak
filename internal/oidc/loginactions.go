@@ -209,7 +209,7 @@ func (h *handler) writeRestartRedirect(w http.ResponseWriter, r *http.Request, r
 		State:        rec.State,
 		HasState:     rec.HasState,
 	}
-	sess, err := h.beginAuthSession(w, realm, tab, nil)
+	sess, err := h.beginAuthSession(w, r, realm, tab, nil)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
