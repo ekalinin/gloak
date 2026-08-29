@@ -1912,3 +1912,88 @@ It unlocks more than one case. F28's caller-relative rule, F32's container rule,
 the `available` filtering, `admin/users/list-without-view-users`, and F36's
 sweep over which roles open the user and credential routes are all currently
 unrecordable for the same reason.
+
+## F38: a golden cannot mask a per-request value inside an HTML body
+
+Found 2026-08-29 while recording P3's first cut.
+
+`Case.Volatile` addresses slash-separated paths into a JSON document, and
+`Case.VolatileHeaders` masks a whole header. Neither can reach inside an HTML
+body, and one measured response needs exactly that.
+
+`oidc/authorization/response-mode-form-post` answers 200 with an auto-submitting
+form:
+
+```html
+<FORM METHOD="POST" ACTION="http://localhost:9999/callback">
+  <INPUT TYPE="HIDDEN" NAME="code" VALUE="5b316524-...anCYj088k42Tzt2U65m0QCz2.e7e7a673-..." />
+  <INPUT TYPE="HIDDEN" NAME="iss" VALUE="{{issuer}}/realms/master" />
+  <INPUT TYPE="HIDDEN" NAME="state" VALUE="xyz123" />
+  <INPUT TYPE="HIDDEN" NAME="session_state" VALUE="anCYj088k42Tzt2U65m0QCz2" />
+```
+
+The `code` and `session_state` are minted by the case's own request, and the
+`<SCRIPT>` above the form carries a `tab_id` and a `client_data` from the same
+request. A golden holding them churns on every recording and can never match a
+served implementation, so the case is `Pending` with that as its reason rather
+than `Recorded` against a golden nobody could satisfy.
+
+It is not the theme problem the other four HTML cases have. This markup is
+Keycloak's own, not the `keycloak.v2` theme's, so it carries no per-container
+resource hash: the *only* thing standing between it and a golden is the four
+values.
+
+What it needs is a way to say "mask the value of this attribute at this place in
+the HTML". Nothing else in the catalogue wants one today, which is why it is
+filed rather than built - and why the P3 plan says so explicitly rather than
+growing the harness a feature to land one case.
+
+## F39: a success redirect's golden masks its whole Location, so the query key order is unasserted
+
+Found 2026-08-29, same recording.
+
+The five browser cases whose response is the redirect carrying an authorization
+code mask the entire `Location` header, because it holds a `code` and a
+`session_state` the case's own request mints and no fixture can capture by name.
+
+What that costs is measured and specific: the query key order is
+`state`, `session_state`, `iss`, `code`, with `state` dropped rather than
+emptied when the request sent none. The error redirects do not have this
+problem - after `ReplaceIssuer` they hold nothing per-request, so their golden
+pins the error code, the description and the key order exactly - which is what
+makes the loss visible as a loss rather than as the way things are.
+
+A `Case.VolatileQueryParams`, naming the parameters of a header's URL to mask
+rather than the header, would fix it in about twenty-five lines applied on both
+sides of the comparison. It was left out of P3's first cut deliberately: the
+cut's job was the fixture, the five affected cases are `Recorded` rather than
+`Implemented`, and a mechanism added to improve a golden nothing yet compares is
+a guess about what the next cut wants.
+
+## F40: an `available` golden is order-dependent and the shared container pollutes it
+
+Found 2026-08-29 while re-recording for P3.
+
+`make record` shares one container across the whole catalogue, and the verifier
+builds a **fresh** in-process handler per case - `serve` calls
+`newFixture(t, f.State)` every time. For a case that enumerates the realm the
+two are not equivalent, and `Case.PristineRealm` exists for exactly that.
+
+`admin/role-mapper/group-realm-available` is not marked `PristineRealm` and it
+enumerates the realm's roles. Its committed golden holds the five bootstrapped
+realm roles; a fresh recording produced eighteen, the extra thirteen being the
+`gloak-probe-*` roles other fixtures create. The golden was reverted rather than
+committed, because the change has nothing to do with P3 and pinning it would
+make the case pass only for as long as the recording order happens to hold.
+
+`TestPristineRealmGoldensAreNotPolluted` did not catch it: it checks
+`"clientId":"..."` against the clients fixtures create, and these are roles.
+
+Two candidate fixes, and the choice is a measurement rather than a preference.
+Marking the case `PristineRealm` moves it to the front of the recording, which
+works only if nothing before it in the *pristine* group creates a role. Making
+the assertion `Unordered` does not help at all, since the difference is
+membership and not order. The real question - whether Keycloak's `available`
+listing is meant to be read as "the whole realm minus what the holder has", in
+which case any golden of it on a shared container is fragile - has not been
+asked.

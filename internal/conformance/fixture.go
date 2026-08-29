@@ -1,6 +1,7 @@
 package conformance
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/net/html"
 )
 
 // Step is one request run before a case's own, whose response contributes
@@ -31,6 +34,38 @@ type Step struct {
 	// is what a case substitutes into a path and the base URL differs between
 	// the recorder and the verifier. Anything else is captured whole.
 	CaptureHeader map[string]string
+	// CaptureForm reads values out of the first HTML form in the step's
+	// response. It maps a variable name to what to take: "action" for the
+	// form's action URL, or "input:<name>" for one input's value.
+	//
+	// The login page is why it exists. Its form's action carries five query
+	// parameters - session_code, execution, client_id, tab_id and client_data -
+	// every one of them minted per request, so the credential POST cannot be
+	// written as a literal. See the "The login page, and the five parameters
+	// its form carries" section of
+	// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+	//
+	// "action" is captured **relative to the base URL**, so it drops straight
+	// into a following step's Path. buildRequest appends Query only when Query
+	// is non-empty, so an action carrying its own query string works there
+	// unchanged.
+	//
+	// "input:" is supported although the measured login needs none of it: the
+	// form's three inputs are username, password and a value-less hidden
+	// credentialId. It is here so the next flow with a valued hidden field does
+	// not need a second mechanism.
+	CaptureForm map[string]string
+	// CaptureQuery maps a variable name to a query parameter of the Location
+	// header. CaptureHeader cannot do this: it yields a URL's last path
+	// segment, which is what a 201's Location carries and is useless for the
+	// authorization redirect, whose code, state, session_state and iss are all
+	// in the query.
+	//
+	// The fragment is deliberately not read. response_mode=fragment puts the
+	// same parameters there, but the case that measures it records the
+	// redirect rather than capturing out of it, and supporting what no case
+	// uses is a guess about the next cut.
+	CaptureQuery map[string]string
 	// ExpectStatus is the set of status codes this step accepts. Empty means
 	// **any 2xx**, which is what almost every step wants.
 	//
@@ -280,6 +315,27 @@ var Fixtures = map[string]Fixture{
 		"gloak-confidential-sa",
 		`{"clientId":"gloak-confidential-sa","enabled":true,"serviceAccountsEnabled":true}`,
 	),
+
+	// The browser fixtures. Every one registers its own client, because the
+	// six bootstrapped ones cannot serve these cases: security-admin-console
+	// pins pkce.code.challenge.method to S256 and registers a host-relative
+	// redirect pattern, admin-cli has the standard flow off, account and
+	// account-console redirect only inside /realms/master/account/*, and
+	// broker and master-realm are confidential. See browserRedirectURI.
+	//
+	// One fixture per case, and here that is not only the usual isolation rule:
+	// a failed code exchange spends the code, so two cases sharing one login
+	// would measure the second one's replay. See browserCodeFixture.
+	"browser-client":        browserClientFixture("gloak-probe-browser", ""),
+	"browser-login":         browserFormFixture("gloak-probe-browser", "", nil),
+	"browser-login-s256":    browserFormFixture("gloak-probe-browser", "", pkceS256Query),
+	"browser-login-plain":   browserFormFixture("gloak-probe-browser", "", pkcePlainQuery),
+	"browser-login-frag":    browserFormFixture("gloak-probe-browser", "", map[string]string{"response_mode": "fragment"}),
+	"browser-login-form":    browserFormFixture("gloak-probe-browser", "", map[string]string{"response_mode": "form_post"}),
+	"browser-code":          browserCodeFixture("gloak-probe-browser", "", nil),
+	"browser-code-mismatch": browserCodeFixture("gloak-probe-browser", "", pkceS256Query),
+	"browser-code-spent":    browserSpentCodeFixture("gloak-probe-browser", nil, nil),
+	"browser-logged-in":     browserLogoutFixture(),
 
 	// access.token.lifespan is measured: "1" makes expires_in 1 and the token
 	// verifiably expired a second later. The delay is what makes the case
@@ -1262,6 +1318,215 @@ func confidentialClientFixture(clientID, body string, extra ...Step) Fixture {
 	return Fixture{State: "bootstrap", Steps: append(steps, extra...)}
 }
 
+// browserRedirectURI is what the browser fixtures register as their client's
+// only redirect pattern, and what every P3 case sends as redirect_uri.
+//
+// It never has to resolve. TestRecordGoldens sets CheckRedirect to
+// ErrUseLastResponse and the verifier reads a ResponseRecorder, so nothing on
+// either side ever follows it. What matters is only that Keycloak accepts it,
+// which it does because the fixture registered it.
+//
+// Registering one is not a convenience. security-admin-console, which every
+// oidc/authorization case named until now, carries the host-relative pattern
+// "/admin/master/console/*", resolved against whatever host and port the
+// request arrived on - so no absolute literal in a Case can match a container
+// whose port testcontainers assigns at run time. Four cases carried a comment
+// saying so and stayed unrecordable. See the "The bootstrapped clients cannot
+// serve most of the cases that name them" section of
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+const browserRedirectURI = "http://localhost:9999/callback"
+
+// pkceVerifier and pkceChallengeS256 are RFC 7636 appendix B's pair, which is
+// where the challenge already in this catalogue came from. Keeping the
+// published pair means the relationship between the two literals is checkable
+// against the RFC rather than against a comment.
+const (
+	pkceVerifier      = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	pkceChallengeS256 = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+	// plain means challenge and verifier are the same string. It is 43
+	// characters because that is RFC 7636's minimum; the literal this replaced
+	// was 41.
+	pkceVerifierPlain = "gloak-probe-plain-code-verifier-0123456789A"
+)
+
+// logoutRedirectAttribute registers a post-logout redirect. It is a separate
+// client attribute and is **not** derived from redirectUris: a client whose
+// redirect_uri validates at the authorization endpoint is still refused at the
+// logout endpoint until this is set, measured 2026-08-29.
+const logoutRedirectAttribute = `,"attributes":{"post.logout.redirect.uris":"` + browserRedirectURI + `"}`
+
+var (
+	pkceS256Query = map[string]string{
+		"code_challenge":        pkceChallengeS256,
+		"code_challenge_method": "S256",
+	}
+	pkcePlainQuery = map[string]string{
+		"code_challenge":        pkceVerifierPlain,
+		"code_challenge_method": "plain",
+	}
+)
+
+// browserClientBody is a public client with the standard flow on and
+// browserRedirectURI registered. attributes is spliced in as given, so a
+// caller can pin a PKCE method.
+func browserClientBody(clientID, attributes string) string {
+	return `{"clientId":"` + clientID + `","enabled":true,"publicClient":true,` +
+		`"standardFlowEnabled":true,"redirectUris":["` + browserRedirectURI + `"]` +
+		attributes + `}`
+}
+
+// browserClientSteps creates the client a browser case logs in at.
+//
+// The create is idempotent because the recorder shares one container across
+// the whole catalogue and a fixture named by more than one case runs its
+// create once per case. Nothing is captured from it, so the repeat's 409
+// passes harmlessly.
+func browserClientSteps(clientID, attributes string) []Step {
+	return []Step{
+		adminTokenStep(),
+		{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(browserClientBody(clientID, attributes)),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+	}
+}
+
+// browserClientFixture is the client and nothing else, for a case whose own
+// request is the one to GET /auth.
+func browserClientFixture(clientID, attributes string) Fixture {
+	return Fixture{State: "bootstrap", Steps: browserClientSteps(clientID, attributes)}
+}
+
+// authorizeStep opens the authorization endpoint and captures the login form's
+// action URL, which is the whole reason this cut exists: the action carries
+// session_code, execution, client_id, tab_id and client_data, all minted per
+// request, so the credential POST cannot be a literal.
+//
+// The step insists on a 200. A rejected authorization request answers a 302
+// with no body, and CaptureForm would then fail on the missing form - but one
+// request later, with a message about HTML rather than about the rejection.
+// Saying 200 here puts the failure where it happened.
+func authorizeStep(clientID string, extra map[string]string) Step {
+	query := map[string]string{
+		"response_type": "code",
+		"client_id":     clientID,
+		"redirect_uri":  browserRedirectURI,
+		"scope":         "openid",
+		"state":         "xyz123",
+	}
+	for k, v := range extra {
+		query[k] = v
+	}
+	return Step{
+		Request:      Request{Method: http.MethodGet, Path: "/realms/master/protocol/openid-connect/auth", Query: query},
+		ExpectStatus: []int{http.StatusOK},
+		CaptureForm:  map[string]string{"login_action": "action"},
+	}
+}
+
+// loginStep posts the credentials to the captured action.
+//
+// The three form fields are the three the measured page carries and no more:
+// username, password, and a hidden credentialId with no value. Everything
+// volatile is in the action's query, which is why nothing here is captured
+// from the page's inputs.
+func loginStep() Step {
+	return Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "{{login_action}}",
+			Form: map[string]string{
+				"username":     "admin",
+				"password":     "admin",
+				"credentialId": "",
+			},
+		},
+		// The successful login is a redirect, not a 2xx.
+		ExpectStatus: []int{http.StatusFound},
+		CaptureQuery: map[string]string{
+			"code":          "code",
+			"session_state": "session_state",
+		},
+	}
+}
+
+// browserFormFixture stops at the login page, so the case's own request is the
+// credential POST and its own response is the redirect carrying the code.
+func browserFormFixture(clientID, attributes string, authQuery map[string]string) Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: append(browserClientSteps(clientID, attributes), authorizeStep(clientID, authQuery)),
+	}
+}
+
+// browserCodeFixture runs the whole login, so the case's own request is the
+// code exchange at the token endpoint.
+//
+// Each case that redeems a code needs its own fixture, and that is not the
+// uniqueness rule clientFixture follows for its own reason - it is measured. A
+// failed exchange spends the code: a wrong code_verifier answers "PKCE
+// verification failed: Code mismatch" and the immediate retry answers "Code
+// not valid". Two cases sharing one login would measure the second one's
+// replay.
+func browserCodeFixture(clientID, attributes string, authQuery map[string]string) Fixture {
+	steps := append(browserClientSteps(clientID, attributes), authorizeStep(clientID, authQuery))
+	return Fixture{State: "bootstrap", Steps: append(steps, loginStep())}
+}
+
+// browserSpentCodeFixture is browserCodeFixture with the code already redeemed
+// once, so the case's own request is the replay.
+func browserSpentCodeFixture(clientID string, authQuery, exchange map[string]string) Fixture {
+	f := browserCodeFixture(clientID, "", authQuery)
+	form := map[string]string{
+		"grant_type":   "authorization_code",
+		"client_id":    clientID,
+		"redirect_uri": browserRedirectURI,
+		"code":         "{{code}}",
+	}
+	for k, v := range exchange {
+		form[k] = v
+	}
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form:   form,
+		},
+	})
+	return f
+}
+
+// browserLogoutFixture logs a user in and exchanges the code, so the case's
+// own request is the logout carrying a real id_token_hint.
+//
+// Its client is its own, because it needs post.logout.redirect.uris and
+// nothing else in the catalogue does. Sharing gloak-probe-browser would mean
+// every browser case's client silently gained a logout redirect, and a case
+// asserting the refusal of one would then measure the wrong thing.
+func browserLogoutFixture() Fixture {
+	const clientID = "gloak-probe-browser-logout"
+	steps := append(browserClientSteps(clientID, logoutRedirectAttribute),
+		authorizeStep(clientID, nil), loginStep())
+	return Fixture{State: "bootstrap", Steps: append(steps, Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type":   "authorization_code",
+				"client_id":    clientID,
+				"redirect_uri": browserRedirectURI,
+				"code":         "{{code}}",
+			},
+		},
+		Capture: map[string]string{"id_token": "id_token"},
+	})}
+}
+
 // expiredTokenFixture obtains an access token that is already expired when the
 // case asks about it.
 //
@@ -1472,9 +1737,99 @@ func loggedOutUserFixture() Fixture {
 // through httptest. Both return the response with its body still readable.
 type Do func(*http.Request) (*http.Response, error)
 
-// RunFixture executes a fixture's steps in order against do, threading the
-// values each step captures into the requests that follow, and returns
-// everything captured.
+// cookies is what a fixture's steps share so that a login is a session rather
+// than a sequence of strangers. Name to value, resent on every step.
+//
+// It lives here, inside RunFixture, and not on the recorder's http.Client.
+// The recorder would get a jar free from http.Client.Jar and the verifier -
+// which calls ServeHTTP into an httptest.ResponseRecorder - would get nothing,
+// so the two sides would obtain their responses in different ways. That is the
+// one thing this suite cannot afford; see the Fixtures doc comment.
+//
+// It is deliberately **not** a cookie jar's semantics. net/http/cookiejar
+// needs a *url.URL per call and a public-suffix list to behave, and the
+// fixtures address one host and no case tests scoping - so Path, Domain,
+// Secure and Max-Age are all ignored. A cookie cleared with Max-Age=0 and an
+// empty value is stored and resent as an empty value, which is what a browser
+// that has not yet expired it would send, and what Keycloak accepts: the
+// measured login clears KC_RESTART exactly that way.
+type cookies map[string]string
+
+// store folds a response's Set-Cookie headers in, keeping the last value for a
+// name a response repeats.
+func (c cookies) store(h http.Header) {
+	for _, raw := range h.Values("Set-Cookie") {
+		name, value, ok := strings.Cut(raw, "=")
+		if !ok {
+			continue
+		}
+		// Only the value, up to the first attribute separator. Keycloak spells
+		// its attributes with no space after the semicolon, so cutting on ";"
+		// rather than "; " is what reads AUTH_SESSION_ID=x;Version=1 correctly.
+		value, _, _ = strings.Cut(value, ";")
+		c[strings.TrimSpace(name)] = value
+	}
+}
+
+// send puts every stored cookie on a request, in name order so that a golden
+// recorded from one run is reproducible by the next.
+//
+// It writes the Cookie header itself rather than calling
+// http.Request.AddCookie. AddCookie sanitises the value, and sanitising drops
+// the double quotes Keycloak wraps KC_AUTH_SESSION_HASH's value in - so the
+// cookie sent back would not be the cookie received. This project's rule is
+// byte for byte wherever a client can observe it, and a request header is
+// observable.
+func (c cookies) send(r *http.Request) {
+	if len(c) == 0 {
+		return
+	}
+	names := make([]string, 0, len(c))
+	for name := range c {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	pairs := make([]string, 0, len(names))
+	for _, name := range names {
+		pairs = append(pairs, name+"="+c[name])
+	}
+	r.Header.Set("Cookie", strings.Join(pairs, "; "))
+}
+
+// Session is what a fixture leaves behind: the values its steps captured, and
+// the cookies they collected.
+//
+// The cookies are here rather than staying inside RunFixture because the
+// case's own request is not one of the fixture's steps - it is built and sent
+// by the recorder and by the verifier themselves - and a credential POST that
+// arrives without the authentication session the login page opened is refused
+// with a 400 theme page. That was measured, by recording one.
+type Session struct {
+	Vars    map[string]string
+	Cookies map[string]string
+}
+
+// Apply puts the session's cookies on a request. It is what a fixture's last
+// step and the case's own request have in common.
+func (s *Session) Apply(r *http.Request) {
+	if s == nil {
+		return
+	}
+	cookies(s.Cookies).send(r)
+}
+
+// RunFixture is Run for the callers that need only the captured values.
+func RunFixture(f Fixture, base string, do Do) (map[string]string, error) {
+	s, err := Run(f, base, do)
+	if err != nil {
+		return nil, err
+	}
+	return s.Vars, nil
+}
+
+// Run executes a fixture's steps in order against do, threading the values
+// each step captures into the requests that follow, and returns everything
+// captured along with the cookies collected on the way.
 //
 // A step whose response lacks a captured path is an error, not an empty
 // string. Substituting an empty token would record whatever Keycloak answers
@@ -1483,17 +1838,20 @@ type Do func(*http.Request) (*http.Response, error)
 //
 // A step whose **status** is not the one it expects is an error too, and that
 // is checked before anything is captured: see Step.ExpectStatus and F34.
-func RunFixture(f Fixture, base string, do Do) (map[string]string, error) {
+func Run(f Fixture, base string, do Do) (*Session, error) {
 	vars := map[string]string{}
+	jar := cookies{}
 	for i, s := range f.Steps {
 		req, err := buildRequest(base, Expand(s.Request, vars))
 		if err != nil {
 			return nil, fmt.Errorf("fixture step %d: build request: %w", i, err)
 		}
+		jar.send(req)
 		resp, err := do(req)
 		if err != nil {
 			return nil, fmt.Errorf("fixture step %d: %w", i, err)
 		}
+		jar.store(resp.Header)
 		body, err := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if err != nil {
@@ -1519,11 +1877,27 @@ func RunFixture(f Fixture, base string, do Do) (map[string]string, error) {
 			}
 			vars[name] = value
 		}
+		for name, what := range s.CaptureForm {
+			value, err := captureFromForm(body, what, base)
+			if err != nil {
+				return nil, fmt.Errorf("fixture step %d: capture %q: %w (status %d)",
+					i, name, err, resp.StatusCode)
+			}
+			vars[name] = value
+		}
+		for name, param := range s.CaptureQuery {
+			value, err := captureFromQuery(resp.Header, param)
+			if err != nil {
+				return nil, fmt.Errorf("fixture step %d: capture %q: %w (status %d)",
+					i, name, err, resp.StatusCode)
+			}
+			vars[name] = value
+		}
 	}
 	if f.Delay > 0 {
 		time.Sleep(f.Delay)
 	}
-	return vars, nil
+	return &Session{Vars: vars, Cookies: jar}, nil
 }
 
 // acceptedStatus applies a step's ExpectStatus: the listed codes, or any 2xx
@@ -1624,6 +1998,120 @@ func captureFromHeader(h http.Header, name string) (string, error) {
 		}
 	}
 	return value, nil
+}
+
+// captureFromForm pulls one value out of the first HTML form in a body. what
+// is "action" or "input:<name>"; see Step.CaptureForm.
+//
+// It tokenises rather than matching a regular expression. A regular expression
+// over HTML is the classic mistake, and the login form's action is exactly the
+// shape that breaks one: it holds five query parameters whose values are
+// base64 and can contain any of the characters a naive pattern would use as a
+// delimiter, and the whole attribute arrives HTML-escaped, with &amp; between
+// the parameters.
+func captureFromForm(body []byte, what, base string) (string, error) {
+	action, inputs, err := parseFirstForm(body)
+	if err != nil {
+		return "", err
+	}
+	if what == "action" {
+		// Relative to base, so it can be a following step's Path. The recorder
+		// and the verifier answer on different hosts, so an absolute action
+		// would send the next step to the wrong server.
+		return strings.TrimPrefix(action, base), nil
+	}
+	name, ok := strings.CutPrefix(what, "input:")
+	if !ok {
+		return "", fmt.Errorf("%q is not \"action\" or \"input:<name>\"", what)
+	}
+	value, ok := inputs[name]
+	if !ok {
+		return "", fmt.Errorf("the form has no input named %q", name)
+	}
+	return value, nil
+}
+
+// parseFirstForm returns the first form's action and its inputs by name.
+//
+// An absent form is an error rather than an empty action, for the reason
+// captureFrom and captureFromHeader already give: substituting nothing would
+// send the next step to the base URL and record whatever that answers as
+// though somebody had meant to ask for it. On this endpoint the empty action
+// is not hypothetical - a rejected authorization request answers a 302 with no
+// body at all, and that is the failure this turns into a message.
+func parseFirstForm(body []byte) (string, map[string]string, error) {
+	z := html.NewTokenizer(bytes.NewReader(body))
+	inForm := false
+	action := ""
+	inputs := map[string]string{}
+	for {
+		switch z.Next() {
+		case html.ErrorToken:
+			if !inForm {
+				return "", nil, fmt.Errorf("the response has no <form> (%d bytes)", len(body))
+			}
+			// A form left unclosed at end of input is still a form. Returning
+			// what was collected beats failing on a page's stray markup.
+			return action, inputs, nil
+		case html.StartTagToken, html.SelfClosingTagToken:
+			name, _ := z.TagName()
+			switch string(name) {
+			case "form":
+				if inForm {
+					continue // a nested form; the first one is the one asked for
+				}
+				inForm = true
+				action = attr(z, "action")
+			case "input":
+				if inForm {
+					if n := attr(z, "name"); n != "" {
+						inputs[n] = attr(z, "value")
+					}
+				}
+			}
+		case html.EndTagToken:
+			if name, _ := z.TagName(); string(name) == "form" && inForm {
+				return action, inputs, nil
+			}
+		}
+	}
+}
+
+// attr reads one attribute off the tokenizer's current tag. The tokenizer
+// unescapes attribute values, so the login form's action comes back with real
+// ampersands between its five query parameters rather than &amp;.
+func attr(z *html.Tokenizer, want string) string {
+	for {
+		key, value, more := z.TagAttr()
+		if string(key) == want {
+			return string(value)
+		}
+		if !more {
+			return ""
+		}
+	}
+}
+
+// captureFromQuery pulls one query parameter out of the Location header.
+//
+// An absent header or an absent parameter is an error and not an empty string,
+// the same rule the other captures follow. A case whose code came back empty
+// would exchange nothing at the token endpoint and record the refusal as the
+// authorization code grant's contract.
+func captureFromQuery(h http.Header, param string) (string, error) {
+	location := h.Get("Location")
+	if location == "" {
+		return "", fmt.Errorf("response has no Location header")
+	}
+	u, err := url.Parse(location)
+	if err != nil {
+		return "", fmt.Errorf("Location %q is not a URL: %w", location, err)
+	}
+	values, ok := u.Query()[param]
+	if !ok || len(values) == 0 {
+		return "", fmt.Errorf("Location %q has no %q parameter", location, param)
+	}
+	return values[0], nil
 }
 
 // Expand substitutes {{name}} references in a request's path, query, headers,

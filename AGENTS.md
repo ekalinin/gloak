@@ -114,10 +114,15 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **Revocation answers an unknown token with 200 and an error body**, not 400:
   `{"error":"invalid_token","error_description":"Invalid token"}` with a 200 status
   line. The client asked for a token to stop working and it does not work.
-- **The revocation success is the only response measured so far carrying
-  `Content-Security-Policy`**, and it carries no `Content-Type` at all - the body
-  is empty. Revocation's own error responses carry neither. That is why the header
-  is set at one call site rather than alongside the five security headers.
+- **The revocation success carries `Content-Security-Policy` and no
+  `Content-Type` at all** - the body is empty. Revocation's own error responses
+  carry neither. That is why the header is set at one call site rather than
+  alongside the five security headers. **This said "the only response measured
+  so far" until 2026-08-29, and P3's sweep falsified it**: six of the seven
+  responses in the browser flow carry the header, because it is one of the
+  realm's `browserSecurityHeaders` and any response Keycloak produces through
+  the page path gets it. Revocation is the odd one on the *protocol* side, not
+  in the server.
 - **A public client may revoke but may not introspect.** `admin-cli` revoking
   succeeds; `admin-cli` introspecting is refused with 403
   `{"error":"invalid_request","error_description":"Client not allowed."}`.
@@ -344,6 +349,50 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   where a coarse gate runs first; it is `/roles-by-id/{id}`'s. Groups are
   otherwise authorised out of the users family - `manage-realm` is 403 on all of
   them - and `query-groups` opens the listing and the count and nothing else.
+
+- **The authorization endpoint has two error families and the redirect URI
+  decides which.** If the `client_id` resolves and the `redirect_uri` matches
+  its pattern, every later rejection is a **302** to that URI carrying `error`,
+  `error_description`, `state` and `iss`, with no `Content-Type` and an empty
+  body. If either fails, it is a **400** serving the theme's error page,
+  `text/html;charset=utf-8`, with **no `Cache-Control` at all**. So the order -
+  realm, client, redirect URI, then everything else - is not a preference: get
+  it wrong and the status, the family and the `Content-Type` are all wrong.
+- **`GET /auth`'s redirect back to the client is the one response in the
+  browser flow that omits `X-Frame-Options`,** and it omits
+  `Content-Security-Policy` with it. It is not "errors omit them":
+  `POST /login-actions/authenticate`'s *error* redirect, to the same URI with
+  the same status, carries all six. It is not "302s omit them", for the same
+  reason. It is not "failures omit them": `prompt=none` with a live session
+  redirects with a real code and omits them too. RP-initiated logout's redirect
+  behaves the same way, so the rule is per endpoint.
+- **`response_mode` moves the parameters and changes the status.** `query` and
+  absent use the query, `fragment` the fragment, and `form_post` answers **200**
+  with an auto-submitting form whose `Content-Type` is `text/html` with **no
+  charset** - where the login page's is `text/html;charset=utf-8`. The form
+  emits `code, iss, state, session_state`; the query redirect emits
+  `state, session_state, iss, code`. One response, two orderings of four
+  parameters, decided by a request parameter.
+- **The authorization code's third part is the client's own internal UUID**,
+  the `id` the Admin API addresses it by - not a client session id. It is
+  identical on every login by any user at that client. The second part is the
+  `session_state`. The first is laid out like a UUID and is not one.
+- **A failed code exchange spends the code.** A wrong `code_verifier` answers
+  `PKCE verification failed: Code mismatch` and the immediate retry answers
+  `Code not valid`. So "single use" means single *attempt*, and two conformance
+  cases cannot share one login.
+- **A missing `redirect_uri` at the token endpoint answers `Incorrect
+  redirect_uri`,** where a missing `code` answers `Missing parameter: code`.
+  It is compared against what the authorization request stored, and absent
+  compares unequal rather than being caught by a presence check.
+- **Logout without an `id_token_hint` does not redirect.** It serves the theme's
+  `Logging out` confirmation page, 200, whatever the `post_logout_redirect_uri`
+  is. Its successful redirect carries `state` and nothing else - no `iss`,
+  where `/auth`'s redirect carries one - and `Cache-Control: no-cache`, where
+  `/auth` sends `no-store, must-revalidate, max-age=0`.
+- **`post.logout.redirect.uris` is a separate client attribute.** A client whose
+  `redirect_uri` validates at the authorization endpoint is still refused at the
+  logout endpoint until it is set.
 
 ## Boundaries
 

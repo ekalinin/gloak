@@ -1,0 +1,13 @@
+# GET /realms/master/protocol/openid-connect/logout
+HTTP/1.1 302 Found
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Location: http://localhost:9999/callback?state=xyz123
+Referrer-Policy: no-referrer
+Set-Cookie: {{volatile}}
+Set-Cookie: {{volatile}}
+Set-Cookie: {{volatile}}
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Robots-Tag: none
+

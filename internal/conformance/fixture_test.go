@@ -8,8 +8,278 @@ import (
 	"testing"
 )
 
-// The CaptureHeader tests below live at the top of this file because they are
-// the newest thing in it; the rest is P1's body-capture coverage.
+// The cookie tests are the newest thing in this file; the CaptureHeader block
+// under them is P2's, and the rest is P1's body-capture coverage.
+
+// twoStepFixture is two requests against one recording handler, which is the
+// smallest shape that can show a value crossing from one step to the next.
+func twoStepFixture() Fixture {
+	return Fixture{State: "bootstrap", Steps: []Step{
+		{Request: Request{Method: http.MethodGet, Path: "/first"}},
+		{Request: Request{Method: http.MethodGet, Path: "/second"}},
+	}}
+}
+
+// recordingDo answers every request from h and keeps the requests it saw.
+func recordingDo(h http.HandlerFunc) (Do, *[]*http.Request) {
+	var seen []*http.Request
+	do := func(r *http.Request) (*http.Response, error) {
+		seen = append(seen, r)
+		w := httptest.NewRecorder()
+		h(w, r)
+		return w.Result(), nil
+	}
+	return do, &seen
+}
+
+func TestRunFixtureCarriesACookieToTheNextStep(t *testing.T) {
+	// A login is a session. Without this every step is an independent request
+	// and the credential POST arrives with no authentication session at all.
+	do, seen := recordingDo(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/first" {
+			w.Header().Add("Set-Cookie", "AUTH_SESSION_ID=abc;Version=1;Path=/realms/master/;Secure;HttpOnly")
+		}
+		w.WriteHeader(200)
+	})
+
+	if _, err := RunFixture(twoStepFixture(), "http://localhost:8080", do); err != nil {
+		t.Fatalf("RunFixture: %v", err)
+	}
+
+	if len(*seen) != 2 {
+		t.Fatalf("want 2 requests, got %d", len(*seen))
+	}
+	if got := (*seen)[0].Header.Get("Cookie"); got != "" {
+		t.Fatalf("the first step sent a cookie it could not have had: %q", got)
+	}
+	// The value only, with every attribute dropped: Version, Path, Secure and
+	// HttpOnly are instructions to a browser, not part of what one sends back.
+	if got := (*seen)[1].Header.Get("Cookie"); got != "AUTH_SESSION_ID=abc" {
+		t.Fatalf("want AUTH_SESSION_ID=abc, got %q", got)
+	}
+}
+
+func TestRunFixtureSendsEveryCookieInNameOrder(t *testing.T) {
+	// A recording that reordered its Cookie header between runs would make any
+	// golden downstream of a login churn for no reason.
+	do, seen := recordingDo(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/first" {
+			w.Header().Add("Set-Cookie", "KC_RESTART=jwe;Path=/realms/master/")
+			w.Header().Add("Set-Cookie", "AUTH_SESSION_ID=abc;Path=/realms/master/")
+		}
+		w.WriteHeader(200)
+	})
+
+	if _, err := RunFixture(twoStepFixture(), "http://localhost:8080", do); err != nil {
+		t.Fatalf("RunFixture: %v", err)
+	}
+
+	want := "AUTH_SESSION_ID=abc; KC_RESTART=jwe"
+	if got := (*seen)[1].Header.Get("Cookie"); got != want {
+		t.Fatalf("want %q, got %q", want, got)
+	}
+}
+
+func TestRunFixtureKeepsTheQuotesKeycloakSends(t *testing.T) {
+	// KC_AUTH_SESSION_HASH's value arrives wrapped in double quotes.
+	// http.Request.AddCookie sanitises them away, so the cookie sent back would
+	// not be the cookie received; send writes the header itself for this.
+	do, seen := recordingDo(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/first" {
+			w.Header().Add("Set-Cookie", `KC_AUTH_SESSION_HASH="wc8IgcQt+LWFo/sO6";Version=1;Max-Age=60`)
+		}
+		w.WriteHeader(200)
+	})
+
+	if _, err := RunFixture(twoStepFixture(), "http://localhost:8080", do); err != nil {
+		t.Fatalf("RunFixture: %v", err)
+	}
+
+	want := `KC_AUTH_SESSION_HASH="wc8IgcQt+LWFo/sO6"`
+	if got := (*seen)[1].Header.Get("Cookie"); got != want {
+		t.Fatalf("want %q, got %q", want, got)
+	}
+}
+
+func TestRunFixtureResendsAClearedCookie(t *testing.T) {
+	// The measured login clears KC_RESTART with Max-Age=0 and an empty value.
+	// This jar has no expiry semantics on purpose, so the cookie stays as an
+	// empty value - which is what a browser that has not yet expired it sends.
+	f := Fixture{State: "bootstrap", Steps: []Step{
+		{Request: Request{Method: http.MethodGet, Path: "/first"}},
+		{Request: Request{Method: http.MethodGet, Path: "/second"}},
+		{Request: Request{Method: http.MethodGet, Path: "/third"}},
+	}}
+	do, seen := recordingDo(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/first":
+			w.Header().Add("Set-Cookie", "KC_RESTART=jwe;Path=/realms/master/")
+		case "/second":
+			w.Header().Add("Set-Cookie", "KC_RESTART=;Version=1;Path=/realms/master/;Max-Age=0")
+		}
+		w.WriteHeader(200)
+	})
+
+	if _, err := RunFixture(f, "http://localhost:8080", do); err != nil {
+		t.Fatalf("RunFixture: %v", err)
+	}
+
+	if got := (*seen)[1].Header.Get("Cookie"); got != "KC_RESTART=jwe" {
+		t.Fatalf("step 2 want KC_RESTART=jwe, got %q", got)
+	}
+	if got := (*seen)[2].Header.Get("Cookie"); got != "KC_RESTART=" {
+		t.Fatalf("step 3 want the cleared value, got %q", got)
+	}
+}
+
+// loginPage is the shape of the measured 26.7.1 login form, cut down to the
+// markup that matters: one form whose action carries five query parameters,
+// HTML-escaped, and the three inputs the page actually has. Recorded
+// 2026-08-29; see the "The login page, and the five parameters its form
+// carries" section of the observed spec.
+const loginPage = `<!DOCTYPE html><html><body>
+<form id="kc-form-login" class="pf-v5-c-form" action="http://localhost:8080/realms/master/login-actions/authenticate?session_code=EoGc7S7XZ432-zJ7UJniMdTLmhQQCSvhHgEj8IL0h58&amp;execution=7b471cd2-b236-4c9f-9e06-dd40365b16eb&amp;client_id=gloak-probe-browser&amp;tab_id=PKFZNyff0dc&amp;client_data=eyJydSI6Imh0dHA6Ly9sb2NhbGhvc3Q6OTk5OS9jYWxsYmFjayJ9" method="post" novalidate="novalidate">
+  <input id="username" name="username" value="" type="text" autocomplete="username" autofocus aria-invalid=""/>
+  <input id="password" name="password" value="" type="password" autocomplete="current-password" aria-invalid=""/>
+  <input type="hidden" id="id-hidden-input" name="credentialId" />
+</form>
+</body></html>`
+
+func TestCaptureFromFormTakesTheActionRelativeToBase(t *testing.T) {
+	// Absolute, it would send the next step at the recorder's container when
+	// the verifier runs it. The five query parameters have to survive whole:
+	// every one is minted per request and the POST is refused without them.
+	got, err := captureFromForm([]byte(loginPage), "action", "http://localhost:8080")
+
+	if err != nil {
+		t.Fatalf("captureFromForm: %v", err)
+	}
+	want := "/realms/master/login-actions/authenticate" +
+		"?session_code=EoGc7S7XZ432-zJ7UJniMdTLmhQQCSvhHgEj8IL0h58" +
+		"&execution=7b471cd2-b236-4c9f-9e06-dd40365b16eb" +
+		"&client_id=gloak-probe-browser" +
+		"&tab_id=PKFZNyff0dc" +
+		"&client_data=eyJydSI6Imh0dHA6Ly9sb2NhbGhvc3Q6OTk5OS9jYWxsYmFjayJ9"
+	if got != want {
+		t.Fatalf("want %q, got %q", want, got)
+	}
+}
+
+func TestCaptureFromFormUnescapesTheAction(t *testing.T) {
+	// The attribute arrives with &amp; between its parameters. Left escaped,
+	// the whole query would be one parameter named session_code.
+	got, err := captureFromForm([]byte(loginPage), "action", "http://localhost:8080")
+
+	if err != nil {
+		t.Fatalf("captureFromForm: %v", err)
+	}
+	if strings.Contains(got, "&amp;") {
+		t.Fatalf("the action is still HTML-escaped: %q", got)
+	}
+}
+
+func TestCaptureFromFormReadsAnInput(t *testing.T) {
+	page := `<form action="/go"><input name="csrf" value="tok-1"/></form>`
+
+	got, err := captureFromForm([]byte(page), "input:csrf", "")
+
+	if err != nil {
+		t.Fatalf("captureFromForm: %v", err)
+	}
+	if got != "tok-1" {
+		t.Fatalf("want tok-1, got %q", got)
+	}
+}
+
+func TestCaptureFromFormTakesTheFirstOfTwoSiblings(t *testing.T) {
+	// The login page carries other forms in some themes, and the credential
+	// form is the one served first. Taking the last would post the wrong one.
+	//
+	// This case is guarded by the early return on </form>, not by the nested
+	// check the next test covers. Both are needed and neither implies the
+	// other: mutating away the nested guard leaves this test passing.
+	page := `<form action="/first"></form><form action="/second"></form>`
+
+	got, err := captureFromForm([]byte(page), "action", "")
+
+	if err != nil {
+		t.Fatalf("captureFromForm: %v", err)
+	}
+	if got != "/first" {
+		t.Fatalf("want /first, got %q", got)
+	}
+}
+
+func TestCaptureFromFormIgnoresAFormNestedInTheFirst(t *testing.T) {
+	// A nested form never reaches the early return, so without the guard the
+	// inner action overwrites the outer one and the credentials go to the
+	// wrong URL. Nested forms are invalid HTML and a tokenizer reports them
+	// anyway, which is the whole risk of tokenising rather than parsing.
+	page := `<form action="/outer"><form action="/inner"></form></form>`
+
+	got, err := captureFromForm([]byte(page), "action", "")
+
+	if err != nil {
+		t.Fatalf("captureFromForm: %v", err)
+	}
+	if got != "/outer" {
+		t.Fatalf("want /outer, got %q", got)
+	}
+}
+
+func TestCaptureFromFormFailsWhenThereIsNoForm(t *testing.T) {
+	// A rejected authorization request answers a 302 with no body at all. An
+	// empty action would send the next step at the base URL and record
+	// whatever that answers as the contract.
+	if _, err := captureFromForm([]byte(""), "action", ""); err == nil {
+		t.Fatal("a body with no form reported success")
+	}
+}
+
+func TestCaptureFromFormFailsOnAnAbsentInput(t *testing.T) {
+	page := `<form action="/go"><input name="csrf" value="tok-1"/></form>`
+
+	if _, err := captureFromForm([]byte(page), "input:nosuchfield", ""); err == nil {
+		t.Fatal("capturing an input the form does not have reported success")
+	}
+}
+
+func TestCaptureFromQueryReadsTheCodeOutOfALocation(t *testing.T) {
+	// captureFromHeader yields a URL's last path segment, so on this Location
+	// it would return "callback".
+	h := http.Header{"Location": {"http://localhost:9999/callback?state=xyz123" +
+		"&session_state=YXHeH_ZlGX3waefvdJu7mjD3" +
+		"&iss=http%3A%2F%2Flocalhost%3A8080%2Frealms%2Fmaster" +
+		"&code=9a543c31-84f1-5b93-dc94-0f03f2486340.YXHeH_ZlGX3waefvdJu7mjD3.f15a3b32-d263-4590-a18a-e1578f3144b3"}}
+
+	got, err := captureFromQuery(h, "code")
+
+	if err != nil {
+		t.Fatalf("captureFromQuery: %v", err)
+	}
+	want := "9a543c31-84f1-5b93-dc94-0f03f2486340.YXHeH_ZlGX3waefvdJu7mjD3.f15a3b32-d263-4590-a18a-e1578f3144b3"
+	if got != want {
+		t.Fatalf("want %q, got %q", want, got)
+	}
+}
+
+func TestCaptureFromQueryFailsOnAnAbsentParameter(t *testing.T) {
+	// An empty code would be exchanged at the token endpoint and the refusal
+	// recorded as the authorization code grant's contract.
+	h := http.Header{"Location": {"http://localhost:9999/callback?error=login_required"}}
+
+	if _, err := captureFromQuery(h, "code"); err == nil {
+		t.Fatal("capturing an absent query parameter reported success")
+	}
+}
+
+func TestCaptureFromQueryFailsOnAnAbsentLocation(t *testing.T) {
+	if _, err := captureFromQuery(http.Header{}, "code"); err == nil {
+		t.Fatal("capturing from a response with no Location reported success")
+	}
+}
+
+// The CaptureHeader tests below are P2's.
 
 func TestRunFixtureCapturesFromAHeader(t *testing.T) {
 	// The admin API answers a create with 201, an empty body and the new
@@ -367,7 +637,13 @@ func TestFixturesAreWellFormed(t *testing.T) {
 			// confidentialClientFixture has one: it creates a client and then
 			// looks the UUID up in a separate GET, so that a re-run's 409 is
 			// harmless. A GET capturing nothing really is dead weight.
-			capturesNothing := len(s.Capture) == 0 && len(s.CaptureHeader) == 0
+			//
+			// All four capture kinds count. The browser fixtures' GET /auth
+			// takes its value from the login page's HTML, and this test named
+			// only two kinds until they existed - which reported every one of
+			// them as dead weight.
+			capturesNothing := len(s.Capture) == 0 && len(s.CaptureHeader) == 0 &&
+				len(s.CaptureForm) == 0 && len(s.CaptureQuery) == 0
 			if capturesNothing && s.Request.Method == http.MethodGet {
 				t.Errorf("fixture %q step %d: a GET that captures nothing is dead weight", name, i)
 			}

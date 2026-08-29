@@ -10,6 +10,32 @@ func TestReplaceIssuerRewritesEveryOccurrence(t *testing.T) {
 	}
 }
 
+func TestReplaceIssuerRewritesAPercentEncodedIssuer(t *testing.T) {
+	// The authorization endpoint's redirect carries the issuer as a query
+	// parameter, percent-encoded, so the raw base URL never appears in it. A
+	// raw-only pass leaves a golden that differs by the recorder's port.
+	in := []byte("http://localhost:9999/callback?state=xyz123" +
+		"&iss=http%3A%2F%2Flocalhost%3A18091%2Frealms%2Fmaster")
+	want := "http://localhost:9999/callback?state=xyz123&iss={{issuer}}%2Frealms%2Fmaster"
+
+	if got := string(ReplaceIssuer(in, "http://localhost:18091")); got != want {
+		t.Fatalf("want %s, got %s", want, got)
+	}
+}
+
+func TestReplaceIssuerRewritesBothSpellingsInOneValue(t *testing.T) {
+	// The Location header holds both at once: the redirect target is not the
+	// issuer, but the iss parameter is, and the same header can hold a raw
+	// issuer too when the client redirects back to the server itself.
+	in := []byte("http://localhost:18091/admin/master/console/" +
+		"?iss=http%3A%2F%2Flocalhost%3A18091%2Frealms%2Fmaster")
+	want := "{{issuer}}/admin/master/console/?iss={{issuer}}%2Frealms%2Fmaster"
+
+	if got := string(ReplaceIssuer(in, "http://localhost:18091")); got != want {
+		t.Fatalf("want %s, got %s", want, got)
+	}
+}
+
 // TestNormalizePreservesKeyOrder is the test that would fail against any
 // implementation that unmarshals into a map and marshals back: Go would emit
 // "a" before "z" before "m", and the whole point is that it must not.

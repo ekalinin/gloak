@@ -1,7 +1,19 @@
 # P3: the browser code flow
 
 Date: 2026-08-22
-Status: accepted, implementation deferred until P2 is serving
+Status: **superseded 2026-08-29 by `2026-08-29-p3-browser-code-flow-design.md`**
+
+> This document was written before anyone drove the endpoint, and it says so
+> about itself. It is kept because its boundaries held and because the newer
+> document is a scorecard against it: section 2 there checks it claim by claim
+> and names the three it falsified - the code's third part is the client's own
+> UUID and not a client session id, the login form carries five action
+> parameters and not three, and logout without an `id_token_hint` serves a
+> confirmation page rather than redirecting. Everything else in it, including
+> the whole cookie table, was confirmed by measurement.
+>
+> Read the newer one. This one is the record of what was reasonable to believe
+> beforehand.
 Roadmap: `2026-08-21-gloak-parity-roadmap.md`
 Depends on: P1, `2026-08-21-p1-token-foundation-design.md` (implemented)
 

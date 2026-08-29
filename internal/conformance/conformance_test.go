@@ -88,15 +88,20 @@ func serve(t *testing.T, c Case) (*httptest.ResponseRecorder, map[string]string,
 		h.ServeHTTP(w, req)
 		return w.Result(), nil
 	}
-	vars, err := RunFixture(f, testIssuer, do)
+	sess, err := Run(f, testIssuer, do)
 	if err != nil {
 		return nil, nil, err
 	}
+	vars := sess.Vars
 
 	req, err := buildRequest(testIssuer, Expand(c.Request, vars))
 	if err != nil {
 		return nil, nil, fmt.Errorf("build request: %w", err)
 	}
+	// The case's own request is not one of the fixture's steps, so the session
+	// goes on it here, the same way the recorder does it. Both sides obtaining
+	// their responses the same way is the property this suite rests on.
+	sess.Apply(req)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	return w, vars, nil
@@ -192,13 +197,21 @@ func diff(c Case, want Golden, got *httptest.ResponseRecorder, vars map[string]s
 	// comment). Folding both sides the same way, with the same
 	// canonicalisation, makes a literal "WWW-Authenticate" map key and a
 	// canonical "Www-Authenticate" golden entry land in the same bucket.
+	// The served side gets the same two passes recordedHeaders applied to the
+	// golden. Without them a header holding the issuer can never compare equal:
+	// the golden says {{issuer}} and the response says the handler's base URL.
+	// It went unnoticed until P3 because every asserted Location so far is also
+	// volatile, and a volatile header is compared on presence alone.
 	gotByName := make(map[string][]string, len(got.Header()))
 	for name, values := range got.Header() {
 		if len(values) == 0 {
 			continue
 		}
 		canonical := http.CanonicalHeaderKey(name)
-		gotByName[canonical] = append(gotByName[canonical], values...)
+		for _, v := range values {
+			normalised := string(ReplaceIssuer(ReplaceCaptured([]byte(v), vars), testIssuer))
+			gotByName[canonical] = append(gotByName[canonical], normalised)
+		}
 	}
 
 	volatile := make(map[string]bool, len(c.VolatileHeaders))
