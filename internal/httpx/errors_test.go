@@ -237,3 +237,42 @@ func TestNoTrailingNewline(t *testing.T) {
 		}
 	}
 }
+
+// TestWriteAuthorizationRedirect pins the header set measured on GET /auth's
+// 302 back to the client. The absences are the contract: the router sets all
+// five security headers before the handler runs, so an implementation that
+// simply stopped deleting X-Frame-Options would send six headers where
+// Keycloak sends four.
+func TestWriteAuthorizationRedirect(t *testing.T) {
+	w := httptest.NewRecorder()
+	// The router sets the five before any handler runs, so the test starts the
+	// way the handler is really entered.
+	httpx.SetSecurityHeaders(w)
+
+	httpx.WriteAuthorizationRedirect(w, "http://localhost:9999/callback?error=invalid_request")
+
+	if w.Code != http.StatusFound {
+		t.Errorf("status = %d, want 302", w.Code)
+	}
+	present := map[string]string{
+		"Cache-Control":             "no-store, must-revalidate, max-age=0",
+		"Location":                  "http://localhost:9999/callback?error=invalid_request",
+		"Referrer-Policy":           "no-referrer",
+		"Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+		"X-Content-Type-Options":    "nosniff",
+		"X-Robots-Tag":              "none",
+	}
+	for name, want := range present {
+		if got := w.Header().Get(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+	for _, name := range []string{"X-Frame-Options", "Content-Security-Policy", "Content-Type"} {
+		if got, ok := w.Header()[name]; ok {
+			t.Errorf("%s = %q, want absent", name, got)
+		}
+	}
+	if body := w.Body.String(); body != "" {
+		t.Errorf("body = %q, want empty", body)
+	}
+}

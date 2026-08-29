@@ -47,6 +47,17 @@ func NewRouter(s store.Store, k *keys.Manager, issuerBase string) http.Handler {
 func Register(mux *http.ServeMux, s store.Store, k *keys.Manager, issuerBase string) {
 	h := &handler{store: s, keys: k, issuerBase: issuerBase}
 	mux.HandleFunc("GET /realms/{realm}/.well-known/openid-configuration", h.discovery)
+	// Both verbs, and they do not read the same place: GET takes its
+	// parameters from the query and POST from the form body. See
+	// authorizationParams.
+	//
+	// Keycloak answers PUT, DELETE and PATCH on this path with a real 405 and
+	// application/json, where WithKeycloakFallbacks below sends the 404 it
+	// sends for every other known path hit with the wrong method. That is the
+	// third counter-example to "a wrong method is not always 404" and nothing
+	// is changed on the strength of it; see follow-up F31.
+	mux.HandleFunc("GET /realms/{realm}/protocol/openid-connect/auth", h.authorize)
+	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/auth", h.authorize)
 	mux.HandleFunc("GET /realms/{realm}/protocol/openid-connect/certs", h.certs)
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/token", h.token)
 	mux.HandleFunc("GET /realms/{realm}/protocol/openid-connect/userinfo", h.userinfo)

@@ -223,46 +223,6 @@ var oidcPending = []Case{
 		VolatileHeaders: []string{"Set-Cookie"},
 	},
 	{
-		ID: "oidc/authorization/prompt-none-no-session",
-		Doc: Doc{
-			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
-			Section:   "Authorization endpoint: prompt=none",
-			Retrieved: "2026-08-20",
-		},
-		Status: Recorded,
-		Reason: "the authorization endpoint is not implemented",
-		// This case recorded the "Invalid parameter: redirect_uri" page until
-		// 2026-08-29, and its old comment concluded there was no literal that
-		// could reach the intended behaviour. There is: a client the fixture
-		// registers with an absolute pattern. Nothing follows the redirect, so
-		// the URI never has to resolve.
-		Fixture: "browser-client",
-		Request: Request{
-			Method: http.MethodGet,
-			Path:   "/realms/master/protocol/openid-connect/auth",
-			Query: map[string]string{
-				"response_type": "code",
-				"client_id":     "gloak-probe-browser",
-				"redirect_uri":  "http://localhost:9999/callback",
-				"scope":         "openid",
-				"state":         "xyz123",
-				"prompt":        "none",
-			},
-		},
-		AssertHeaders: []string{"Location", "Cache-Control"},
-		// AUTH_SESSION_ID and KC_AUTH_SESSION_HASH are minted per request. The
-		// attributes on them are contract and are recorded in the observed
-		// spec rather than here; nothing asserts this header either way, and
-		// left unmasked it churns the golden on every recording.
-		VolatileHeaders: []string{"Set-Cookie"},
-		// Measured: this redirect is the one response in the whole browser
-		// flow that omits X-Frame-Options, and it omits Content-Security-Policy
-		// with it. login-actions' own error redirect, to the same URI with the
-		// same status, carries both. Pinned as absent because AssertHeaders can
-		// only check a header that is named.
-		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
-	},
-	{
 		ID: "oidc/authorization/invalid-redirect-uri",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
@@ -314,57 +274,6 @@ var oidcPending = []Case{
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
-	},
-	{
-		ID: "oidc/authorization/missing-response-type",
-		Doc: Doc{
-			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
-			Section:   "Authorization endpoint: request validation",
-			Retrieved: "2026-08-20",
-		},
-		Status: Recorded,
-		Reason: "the authorization endpoint is not implemented",
-		// The old comment here was right that redirect_uri validation runs
-		// first and wrong that nothing could get past it. Once the redirect
-		// URI validates, the rejection is a redirect rather than a page, which
-		// is the split the P3 design's section 4 is about.
-		Fixture: "browser-client",
-		Request: Request{
-			Method: http.MethodGet,
-			Path:   "/realms/master/protocol/openid-connect/auth",
-			Query: map[string]string{
-				"client_id":    "gloak-probe-browser",
-				"redirect_uri": "http://localhost:9999/callback",
-				"scope":        "openid",
-				"state":        "xyz123",
-			},
-		},
-		AssertHeaders:       []string{"Location", "Cache-Control"},
-		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
-	},
-	{
-		ID: "oidc/authorization/unsupported-scope",
-		Doc: Doc{
-			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
-			Section:   "Authorization endpoint: scope validation",
-			Retrieved: "2026-08-20",
-		},
-		Status:  Recorded,
-		Reason:  "the authorization endpoint is not implemented",
-		Fixture: "browser-client",
-		Request: Request{
-			Method: http.MethodGet,
-			Path:   "/realms/master/protocol/openid-connect/auth",
-			Query: map[string]string{
-				"response_type": "code",
-				"client_id":     "gloak-probe-browser",
-				"redirect_uri":  "http://localhost:9999/callback",
-				"scope":         "openid nosuchscope",
-				"state":         "xyz123",
-			},
-		},
-		AssertHeaders:       []string{"Location", "Cache-Control"},
-		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
 	},
 
 	// --- Token endpoint ---
