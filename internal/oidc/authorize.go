@@ -536,6 +536,11 @@ func authorizationParams(r *http.Request) (url.Values, error) {
 // writeErrorPage serves the family a rejection takes when it cannot be reported
 // to the client: a page rather than a redirect. The body and the header set
 // live in internal/httpx, which owns every response body Gloak writes.
+//
+// The empty Cache-Control is measured, not a default. This endpoint's page
+// family sends none at all, where the logout endpoint's identical-looking page
+// family sends "no-cache". Both were re-measured side by side on one container
+// on 2026-08-29, which is why the writer takes the value rather than choosing.
 func (h *handler) writeErrorPage(w http.ResponseWriter, status int) {
-	httpx.WriteThemeErrorPage(w, status)
+	httpx.WriteThemeErrorPage(w, status, "")
 }

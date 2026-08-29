@@ -58,6 +58,17 @@ func Register(mux *http.ServeMux, s store.Store, k *keys.Manager, issuerBase str
 	// is changed on the strength of it; see follow-up F31.
 	mux.HandleFunc("GET /realms/{realm}/protocol/openid-connect/auth", h.authorize)
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/auth", h.authorize)
+	// Both verbs again, and again they read different places: GET takes the
+	// query and POST the body. Measured 2026-08-29, the same as /auth.
+	//
+	// Keycloak answers PUT, DELETE and PATCH here with a real 405 carrying
+	// {"error":"HTTP 405 Method Not Allowed"}, and OPTIONS with a 200 that
+	// has **no Allow header** - where /auth's OPTIONS sends
+	// "Allow: HEAD, POST, GET, OPTIONS". Two neighbouring endpoints, one
+	// container, two answers. That is the fourth data point in follow-up F31
+	// and nothing here is changed on the strength of it.
+	mux.HandleFunc("GET /realms/{realm}/protocol/openid-connect/logout", h.logout)
+	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/logout", h.logout)
 	mux.HandleFunc("GET /realms/{realm}/protocol/openid-connect/certs", h.certs)
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/token", h.token)
 	mux.HandleFunc("GET /realms/{realm}/protocol/openid-connect/userinfo", h.userinfo)
