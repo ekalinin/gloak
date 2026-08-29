@@ -285,6 +285,11 @@ because the case does not claim the flag. Worth a sweep: any case whose body
 enumerates a realm-wide set needs the flag, and this one shows the catalogue has
 at least one that does not have it.
 
+Recorded before `main` gained `9732342 fix(conformance): record every pristine
+case against its own container`, which this branch has since merged. That change
+gives each **pristine** case its own container and so cannot help a case that
+does not claim the flag; the finding stands, and the fix is still the one field.
+
 ### 3.2 Close: Gloak's 204 carried a `Date` header
 
 AGENTS.md says "Gloak deletes the `Date` header on every response". It did not:
@@ -336,12 +341,23 @@ from. `internal/admin/keys.go`'s `providerIDOf` says so at the call site.
 
 ## 4. Parity before and after
 
+Measured twice, because `main` moved while this branch was open. Against the
+merge base `da212c4`:
+
 ```
 before   129 of 485 enumerated behaviours served
 after    140 of 485
 ```
 
-`+11`, one per operation:
+and after merging `main` at `e209a6d`, which brought P3's authorization work and
+four more enumerated behaviours with it:
+
+```
+main     136 of 489
+branch   147 of 489
+```
+
+`+11` either way, one per operation:
 
 | chapter | before | after | denominator |
 |---|---|---|---|
