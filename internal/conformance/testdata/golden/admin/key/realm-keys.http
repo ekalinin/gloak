@@ -1,0 +1,12 @@
+# GET /admin/realms/master/keys
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"active":{"RSA-OAEP":"{{string}}","HS512":"{{string}}","RS256":"{{string}}","AES":"{{string}}"},"keys":[{"providerId":"{{string}}","providerPriority":100,"kid":"{{string}}","status":"ACTIVE","type":"OCT","algorithm":"AES","use":"ENC"},{"providerId":"{{string}}","providerPriority":100,"kid":"{{string}}","status":"ACTIVE","type":"OCT","algorithm":"HS512","use":"SIG"},{"providerId":"{{string}}","providerPriority":100,"kid":"{{string}}","status":"ACTIVE","type":"RSA","algorithm":"RS256","publicKey":"{{string}}","certificate":"{{string}}","use":"SIG","validTo":"{{number}}"},{"providerId":"{{string}}","providerPriority":100,"kid":"{{string}}","status":"ACTIVE","type":"RSA","algorithm":"RSA-OAEP","publicKey":"{{string}}","certificate":"{{string}}","use":"ENC","validTo":"{{number}}"}]}

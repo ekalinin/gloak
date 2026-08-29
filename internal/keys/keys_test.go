@@ -3,6 +3,7 @@ package keys_test
 import (
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"testing"
 
 	jose "github.com/go-jose/go-jose/v4"
@@ -10,17 +11,75 @@ import (
 	"github.com/ekalinin/gloak/internal/keys"
 )
 
-func TestGenerateProducesBothKeys(t *testing.T) {
+func TestGenerateProducesFourDistinctKeyIDs(t *testing.T) {
 	k, err := keys.Generate("master")
 
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	if k.RSAKeyID == "" || k.HMACKeyID == "" {
-		t.Fatalf("want both key IDs set, got rsa=%q hmac=%q", k.RSAKeyID, k.HMACKeyID)
+	ids := map[string]string{
+		"rsa": k.RSAKeyID, "enc": k.EncKeyID, "hmac": k.HMACKeyID, "aes": k.AESKeyID,
 	}
-	if k.RSAKeyID == k.HMACKeyID {
-		t.Fatal("want distinct key IDs for the RSA and HMAC keys")
+	seen := make(map[string]string, len(ids))
+	for name, id := range ids {
+		if id == "" {
+			t.Fatalf("%s key ID is empty", name)
+		}
+		if other, dup := seen[id]; dup {
+			t.Fatalf("%s and %s share the key ID %q", other, name, id)
+		}
+		seen[id] = name
+	}
+}
+
+// TestKeyIDReproducesTheMeasuredKid is the vector, and both halves of it come
+// off one recorded response.
+//
+// publicKey and kid below are master's RS256 entry from
+// GET /admin/realms/master/keys on a live Keycloak 26.7.1, recorded
+// 2026-08-29. The digest of the first has to be the second, which is what says
+// the rule is base64url(sha256(SubjectPublicKeyInfo)) and not something that
+// merely produces a 43-character string.
+//
+// The RFC 7638 JWK thumbprint was computed over this same key first, because
+// it is the obvious guess, and gives RI0Cq8BR5aI1Km8s8ioVX63uTGMEWZOCfyf1NN6jy7I.
+func TestKeyIDReproducesTheMeasuredKid(t *testing.T) {
+	const (
+		publicKey = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwZf5VMa5NxHtHj7d7n5p6bMbsiQwg6FEW75o9QhDIGPJAXP3TUOuKyy65Ww+wHLWiF8rzj2XbZO9coUBu5wD8KTjm2/KKgne2pVcEk4XRFEcLrlrZmqmIybXDfUREbWrpVBRB1F1R6R3G89swrw7Gm10CS4qOsg/RLAD0QAVp/86LatxutvHsCGS62EK9uBoruylAdMUKk7DvLyMw2TPCd6Lc8EXkz13zNgzf+8aL/m7t7eYA4nKAgMPoG86jT7b23KvECYw0Q1yYGBcCiarHDLEkFogIejZGw7KT6+FHS7fCKsKbAPZ+wIvLcoYtEvvgasV3DRXtvuYynWm00665wIDAQAB"
+		kid       = "Q80zap21IG6Jjn3zecYt3iXqDNthWiPlL4dNVvQGkyw"
+	)
+	der, err := base64.StdEncoding.DecodeString(publicKey)
+	if err != nil {
+		t.Fatalf("decode the recorded public key: %v", err)
+	}
+	parsed, err := x509.ParsePKIXPublicKey(der)
+	if err != nil {
+		t.Fatalf("ParsePKIXPublicKey: %v", err)
+	}
+	pub, ok := parsed.(*rsa.PublicKey)
+	if !ok {
+		t.Fatalf("want an RSA public key, got %T", parsed)
+	}
+
+	if got := keys.KeyID(pub); got != kid {
+		t.Fatalf("want the measured kid %q, got %q", kid, got)
+	}
+}
+
+// TestGeneratedRSAKidsAreDerivedFromTheirKeys pins the other half: the two RSA
+// key IDs are not fresh UUIDs but the digest of the key they name, so a set
+// read back from storage and one generated from the same key agree.
+func TestGeneratedRSAKidsAreDerivedFromTheirKeys(t *testing.T) {
+	k, err := keys.Generate("master")
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	if got := keys.KeyID(k.SigningPublicKey()); got != k.RSAKeyID {
+		t.Errorf("signing kid %q is not the digest of its key (%q)", k.RSAKeyID, got)
+	}
+	if got := keys.KeyID(k.EncryptionPublicKey()); got != k.EncKeyID {
+		t.Errorf("encryption kid %q is not the digest of its key (%q)", k.EncKeyID, got)
 	}
 }
 

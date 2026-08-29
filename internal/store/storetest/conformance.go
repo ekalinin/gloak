@@ -1407,4 +1407,61 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	t.Run("default groups add once, remove twice and follow the group", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		if err := s.Realms().Create(ctx, realm); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		top := &model.Group{ID: model.NewID(), RealmID: realm.ID, Name: "top"}
+		other := &model.Group{ID: model.NewID(), RealmID: realm.ID, Name: "other"}
+		for _, g := range []*model.Group{top, other} {
+			if err := s.Groups().Create(ctx, g); err != nil {
+				t.Fatalf("Create(%q): %v", g.Name, err)
+			}
+		}
+
+		// Adding the same group twice answers 204 twice and lists it once,
+		// measured; the primary key is what makes that true without a read.
+		for range 2 {
+			if err := s.Groups().AddDefaultGroup(ctx, realm.ID, top.ID); err != nil {
+				t.Fatalf("AddDefaultGroup: %v", err)
+			}
+		}
+		if err := s.Groups().AddDefaultGroup(ctx, realm.ID, other.ID); err != nil {
+			t.Fatalf("AddDefaultGroup(other): %v", err)
+		}
+		got, err := s.Groups().ListDefaultGroups(ctx, realm.ID)
+		if err != nil {
+			t.Fatalf("ListDefaultGroups: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("want two default groups, got %d", len(got))
+		}
+
+		// Removing one that is not a default group is not an error, the way
+		// RemoveMember is not - measured 204 on the second delete.
+		for range 2 {
+			if err := s.Groups().RemoveDefaultGroup(ctx, realm.ID, other.ID); err != nil {
+				t.Fatalf("RemoveDefaultGroup: %v", err)
+			}
+		}
+
+		// **Deleting the group takes the default-group row with it.** Measured:
+		// a group deleted through the Groups API left the default-groups listing
+		// with one fewer entry. The DDL says the cascade is there; this is what
+		// says both drivers act on it.
+		if err := s.Groups().Delete(ctx, realm.ID, top.ID); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		got, err = s.Groups().ListDefaultGroups(ctx, realm.ID)
+		if err != nil {
+			t.Fatalf("ListDefaultGroups after the delete: %v", err)
+		}
+		if len(got) != 0 {
+			t.Fatalf("a deleted group is still a default group: %d rows", len(got))
+		}
+	})
+
 }

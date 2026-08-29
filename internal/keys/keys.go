@@ -7,8 +7,10 @@ package keys
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"fmt"
 	"math/big"
 	"time"
@@ -22,24 +24,40 @@ type RealmKeys struct {
 	RSAKeyID  string
 	EncKeyID  string
 	HMACKeyID string
+	AESKeyID  string
 
 	rsaKey     *rsa.PrivateKey
 	certDER    []byte
 	encKey     *rsa.PrivateKey
 	encCertDER []byte
 	hmacKey    []byte
+	aesKey     []byte
 }
 
-// Generate creates a realm's three keys: an RSA key for RS256 signing, a
-// second RSA key for RSA-OAEP encryption, and a secret for HS512. Each RSA key
-// gets a self-signed certificate, because Keycloak publishes one in the JWKS
-// as x5c with its two thumbprints, so the key alone is not enough. subjectCN
-// is the realm name, which is what appears in both published certificates'
-// subject.
+// aesSecretSize is the AES key's length in bytes, matching Keycloak's
+// aes-generated provider default of 128 bits.
+//
+// **It is not observable.** The secret is published by no endpoint - the key
+// appears in GET /admin/realms/{realm}/keys as type OCT with a kid and nothing
+// else - so this is Keycloak's default rather than a measured contract, and it
+// is written down as such.
+const aesSecretSize = 16
+
+// Generate creates a realm's four keys: an RSA key for RS256 signing, a second
+// RSA key for RSA-OAEP encryption, a secret for HS512, and an AES secret. Each
+// RSA key gets a self-signed certificate, because Keycloak publishes one in
+// the JWKS as x5c with its two thumbprints, so the key alone is not enough.
+// subjectCN is the realm name, which is what appears in both published
+// certificates' subject.
 //
 // The encryption key is published but never used by Gloak itself: a live
 // master realm's JWKS carries it, so a JWKS without it differs from Keycloak's
 // on the one endpoint whose whole purpose is to be read by other software.
+//
+// **The AES key is used by nothing at all**, here or in the JWKS. It exists
+// because GET /admin/realms/{realm}/keys was measured serving four keys on
+// both master and a created realm, and a realm serving three differs from
+// Keycloak on that endpoint.
 func Generate(subjectCN string) (*RealmKeys, error) {
 	rsaKey, certDER, err := generateRSAWithCertificate(subjectCN)
 	if err != nil {
@@ -53,16 +71,56 @@ func Generate(subjectCN string) (*RealmKeys, error) {
 	if _, err := rand.Read(hmacKey); err != nil {
 		return nil, fmt.Errorf("keys: generate hmac: %w", err)
 	}
+	aesKey, err := generateAES()
+	if err != nil {
+		return nil, err
+	}
 	return &RealmKeys{
-		RSAKeyID:   model.NewID(),
-		EncKeyID:   model.NewID(),
+		// **The two RSA kids are derived from the key and the two OCT ones are
+		// not.** See KeyID.
+		RSAKeyID:   KeyID(&rsaKey.PublicKey),
+		EncKeyID:   KeyID(&encKey.PublicKey),
 		HMACKeyID:  model.NewID(),
+		AESKeyID:   model.NewID(),
 		rsaKey:     rsaKey,
 		certDER:    certDER,
 		encKey:     encKey,
 		encCertDER: encCertDER,
 		hmacKey:    hmacKey,
+		aesKey:     aesKey,
 	}, nil
+}
+
+// KeyID is the kid Keycloak publishes for an RSA key: the base64url SHA-256
+// digest of the DER-encoded SubjectPublicKeyInfo, unpadded.
+//
+// Measured 2026-08-29: the digest of master's recorded publicKey reproduces
+// its recorded kid byte for byte, on both the RS256 and the RSA-OAEP key.
+// **It is not the RFC 7638 JWK thumbprint**, which was computed first over the
+// same key and gives a different value - so the obvious guess is the wrong
+// one, and keys_test.go carries the measured pair as a vector.
+//
+// The two OCT keys are UUIDs instead, measured on the same response, which is
+// why this takes an *rsa.PublicKey rather than a Key: there is no "the kid
+// rule" to share between them.
+func KeyID(pub *rsa.PublicKey) string {
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		// Unreachable for an RSA key: MarshalPKIXPublicKey only fails on a key
+		// type it does not know. Falling back to a fresh id keeps a realm
+		// serviceable rather than failing a bootstrap over an impossibility.
+		return model.NewID()
+	}
+	sum := sha256.Sum256(der)
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func generateAES() ([]byte, error) {
+	key := make([]byte, aesSecretSize)
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("keys: generate aes: %w", err)
+	}
+	return key, nil
 }
 
 func generateRSAWithCertificate(subjectCN string) (*rsa.PrivateKey, []byte, error) {
@@ -108,6 +166,10 @@ func (k *RealmKeys) SigningPublicKey() *rsa.PublicKey { return &k.rsaKey.PublicK
 
 // EncCertificateDER is the same for the encryption key's enc entry.
 func (k *RealmKeys) EncCertificateDER() []byte { return k.encCertDER }
+
+// EncryptionPublicKey is the RSA-OAEP public key. The Admin API's key listing
+// publishes it beside the signing one; nothing in Gloak encrypts with it.
+func (k *RealmKeys) EncryptionPublicKey() *rsa.PublicKey { return &k.encKey.PublicKey }
 
 // HMACSecret is the HS512 secret, needed to verify a refresh token this realm
 // issued. It is deliberately absent from JWKS and from every response body:

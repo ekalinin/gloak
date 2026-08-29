@@ -3832,4 +3832,532 @@ var adminCases = []Case{
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},
+
+	// -----------------------------------------------------------------------
+	// P4's second cut: the remaining eleven operations of the Realms Admin tag
+	// and the whole of the Key tag. Measured 2026-08-29 against a live 26.7.1.
+	// -----------------------------------------------------------------------
+	{
+		// **Four keys, where the JWKS beside it publishes two.** The two OCT
+		// entries carry a kid and nothing else; the two RSA ones carry the
+		// public key, its certificate and the certificate's notAfter in
+		// milliseconds.
+		ID: "admin/key/realm-keys",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Key: get the keys of the realm",
+			Retrieved: "2026-08-29",
+		},
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/keys",
+		Fixture:       "admin-token",
+		PristineRealm: true,
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/keys",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		// Everything derived from the key material varies per container start,
+		// and so does providerId, which is a component id Keycloak mints at
+		// random. What this case pins is the field set, their order, the
+		// algorithm metadata, and the key order of `active` - which is a Java
+		// map javamap reproduces and not something Go's sorted map keys would.
+		Volatile: []string{
+			"active/*",
+			"keys/*/providerId",
+			"keys/*/kid",
+			"keys/*/publicKey",
+			"keys/*/certificate",
+			"keys/*/validTo",
+		},
+		// The array is ordered by providerId, which the line above has just
+		// masked, so its order is not reproducible - measured on two realms
+		// whose algorithm orders differ. The JWKS case takes the same retreat
+		// for the same reason.
+		Unordered: []string{"keys"},
+	},
+	{
+		ID: "admin/key/unknown-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Key: get the keys of the realm, unknown realm",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-no-such-realm/keys",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/realms-admin/default-groups-empty",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get a realm's default groups",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/default-groups",
+		Fixture:   "admin-token-default-groups",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-dg/default-groups",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **The entry is the shape a user's group listing sends**: no
+		// subGroupCount, no attributes, no access.
+		ID: "admin/realms-admin/default-groups",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get a realm's default groups, populated",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-default-groups-full",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-dg-full/default-groups",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/parentId"},
+		// No order reproduces both measurements: three groups added zzz, aaa,
+		// mmm came back in that order, and a parent added before its child came
+		// back after it.
+		Unordered: []string{"."},
+	},
+	{
+		// The 204 carries Cache-Control: no-cache and **no X-Frame-Options**,
+		// because a PUT with no body declares no Content-Type. The client-policy
+		// PUT further down is the other way round on both counts.
+		ID: "admin/realms-admin/default-group-add",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: add a default group",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/default-groups/{groupId}",
+		Fixture:   "admin-token-default-groups",
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/gloak-probe-dg/default-groups/{{dg_top}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Type"},
+	},
+	{
+		// Removing a group that is **not** a default group is a 204, not a 404.
+		// This realm's fixture makes neither group a default one.
+		ID: "admin/realms-admin/default-group-remove",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: remove a default group",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/default-groups/{groupId}",
+		Fixture:   "admin-token-default-groups",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/gloak-probe-dg/default-groups/{{dg_child}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Type"},
+	},
+	{
+		// **"Group not found", not "Could not find group by id"** - the
+		// membership routes' spelling for the same missing group.
+		ID: "admin/realms-admin/default-group-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: add a default group, unknown group",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-default-groups",
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/gloak-probe-dg/default-groups/00000000-0000-0000-0000-000000000000",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **The sixth shape of a group**: the single read minus its access
+		// block, measured side by side on the same group.
+		ID: "admin/realms-admin/group-by-path",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get a group by path",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/group-by-path/{path}",
+		Fixture:   "admin-token-default-groups",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-dg/group-by-path/gloak-probe-dg-top",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"id"},
+	},
+	{
+		// A nested path walks the tree, and a leading slash is optional: this
+		// one sends none and the group's own path comes back with one.
+		ID: "admin/realms-admin/group-by-path-nested",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get a group by path, nested",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-default-groups",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-dg/group-by-path/gloak-probe-dg-top/gloak-probe-dg-child",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"id", "parentId"},
+	},
+	{
+		// A **twelfth** spelling of not-found on this API, and the third for a
+		// group. It is answered before the caller is judged, so a caller
+		// holding no admin role gets it too.
+		ID: "admin/realms-admin/group-by-path-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get a group by path, no such path",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-default-groups",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-dg/group-by-path/gloak-probe-no-such-group",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/realms-admin/client-profiles-empty",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get client profiles",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-policies/profiles",
+		Fixture:   "admin-token-client-profiles",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-profiles/client-policies/profiles",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// A profile written without a description comes back without the key,
+		// which is what puts omitempty on that field and not on `executors`.
+		ID: "admin/realms-admin/client-profiles",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get client profiles, one written",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-client-profiles-written",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-profiles-written/client-policies/profiles",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The ten built-in profiles, 9 KB of them, and the reason the constant
+		// is recorded bytes rather than Go structs: several of the
+		// configurations in here have keys that are not in alphabetical order,
+		// and Go sorts a map's keys.
+		ID: "admin/realms-admin/client-profiles-global",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get client profiles, including the global ones",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-client-profiles",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-profiles/client-policies/profiles",
+			Query:   map[string]string{"include-global-profiles": "true"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **The 204 carries no Cache-Control at all**, where the default-groups
+		// PUT above carries no-cache. Two PUTs in one cut, opposite answers,
+		// which is what "pinned per endpoint" means. It does carry
+		// X-Frame-Options, because this request declares application/json.
+		ID: "admin/realms-admin/client-profiles-update",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: update client profiles",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/client-policies/profiles",
+		Fixture:   "admin-token-client-profiles",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-profiles/client-policies/profiles",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"profiles":[]}`),
+		},
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+	},
+	{
+		// **A body Keycloak cannot read is the RFC 6749 shape here** and the
+		// errorMessage shape on POST /admin/realms. Two ways to send bad JSON
+		// to one resource family, two error families.
+		ID: "admin/realms-admin/client-profiles-malformed",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: update client profiles, malformed body",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-client-profiles",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-profiles/client-policies/profiles",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`nope`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **An absent body is a 400 here and a 500 on PUT /admin/realms/{r}.**
+		// Same verb, neighbouring routes, and a shared decoder gets one wrong.
+		ID: "admin/realms-admin/client-profiles-no-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: update client profiles, no body",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-client-profiles",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-profiles/client-policies/profiles",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// Recorded rather than Implemented: reproducing this means reproducing
+		// Jackson's parser positions - the column is a function of the request
+		// body - and PUT /admin/realms/{realm} does not reproduce its own copy
+		// of this error either. Gloak ignores the field and answers 204.
+		ID: "admin/realms-admin/client-profiles-unknown-field",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: update client profiles, unrecognised field",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Recorded,
+		Reason:  "the message carries a Jackson line and column computed from the request body; Gloak ignores unknown fields here, as PUT /admin/realms/{realm} does",
+		Fixture: "admin-token-client-profiles",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-profiles/client-policies/profiles",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"nosuchfield":true}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/realms-admin/client-policies-empty",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get client policies",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-policies/policies",
+		Fixture:   "admin-token-client-profiles",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-profiles/client-policies/policies",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/realms-admin/client-policies",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get client policies, one written",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-client-policies-written",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-policies-written/client-policies/policies",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// 26.7.1 ships no global policies where it ships ten global profiles.
+		// The key is still added by the parameter.
+		ID: "admin/realms-admin/client-policies-global",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get client policies, including the global ones",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-client-profiles",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-profiles/client-policies/policies",
+			Query:   map[string]string{"include-global-policies": "true"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/realms-admin/client-policies-update",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: update client policies",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/client-policies/policies",
+		Fixture:   "admin-token-client-profiles",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-profiles/client-policies/policies",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"policies":[]}`),
+		},
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+	},
+	{
+		// The one cross-reference a policy body has, and the one validation
+		// this cut can perform out of the realm's own state.
+		ID: "admin/realms-admin/client-policies-unknown-profile",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: update client policies, unknown profile",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-client-profiles",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-profiles/client-policies/policies",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"policies":[{"name":"gloak-probe-bad-policy","conditions":[],` +
+				`"profiles":["gloak-probe-no-such-profile"]}]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **A 501 is this endpoint's whole contract on a default 26.7.1.**
+		// CLIENT_TYPES is a disabled preview feature, the same situation as
+		// GET .../client-secret/rotated's permanent 404, and like it this is
+		// the operation served rather than a stub.
+		ID: "admin/realms-admin/client-types",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: list client types",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-types",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-types",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "admin/realms-admin/client-types-update",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: update client types",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/client-types",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/client-types",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"global-client-types":[],"realm-client-types":[]}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The realm is resolved before the feature check, which is itself
+		// before the authorization check. This pins the first of the three.
+		ID: "admin/realms-admin/client-types-unknown-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: list client types, unknown realm",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-no-such-realm/client-types",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
 }

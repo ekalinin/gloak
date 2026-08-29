@@ -188,7 +188,15 @@ func SetUserinfoSecurityHeaders(w http.ResponseWriter) {
 // Cache-Control is not set here: three of the four measured deletes carry
 // no-cache and DELETE .../client-secret/rotated does not, so it stays with the
 // caller.
+// It is also the one writer here that used not to suppress Date, so every 204
+// a running Gloak sent carried one where Keycloak sends none - on the deletes,
+// the updates, the credential moves and the group joins alike. The conformance
+// harness cannot see it, for the reason suppressDate gives, and neither could
+// the two tests that guard the rule, because both went through WriteJSON.
+// Found by reading a live 204 off the wire while measuring P4's default
+// groups.
 func WriteNoContent(w http.ResponseWriter, r *http.Request) {
+	suppressDate(w)
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/") {
 		w.Header().Del("X-Frame-Options")
 	}
