@@ -308,13 +308,11 @@ func (h *handler) clientMappingSubject(w http.ResponseWriter, r *http.Request, r
 	if !ok {
 		return nil, nil, false
 	}
-	c, err := h.store.Clients().ByID(r.Context(), rc.realm.ID, r.PathValue("clientUUID"))
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeMappingClientNotFound(w)
-			return nil, nil, false
-		}
-		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+	// The client half is mappingClientFromPath's, shared with the group
+	// routes: the two families resolve the same segment against the same 404,
+	// and two copies of it would be two places for that 404 to drift.
+	c, ok := h.mappingClientFromPath(w, r, rc)
+	if !ok {
 		return nil, nil, false
 	}
 	return user, c, true
@@ -493,7 +491,7 @@ func (h *handler) eachClientMapping(w http.ResponseWriter, r *http.Request, rc *
 // array order, because Keycloak answers in array order - a body naming a
 // nonexistent id and then a refused role is 404, the same two entries the other
 // way round are 403, measured on this route and on the composite one.
-func (h *handler) eachMapping(w http.ResponseWriter, r *http.Request, rc *reqContext, userID string, accepts func(*model.Role) bool, apply func(context.Context, string, string) error) {
+func (h *handler) eachMapping(w http.ResponseWriter, r *http.Request, rc *reqContext, holderID string, accepts func(*model.Role) bool, apply func(context.Context, string, string) error) {
 	reps, ok := decodeRoleList(w, r)
 	if !ok {
 		return
@@ -523,7 +521,7 @@ func (h *handler) eachMapping(w http.ResponseWriter, r *http.Request, rc *reqCon
 		}
 	}
 	for _, rep := range reps {
-		if err := apply(r.Context(), userID, rep.ID); err != nil {
+		if err := apply(r.Context(), holderID, rep.ID); err != nil {
 			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 			return
 		}

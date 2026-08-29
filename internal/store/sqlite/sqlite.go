@@ -1291,3 +1291,39 @@ func scanGroup(row scanner) (*model.Group, error) {
 	}
 	return m, nil
 }
+
+// AssignToGroup is AssignToUser's mirror. The mapping write is measured
+// idempotent on a group holder as on a user one, so a repeat is not a conflict.
+func (r *roleRepo) AssignToGroup(ctx context.Context, groupID, roleID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO group_role_mapping (group_id, role_id) VALUES (?, ?)
+		 ON CONFLICT DO NOTHING`, groupID, roleID)
+	return classify(err)
+}
+
+// RemoveFromGroup reports no error for a mapping that is not there, the way
+// RemoveFromUser's route was measured answering 204 for one never held.
+func (r *roleRepo) RemoveFromGroup(ctx context.Context, groupID, roleID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM group_role_mapping WHERE group_id = ? AND role_id = ?`, groupID, roleID)
+	return classify(err)
+}
+
+func (r *roleRepo) ListGroupRoles(ctx context.Context, groupID string) ([]*model.Role, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT r.id, r.realm_id, r.client_id, r.name, r.description, r.composite
+		 FROM keycloak_role r
+		 JOIN group_role_mapping m ON m.role_id = r.id
+		 WHERE m.group_id = ? ORDER BY r.name`, groupID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	out, err := collectRoles(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadRoleAttributes(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

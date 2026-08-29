@@ -145,6 +145,14 @@ type RoleRepo interface {
 	AssignToUser(ctx context.Context, userID, roleID string) error
 	RemoveFromUser(ctx context.Context, userID, roleID string) error
 	ListUserRoles(ctx context.Context, userID string) ([]*model.Role, error)
+
+	// The group mirror of the three above. A second table rather than a
+	// nullable holder column on one: the two are read by different routes with
+	// different guards, and one table invites a query that forgets which kind
+	// of holder it meant.
+	AssignToGroup(ctx context.Context, groupID, roleID string) error
+	RemoveFromGroup(ctx context.Context, groupID, roleID string) error
+	ListGroupRoles(ctx context.Context, groupID string) ([]*model.Role, error)
 	// ListUsersWithRole returns the users holding this role **directly**.
 	// Measured: /roles/{name}/users lists the administrator for `admin` and
 	// nobody for `create-realm`, which `admin` is composite over, so this must

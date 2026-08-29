@@ -332,6 +332,12 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   a `manage-users` caller gets 404. When both ids are unknown the **user** wins.
   And the same missing group is `Could not find group by id` on the first family
   and `Group not found` on the second.
+- **An unknown client is 404 before any role check, on all twelve mapping
+  routes.** A real holder with an unknown client answers `Client not found` to a
+  caller that may not use the route at all - and an unknown *holder* with an
+  unknown client answers about the holder. So the client's absence is not gated
+  and the subject's is, on the user family; on the group family the group comes
+  first and the client second, and neither is gated.
 - **A group is resolved before the caller is judged at all.** Every route naming
   a `{groupID}` answers 404 for a group that does not exist to **every** caller,
   including one holding no admin role. That is not the user family's shape,

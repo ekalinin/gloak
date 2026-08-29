@@ -33,7 +33,22 @@ func Effective(ctx context.Context, repo store.RoleRepo, userID string) ([]*mode
 	if err != nil {
 		return nil, err
 	}
+	return ExpandFrom(ctx, repo, direct)
+}
 
+// EffectiveForGroup is Effective for a group holder. The expansion below is the
+// same walk, and it is shared rather than copied because a group's composite
+// read and a user's answer the same question and must not be able to disagree.
+func EffectiveForGroup(ctx context.Context, repo store.RoleRepo, groupID string) ([]*model.Role, error) {
+	direct, err := repo.ListGroupRoles(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	return ExpandFrom(ctx, repo, direct)
+}
+
+// ExpandFrom closes a direct set over its composites.
+func ExpandFrom(ctx context.Context, repo store.RoleRepo, direct []*model.Role) ([]*model.Role, error) {
 	out := make([]*model.Role, 0, len(direct))
 	seen := make(map[string]bool, len(direct))
 	queue := make([]*model.Role, 0, len(direct))
