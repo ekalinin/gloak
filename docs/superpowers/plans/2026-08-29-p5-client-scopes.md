@@ -1,7 +1,7 @@
 # P5, first cut: client scopes
 
 Date: 2026-08-29
-Status: in progress
+Status: complete
 Branch: `feat/p5-client-scopes`
 Reference container: `kc-p5`, `quay.io/keycloak/keycloak:26.7.1`, port 8091
 
@@ -376,7 +376,23 @@ protocol. Flip the two `Recorded` client cases.
 **T7 - conformance cases and goldens.** Appended at the end of `adminCases`.
 `make record`; never hand-edited.
 
-**T8 - handover and PR.**
+**T8 - handover and PR.** Done: `docs/superpowers/handover/p5-client-scopes.md`.
+
+## 7. What it cost, against what the plan said
+
+All eight tasks landed and the cut is 22 operations, 147 -> 169 of 489. Three
+things the plan did not foresee:
+
+- **F49 was six defects, not one.** A client created through the Admin API had
+  the wrong `standardFlowEnabled`, `fullScopeAllowed`, `protocol`,
+  `nodeReRegistrationTimeout` and `name`, and gave a public client a
+  `client.secret.creation.time`. The scopes could not be fixed without the
+  protocol, because the inheritance filter matches on it.
+- **Inheritance is all-or-nothing across the two lists**, not per list. Section
+  1.7 of the handover has the nine bodies that say so.
+- **`Case.Unordered` cannot sort a nested array inside one it sorts at the
+  root**, silently. The listing case masks the protocol mappers and a Go test
+  in `internal/admin` asserts one scope's directly. Filed as F58.
 
 ## 6. What this cut deliberately does not do
 
