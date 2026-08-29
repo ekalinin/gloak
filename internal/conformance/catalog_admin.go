@@ -4920,7 +4920,15 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/default-client-scopes",
-		Fixture:   "admin-token-client-scopes-read",
+		// PristineRealm because this body is a function of the realm's own
+		// default sets at the moment the fixture created its client, and two
+		// cases earlier in the catalogue add a scope to those sets. Recorded
+		// against the shared container it came back with seven entries and
+		// replayed against a fresh one with six. That is F40's shape on a body
+		// that does not look realm-wide, which is exactly what follow-up F53
+		// asks about.
+		PristineRealm: true,
+		Fixture:       "admin-token-client-scopes-read",
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/admin/realms/master/clients/c11e0000-0000-4000-8000-00000000000a/default-client-scopes",
@@ -4939,7 +4947,15 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/optional-client-scopes",
-		Fixture:   "admin-token-client-scopes-read",
+		// PristineRealm because this body is a function of the realm's own
+		// default sets at the moment the fixture created its client, and two
+		// cases earlier in the catalogue add a scope to those sets. Recorded
+		// against the shared container it came back with seven entries and
+		// replayed against a fresh one with six. That is F40's shape on a body
+		// that does not look realm-wide, which is exactly what follow-up F53
+		// asks about.
+		PristineRealm: true,
+		Fixture:       "admin-token-client-scopes-read",
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/admin/realms/master/clients/c11e0000-0000-4000-8000-00000000000a/optional-client-scopes",

@@ -188,8 +188,13 @@ func (h *handler) createClientScope(w http.ResponseWriter, r *http.Request, rc *
 	// creates on one API, one with the header and one without; it is pinned per
 	// endpoint like every other Cache-Control on this API.
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Location",
-		h.issuerBase+"/admin/realms/"+rc.realm.Name+"/client-scopes/"+m.ID)
+	// **The alias echoes its own path.** A create through /client-templates
+	// answers a Location under /client-templates, not under /client-scopes -
+	// measured, and it is the one place the two spellings are distinguishable
+	// in a response. Building the header from the constant rather than from
+	// r.URL.Path is what sends a caller of the deprecated path to the other
+	// one.
+	w.Header().Set("Location", h.issuerBase+r.URL.Path+"/"+m.ID)
 	w.WriteHeader(http.StatusCreated)
 }
 
