@@ -26,6 +26,13 @@ import (
 // yet. A case naming a fixture this recorder cannot build is a failure, not a
 // quiet skip.
 //
+// A Pending case is skipped too, and its golden is left byte for byte as it was
+// found. Nothing compares a Pending golden, so rewriting it can only add noise
+// to the diff - which four login-theme pages did on every single run, because
+// their /resources/<hash>/ segment is regenerated per container start. See
+// GoldenIsAsserted for why the way to ask for one is to promote the case rather
+// than to set a flag.
+//
 // There are two container regimes and the catalogue decides which a case gets.
 // Almost every case is recorded against one shared container, in catalogue
 // order, which is why a whole run costs one Keycloak start and not three
@@ -57,10 +64,17 @@ func TestRecordGoldens(t *testing.T) {
 		},
 	}
 
-	var skipped []string
+	var skipped, parked []string
 	for _, c := range Catalog {
 		if c.Fixture == "" {
 			skipped = append(skipped, c.ID)
+			continue
+		}
+		// A golden nothing compares is left exactly as it was found. See
+		// GoldenIsAsserted: rewriting one produces churn in the diff this
+		// project asks people to read carefully, and says nothing in return.
+		if !GoldenIsAsserted(c) {
+			parked = append(parked, c.ID)
 			continue
 		}
 		f, ok := Fixtures[c.Fixture]
@@ -137,6 +151,11 @@ func TestRecordGoldens(t *testing.T) {
 	if len(skipped) > 0 {
 		sort.Strings(skipped)
 		t.Logf("skipped %d cases with no fixture yet: %v", len(skipped), skipped)
+	}
+	if len(parked) > 0 {
+		sort.Strings(parked)
+		t.Logf("left %d Pending goldens alone, because nothing compares them: %v",
+			len(parked), parked)
 	}
 }
 
