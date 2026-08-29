@@ -160,7 +160,7 @@ func clientRepresentationOf(m *model.Client, c *caller, realmName string) client
 		AuthenticationFlowBindingOverrides: map[string]string{},
 		FullScopeAllowed:                   m.FullScopeAllowed,
 		NodeReRegistrationTimeout:          m.NodeReRegistrationTimeout,
-		ProtocolMappers:                    protocolMapperListOrNil(m.ProtocolMappers),
+		ProtocolMappers:                    protocolMapperListOf(m.ProtocolMappers),
 		DefaultClientScopes:                nonNil(m.DefaultClientScopes),
 		OptionalClientScopes:               nonNil(m.OptionalClientScopes),
 		Access:                             clientAccessFor(c, m, realmName),

@@ -478,17 +478,13 @@ func lastMapper(holder mapperHolder) model.ProtocolMapper {
 	return in[len(in)-1]
 }
 
-// protocolMapperListOrNil is protocolMapperListOf for the two representations
-// that **omit** the key when there are no mappers rather than serialising `[]`.
-// The dedicated routes go the other way and answer a bare `[]`, which is why
-// this is a second function and not a flag on the first.
-func protocolMapperListOrNil(in []model.ProtocolMapper) []protocolMapperRepresentation {
-	if len(in) == 0 {
-		return nil
-	}
-	return protocolMapperListOf(in)
-}
-
+// protocolMapperListOf converts a container's mappers for the wire.
+//
+// There is no second function for the client representation, which **omits**
+// the key when there are no mappers where the dedicated routes answer a bare
+// `[]`. There was one, and a mutation showed it did nothing: `omitempty` on a
+// slice already drops an empty one, so the two shapes fall out of the struct
+// tag and the same helper serves both.
 func protocolMapperListOf(in []model.ProtocolMapper) []protocolMapperRepresentation {
 	out := make([]protocolMapperRepresentation, 0, len(in))
 	for _, m := range in {

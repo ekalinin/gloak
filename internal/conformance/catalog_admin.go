@@ -6084,4 +6084,31 @@ var adminCases = []Case{
 		AssertHeaders:       []string{"Content-Type"},
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
+	{
+		// The batch route checks the provider too, and answers the same 404 the
+		// single create does. Added after a mutation survived: deleting the
+		// provider check from addProtocolMappers passed every other case in
+		// this cut, because every other batch body names a registered one.
+		ID: "admin/protocol-mappers/add-models-unknown-provider",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a batch naming a provider that is not registered",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-mapper-scope",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000011" +
+				"/protocol-mappers/add-models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"name":"gloak-probe-mapper-batch-bad","protocol":"openid-connect",` +
+				`"protocolMapper":"gloak-no-such-provider"}]`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
 }
