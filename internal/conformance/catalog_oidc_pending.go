@@ -16,9 +16,31 @@ import "net/http"
 // chained sequence of calls.
 var oidcPending = []Case{
 	// --- Authorization endpoint ---
-	// admin-cli has standard flow disabled (see the observed spec's
-	// "Bootstrap of the master realm" table), so every case below uses
-	// security-admin-console, which is public with standard flow enabled.
+	//
+	// These cases named security-admin-console until 2026-08-29, on the
+	// reasoning that it is the one bootstrapped public client with the standard
+	// flow enabled. It is, and it cannot serve nine of them. It pins
+	// pkce.code.challenge.method to S256, so a request carrying no
+	// code_challenge_method is refused with "Missing parameter:
+	// code_challenge_method" before anything else is looked at; and its
+	// redirectUris is the host-relative "/admin/master/console/*", resolved
+	// against whatever host and port the request arrived on, so no absolute
+	// literal here can match the recorder's run-time port. Four of the cases
+	// carried a comment about the second half of that and none about the first.
+	//
+	// They now register their own client instead. See browserRedirectURI in
+	// fixture.go, and the "The bootstrapped clients cannot serve most of the
+	// cases that name them" section of
+	// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+	//
+	// The success redirects mask their whole Location. It carries a code and a
+	// session_state minted by the case's own request, which no fixture can
+	// capture and mask by name, so the alternative was a golden that churns on
+	// every recording. What that costs is the query key order - measured as
+	// state, session_state, iss, code - and it is a real loss, recorded as a
+	// follow-up rather than hidden here. The **error** redirects are not masked:
+	// after ReplaceIssuer they hold nothing per-request, so their error code,
+	// description and key order are all pinned exactly.
 	{
 		ID: "oidc/authorization/code-flow-redirect",
 		Doc: Doc{
@@ -26,21 +48,25 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: authorization code grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status:  Recorded,
 		Reason:  "the authorization endpoint is not implemented",
-		Fixture: "", // needs a completed browser login to observe the redirect back
+		Fixture: "browser-login",
+		// The fixture stops at the login page, so the case's own request is
+		// the credential POST and its own response is the redirect carrying
+		// the code. {{login_action}} is the form's action, captured from the
+		// page: it holds session_code, execution, client_id, tab_id and
+		// client_data, all minted per request.
 		Request: Request{
-			Method: http.MethodGet,
-			Path:   "/realms/master/protocol/openid-connect/auth",
-			Query: map[string]string{
-				"response_type": "code",
-				"client_id":     "security-admin-console",
-				"redirect_uri":  "http://localhost:8080/admin/master/console/",
-				"scope":         "openid",
-				"state":         "xyz123",
+			Method: http.MethodPost,
+			Path:   "{{login_action}}",
+			Form: map[string]string{
+				"username":     "admin",
+				"password":     "admin",
+				"credentialId": "",
 			},
 		},
-		AssertHeaders: []string{"Location"},
+		AssertHeaders:   []string{"Location", "Cache-Control"},
+		VolatileHeaders: []string{"Location"},
 	},
 	{
 		ID: "oidc/authorization/pkce-s256",
@@ -49,23 +75,20 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: PKCE, S256 challenge method",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status:  Recorded,
 		Reason:  "the authorization endpoint is not implemented",
-		Fixture: "", // needs a completed browser login to observe the redirect back
+		Fixture: "browser-login-s256",
 		Request: Request{
-			Method: http.MethodGet,
-			Path:   "/realms/master/protocol/openid-connect/auth",
-			Query: map[string]string{
-				"response_type":         "code",
-				"client_id":             "security-admin-console",
-				"redirect_uri":          "http://localhost:8080/admin/master/console/",
-				"scope":                 "openid",
-				"state":                 "xyz123",
-				"code_challenge":        "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
-				"code_challenge_method": "S256",
+			Method: http.MethodPost,
+			Path:   "{{login_action}}",
+			Form: map[string]string{
+				"username":     "admin",
+				"password":     "admin",
+				"credentialId": "",
 			},
 		},
-		AssertHeaders: []string{"Location"},
+		AssertHeaders:   []string{"Location", "Cache-Control"},
+		VolatileHeaders: []string{"Location"},
 	},
 	{
 		ID: "oidc/authorization/pkce-plain",
@@ -74,23 +97,25 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: PKCE, plain challenge method",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the authorization endpoint is not implemented",
-		Fixture: "", // needs a completed browser login to observe the redirect back
+		Status: Recorded,
+		Reason: "the authorization endpoint is not implemented",
+		// Measured: a client with no pkce.code.challenge.method accepts either
+		// method. This case was impossible against security-admin-console,
+		// which pins S256 and answers "code challenge method is not matching
+		// the configured one" to plain - not a mismeasurement but an
+		// unreachable case.
+		Fixture: "browser-login-plain",
 		Request: Request{
-			Method: http.MethodGet,
-			Path:   "/realms/master/protocol/openid-connect/auth",
-			Query: map[string]string{
-				"response_type":         "code",
-				"client_id":             "security-admin-console",
-				"redirect_uri":          "http://localhost:8080/admin/master/console/",
-				"scope":                 "openid",
-				"state":                 "xyz123",
-				"code_challenge":        "plainverifier1234567890123456789012345678",
-				"code_challenge_method": "plain",
+			Method: http.MethodPost,
+			Path:   "{{login_action}}",
+			Form: map[string]string{
+				"username":     "admin",
+				"password":     "admin",
+				"credentialId": "",
 			},
 		},
-		AssertHeaders: []string{"Location"},
+		AssertHeaders:   []string{"Location", "Cache-Control"},
+		VolatileHeaders: []string{"Location"},
 	},
 	{
 		ID: "oidc/authorization/implicit-flow",
@@ -99,16 +124,22 @@ var oidcPending = []Case{
 			Section:   "Grant types: implicit",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the authorization endpoint is not implemented",
-		Fixture: "", // needs a completed browser login to observe the redirect back
+		Status: Pending,
+		Reason: "the implicit flow is out of P3's scope",
+		// Measured 2026-08-29 on a client with the implicit flow disabled,
+		// which is the default: 302 with the error in the **fragment**, not
+		// the query, without any response_mode being asked for - the default
+		// response mode follows the response type. A case for that belongs
+		// with whichever sub-project builds the implicit flow, and writing one
+		// here would claim surface P3 is not building.
+		Fixture: "",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/protocol/openid-connect/auth",
 			Query: map[string]string{
 				"response_type": "id_token token",
-				"client_id":     "security-admin-console",
-				"redirect_uri":  "http://localhost:8080/admin/master/console/",
+				"client_id":     "gloak-probe-browser",
+				"redirect_uri":  "http://localhost:9999/callback",
 				"scope":         "openid",
 				"state":         "xyz123",
 				"nonce":         "abc123",
@@ -123,22 +154,20 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: response_mode=fragment",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status:  Recorded,
 		Reason:  "the authorization endpoint is not implemented",
-		Fixture: "", // needs a completed browser login to observe the redirect back
+		Fixture: "browser-login-frag",
 		Request: Request{
-			Method: http.MethodGet,
-			Path:   "/realms/master/protocol/openid-connect/auth",
-			Query: map[string]string{
-				"response_type": "code",
-				"response_mode": "fragment",
-				"client_id":     "security-admin-console",
-				"redirect_uri":  "http://localhost:8080/admin/master/console/",
-				"scope":         "openid",
-				"state":         "xyz123",
+			Method: http.MethodPost,
+			Path:   "{{login_action}}",
+			Form: map[string]string{
+				"username":     "admin",
+				"password":     "admin",
+				"credentialId": "",
 			},
 		},
-		AssertHeaders: []string{"Location"},
+		AssertHeaders:   []string{"Location", "Cache-Control"},
+		VolatileHeaders: []string{"Location"},
 	},
 	{
 		ID: "oidc/authorization/response-mode-form-post",
@@ -147,22 +176,24 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: response_mode=form_post",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the authorization endpoint is not implemented",
-		Fixture: "", // needs a completed browser login to observe the auto-submitted form
+		Status: Recorded,
+		Reason: "the authorization endpoint is not implemented",
+		// Measured: form_post answers **200** with an auto-submitting form,
+		// not a redirect, and its Content-Type is text/html with no charset
+		// where the login page's is text/html;charset=utf-8. The body is
+		// Keycloak's own markup and not the theme's, so unlike the three
+		// theme-HTML cases it carries no per-container resource hash.
+		Fixture: "browser-login-form",
 		Request: Request{
-			Method: http.MethodGet,
-			Path:   "/realms/master/protocol/openid-connect/auth",
-			Query: map[string]string{
-				"response_type": "code",
-				"response_mode": "form_post",
-				"client_id":     "security-admin-console",
-				"redirect_uri":  "http://localhost:8080/admin/master/console/",
-				"scope":         "openid",
-				"state":         "xyz123",
+			Method: http.MethodPost,
+			Path:   "{{login_action}}",
+			Form: map[string]string{
+				"username":     "admin",
+				"password":     "admin",
+				"credentialId": "",
 			},
 		},
-		AssertHeaders: []string{"Content-Type"},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 	},
 	{
 		ID: "oidc/authorization/prompt-none-no-session",
@@ -171,30 +202,33 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: prompt=none",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
+		Status: Recorded,
 		Reason: "the authorization endpoint is not implemented",
-		// Measured: recording this with Fixture: "bootstrap" produced the
-		// same "Invalid parameter: redirect_uri" page as invalid-redirect-uri
-		// below, not a login_required response. A Case's redirect_uri is a
-		// literal chosen when this file was written, and Keycloak's
-		// security-admin-console redirect pattern only validates against the
-		// exact host:port the recorder's container answers on at run time,
-		// which is assigned by testcontainers and unknowable in advance.
-		// There is no literal that reaches the intended behaviour.
-		Fixture: "",
+		// This case recorded the "Invalid parameter: redirect_uri" page until
+		// 2026-08-29, and its old comment concluded there was no literal that
+		// could reach the intended behaviour. There is: a client the fixture
+		// registers with an absolute pattern. Nothing follows the redirect, so
+		// the URI never has to resolve.
+		Fixture: "browser-client",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/protocol/openid-connect/auth",
 			Query: map[string]string{
 				"response_type": "code",
-				"client_id":     "security-admin-console",
-				"redirect_uri":  "http://localhost:8080/admin/master/console/",
+				"client_id":     "gloak-probe-browser",
+				"redirect_uri":  "http://localhost:9999/callback",
 				"scope":         "openid",
 				"state":         "xyz123",
 				"prompt":        "none",
 			},
 		},
-		AssertHeaders: []string{"Location"},
+		AssertHeaders: []string{"Location", "Cache-Control"},
+		// Measured: this redirect is the one response in the whole browser
+		// flow that omits X-Frame-Options, and it omits Content-Security-Policy
+		// with it. login-actions' own error redirect, to the same URI with the
+		// same status, carries both. Pinned as absent because AssertHeaders can
+		// only check a header that is named.
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
 	},
 	{
 		ID: "oidc/authorization/invalid-redirect-uri",
@@ -203,8 +237,15 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: redirect URI validation",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the authorization endpoint is not implemented",
+		Status: Pending,
+		Reason: "the login theme is P13, and this response is a theme page",
+		// Measured 2026-08-29: 400, text/html;charset=utf-8, no Cache-Control
+		// at all, and 3618 bytes of the keycloak.v2 theme whose
+		// /resources/<hash>/ segment is regenerated per container start. Two
+		// recordings from one container are byte-identical and two containers
+		// are not, so the golden already in the repository churns on every
+		// re-record. That is the churn the P3 design defers to P13, now
+		// measured rather than assumed.
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodGet,
@@ -227,7 +268,7 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-20",
 		},
 		Status:  Pending,
-		Reason:  "the authorization endpoint is not implemented",
+		Reason:  "the login theme is P13, and this response is a theme page",
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodGet,
@@ -249,25 +290,25 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: request validation",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
+		Status: Recorded,
 		Reason: "the authorization endpoint is not implemented",
-		// Measured: recording this with Fixture: "bootstrap" produced the
-		// same "Invalid parameter: redirect_uri" page as invalid-redirect-uri
-		// above; redirect_uri validation runs before response_type
-		// validation, and no literal redirect_uri matches the recorder's
-		// container at run time (see prompt-none-no-session above).
-		Fixture: "",
+		// The old comment here was right that redirect_uri validation runs
+		// first and wrong that nothing could get past it. Once the redirect
+		// URI validates, the rejection is a redirect rather than a page, which
+		// is the split the P3 design's section 4 is about.
+		Fixture: "browser-client",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/protocol/openid-connect/auth",
 			Query: map[string]string{
-				"client_id":    "security-admin-console",
-				"redirect_uri": "http://localhost:8080/admin/master/console/",
+				"client_id":    "gloak-probe-browser",
+				"redirect_uri": "http://localhost:9999/callback",
 				"scope":        "openid",
 				"state":        "xyz123",
 			},
 		},
-		AssertHeaders: []string{"Content-Type"},
+		AssertHeaders:       []string{"Location", "Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
 	},
 	{
 		ID: "oidc/authorization/unsupported-scope",
@@ -276,23 +317,22 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: scope validation",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
-		Reason: "the authorization endpoint is not implemented",
-		// Measured: same "Invalid parameter: redirect_uri" outcome as the
-		// two cases above, for the same reason.
-		Fixture: "",
+		Status:  Recorded,
+		Reason:  "the authorization endpoint is not implemented",
+		Fixture: "browser-client",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/protocol/openid-connect/auth",
 			Query: map[string]string{
 				"response_type": "code",
-				"client_id":     "security-admin-console",
-				"redirect_uri":  "http://localhost:8080/admin/master/console/",
+				"client_id":     "gloak-probe-browser",
+				"redirect_uri":  "http://localhost:9999/callback",
 				"scope":         "openid nosuchscope",
 				"state":         "xyz123",
 			},
 		},
-		AssertHeaders: []string{"Content-Type"},
+		AssertHeaders:       []string{"Location", "Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
 	},
 
 	// --- Token endpoint ---
@@ -391,23 +431,26 @@ var oidcPending = []Case{
 			Section:   "Grant types: authorization code",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the token endpoint is not implemented",
-		Fixture: "", // needs an authorization code from a completed browser login
+		Status:  Recorded,
+		Reason:  "the token endpoint does not serve the authorization_code grant",
+		Fixture: "browser-code",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
 			Form: map[string]string{
 				"grant_type":   "authorization_code",
-				"client_id":    "security-admin-console",
-				"redirect_uri": "http://localhost:8080/admin/master/console/",
-				"code":         "REPLACE-WITH-A-REAL-CODE",
+				"client_id":    "gloak-probe-browser",
+				"redirect_uri": "http://localhost:9999/callback",
+				"code":         "{{code}}",
 			},
 		},
-		AssertHeaders: []string{"Content-Type"},
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "Pragma"},
 		Volatile: []string{
 			"access_token", "refresh_token", "id_token", "session_state",
 		},
+		// See password-grant-admin-cli for why scope's word order is not
+		// stable across container starts.
+		UnorderedWords: []string{"scope"},
 	},
 	{
 		ID: "oidc/token/refresh-token-grant",
@@ -672,20 +715,21 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: authorization code reuse",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the token endpoint is not implemented",
-		Fixture: "", // needs a real authorization code from a completed browser login, used twice
+		Status: Recorded,
+		Reason: "the token endpoint does not serve the authorization_code grant",
+		// The fixture redeems the code once, so this request is the replay.
+		Fixture: "browser-code-spent",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
 			Form: map[string]string{
 				"grant_type":   "authorization_code",
-				"client_id":    "security-admin-console",
-				"redirect_uri": "http://localhost:8080/admin/master/console/",
-				"code":         "REPLACE-WITH-AN-ALREADY-CONSUMED-CODE",
+				"client_id":    "gloak-probe-browser",
+				"redirect_uri": "http://localhost:9999/callback",
+				"code":         "{{code}}",
 			},
 		},
-		AssertHeaders: []string{"Content-Type"},
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "Pragma"},
 	},
 	{
 		// A refresh token that verifies and whose session an administrator
@@ -742,21 +786,27 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: PKCE, S256 challenge method",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the token endpoint is not implemented",
-		Fixture: "", // needs a real code from a PKCE-initiated browser login, exchanged with the wrong verifier
+		Status: Recorded,
+		Reason: "the token endpoint does not serve the authorization_code grant",
+		// The login is its own, not shared with authorization-code-grant.
+		// Measured 2026-08-29: a failed exchange spends the code, so a second
+		// case reusing this login would measure "Code not valid" instead of
+		// the PKCE failure.
+		Fixture: "browser-code-mismatch",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
 			Form: map[string]string{
-				"grant_type":    "authorization_code",
-				"client_id":     "security-admin-console",
-				"redirect_uri":  "http://localhost:8080/admin/master/console/",
-				"code":          "REPLACE-WITH-A-REAL-PKCE-CODE",
-				"code_verifier": "the-wrong-verifier-0123456789012345678901",
+				"grant_type":   "authorization_code",
+				"client_id":    "gloak-probe-browser",
+				"redirect_uri": "http://localhost:9999/callback",
+				"code":         "{{code}}",
+				// 43 characters, RFC 7636's minimum, and not the verifier
+				// whose challenge the fixture sent.
+				"code_verifier": "gloak-probe-wrong-code-verifier-0123456789A",
 			},
 		},
-		AssertHeaders: []string{"Content-Type"},
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "Pragma"},
 	},
 
 	// --- Userinfo endpoint ---
@@ -947,19 +997,29 @@ var oidcPending = []Case{
 			Section:   "Logout endpoint: RP-initiated logout",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status:  Recorded,
 		Reason:  "the logout endpoint is not implemented",
-		Fixture: "", // needs a real id_token from a completed browser login
+		Fixture: "browser-logged-in",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/protocol/openid-connect/logout",
 			Query: map[string]string{
-				"id_token_hint":            "REPLACE-WITH-A-REAL-ID-TOKEN",
-				"post_logout_redirect_uri": "http://localhost:8080/admin/master/console/",
+				"id_token_hint":            "{{id_token}}",
+				"post_logout_redirect_uri": "http://localhost:9999/callback",
 				"state":                    "xyz123",
 			},
 		},
-		AssertHeaders: []string{"Location"},
+		// Measured 2026-08-29: the redirect carries **state and nothing
+		// else**. No iss, where the authorization endpoint's redirect carries
+		// one, so this Location holds nothing per-request and is asserted
+		// exactly rather than masked. Cache-Control is no-cache here and
+		// "no-store, must-revalidate, max-age=0" at /auth.
+		AssertHeaders: []string{"Location", "Cache-Control"},
+		// The same omission the authorization endpoint's redirect has. The
+		// two endpoints that redirect a browser to a client's registered URI
+		// both drop these two; login-actions, redirecting to the very same
+		// URI, does not.
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
 	},
 	{
 		ID: "oidc/logout/rp-initiated-without-id-token-hint",
@@ -969,19 +1029,25 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-20",
 		},
 		Status: Pending,
-		Reason: "the logout endpoint is not implemented",
-		// Measured: recording this with Fixture: "bootstrap" produced the
-		// same "Invalid redirect uri" page as invalid-post-logout-redirect-uri
-		// below, for the same reason as the authorization-endpoint cases
-		// above - no literal post_logout_redirect_uri matches the recorder's
-		// container at run time.
+		Reason: "the login theme is P13, and this response is a theme page",
+		// Measured 2026-08-29, and it is not the redirect this case was
+		// written to expect. Without an id_token_hint the logout endpoint
+		// serves the theme's "Logging out" confirmation page - 200,
+		// text/html;charset=utf-8, "Do you want to log out?" - whatever the
+		// post_logout_redirect_uri is and whether or not it validates. So
+		// AssertHeaders naming Location was asserting a header that does not
+		// exist on this response, and the earlier comment's diagnosis, that
+		// the run-time port was to blame, was measuring the wrong thing.
+		//
+		// It is a theme page, so it moves to P13 with the other three. P3's
+		// share of oidc/logout is one case, not two.
 		Fixture: "",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/protocol/openid-connect/logout",
 			Query: map[string]string{
-				"client_id":                "security-admin-console",
-				"post_logout_redirect_uri": "http://localhost:8080/admin/master/console/",
+				"client_id":                "gloak-probe-browser-logout",
+				"post_logout_redirect_uri": "http://localhost:9999/callback",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
@@ -993,8 +1059,11 @@ var oidcPending = []Case{
 			Section:   "Logout endpoint: redirect URI validation",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the logout endpoint is not implemented",
+		Status: Pending,
+		Reason: "the login theme is P13, and this response is a theme page",
+		// Measured 2026-08-29: 400, text/html;charset=utf-8, the theme's error
+		// page with the instruction "Invalid redirect uri". Same per-container
+		// resource hash as the authorization endpoint's two, same deferral.
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodGet,

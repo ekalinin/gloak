@@ -316,6 +316,27 @@ var Fixtures = map[string]Fixture{
 		`{"clientId":"gloak-confidential-sa","enabled":true,"serviceAccountsEnabled":true}`,
 	),
 
+	// The browser fixtures. Every one registers its own client, because the
+	// six bootstrapped ones cannot serve these cases: security-admin-console
+	// pins pkce.code.challenge.method to S256 and registers a host-relative
+	// redirect pattern, admin-cli has the standard flow off, account and
+	// account-console redirect only inside /realms/master/account/*, and
+	// broker and master-realm are confidential. See browserRedirectURI.
+	//
+	// One fixture per case, and here that is not only the usual isolation rule:
+	// a failed code exchange spends the code, so two cases sharing one login
+	// would measure the second one's replay. See browserCodeFixture.
+	"browser-client":        browserClientFixture("gloak-probe-browser", ""),
+	"browser-login":         browserFormFixture("gloak-probe-browser", "", nil),
+	"browser-login-s256":    browserFormFixture("gloak-probe-browser", "", pkceS256Query),
+	"browser-login-plain":   browserFormFixture("gloak-probe-browser", "", pkcePlainQuery),
+	"browser-login-frag":    browserFormFixture("gloak-probe-browser", "", map[string]string{"response_mode": "fragment"}),
+	"browser-login-form":    browserFormFixture("gloak-probe-browser", "", map[string]string{"response_mode": "form_post"}),
+	"browser-code":          browserCodeFixture("gloak-probe-browser", "", nil),
+	"browser-code-mismatch": browserCodeFixture("gloak-probe-browser", "", pkceS256Query),
+	"browser-code-spent":    browserSpentCodeFixture("gloak-probe-browser", nil, nil),
+	"browser-logged-in":     browserLogoutFixture(),
+
 	// access.token.lifespan is measured: "1" makes expires_in 1 and the token
 	// verifiably expired a second later. The delay is what makes the case
 	// deterministic rather than a race against the recorder's own latency.
@@ -1295,6 +1316,215 @@ func confidentialClientFixture(clientID, body string, extra ...Step) Fixture {
 		},
 	}
 	return Fixture{State: "bootstrap", Steps: append(steps, extra...)}
+}
+
+// browserRedirectURI is what the browser fixtures register as their client's
+// only redirect pattern, and what every P3 case sends as redirect_uri.
+//
+// It never has to resolve. TestRecordGoldens sets CheckRedirect to
+// ErrUseLastResponse and the verifier reads a ResponseRecorder, so nothing on
+// either side ever follows it. What matters is only that Keycloak accepts it,
+// which it does because the fixture registered it.
+//
+// Registering one is not a convenience. security-admin-console, which every
+// oidc/authorization case named until now, carries the host-relative pattern
+// "/admin/master/console/*", resolved against whatever host and port the
+// request arrived on - so no absolute literal in a Case can match a container
+// whose port testcontainers assigns at run time. Four cases carried a comment
+// saying so and stayed unrecordable. See the "The bootstrapped clients cannot
+// serve most of the cases that name them" section of
+// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+const browserRedirectURI = "http://localhost:9999/callback"
+
+// pkceVerifier and pkceChallengeS256 are RFC 7636 appendix B's pair, which is
+// where the challenge already in this catalogue came from. Keeping the
+// published pair means the relationship between the two literals is checkable
+// against the RFC rather than against a comment.
+const (
+	pkceVerifier      = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	pkceChallengeS256 = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+	// plain means challenge and verifier are the same string. It is 43
+	// characters because that is RFC 7636's minimum; the literal this replaced
+	// was 41.
+	pkceVerifierPlain = "gloak-probe-plain-code-verifier-0123456789A"
+)
+
+// logoutRedirectAttribute registers a post-logout redirect. It is a separate
+// client attribute and is **not** derived from redirectUris: a client whose
+// redirect_uri validates at the authorization endpoint is still refused at the
+// logout endpoint until this is set, measured 2026-08-29.
+const logoutRedirectAttribute = `,"attributes":{"post.logout.redirect.uris":"` + browserRedirectURI + `"}`
+
+var (
+	pkceS256Query = map[string]string{
+		"code_challenge":        pkceChallengeS256,
+		"code_challenge_method": "S256",
+	}
+	pkcePlainQuery = map[string]string{
+		"code_challenge":        pkceVerifierPlain,
+		"code_challenge_method": "plain",
+	}
+)
+
+// browserClientBody is a public client with the standard flow on and
+// browserRedirectURI registered. attributes is spliced in as given, so a
+// caller can pin a PKCE method.
+func browserClientBody(clientID, attributes string) string {
+	return `{"clientId":"` + clientID + `","enabled":true,"publicClient":true,` +
+		`"standardFlowEnabled":true,"redirectUris":["` + browserRedirectURI + `"]` +
+		attributes + `}`
+}
+
+// browserClientSteps creates the client a browser case logs in at.
+//
+// The create is idempotent because the recorder shares one container across
+// the whole catalogue and a fixture named by more than one case runs its
+// create once per case. Nothing is captured from it, so the repeat's 409
+// passes harmlessly.
+func browserClientSteps(clientID, attributes string) []Step {
+	return []Step{
+		adminTokenStep(),
+		{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(browserClientBody(clientID, attributes)),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+	}
+}
+
+// browserClientFixture is the client and nothing else, for a case whose own
+// request is the one to GET /auth.
+func browserClientFixture(clientID, attributes string) Fixture {
+	return Fixture{State: "bootstrap", Steps: browserClientSteps(clientID, attributes)}
+}
+
+// authorizeStep opens the authorization endpoint and captures the login form's
+// action URL, which is the whole reason this cut exists: the action carries
+// session_code, execution, client_id, tab_id and client_data, all minted per
+// request, so the credential POST cannot be a literal.
+//
+// The step insists on a 200. A rejected authorization request answers a 302
+// with no body, and CaptureForm would then fail on the missing form - but one
+// request later, with a message about HTML rather than about the rejection.
+// Saying 200 here puts the failure where it happened.
+func authorizeStep(clientID string, extra map[string]string) Step {
+	query := map[string]string{
+		"response_type": "code",
+		"client_id":     clientID,
+		"redirect_uri":  browserRedirectURI,
+		"scope":         "openid",
+		"state":         "xyz123",
+	}
+	for k, v := range extra {
+		query[k] = v
+	}
+	return Step{
+		Request:      Request{Method: http.MethodGet, Path: "/realms/master/protocol/openid-connect/auth", Query: query},
+		ExpectStatus: []int{http.StatusOK},
+		CaptureForm:  map[string]string{"login_action": "action"},
+	}
+}
+
+// loginStep posts the credentials to the captured action.
+//
+// The three form fields are the three the measured page carries and no more:
+// username, password, and a hidden credentialId with no value. Everything
+// volatile is in the action's query, which is why nothing here is captured
+// from the page's inputs.
+func loginStep() Step {
+	return Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "{{login_action}}",
+			Form: map[string]string{
+				"username":     "admin",
+				"password":     "admin",
+				"credentialId": "",
+			},
+		},
+		// The successful login is a redirect, not a 2xx.
+		ExpectStatus: []int{http.StatusFound},
+		CaptureQuery: map[string]string{
+			"code":          "code",
+			"session_state": "session_state",
+		},
+	}
+}
+
+// browserFormFixture stops at the login page, so the case's own request is the
+// credential POST and its own response is the redirect carrying the code.
+func browserFormFixture(clientID, attributes string, authQuery map[string]string) Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: append(browserClientSteps(clientID, attributes), authorizeStep(clientID, authQuery)),
+	}
+}
+
+// browserCodeFixture runs the whole login, so the case's own request is the
+// code exchange at the token endpoint.
+//
+// Each case that redeems a code needs its own fixture, and that is not the
+// uniqueness rule clientFixture follows for its own reason - it is measured. A
+// failed exchange spends the code: a wrong code_verifier answers "PKCE
+// verification failed: Code mismatch" and the immediate retry answers "Code
+// not valid". Two cases sharing one login would measure the second one's
+// replay.
+func browserCodeFixture(clientID, attributes string, authQuery map[string]string) Fixture {
+	steps := append(browserClientSteps(clientID, attributes), authorizeStep(clientID, authQuery))
+	return Fixture{State: "bootstrap", Steps: append(steps, loginStep())}
+}
+
+// browserSpentCodeFixture is browserCodeFixture with the code already redeemed
+// once, so the case's own request is the replay.
+func browserSpentCodeFixture(clientID string, authQuery, exchange map[string]string) Fixture {
+	f := browserCodeFixture(clientID, "", authQuery)
+	form := map[string]string{
+		"grant_type":   "authorization_code",
+		"client_id":    clientID,
+		"redirect_uri": browserRedirectURI,
+		"code":         "{{code}}",
+	}
+	for k, v := range exchange {
+		form[k] = v
+	}
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form:   form,
+		},
+	})
+	return f
+}
+
+// browserLogoutFixture logs a user in and exchanges the code, so the case's
+// own request is the logout carrying a real id_token_hint.
+//
+// Its client is its own, because it needs post.logout.redirect.uris and
+// nothing else in the catalogue does. Sharing gloak-probe-browser would mean
+// every browser case's client silently gained a logout redirect, and a case
+// asserting the refusal of one would then measure the wrong thing.
+func browserLogoutFixture() Fixture {
+	const clientID = "gloak-probe-browser-logout"
+	steps := append(browserClientSteps(clientID, logoutRedirectAttribute),
+		authorizeStep(clientID, nil), loginStep())
+	return Fixture{State: "bootstrap", Steps: append(steps, Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type":   "authorization_code",
+				"client_id":    clientID,
+				"redirect_uri": browserRedirectURI,
+				"code":         "{{code}}",
+			},
+		},
+		Capture: map[string]string{"id_token": "id_token"},
+	})}
 }
 
 // expiredTokenFixture obtains an access token that is already expired when the
