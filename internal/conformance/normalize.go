@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,12 +39,32 @@ func compilePaths(paths []string) [][]string {
 	return patterns
 }
 
-// ReplaceIssuer swaps a server's base URL for the placeholder.
+// ReplaceIssuer swaps a server's base URL for the placeholder, in both its raw
+// and its percent-encoded spelling.
+//
+// The encoded pass is not decoration. The authorization endpoint's redirect
+// carries the issuer as a query parameter of its Location header:
+//
+//	Location: http://localhost:9999/callback?state=xyz123&iss=http%3A%2F%2Flocalhost%3A8083%2Frealms%2Fmaster
+//
+// The raw base URL does not appear in that string, so a raw-only substitution
+// misses it and a golden recorded on one port differs from the handler's on
+// that parameter alone.
+//
+// The alternative was to mask the whole header with Case.VolatileHeaders, and
+// the two are not equivalent: masking discards the query key order, the error
+// code and the error description, which for the authorization endpoint's
+// rejections is the entire contract.
+//
+// Raw first. The other order would leave an encoded occurrence untouched
+// inside a value that also holds a raw one, since the raw pass would have
+// already rewritten the substring the encoded pattern was built from.
 func ReplaceIssuer(raw []byte, base string) []byte {
 	if base == "" {
 		return raw
 	}
-	return bytes.ReplaceAll(raw, []byte(base), []byte(issuerPlaceholder))
+	raw = bytes.ReplaceAll(raw, []byte(base), []byte(issuerPlaceholder))
+	return bytes.ReplaceAll(raw, []byte(url.QueryEscape(base)), []byte(issuerPlaceholder))
 }
 
 // Normalize replaces the values at the given paths with placeholders that
