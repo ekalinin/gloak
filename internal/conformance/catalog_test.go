@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -92,19 +93,20 @@ func TestRecordedCaseRules(t *testing.T) {
 // keeps a name from matching inside a description.
 var createdKeys = []string{"clientId", "username", "realm", "name"}
 
-// createdObject is one object some fixture creates: the key its creation body
-// named it by, its name, and the fixture that made it.
+// createdObject is one object the recording creates: the key its creation body
+// named it by, its name, and what made it - a fixture, or the case whose own
+// request is the create.
 type createdObject struct {
 	key     string
 	name    string
-	fixture string
+	creator string
 }
 
 // TestPristineRealmGoldensAreNotPolluted checks the result of the recorder's
 // ordering rather than the ordering itself.
 //
 // A case marked PristineRealm enumerates the realm, so its golden must hold
-// nothing another fixture created. Three clients did once - gloak-confidential
+// nothing another case or fixture created. Three clients did once - gloak-confidential
 // and its two siblings, created by the OIDC fixtures that run earlier - and
 // were recorded into the unfiltered client list as though Keycloak
 // bootstrapped them. Checking the bytes catches that whatever the recorder's
@@ -117,22 +119,22 @@ type createdObject struct {
 // create roles, groups, users and - since P4's first cut - realms too, so the
 // blind spot was four times the size of the one thing being watched.
 //
-// The case's **own** fixture is exempt. Its steps run on both sides of the
-// comparison - the recorder's container and the verifier's fresh handler - so
-// what they create belongs in the golden. Only what some *other* fixture made
-// is pollution, and only the recorder's shared container can put it there. The
-// exemption is load-bearing today: admin/groups/list's golden holds the
-// gloak-probe-group its own fixture creates, and without it this test would
-// fail on a correct golden.
+// The case's **own** fixture is exempt, and so is the case itself. Both run on
+// both sides of the comparison - the recorder's container and the verifier's
+// fresh handler - so what they create belongs in the golden. Only what
+// something else made is pollution, and only the recorder's shared container
+// can put it there. The exemption is load-bearing today: admin/groups/list's
+// golden holds the gloak-probe-group its own fixture creates, and without it
+// this test would fail on a correct golden.
 func TestPristineRealmGoldensAreNotPolluted(t *testing.T) {
-	created := fixtureCreatedObjects()
+	created := createdObjects()
 	byKey := map[string]int{}
 	for _, o := range created {
 		byKey[o.key]++
 	}
 	for _, key := range createdKeys {
 		if byKey[key] == 0 {
-			t.Fatalf("no fixture creates an object named by %q; "+
+			t.Fatalf("nothing in the recording creates an object named by %q; "+
 				"this test has stopped checking that family", key)
 		}
 	}
@@ -146,16 +148,17 @@ func TestPristineRealmGoldensAreNotPolluted(t *testing.T) {
 			t.Errorf("%q: %v", c.ID, err)
 			continue
 		}
-		for _, o := range pollution(raw, created, c.Fixture) {
-			t.Errorf("%q: golden holds %s %q, which fixture %q created - "+
-				"this case has to be recorded against a realm no other fixture has touched",
-				c.ID, o.key, o.name, o.fixture)
+		for _, o := range pollution(raw, created, c.Fixture, c.ID) {
+			t.Errorf("%q: golden holds %s %q, which %q created - "+
+				"this case has to be recorded against a realm nothing else has touched",
+				c.ID, o.key, o.name, o.creator)
 		}
 	}
 }
 
-// pollution is every object in created that raw mentions and that some fixture
-// other than own made.
+// pollution is every object in created that raw mentions and that something
+// other than the named owners made. The owners are a case's own fixture and the
+// case itself, which are the two things whose creates the verifier repeats.
 //
 // A name is matched against the key its creation body used, not on its own:
 // "gloak-probe-group" as a bare substring also matches the
@@ -166,10 +169,10 @@ func TestPristineRealmGoldensAreNotPolluted(t *testing.T) {
 // TestPollutionGuardSeesEveryCreatedFamily can feed it a body known to be
 // polluted. A guard nothing can make fail is the failure mode this whole file
 // exists to prevent.
-func pollution(raw []byte, created []createdObject, own string) []createdObject {
+func pollution(raw []byte, created []createdObject, owners ...string) []createdObject {
 	mine := map[createdObject]bool{}
 	for _, o := range created {
-		if o.fixture == own {
+		if slices.Contains(owners, o.creator) {
 			mine[createdObject{key: o.key, name: o.name}] = true
 		}
 	}
@@ -194,7 +197,7 @@ func pollution(raw []byte, created []createdObject, own string) []createdObject 
 // listing spells it - and the guard has to report it. A family that stops
 // being watched fails here rather than going quiet.
 func TestPollutionGuardSeesEveryCreatedFamily(t *testing.T) {
-	created := fixtureCreatedObjects()
+	created := createdObjects()
 	for _, key := range createdKeys {
 		var victim createdObject
 		for _, o := range created {
@@ -204,24 +207,31 @@ func TestPollutionGuardSeesEveryCreatedFamily(t *testing.T) {
 			}
 		}
 		if victim.name == "" {
-			t.Fatalf("no fixture creates an object named by %q", key)
+			t.Fatalf("nothing in the recording creates an object named by %q", key)
 		}
 
 		polluted := []byte(`[{"id":"x","` + victim.key + `":"` + victim.name + `","enabled":true}]`)
-		if got := pollution(polluted, created, ""); len(got) == 0 {
+		if got := pollution(polluted, created); len(got) == 0 {
 			t.Errorf("%s: a golden holding %q went unreported", key, victim.name)
 		}
-		// The same body is clean for the case whose own fixture made it.
-		if got := pollution(polluted, created, victim.fixture); len(got) != 0 {
-			t.Errorf("%s: %q is the case's own fixture's and was reported anyway: %v",
+		// The same body is clean for the case that owns the creator.
+		if got := pollution(polluted, created, victim.creator); len(got) != 0 {
+			t.Errorf("%s: %q is the case's own and was reported anyway: %v",
 				key, victim.name, got)
 		}
 	}
 }
 
-// fixtureCreatedObjects is every object a fixture creates, read out of the
-// creation bodies themselves so that a new fixture is covered without anyone
+// createdObjects is every object a recording creates, read out of the creation
+// bodies themselves so that a new fixture is covered without anyone
 // remembering to list it here.
+//
+// Two sources, because the shared container cannot tell them apart. A fixture's
+// steps are one. The other is a **case's own request**: admin/roles/create-realm
+// POSTs `{"name":"gloak-probe-role-create"}` and that role outlives the case
+// exactly as a fixture's does. It was the thirteenth role in the recording that
+// produced F40, and reading fixtures alone was the reason the guard named
+// twelve of the thirteen.
 //
 // A value holding "{{" is skipped: it is a reference to something a step
 // captured, so no golden can hold it literally.
@@ -231,25 +241,31 @@ func TestPollutionGuardSeesEveryCreatedFamily(t *testing.T) {
 // that already exist - `[{"id":"...","name":"manage-users"}]`. Reading those as
 // creations would put six bootstrapped admin role names into the set and make
 // this test fail on any golden that legitimately lists one.
-func fixtureCreatedObjects() []createdObject {
+func createdObjects() []createdObject {
 	pattern := regexp.MustCompile(`"(` + strings.Join(createdKeys, "|") + `)":"([^"]+)"`)
 	seen := map[createdObject]bool{}
 	var out []createdObject
-	for name, f := range Fixtures {
-		for _, s := range f.Steps {
-			body := bytes.TrimSpace(s.Request.Body)
-			if s.Request.Method != http.MethodPost || len(body) == 0 || body[0] != '{' {
+	collect := func(r Request, creator string) {
+		body := bytes.TrimSpace(r.Body)
+		if r.Method != http.MethodPost || len(body) == 0 || body[0] != '{' {
+			return
+		}
+		for _, m := range pattern.FindAllSubmatch(body, -1) {
+			o := createdObject{key: string(m[1]), name: string(m[2]), creator: creator}
+			if strings.Contains(o.name, "{{") || seen[o] {
 				continue
 			}
-			for _, m := range pattern.FindAllSubmatch(body, -1) {
-				o := createdObject{key: string(m[1]), name: string(m[2]), fixture: name}
-				if strings.Contains(o.name, "{{") || seen[o] {
-					continue
-				}
-				seen[o] = true
-				out = append(out, o)
-			}
+			seen[o] = true
+			out = append(out, o)
 		}
+	}
+	for name, f := range Fixtures {
+		for _, s := range f.Steps {
+			collect(s.Request, name)
+		}
+	}
+	for _, c := range Catalog {
+		collect(c.Request, c.ID)
 	}
 	// Fixtures is a map, so the order it ranges in is not stable and neither
 	// is which fixture a shared name is attributed to. Sorting makes the
@@ -261,7 +277,7 @@ func fixtureCreatedObjects() []createdObject {
 		if out[i].name != out[j].name {
 			return out[i].name < out[j].name
 		}
-		return out[i].fixture < out[j].fixture
+		return out[i].creator < out[j].creator
 	})
 	return out
 }
