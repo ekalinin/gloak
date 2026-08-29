@@ -136,6 +136,25 @@ type GroupRepo interface {
 	AddMember(ctx context.Context, groupID, userID string) error
 	RemoveMember(ctx context.Context, groupID, userID string) error
 	ListUserGroups(ctx context.Context, realmID, userID string) ([]*model.Group, error)
+
+	// The realm's default groups. They are here rather than on RealmRepo
+	// because every one of the three returns or takes a group, and because
+	// deleting a group has to take its default-group row with it - measured,
+	// and it is keycloak_group that the cascade hangs off.
+	//
+	// ListDefaultGroups has **no measured order to reproduce**. Three groups
+	// added zzz, aaa, mmm came back in that order, and in another realm a
+	// parent added first and a child added second came back child first;
+	// neither name, id, path nor insertion order explains both. The ORDER BY
+	// is here so the two drivers agree with each other, the same reason
+	// RealmRepo.List carries one.
+	ListDefaultGroups(ctx context.Context, realmID string) ([]*model.Group, error)
+	// AddDefaultGroup is idempotent: the same group added twice was measured
+	// answering 204 both times and appearing once.
+	AddDefaultGroup(ctx context.Context, realmID, groupID string) error
+	// RemoveDefaultGroup reports no error for a group that is not a default
+	// group, the way RemoveMember does - measured 204 on the second delete.
+	RemoveDefaultGroup(ctx context.Context, realmID, groupID string) error
 }
 
 type RoleRepo interface {

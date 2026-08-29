@@ -102,6 +102,12 @@ const (
 	// subGroupCount nor access. Measured 2026-08-28, and it is why the four
 	// shapes are five: no other body has the attributes trio without access.
 	groupMembershipFull
+	// groupByPath is GET /admin/realms/{realm}/group-by-path/{path}: groupFull
+	// **minus access** and nothing else. Measured 2026-08-29 side by side with
+	// GET /groups/{id} on the same group, whose body is identical but for that
+	// one key. So the shapes are six, and the sixth differs from the second by
+	// a single field on a route the description files under a different tag.
+	groupByPath
 )
 
 // groupRepresentationOf converts a stored group for the wire.
@@ -139,7 +145,7 @@ func groupRepresentationOf(g *model.Group, path string, subGroupCount int, c *ca
 		rep.RealmRoles = &realmRoles
 		rep.ClientRoles = &clientRoles
 	}
-	if shape != groupMembership && shape != groupMembershipFull {
+	if shape != groupMembership && shape != groupMembershipFull && shape != groupByPath {
 		access := groupAccessFor(c)
 		rep.Access = &access
 	}
@@ -565,6 +571,16 @@ func writeGroupNotFound(w http.ResponseWriter) {
 	httpx.WriteMessageError(w, http.StatusNotFound, "Could not find group by id")
 }
 
+// writePlainGroupNotFound is that other spelling, and it now has two callers:
+// the user-membership writes and the realm's default-groups writes.
+//
+// It is a helper rather than a literal at each site because AGENTS.md's
+// eleven-spellings entry ends with the reason - a measured string written in
+// two places can drift, which is why writeRealmNotFound exists too.
+func writePlainGroupNotFound(w http.ResponseWriter) {
+	httpx.WriteMessageError(w, http.StatusNotFound, "Group not found")
+}
+
 // listUserGroups serves GET /admin/realms/{realm}/users/{user-id}/groups.
 //
 // **Direct memberships only.** A user in a child is not a member of its parent,
@@ -689,7 +705,7 @@ func (h *handler) membershipSubject(w http.ResponseWriter, r *http.Request, rc *
 	group, err := h.store.Groups().ByID(r.Context(), rc.realm.ID, r.PathValue("groupID"))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			httpx.WriteMessageError(w, http.StatusNotFound, "Group not found")
+			writePlainGroupNotFound(w)
 			return nil, nil, false
 		}
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")

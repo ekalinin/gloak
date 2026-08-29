@@ -249,12 +249,36 @@ func (h *handler) updateRealm(w http.ResponseWriter, r *http.Request, rc *reqCon
 	if _, ok := fields["attributes"]; ok {
 		rep.Attributes = nil
 	}
+	// **The two client-policy arrays are emptied before the merge for a
+	// different reason than attributes.** encoding/json unmarshals a JSON array
+	// into an existing slice *element by element*, keeping any field the new
+	// element does not name - so a realm holding a profile with a description,
+	// sent a replacement without one, kept the old description. Measured:
+	// Keycloak answered the same PUT with the profile it was given and nothing
+	// else. Every other slice in this representation holds strings, where
+	// element reuse is invisible; these two hold structs, where it is not.
+	if _, ok := fields["clientProfiles"]; ok {
+		rep.ClientProfiles.Profiles = nil
+	}
+	if _, ok := fields["clientPolicies"]; ok {
+		rep.ClientPolicies.Policies = nil
+	}
 	if err := applyRealmFields(&rep, fields); err != nil {
 		httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_request", "Cannot parse the JSON")
 		return
 	}
 	if _, ok := fields["attributes"]; ok {
 		restoreDerivedAttributes(&rep, rc.realm.Name)
+	}
+	// A body naming clientProfiles without a profiles array **clears** them -
+	// measured, `PUT {"clientProfiles":{}}` on a realm holding one answered 204
+	// and left `{"profiles":[]}` - so the nil the merge leaves has to become an
+	// empty array rather than marshalling as null.
+	if rep.ClientProfiles.Profiles == nil {
+		rep.ClientProfiles.Profiles = []clientProfile{}
+	}
+	if rep.ClientPolicies.Policies == nil {
+		rep.ClientPolicies.Policies = []clientPolicy{}
 	}
 
 	was := rc.realm.Name

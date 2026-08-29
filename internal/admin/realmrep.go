@@ -1,5 +1,7 @@
 package admin
 
+import "encoding/json"
+
 // Keycloak's RealmRepresentation, and the four narrower bodies the same
 // endpoints serve to a caller that may not see the whole thing.
 //
@@ -171,9 +173,10 @@ type browserSecurityHeaders struct {
 }
 
 // clientProfiles and clientPolicies are the two one-key objects at the end of
-// the body. Their contents are P4's cut C; the empty arrays are what a realm
-// with none was measured carrying, and `[]` is exactly what omitempty drops, so
-// neither field has it.
+// the body, and they are the same state GET/PUT .../client-policies/profiles
+// and .../policies read and write - measured in both directions. The empty
+// arrays are what a realm with none was measured carrying, and `[]` is exactly
+// what omitempty drops, so neither field has it.
 type clientProfiles struct {
 	Profiles []clientProfile `json:"profiles"`
 }
@@ -182,12 +185,40 @@ type clientPolicies struct {
 	Policies []clientPolicy `json:"policies"`
 }
 
-// clientProfile and clientPolicy are placeholders: no realm measured so far
-// carries one, so their fields are not known. Declaring them empty keeps the
-// two arrays typed without inventing a shape.
-type clientProfile struct{}
+// clientProfile is one entry of the profiles array, transcribed from a
+// recorded round trip: a profile written without a description came back
+// without the key, so omitempty there is the contract and not a convenience.
+type clientProfile struct {
+	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
+	Executors   []clientExecutor `json:"executors"`
+}
 
-type clientPolicy struct{}
+// clientExecutor and clientCondition are the two provider references. Their
+// `configuration` is a free JSON object which Gloak stores and never reads -
+// the client-policy engine that would interpret it is not built - so it is
+// json.RawMessage rather than a map: a map would be re-marshalled with its keys
+// sorted, and the recorded configurations are not in alphabetical order.
+type clientExecutor struct {
+	Executor      string          `json:"executor"`
+	Configuration json.RawMessage `json:"configuration,omitempty"`
+}
+
+type clientCondition struct {
+	Condition     string          `json:"condition"`
+	Configuration json.RawMessage `json:"configuration,omitempty"`
+}
+
+// clientPolicy is one entry of the policies array. `enabled` is omitempty for
+// the same measured reason `description` is: a policy written without it came
+// back without it.
+type clientPolicy struct {
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Enabled     bool              `json:"enabled,omitempty"`
+	Conditions  []clientCondition `json:"conditions"`
+	Profiles    []string          `json:"profiles"`
+}
 
 // realmBriefRepresentation is what the listing sends under
 // briefRepresentation=true, to a caller that may view the realm. Three keys,

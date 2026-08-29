@@ -1249,6 +1249,37 @@ func (r *groupRepo) ListUserGroups(ctx context.Context, realmID, userID string) 
 	return out, nil
 }
 
+func (r *groupRepo) ListDefaultGroups(ctx context.Context, realmID string) ([]*model.Group, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT g.id, g.realm_id, g.parent_id, g.name FROM keycloak_group g
+		 JOIN realm_default_group d ON d.group_id = g.id
+		 WHERE d.realm_id = ? ORDER BY g.name`, realmID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	out, err := collectGroups(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadGroupAttributes(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *groupRepo) AddDefaultGroup(ctx context.Context, realmID, groupID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO realm_default_group (realm_id, group_id) VALUES (?, ?)
+		 ON CONFLICT DO NOTHING`, realmID, groupID)
+	return classify(err)
+}
+
+func (r *groupRepo) RemoveDefaultGroup(ctx context.Context, realmID, groupID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM realm_default_group WHERE realm_id = ? AND group_id = ?`, realmID, groupID)
+	return classify(err)
+}
+
 func insertGroupAttributes(ctx context.Context, tx *sql.Tx, m *model.Group) error {
 	for name, values := range m.Attributes {
 		for i, v := range values {

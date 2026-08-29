@@ -55,6 +55,58 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /admin/realms/{realm}", h.guardAny(realmWriteRoles, h.updateRealm))
 	mux.HandleFunc("DELETE /admin/realms/{realm}", h.guardAny(realmWriteRoles, h.deleteRealm))
 
+	// The whole of the description's Key tag. view-realm or manage-realm,
+	// measured across all 22 realm-management roles and a caller holding none -
+	// the same pair the realm's own configuration reads take, and measured on
+	// this route rather than carried over from them.
+	mux.HandleFunc("GET /admin/realms/{realm}/keys", h.guardAny(realmConfigReadRoles, h.readKeys))
+
+	// The realm's default groups, and the read of a group by its path. The
+	// description files all four under Realms Admin and they are **not** all
+	// authorised alike: the three default-groups operations take the realm's
+	// roles and group-by-path takes the users family's. Measured on each.
+	//
+	// **The two writes resolve the caller before the group, which no other
+	// route naming a group does.** An unknown group id answers 403 to a
+	// view-realm caller and to a caller holding nothing, where every Groups
+	// route answers 404 to both. So these take guardAny and resolve the group
+	// in the handler, and guardGroup would be wrong here - see
+	// defaultGroupFromPath.
+	mux.HandleFunc("GET /admin/realms/{realm}/default-groups",
+		h.guardAny(realmConfigReadRoles, h.listDefaultGroups))
+	mux.HandleFunc("PUT /admin/realms/{realm}/default-groups/{groupID}",
+		h.guardAny(realmWriteRoles, h.addDefaultGroup))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/default-groups/{groupID}",
+		h.guardAny(realmWriteRoles, h.removeDefaultGroup))
+
+	// group-by-path is the Groups family's ordering and the Groups family's
+	// roles, on a route the description tags Realms Admin: an unknown path
+	// answers 404 to every caller including one holding nothing, and
+	// query-groups - which opens the group listing - is 403 here.
+	mux.HandleFunc("GET /admin/realms/{realm}/group-by-path/{path...}",
+		h.guardGroupPath(groupReadRoles, h.readGroupByPath))
+
+	// Client policies and client profiles. They are the same state the realm
+	// representation's clientPolicies and clientProfiles keys carry, measured in
+	// both directions, so the reads take the realm's read pair and the writes
+	// take manage-realm - the guard PUT /admin/realms/{realm} takes, because it
+	// is the same write.
+	mux.HandleFunc("GET /admin/realms/{realm}/client-policies/policies",
+		h.guardAny(realmConfigReadRoles, h.readClientPolicies))
+	mux.HandleFunc("PUT /admin/realms/{realm}/client-policies/policies",
+		h.guardAny(realmWriteRoles, h.updateClientPolicies))
+	mux.HandleFunc("GET /admin/realms/{realm}/client-policies/profiles",
+		h.guardAny(realmConfigReadRoles, h.readClientProfiles))
+	mux.HandleFunc("PUT /admin/realms/{realm}/client-policies/profiles",
+		h.guardAny(realmWriteRoles, h.updateClientProfiles))
+
+	// Client types, whose entire contract on a default 26.7.1 is a 501.
+	// CLIENT_TYPES is a disabled preview feature, the same situation as
+	// GET .../client-secret/rotated's permanent 404. See guardRealmFeature for
+	// why this is not a guardAny with an empty role list.
+	mux.HandleFunc("GET /admin/realms/{realm}/client-types", h.guardRealmFeature(writeFeatureNotEnabled))
+	mux.HandleFunc("PUT /admin/realms/{realm}/client-types", h.guardRealmFeature(writeFeatureNotEnabled))
+
 	// Listing and counting accept query-users as well as view-users, measured:
 	// a caller holding only query-users gets 200 on both. Reading one user
 	// does not - it answers 403.
@@ -667,6 +719,77 @@ func (h *handler) guardRealmRead(next func(http.ResponseWriter, *http.Request, *
 	}
 }
 
+// guardGroupPath is guardGroup for the one route that names a group by its
+// path rather than its id: the path is resolved **before the caller is judged**.
+//
+// Measured 2026-08-29 on three callers - one holding nothing, one holding
+// create-client and one holding view-users - all three of which answer 404
+// "Group path does not exist" for a path that resolves to nothing, while a
+// path that resolves answers 403 to the first two. That is guardGroup's
+// ordering on a route the description tags Realms Admin rather than Groups, so
+// it is measured here rather than inherited from either neighbour.
+func (h *handler) guardGroupPath(fine []string, next func(http.ResponseWriter, *http.Request, *reqContext, *model.Group)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		realm := h.resolveRealm(w, r)
+		if realm == nil {
+			return
+		}
+		c := h.resolveCaller(w, r, realm)
+		if c == nil {
+			return
+		}
+		group, err := h.groupAtPath(r, realm.ID, groupByPathSegments(r.PathValue("path")))
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeGroupPathNotFound(w)
+				return
+			}
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		rc := &reqContext{realm: realm, caller: c}
+		if !c.hasAny(fine) {
+			writeForbidden(w)
+			return
+		}
+		next(w, r, rc, group)
+	}
+}
+
+// guardRealmFeature is the guard for a route whose whole answer is "that
+// feature is off": authenticate, resolve the realm, and hand over.
+//
+// **The order it expresses is measured and it is nobody else's.** On
+// /admin/realms/{realm}/client-types, no token is 401, an unknown realm with a
+// valid token is 404 "Realm not found.", and then *every* authenticated caller
+// gets the 501 - including one holding no admin role at all. So the feature
+// check sits between the realm and the authorization check, which means there
+// is no role list to write down and guardAny with an empty slice would refuse
+// everybody instead.
+func (h *handler) guardRealmFeature(next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		realm := h.resolveRealm(w, r)
+		if realm == nil {
+			return
+		}
+		c := h.resolveCaller(w, r, realm)
+		if c == nil {
+			return
+		}
+		next(w, r, &reqContext{realm: realm, caller: c})
+	}
+}
+
+// writeFeatureNotEnabled is what both client-types operations answer on a
+// default 26.7.1: CLIENT_TYPES is a disabled preview feature, so 501 is the
+// endpoint's contract and not a stub. The wording is the generic one Keycloak
+// uses when it cannot say more - the same description the realm PUT's 500
+// carries - and it is a 501 rather than a 404 or a 403.
+func writeFeatureNotEnabled(w http.ResponseWriter, _ *http.Request, _ *reqContext) {
+	httpx.WriteOAuthError(w, http.StatusNotImplemented, "Feature not enabled",
+		"For more on this error consult the server log.")
+}
+
 // guardAnyRejecting is the one implementation the three wrappers share:
 // resolve the realm, resolve the caller, admit it if it holds any of the
 // roles.
@@ -796,6 +919,18 @@ var realmWriteRoles = []string{"manage-realm"}
 // realmRolesReadRoles is what both realm-role reads accept: view-realm or
 // manage-realm, measured across eight single-role callers.
 var realmRolesReadRoles = []string{"view-realm", "manage-realm"}
+
+// realmConfigReadRoles is what the realm's own configuration reads accept: the
+// key set, the default groups listing and both client-policy reads. Measured
+// 2026-08-29 across all 22 realm-management roles plus a caller holding none,
+// on each of the four routes.
+//
+// **It holds the same two roles as realmRolesReadRoles and is a second
+// variable on purpose.** The two were measured on different routes and agree
+// today; sharing one would make a later measurement that splits them look like
+// a regression in the other family, which is the mistake usersReadRoles and
+// groupsReadRoles already record next door.
+var realmConfigReadRoles = []string{"view-realm", "manage-realm"}
 
 // clientRolesReadRoles is what both client-role reads accept: view-clients or
 // manage-clients - measured the same way as the realm-role pair above, on an
