@@ -546,6 +546,62 @@ var Fixtures = map[string]Fixture{
 	"admin-token-client-saml-scope": namedScopesClientFixture(
 		probeScopeClientSAMLID, "gloak-probe-cs-saml",
 		probeSAMLScopeID, "gloak-probe-cs-saml-scope", true),
+
+	// ---------------------------------------------------------------------
+	// P5 cut B: protocol mappers. Appended here rather than filed beside the
+	// client-scope fixtures above, because internal/conformance/fixture.go
+	// belongs to another stream this session and the end of the map is the
+	// one place two branches cannot both edit.
+	//
+	// Every mapper is created with a **fixed id**, which the body's id wins
+	// over on every path that takes one: POST /client-scopes, POST /clients,
+	// POST .../protocol-mappers/models and POST .../protocol-mappers/add-models
+	// were each measured keeping the id they were handed. So no fixture has to
+	// capture from Location, which is what makes them safe on the shared
+	// container.
+	//
+	// The mapper configs are **measured to be order-stable**: their key order
+	// as sent is the key order Keycloak serves them back in. That is not free -
+	// a config is a Java map and a seven-key one comes back reordered - so each
+	// of these was checked against the container before being written here, and
+	// it is what lets these goldens assert config bytes with no UnorderedKeys
+	// mask. See the plan's section 4.4.
+	"admin-token-mapper-scope": mapperScopeFixture(
+		probeMapperScopeID, "gloak-probe-pm-read", probeReadMappers),
+	"admin-token-mapper-scope-create": mapperScopeFixture(
+		probeMapperScopeCreateID, "gloak-probe-pm-create", ""),
+	"admin-token-mapper-template-create": mapperScopeFixture(
+		probeMapperTemplateCreateID, "gloak-probe-pm-tmpl-create", ""),
+	"admin-token-mapper-scope-update": mapperScopeFixture(
+		probeMapperScopeUpdateID, "gloak-probe-pm-update", probeUpdateMapper),
+	"admin-token-mapper-template-update": mapperScopeFixture(
+		probeMapperTemplateUpdateID, "gloak-probe-pm-tmpl-update", probeUpdateMapper),
+	"admin-token-mapper-scope-delete": mapperScopeFixture(
+		probeMapperScopeDeleteID, "gloak-probe-pm-delete", probeDeleteMapper),
+	"admin-token-mapper-template-delete": mapperScopeFixture(
+		probeMapperTemplateDeleteID, "gloak-probe-pm-tmpl-delete", probeDeleteMapper),
+	"admin-token-mapper-scope-add": mapperScopeFixture(
+		probeMapperScopeAddID, "gloak-probe-pm-add", ""),
+	"admin-token-mapper-template-add": mapperScopeFixture(
+		probeMapperTemplateAddID, "gloak-probe-pm-tmpl-add", ""),
+	"admin-token-mapper-scope-dup": mapperScopeFixture(
+		probeMapperScopeDupID, "gloak-probe-pm-dup", probeDupMapper),
+
+	"admin-token-mapper-client": mapperClientFixture(
+		probeMapperClientID, "gloak-probe-pm-client", probeReadMappers),
+	"admin-token-mapper-client-create": mapperClientFixture(
+		probeMapperClientCreateID, "gloak-probe-pm-client-create", ""),
+	"admin-token-mapper-client-update": mapperClientFixture(
+		probeMapperClientUpdateID, "gloak-probe-pm-client-update", probeUpdateMapper),
+	"admin-token-mapper-client-delete": mapperClientFixture(
+		probeMapperClientDeleteID, "gloak-probe-pm-client-delete", probeDeleteMapper),
+	"admin-token-mapper-client-add": mapperClientFixture(
+		probeMapperClientAddID, "gloak-probe-pm-client-add", ""),
+
+	// The three fixtures whose point is what a 204 or a 409 cannot show.
+	"admin-token-mapper-created":        createdMapperFixture(),
+	"admin-token-mapper-updated":        updatedMapperFixture(),
+	"admin-token-mapper-batch-conflict": batchConflictMapperFixture(),
 }
 
 // The fixed client-scope ids P5's fixtures create their scopes with. They are
@@ -2776,4 +2832,229 @@ func ReplaceCaptured(raw []byte, vars map[string]string) []byte {
 		raw = []byte(strings.ReplaceAll(string(raw), value, "{{"+name+"}}"))
 	}
 	return raw
+}
+
+// ---------------------------------------------------------------------------
+// P5 cut B: protocol mappers.
+//
+// These sit after the last existing helper for the reason the fixtures do: the
+// file belongs to another stream this session, and the end of it is the one
+// place two branches cannot both edit.
+// ---------------------------------------------------------------------------
+
+// The fixed ids the protocol-mapper fixtures use. Scopes continue the
+// a5c09e00 series the client-scope cut started, clients the c11e0000 one, and
+// the mappers get a series of their own so a case can never name a mapper id
+// where a scope id was meant.
+const (
+	probeMapperScopeID          = "a5c09e00-0000-4000-8000-000000000011"
+	probeMapperScopeCreateID    = "a5c09e00-0000-4000-8000-000000000012"
+	probeMapperTemplateCreateID = "a5c09e00-0000-4000-8000-000000000013"
+	probeMapperScopeUpdateID    = "a5c09e00-0000-4000-8000-000000000014"
+	probeMapperTemplateUpdateID = "a5c09e00-0000-4000-8000-000000000015"
+	probeMapperScopeDeleteID    = "a5c09e00-0000-4000-8000-000000000016"
+	probeMapperTemplateDeleteID = "a5c09e00-0000-4000-8000-000000000017"
+	probeMapperScopeAddID       = "a5c09e00-0000-4000-8000-000000000018"
+	probeMapperTemplateAddID    = "a5c09e00-0000-4000-8000-000000000019"
+	probeMapperScopeDupID       = "a5c09e00-0000-4000-8000-00000000001a"
+	probeMapperScopeCreatedID   = "a5c09e00-0000-4000-8000-00000000001b"
+	probeMapperScopeUpdatedID   = "a5c09e00-0000-4000-8000-00000000001c"
+	probeMapperScopeBatchID     = "a5c09e00-0000-4000-8000-00000000001d"
+
+	probeMapperClientID       = "c11e0000-0000-4000-8000-000000000011"
+	probeMapperClientCreateID = "c11e0000-0000-4000-8000-000000000012"
+	probeMapperClientUpdateID = "c11e0000-0000-4000-8000-000000000013"
+	probeMapperClientDeleteID = "c11e0000-0000-4000-8000-000000000014"
+	probeMapperClientAddID    = "c11e0000-0000-4000-8000-000000000015"
+
+	probeMapperAID       = "9a99e400-0000-4000-8000-000000000001"
+	probeMapperBID       = "9a99e400-0000-4000-8000-000000000002"
+	probeMapperUpdateID  = "9a99e400-0000-4000-8000-000000000003"
+	probeMapperDeleteID  = "9a99e400-0000-4000-8000-000000000004"
+	probeMapperDupID     = "9a99e400-0000-4000-8000-000000000005"
+	probeMapperCreatedID = "9a99e400-0000-4000-8000-000000000006"
+	probeMapperUpdatedID = "9a99e400-0000-4000-8000-000000000007"
+	probeMapperBatchID   = "9a99e400-0000-4000-8000-000000000008"
+)
+
+// The mapper bodies the fixtures embed, spelled once so a case can quote the
+// same configs its fixture sent.
+//
+// probeReadMappers holds one of each protocol, because the
+// `protocol/{protocol}` route filters on the **mapper's** own protocol and a
+// scope holding only OIDC mappers cannot tell that route apart from `models`.
+// The saml one also carries a `saml-*` provider, which is one of the fifteen
+// that do **not** gain a mirrored config key.
+const (
+	probeReadMappers = `{"id":"` + probeMapperAID + `","name":"gloak-probe-mapper-a",` +
+		`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper",` +
+		`"config":{"claim.name":"gloak-a","user.attribute":"gloak"}},` +
+		`{"id":"` + probeMapperBID + `","name":"gloak-probe-mapper-b",` +
+		`"protocol":"saml","protocolMapper":"saml-user-property-mapper",` +
+		`"config":{"attribute.name":"gloak-b"}}`
+
+	probeUpdateMapper = `{"id":"` + probeMapperUpdateID + `","name":"gloak-probe-mapper-update",` +
+		`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper",` +
+		`"config":{"claim.name":"gloak-before"}}`
+
+	probeDeleteMapper = `{"id":"` + probeMapperDeleteID + `","name":"gloak-probe-mapper-delete",` +
+		`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper",` +
+		`"config":{"claim.name":"gloak-delete"}}`
+
+	probeDupMapper = `{"id":"` + probeMapperDupID + `","name":"gloak-probe-mapper-dup",` +
+		`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper",` +
+		`"config":{"claim.name":"gloak-dup"}}`
+)
+
+// mapperScopeFixture creates one client scope carrying the mappers it is
+// given, in a single POST.
+//
+// One request rather than a create followed by N mapper POSTs, because
+// `POST /client-scopes` was measured accepting `protocolMappers` **and keeping
+// the ids inside them** - which is not true of its PUT, and is the reason a
+// scope's mappers can be set up without capturing anything.
+func mapperScopeFixture(id, name, mappers string) Fixture {
+	body := `{"id":"` + id + `","name":"` + name + `","protocol":"openid-connect"`
+	if mappers != "" {
+		body += `,"protocolMappers":[` + mappers + `]`
+	}
+	body += `}`
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{adminTokenStep(), {
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/client-scopes",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(body),
+			},
+			ExpectStatus: idempotentCreate,
+		}},
+	}
+}
+
+// mapperClientFixture is mapperScopeFixture over a client. `POST /clients`
+// takes `protocolMappers` the same way and keeps their ids too.
+//
+// The client names one of its scope lists so it inherits nothing: a client
+// created bare picks up the realm's six defaults and five optionals, and none
+// of that is what these cases are about. Naming **either** list suppresses
+// inheritance on both - the rule the client-scope cut measured - so one empty
+// list is enough.
+func mapperClientFixture(uuid, clientID, mappers string) Fixture {
+	body := `{"id":"` + uuid + `","clientId":"` + clientID + `","defaultClientScopes":[]`
+	if mappers != "" {
+		body += `,"protocolMappers":[` + mappers + `]`
+	}
+	body += `}`
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{adminTokenStep(), {
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(body),
+			},
+			ExpectStatus: idempotentCreate,
+		}},
+	}
+}
+
+// createdMapperFixture creates two mappers through the dedicated routes so a
+// case can read back what a 201 and a 204 do not show: the config keys the
+// server added for itself, an empty-valued key it dropped, and
+// `consentRequired` coming back **false** for a body that sent `true`.
+//
+// The first asks for `id.token.claim` and `access.token.claim` and gets
+// `introspection.token.claim` and `userinfo.token.claim` appended, because
+// `oidc-usermodel-attribute-mapper` is one of the twenty-one providers that
+// mirror both. The second uses `oidc-audience-resolve-mapper`, which mirrors
+// **only** the first - so a case reading the pair fails if the rule is
+// implemented as one flag rather than two, and fails again if it is
+// implemented as "every oidc-* provider".
+func createdMapperFixture() Fixture {
+	f := mapperScopeFixture(probeMapperScopeCreatedID, "gloak-probe-pm-created", "")
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes/" + probeMapperScopeCreatedID + "/protocol-mappers/models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json",
+			},
+			Body: []byte(`{"id":"` + probeMapperCreatedID + `","name":"gloak-probe-mapper-created",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper",` +
+				`"consentRequired":true,` +
+				`"config":{"id.token.claim":"true","access.token.claim":"true","empty":""}}`),
+		},
+		ExpectStatus: idempotentCreate,
+	}, Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes/" + probeMapperScopeCreatedID + "/protocol-mappers/add-models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json",
+			},
+			Body: []byte(`[{"id":"` + probeMapperBatchID + `","name":"gloak-probe-mapper-added",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-audience-resolve-mapper",` +
+				`"config":{"access.token.claim":"true"}}]`),
+		},
+		ExpectStatus: []int{http.StatusNoContent, http.StatusConflict},
+	})
+	return f
+}
+
+// updatedMapperFixture PUTs over a mapper and exists for the three fields the
+// PUT throws away.
+//
+// The body renames the mapper, moves it to `saml` and sets
+// `consentRequired: true`; measured, none of the three lands. Only
+// `protocolMapper` and `config` are written, and the config is **replaced**
+// rather than merged. The PUT's own 204 says none of that, which is why this
+// is a fixture and a read rather than an assertion on the write.
+func updatedMapperFixture() Fixture {
+	f := mapperScopeFixture(probeMapperScopeUpdatedID, "gloak-probe-pm-updated",
+		`{"id":"`+probeMapperUpdatedID+`","name":"gloak-probe-mapper-updated",`+
+			`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper",`+
+			`"config":{"claim.name":"gloak-before","user.attribute":"gloak"}}`)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/master/client-scopes/" + probeMapperScopeUpdatedID +
+				"/protocol-mappers/models/" + probeMapperUpdatedID,
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json",
+			},
+			Body: []byte(`{"id":"` + probeMapperUpdatedID + `","name":"gloak-probe-mapper-renamed",` +
+				`"protocol":"saml","protocolMapper":"oidc-audience-resolve-mapper",` +
+				`"consentRequired":true,"config":{"access.token.claim":"true"}}`),
+		},
+	})
+	return f
+}
+
+// batchConflictMapperFixture sends an add-models array whose **second** entry
+// duplicates a name the scope already holds, and exists so a case can read the
+// listing afterwards.
+//
+// The point is that the **first** entry is not there. The batch validates
+// before it applies, exactly as a composite batch does, and its 409 alone
+// cannot tell a rejected batch from a half-applied one.
+func batchConflictMapperFixture() Fixture {
+	f := mapperScopeFixture(probeMapperScopeBatchID, "gloak-probe-pm-batch", probeDupMapper)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes/" + probeMapperScopeBatchID + "/protocol-mappers/add-models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json",
+			},
+			Body: []byte(`[{"name":"gloak-probe-mapper-first","protocol":"openid-connect",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper","config":{}},` +
+				`{"name":"gloak-probe-mapper-dup","protocol":"openid-connect",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper","config":{}}]`),
+		},
+		ExpectStatus: []int{http.StatusConflict},
+	})
+	return f
 }
