@@ -74,6 +74,46 @@ func WriteAuthorizationRedirect(w http.ResponseWriter, location string) {
 	w.WriteHeader(http.StatusFound)
 }
 
+// themeErrorPageBody is Gloak's placeholder for the theme's error page.
+//
+// Keycloak serves 3574 to 3623 bytes of keycloak.v2 Freemarker output here,
+// carrying a /resources/<hash>/ cache-busting segment regenerated on every
+// container start. Two conformance cases are Pending against exactly that
+// churn and stay Pending until P13 builds themes. What Gloak reproduces today
+// is the response's **envelope**, which is measured and stable.
+const themeErrorPageBody = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
+	`<title>We are sorry...</title></head><body><h1 id="kc-page-title">We are sorry...</h1>` +
+	`</body></html>`
+
+// WriteThemeErrorPage writes the authorization endpoint's page family: the
+// answer to every rejection that cannot be reported back to the client,
+// because the client or its redirect URI is what failed.
+//
+// Measured 2026-08-29 on five 400s and one 403 from GET /auth:
+//
+//	Content-Language: en
+//	Content-Security-Policy: frame-src 'self'; frame-ancestors 'self'; object-src 'none';
+//	Content-Type: text/html;charset=utf-8
+//	the five security headers
+//	**no Cache-Control at all**
+//
+// The missing Cache-Control is the part that looks like an oversight: the 302
+// beside it and the 200 login page both send
+// "no-store, must-revalidate, max-age=0". Adding one here for consistency is
+// the fix that breaks it.
+//
+// status is a parameter because it is not always 400: a bearer-only client
+// answers 403 with this same page and these same headers.
+func WriteThemeErrorPage(w http.ResponseWriter, status int) {
+	suppressDate(w)
+	SetSecurityHeaders(w)
+	SetContentSecurityPolicy(w)
+	w.Header().Set("Content-Language", "en")
+	w.Header().Set("Content-Type", "text/html;charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write([]byte(themeErrorPageBody))
+}
+
 // suppressDate omits the Date header net/http would otherwise add
 // automatically. Keycloak 26.7.1 sends no Date header on any response, so a
 // running Gloak that let net/http add one would differ from Keycloak on
