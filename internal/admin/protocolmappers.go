@@ -635,19 +635,25 @@ func decodeMapperBody(w http.ResponseWriter, r *http.Request, want byte,
 // bad:
 //
 //	no clients role   403 even for a scope that does not exist
+//	query-clients     **404** for a scope that does not exist, 403 for one that does
 //	view-clients      404 for a bad scope, 404 for a bad mapper, 403 for a write
 //	manage-clients    404 for everything
 //
-// So: coarse gate, then the container, then - on a read - the mapper, and on a
-// write the manage-clients check sits between the container and the provider.
+// So: coarse gate, then the container, then the fine role check, and - on a
+// read - the mapper after it; on a write the manage-clients check sits between
+// the container and the provider.
 //
-// **The coarse gate here is two roles, not three.** `query-clients` is 403 on
-// every one of these, where `GET /client-scopes` one level up admits it and
-// answers `200 []`. Widening this to clientsReadRoles for symmetry is the
-// tidy-up that breaks it.
+// **The query-clients row is why the gate is three roles and the fine check is
+// two.** It was written as a two-role gate first, from a sweep that had only
+// asked what query-clients gets on a scope that **exists** - 403, the same
+// answer either arrangement gives. The scope that does not exist is what tells
+// them apart, and it says query-clients is admitted and then refused, not
+// refused at the door. `GET /client-scopes` one level up admits it too and
+// answers `200 []` rather than 403, so the gate is shared with the parent
+// family and only the fine check differs.
 func (h *handler) guardScopeMappers(write bool,
 	next func(http.ResponseWriter, *http.Request, *reqContext, mapperHolder)) http.HandlerFunc {
-	return h.guardAnyRejecting(clientScopeMapperReadRoles, writeForbidden,
+	return h.guardAnyRejecting(clientsReadRoles, writeForbidden,
 		func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 			sc, err := h.store.ClientScopes().ByID(r.Context(), rc.realm.ID,
 				r.PathValue("clientScopeID"))
@@ -659,7 +665,7 @@ func (h *handler) guardScopeMappers(write bool,
 				httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 				return
 			}
-			if write && !rc.caller.has("manage-clients") {
+			if !mayUseClientMappers(rc.caller, write) {
 				writeForbidden(w)
 				return
 			}
@@ -673,13 +679,13 @@ func (h *handler) guardScopeMappers(write bool,
 // scope`.
 func (h *handler) guardClientMappers(write bool,
 	next func(http.ResponseWriter, *http.Request, *reqContext, mapperHolder)) http.HandlerFunc {
-	return h.guardAnyRejecting(clientScopeMapperReadRoles, writeForbidden,
+	return h.guardAnyRejecting(clientsReadRoles, writeForbidden,
 		func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 			client, ok := h.clientFromPath(w, r, rc)
 			if !ok {
 				return
 			}
-			if write && !rc.caller.has("manage-clients") {
+			if !mayUseClientMappers(rc.caller, write) {
 				writeForbidden(w)
 				return
 			}
@@ -687,9 +693,20 @@ func (h *handler) guardClientMappers(write bool,
 		})
 }
 
-// clientScopeMapperReadRoles is the coarse gate on the protocol-mapper routes.
+// mayUseClientMappers is the **fine** check, after the container is resolved.
 //
-// It is clientsReadRoles **minus query-clients**, measured: a query-clients
-// caller is 403 on all five reads here and 200 with an empty body on
-// GET /client-scopes. One role, two neighbouring families, two answers.
-var clientScopeMapperReadRoles = []string{"view-clients", "manage-clients"}
+// A read takes view-clients or manage-clients and a write takes manage-clients
+// alone, swept one role at a time over eight candidates on ten routes.
+// `query-clients` opens neither, although the coarse gate above admits it -
+// which is what makes a scope that does not exist a 404 to a query-clients
+// caller and a scope that does a 403.
+//
+// It is not maySeeClientScopes, although it reads identically for a read: that
+// one empties a body and this one refuses a request. `GET /client-scopes`
+// answers query-clients `200 []`; nothing on this family answers it 200 at all.
+func mayUseClientMappers(c *caller, write bool) bool {
+	if write {
+		return c.has("manage-clients")
+	}
+	return c.has("view-clients") || c.has("manage-clients")
+}
