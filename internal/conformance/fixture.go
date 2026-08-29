@@ -1,6 +1,7 @@
 package conformance
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/net/html"
 )
 
 // Step is one request run before a case's own, whose response contributes
@@ -31,6 +34,38 @@ type Step struct {
 	// is what a case substitutes into a path and the base URL differs between
 	// the recorder and the verifier. Anything else is captured whole.
 	CaptureHeader map[string]string
+	// CaptureForm reads values out of the first HTML form in the step's
+	// response. It maps a variable name to what to take: "action" for the
+	// form's action URL, or "input:<name>" for one input's value.
+	//
+	// The login page is why it exists. Its form's action carries five query
+	// parameters - session_code, execution, client_id, tab_id and client_data -
+	// every one of them minted per request, so the credential POST cannot be
+	// written as a literal. See the "The login page, and the five parameters
+	// its form carries" section of
+	// docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+	//
+	// "action" is captured **relative to the base URL**, so it drops straight
+	// into a following step's Path. buildRequest appends Query only when Query
+	// is non-empty, so an action carrying its own query string works there
+	// unchanged.
+	//
+	// "input:" is supported although the measured login needs none of it: the
+	// form's three inputs are username, password and a value-less hidden
+	// credentialId. It is here so the next flow with a valued hidden field does
+	// not need a second mechanism.
+	CaptureForm map[string]string
+	// CaptureQuery maps a variable name to a query parameter of the Location
+	// header. CaptureHeader cannot do this: it yields a URL's last path
+	// segment, which is what a 201's Location carries and is useless for the
+	// authorization redirect, whose code, state, session_state and iss are all
+	// in the query.
+	//
+	// The fragment is deliberately not read. response_mode=fragment puts the
+	// same parameters there, but the case that measures it records the
+	// redirect rather than capturing out of it, and supporting what no case
+	// uses is a guess about the next cut.
+	CaptureQuery map[string]string
 	// ExpectStatus is the set of status codes this step accepts. Empty means
 	// **any 2xx**, which is what almost every step wants.
 	//
@@ -1581,6 +1616,22 @@ func RunFixture(f Fixture, base string, do Do) (map[string]string, error) {
 			}
 			vars[name] = value
 		}
+		for name, what := range s.CaptureForm {
+			value, err := captureFromForm(body, what, base)
+			if err != nil {
+				return nil, fmt.Errorf("fixture step %d: capture %q: %w (status %d)",
+					i, name, err, resp.StatusCode)
+			}
+			vars[name] = value
+		}
+		for name, param := range s.CaptureQuery {
+			value, err := captureFromQuery(resp.Header, param)
+			if err != nil {
+				return nil, fmt.Errorf("fixture step %d: capture %q: %w (status %d)",
+					i, name, err, resp.StatusCode)
+			}
+			vars[name] = value
+		}
 	}
 	if f.Delay > 0 {
 		time.Sleep(f.Delay)
@@ -1686,6 +1737,120 @@ func captureFromHeader(h http.Header, name string) (string, error) {
 		}
 	}
 	return value, nil
+}
+
+// captureFromForm pulls one value out of the first HTML form in a body. what
+// is "action" or "input:<name>"; see Step.CaptureForm.
+//
+// It tokenises rather than matching a regular expression. A regular expression
+// over HTML is the classic mistake, and the login form's action is exactly the
+// shape that breaks one: it holds five query parameters whose values are
+// base64 and can contain any of the characters a naive pattern would use as a
+// delimiter, and the whole attribute arrives HTML-escaped, with &amp; between
+// the parameters.
+func captureFromForm(body []byte, what, base string) (string, error) {
+	action, inputs, err := parseFirstForm(body)
+	if err != nil {
+		return "", err
+	}
+	if what == "action" {
+		// Relative to base, so it can be a following step's Path. The recorder
+		// and the verifier answer on different hosts, so an absolute action
+		// would send the next step to the wrong server.
+		return strings.TrimPrefix(action, base), nil
+	}
+	name, ok := strings.CutPrefix(what, "input:")
+	if !ok {
+		return "", fmt.Errorf("%q is not \"action\" or \"input:<name>\"", what)
+	}
+	value, ok := inputs[name]
+	if !ok {
+		return "", fmt.Errorf("the form has no input named %q", name)
+	}
+	return value, nil
+}
+
+// parseFirstForm returns the first form's action and its inputs by name.
+//
+// An absent form is an error rather than an empty action, for the reason
+// captureFrom and captureFromHeader already give: substituting nothing would
+// send the next step to the base URL and record whatever that answers as
+// though somebody had meant to ask for it. On this endpoint the empty action
+// is not hypothetical - a rejected authorization request answers a 302 with no
+// body at all, and that is the failure this turns into a message.
+func parseFirstForm(body []byte) (string, map[string]string, error) {
+	z := html.NewTokenizer(bytes.NewReader(body))
+	inForm := false
+	action := ""
+	inputs := map[string]string{}
+	for {
+		switch z.Next() {
+		case html.ErrorToken:
+			if !inForm {
+				return "", nil, fmt.Errorf("the response has no <form> (%d bytes)", len(body))
+			}
+			// A form left unclosed at end of input is still a form. Returning
+			// what was collected beats failing on a page's stray markup.
+			return action, inputs, nil
+		case html.StartTagToken, html.SelfClosingTagToken:
+			name, _ := z.TagName()
+			switch string(name) {
+			case "form":
+				if inForm {
+					continue // a nested form; the first one is the one asked for
+				}
+				inForm = true
+				action = attr(z, "action")
+			case "input":
+				if inForm {
+					if n := attr(z, "name"); n != "" {
+						inputs[n] = attr(z, "value")
+					}
+				}
+			}
+		case html.EndTagToken:
+			if name, _ := z.TagName(); string(name) == "form" && inForm {
+				return action, inputs, nil
+			}
+		}
+	}
+}
+
+// attr reads one attribute off the tokenizer's current tag. The tokenizer
+// unescapes attribute values, so the login form's action comes back with real
+// ampersands between its five query parameters rather than &amp;.
+func attr(z *html.Tokenizer, want string) string {
+	for {
+		key, value, more := z.TagAttr()
+		if string(key) == want {
+			return string(value)
+		}
+		if !more {
+			return ""
+		}
+	}
+}
+
+// captureFromQuery pulls one query parameter out of the Location header.
+//
+// An absent header or an absent parameter is an error and not an empty string,
+// the same rule the other captures follow. A case whose code came back empty
+// would exchange nothing at the token endpoint and record the refusal as the
+// authorization code grant's contract.
+func captureFromQuery(h http.Header, param string) (string, error) {
+	location := h.Get("Location")
+	if location == "" {
+		return "", fmt.Errorf("response has no Location header")
+	}
+	u, err := url.Parse(location)
+	if err != nil {
+		return "", fmt.Errorf("Location %q is not a URL: %w", location, err)
+	}
+	values, ok := u.Query()[param]
+	if !ok || len(values) == 0 {
+		return "", fmt.Errorf("Location %q has no %q parameter", location, param)
+	}
+	return values[0], nil
 }
 
 // Expand substitutes {{name}} references in a request's path, query, headers,
