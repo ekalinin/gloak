@@ -938,9 +938,18 @@ var oidcPending = []Case{
 			Section:   "Logout endpoint: RP-initiated logout",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the logout endpoint is not implemented",
-		Fixture: "browser-logged-in",
+		Status: Implemented,
+		// The fixture moved from browser-logged-in to logout-hint on 2026-08-29,
+		// and the case measures the same response.
+		//
+		// browser-logged-in drives Keycloak's login form, which Gloak does not
+		// serve until P13, so this case could never run against Gloak however
+		// well the endpoint worked - it would sit at Recorded with the endpoint
+		// finished. Measured on one container: a direct grant's id_token_hint
+		// with no cookie jar at all produces a byte-identical 302, differing
+		// only in the two cookie clears a browser session would have had, which
+		// this case masks as volatile and does not assert.
+		Fixture: "logout-hint",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/protocol/openid-connect/logout",
@@ -972,26 +981,128 @@ var oidcPending = []Case{
 			Section:   "Logout endpoint: RP-initiated logout",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
-		Reason: "the login theme is P13, and this response is a theme page",
-		// Measured 2026-08-29, and it is not the redirect this case was
-		// written to expect. Without an id_token_hint the logout endpoint
-		// serves the theme's "Logging out" confirmation page - 200,
-		// text/html;charset=utf-8, "Do you want to log out?" - whatever the
-		// post_logout_redirect_uri is and whether or not it validates. So
-		// AssertHeaders naming Location was asserting a header that does not
-		// exist on this response, and the earlier comment's diagnosis, that
-		// the run-time port was to blame, was measuring the wrong thing.
+		Status: Implemented,
+		// **This case is back to the redirect it was originally written to
+		// expect, and the reading that moved it to P13 was wrong.**
 		//
-		// It is a theme page, so it moves to P13 with the other three. P3's
-		// share of oidc/logout is one case, not two.
-		Fixture: "",
+		// Measured 2026-08-29 on one container, the same request with and
+		// without a cookie jar:
+		//
+		//	with a live browser session   200, the theme's "Logging out" page
+		//	with no session at all        302 to the registered target
+		//
+		// The confirmation page is what a logout serves when it has a session
+		// to end and no authority to end it without asking. The measurement
+		// that produced "logout without an id_token_hint does not redirect"
+		// was taken through a jar and read the session for the parameter. This
+		// case sends no cookies, so it is the second row.
+		//
+		// It has its own client rather than sharing logout-hint's, because it
+		// is the one case that must NOT have a session on the client it names:
+		// a client carrying one would answer the page here and the case would
+		// stop measuring what it says it measures.
+		Fixture: "logout-client",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/protocol/openid-connect/logout",
 			Query: map[string]string{
-				"client_id":                "gloak-probe-browser-logout",
+				"client_id":                "gloak-probe-logout-client",
 				"post_logout_redirect_uri": "http://localhost:9999/callback",
+				"state":                    "xyz123",
+			},
+		},
+		AssertHeaders:       []string{"Location", "Cache-Control"},
+		VolatileHeaders:     []string{"Set-Cookie"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
+	},
+	{
+		ID: "oidc/logout/post-logout-uri-defaults-to-redirect-uris",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Logout endpoint: redirect URI validation",
+			Retrieved: "2026-08-29",
+		},
+		Status: Implemented,
+		// The client this fixture creates registers **no**
+		// post.logout.redirect.uris at all, and its redirectUris entry still
+		// validates. That falsifies "a client whose redirect_uri validates at
+		// the authorization endpoint is still refused at the logout endpoint
+		// until it is set": the attribute is a filter over redirectUris, not a
+		// separate registration.
+		//
+		// Measured across five values - absent, "", "+", "-" and a
+		// "##"-separated list. The first three fall back to redirectUris, "-"
+		// refuses everything including its own redirectUris, and a list
+		// replaces redirectUris rather than adding to it. This case pins the
+		// first row and internal/oidc's own tests pin the other four, because
+		// four more goldens would each cost a container-shared client to say
+		// one thing.
+		Fixture: "logout-default-uris",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/logout",
+			Query: map[string]string{
+				"id_token_hint":            "{{id_token}}",
+				"post_logout_redirect_uri": "http://localhost:9999/callback",
+			},
+		},
+		// No state was sent, so the Location is the bare target - which is the
+		// other half of "state and nothing else": there is no iss to leave
+		// behind either.
+		AssertHeaders:       []string{"Location", "Cache-Control"},
+		VolatileHeaders:     []string{"Set-Cookie"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
+	},
+	{
+		ID: "oidc/logout/spent-id-token-hint",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Logout endpoint: RP-initiated logout",
+			Retrieved: "2026-08-29",
+		},
+		Status: Implemented,
+		// The fixture already logged this session out once, so the case's own
+		// request presents an id_token_hint whose session is gone.
+		//
+		// Measured: the same 302, not an error. That is the opposite of the
+		// authorization code, where a second attempt answers "Code not valid" -
+		// and it is why the endpoint cannot be written to resolve the session
+		// before deciding. A client asked for the session to end and it has
+		// ended.
+		Fixture: "logout-hint-spent",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/logout",
+			Query: map[string]string{
+				"id_token_hint":            "{{id_token}}",
+				"post_logout_redirect_uri": "http://localhost:9999/callback",
+				"state":                    "again",
+			},
+		},
+		AssertHeaders:       []string{"Location", "Cache-Control"},
+		VolatileHeaders:     []string{"Set-Cookie"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
+	},
+	{
+		ID: "oidc/logout/unknown-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Logout endpoint: RP-initiated logout",
+			Retrieved: "2026-08-29",
+		},
+		Status: Implemented,
+		// The realm is resolved before anything else, and its rejection is the
+		// only one on this endpoint that is JSON rather than a page. Measured
+		// with a request that is wrong in two further ways - an unusable
+		// id_token_hint and an unregistered target - and it still answers about
+		// the realm.
+		Fixture: "bootstrap",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/gloak-no-such-realm/protocol/openid-connect/logout",
+			Query: map[string]string{
+				"id_token_hint":            "not-a-jwt",
+				"post_logout_redirect_uri": "https://evil.example/cb",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
@@ -1006,8 +1117,11 @@ var oidcPending = []Case{
 		Status: Pending,
 		Reason: "the login theme is P13, and this response is a theme page",
 		// Measured 2026-08-29: 400, text/html;charset=utf-8, the theme's error
-		// page with the instruction "Invalid redirect uri". Same per-container
-		// resource hash as the authorization endpoint's two, same deferral.
+		// page with the instruction "Invalid redirect uri", and
+		// **Cache-Control: no-cache** - which the authorization endpoint's
+		// otherwise identical page family does not send. The envelope is served
+		// now; the body carries the same per-container resource hash as the
+		// authorization endpoint's two, so the golden stays deferred.
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodGet,
@@ -1020,14 +1134,181 @@ var oidcPending = []Case{
 		AssertHeaders: []string{"Content-Type"},
 	},
 	{
+		ID: "oidc/logout/invalid-id-token-hint",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Logout endpoint: redirect URI validation",
+			Retrieved: "2026-08-29",
+		},
+		Status: Pending,
+		Reason: "the login theme is P13, and this response is a theme page",
+		// The third instruction the 400 page carries, and the branch that
+		// decides the rejection order: an unusable id_token_hint is answered
+		// **before** the redirect URI is looked at, so a request wrong in both
+		// ways answers about the hint. Measured on five hints - rubbish, an
+		// access token, a refresh token, a rewritten signature and another
+		// realm's token - all answering "Invalid parameter: id_token_hint".
+		//
+		// Its envelope is served; only the prose is P13's, and Gloak's
+		// placeholder body cannot carry three different instructions. That is
+		// why the branch is guarded by internal/oidc's own tests as well.
+		Fixture: "bootstrap",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/logout",
+			Query: map[string]string{
+				"id_token_hint":            "not-a-jwt",
+				"post_logout_redirect_uri": "https://evil.example/callback",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+
+	// --- Logout endpoint, the POST family ---
+	//
+	// A POST carrying a refresh_token is a different endpoint wearing the same
+	// path: it authenticates the client, answers JSON rather than pages, and
+	// ignores any post_logout_redirect_uri it was given. Measured 2026-08-29,
+	// the refresh_token is what decides - a POST without one answers the GET
+	// families, and a POST carrying both a refresh_token and an id_token_hint
+	// answers 204.
+	{
+		ID: "oidc/logout/post-refresh-token",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Logout endpoint: RP-initiated logout",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "logout-refresh",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/logout",
+			Form: map[string]string{
+				"client_id":     "gloak-probe-logout-refresh",
+				"refresh_token": "{{refresh_token}}",
+			},
+		},
+		// 204, an empty body, Cache-Control: no-cache, and a
+		// Content-Security-Policy - the second protocol response measured
+		// carrying that header, beside revocation's success. X-Frame-Options is
+		// asserted because this is a 204 whose request declared
+		// application/x-www-form-urlencoded, which is the side of
+		// WriteNoContent's measured rule that sends it.
+		AssertHeaders: []string{"Cache-Control", "Content-Security-Policy", "X-Frame-Options"},
+	},
+	{
+		ID: "oidc/logout/post-invalid-refresh-token",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Logout endpoint: RP-initiated logout",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "logout-refresh",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/logout",
+			Form: map[string]string{
+				"client_id":     "gloak-probe-logout-refresh",
+				"refresh_token": "not-a-jwt",
+			},
+		},
+		// {"error":"invalid_grant","error_description":"Invalid refresh token"},
+		// and **no Cache-Control at all** where the 204 beside it sends
+		// no-cache. Measured on an access token and an ID token in the
+		// refresh_token's place too, which answer the same body - so the token
+		// type is asserted rather than the shape.
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "oidc/logout/post-client-mismatch",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Logout endpoint: RP-initiated logout",
+			Retrieved: "2026-08-29",
+		},
+		Status: Implemented,
+		// Two **public** clients, so nothing but the token differs. The token
+		// endpoint's equivalent case had to be redone for exactly this reason:
+		// its first attempt used a confidential client and measured client
+		// authentication rather than the token.
+		//
+		// The description is a spelling nothing else in this project carries.
+		Fixture: "logout-mismatch",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/logout",
+			Form: map[string]string{
+				"client_id":     "gloak-probe-logout-other",
+				"refresh_token": "{{refresh_token}}",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "oidc/logout/post-missing-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Logout endpoint: RP-initiated logout",
+			Retrieved: "2026-08-29",
+		},
+		Status: Implemented,
+		// A refresh_token with nothing naming a client is 401 invalid_client,
+		// where a confidential client sending no secret is 401
+		// unauthorized_client. That is the split AGENTS.md records for the token
+		// endpoint, holding on a fourth endpoint - and the pair is only a pair
+		// because post-confidential-no-secret sits beside this case.
+		Fixture: "bootstrap",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/logout",
+			Form:   map[string]string{"refresh_token": "not-a-jwt"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "oidc/logout/post-confidential-no-secret",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Logout endpoint: RP-initiated logout",
+			Retrieved: "2026-08-29",
+		},
+		Status: Implemented,
+		// The fixture holds this client's secret and the case deliberately does
+		// not send it. Measured: 401 unauthorized_client, and the same request
+		// carrying the secret answers 204 - so the refusal is about the
+		// credential rather than about the token.
+		//
+		// The GET family does not authenticate the client at all: the same
+		// confidential client redirects with an id_token_hint and no secret.
+		Fixture: "logout-confidential",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/logout",
+			Form: map[string]string{
+				"client_id":     "gloak-probe-logout-confidential",
+				"refresh_token": "{{refresh_token}}",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
 		ID: "oidc/logout/backchannel",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
 			Section:   "Logout endpoint: backchannel logout",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the logout endpoint is not implemented",
+		Status: Pending,
+		// The endpoint is implemented as of 2026-08-29; what this case waits
+		// for is not the endpoint. Back-channel logout is Keycloak making an
+		// outbound HTTP call to the client's registered
+		// backchannel.logout.url, carrying a signed logout token. The harness
+		// records one request and one response and can observe neither the
+		// call nor its token, so there is nothing here for a golden to hold.
+		Reason:  "the harness cannot observe Keycloak calling out to a client",
 		Fixture: "", // needs a client with a registered backchannel logout URL and an active session; Keycloak calls the client, the client does not call this
 		Request: Request{
 			Method: http.MethodGet,
@@ -1046,8 +1327,12 @@ var oidcPending = []Case{
 			Section:   "Logout endpoint: frontchannel logout",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the logout endpoint is not implemented",
+		Status: Pending,
+		// Same correction as its back-channel sibling: the endpoint exists, and
+		// front-channel logout is an HTML page carrying an iframe per client
+		// session, which is both a theme page (P13) and a call out to the
+		// client (unobservable here).
+		Reason:  "the response is a theme page carrying per-client iframes, and the calls it makes are unobservable",
 		Fixture: "", // needs a client with a registered frontchannel logout URL and an active session
 		Request: Request{
 			Method: http.MethodGet,

@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ekalinin/gloak/internal/httpx"
@@ -274,5 +275,97 @@ func TestWriteAuthorizationRedirect(t *testing.T) {
 	}
 	if body := w.Body.String(); body != "" {
 		t.Errorf("body = %q, want empty", body)
+	}
+}
+
+// TestWriteLogoutRedirect pins the one value that separates the logout redirect
+// from the authorization redirect, and the four that do not.
+//
+// Measured 2026-08-29 side by side on one container: both endpoints redirect a
+// browser to a client's own registered URI, both omit X-Frame-Options and
+// Content-Security-Policy, and they disagree about Cache-Control alone. One
+// shared writer taking that string as an argument is exactly what this test
+// exists to make fail.
+func TestWriteLogoutRedirect(t *testing.T) {
+	w := httptest.NewRecorder()
+	httpx.SetSecurityHeaders(w)
+
+	httpx.WriteLogoutRedirect(w, "http://localhost:9999/callback?state=bye")
+
+	if w.Code != http.StatusFound {
+		t.Errorf("status = %d, want 302", w.Code)
+	}
+	present := map[string]string{
+		"Cache-Control":             "no-cache",
+		"Location":                  "http://localhost:9999/callback?state=bye",
+		"Referrer-Policy":           "no-referrer",
+		"Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+		"X-Content-Type-Options":    "nosniff",
+		"X-Robots-Tag":              "none",
+	}
+	for name, want := range present {
+		if got := w.Header().Get(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+	for _, name := range []string{"X-Frame-Options", "Content-Security-Policy", "Content-Type"} {
+		if got, ok := w.Header()[name]; ok {
+			t.Errorf("%s = %q, want absent", name, got)
+		}
+	}
+	if body := w.Body.String(); body != "" {
+		t.Errorf("body = %q, want empty", body)
+	}
+}
+
+// TestWriteThemePageCacheControl pins the disagreement between the two
+// endpoints that serve the theme's pages: /auth sends no Cache-Control at all
+// and /logout sends no-cache. Both directions are asserted, because a writer
+// that always set the header and one that never set it would each pass a test
+// checking only the other one.
+func TestWriteThemePageCacheControl(t *testing.T) {
+	none := httptest.NewRecorder()
+	httpx.WriteThemeErrorPage(none, http.StatusBadRequest, "")
+	if got, ok := none.Header()["Cache-Control"]; ok {
+		t.Errorf("Cache-Control = %q, want absent for the authorization endpoint", got)
+	}
+
+	cached := httptest.NewRecorder()
+	httpx.WriteThemeErrorPage(cached, http.StatusBadRequest, "no-cache")
+	if got := cached.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("Cache-Control = %q, want %q for the logout endpoint", got, "no-cache")
+	}
+	if none.Body.String() != cached.Body.String() {
+		t.Errorf("the two pages differ in body:\n%q\n%q", none.Body, cached.Body)
+	}
+}
+
+// TestWriteThemePageTitle guards the placeholder's one variable part. A 200
+// carrying "We are sorry..." would say the request failed where it succeeded,
+// which is the mistake one hard-coded body makes.
+func TestWriteThemePageTitle(t *testing.T) {
+	w := httptest.NewRecorder()
+	httpx.WriteThemePage(w, http.StatusOK, "no-cache", "You are logged out")
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "<title>You are logged out</title>") {
+		t.Errorf("body has no title: %q", body)
+	}
+	if strings.Contains(body, httpx.ThemeErrorTitle) {
+		t.Errorf("body carries the error page's title: %q", body)
+	}
+	envelope := map[string]string{
+		"Content-Type":            "text/html;charset=utf-8",
+		"Content-Language":        "en",
+		"Content-Security-Policy": "frame-src 'self'; frame-ancestors 'self'; object-src 'none';",
+		"X-Frame-Options":         "SAMEORIGIN",
+	}
+	for name, want := range envelope {
+		if got := w.Header().Get(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
 	}
 }

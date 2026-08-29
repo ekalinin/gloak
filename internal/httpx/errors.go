@@ -74,16 +74,54 @@ func WriteAuthorizationRedirect(w http.ResponseWriter, location string) {
 	w.WriteHeader(http.StatusFound)
 }
 
-// themeErrorPageBody is Gloak's placeholder for the theme's error page.
+// WriteLogoutRedirect writes the RP-initiated logout endpoint's 302 back to a
+// client's registered post-logout redirect URI.
 //
-// Keycloak serves 3574 to 3623 bytes of keycloak.v2 Freemarker output here,
+// It is WriteAuthorizationRedirect's header set with **one** value changed, and
+// that one value is why it is a separate function rather than a parameter.
+// Measured 2026-08-29 side by side on one container:
+//
+//	GET /auth    redirect   Cache-Control: no-store, must-revalidate, max-age=0
+//	GET /logout  redirect   Cache-Control: no-cache
+//
+// A shared writer taking the string as an argument would put the difference one
+// call site away from being invisible, and this is the difference that a reader
+// comparing the two endpoints most easily assumes away. Everything else is
+// identical and re-measured here rather than inherited: no Content-Type, an
+// empty body, the five security headers minus X-Frame-Options, and no
+// Content-Security-Policy - the same two omissions, on the second endpoint that
+// redirects a browser to a client's own registered URI.
+func WriteLogoutRedirect(w http.ResponseWriter, location string) {
+	suppressDate(w)
+	SetSecurityHeaders(w)
+	w.Header().Del("X-Frame-Options")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Location", location)
+	w.WriteHeader(http.StatusFound)
+}
+
+// themePageBody is Gloak's placeholder for a page the login theme renders.
+//
+// Keycloak serves 3574 to 4645 bytes of keycloak.v2 Freemarker output here,
 // carrying a /resources/<hash>/ cache-busting segment regenerated on every
-// container start. Two conformance cases are Pending against exactly that
+// container start. Several conformance cases are Pending against exactly that
 // churn and stay Pending until P13 builds themes. What Gloak reproduces today
 // is the response's **envelope**, which is measured and stable.
-const themeErrorPageBody = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
-	`<title>We are sorry...</title></head><body><h1 id="kc-page-title">We are sorry...</h1>` +
-	`</body></html>`
+//
+// The title is a parameter because the measured pages are not all the error
+// page: `/logout` serves "Logging out" and "You are logged out" with 200s
+// through the same envelope, and a 200 whose body says "We are sorry..." would
+// be a placeholder that misleads about which branch was taken.
+func themePageBody(title string) string {
+	return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
+		`<title>` + title + `</title></head><body><h1 id="kc-page-title">` + title +
+		`</h1></body></html>`
+}
+
+// ThemeErrorTitle is the title Keycloak's error page carries, and the one
+// WriteThemeErrorPage renders. It is exported so a handler serving a different
+// theme page names its own title rather than passing a bare literal.
+const ThemeErrorTitle = "We are sorry..."
 
 // WriteThemeErrorPage writes the authorization endpoint's page family: the
 // answer to every rejection that cannot be reported back to the client,
@@ -104,14 +142,40 @@ const themeErrorPageBody = `<!DOCTYPE html><html lang="en"><head><meta charset="
 //
 // status is a parameter because it is not always 400: a bearer-only client
 // answers 403 with this same page and these same headers.
-func WriteThemeErrorPage(w http.ResponseWriter, status int) {
+//
+// cacheControl is a parameter because the two endpoints serving this page
+// disagree about it, measured 2026-08-29 side by side on one container:
+//
+//	GET /auth    400 page and 403 page   no Cache-Control at all
+//	GET /logout  400 page                Cache-Control: no-cache
+//
+// So "the theme error page sends no Cache-Control" is a fact about `/auth` and
+// not about the page. Callers pass "" for no header. Hard-coding either value
+// here breaks the other endpoint.
+func WriteThemeErrorPage(w http.ResponseWriter, status int, cacheControl string) {
+	WriteThemePage(w, status, cacheControl, ThemeErrorTitle)
+}
+
+// WriteThemePage writes the envelope every page the login theme renders shares,
+// with Gloak's placeholder body under the given title.
+//
+// The envelope is measured on eight responses across two endpoints: `/auth`'s
+// five 400s and its 403, and `/logout`'s 400 error page, its "Logging out"
+// confirmation page and its "You are logged out" page. All of them carry
+// Content-Language: en, Content-Security-Policy, text/html;charset=utf-8 and
+// the five security headers. Only the status, the Cache-Control and the body
+// differ, which is why those three are the parameters and nothing else is.
+func WriteThemePage(w http.ResponseWriter, status int, cacheControl, title string) {
 	suppressDate(w)
 	SetSecurityHeaders(w)
 	SetContentSecurityPolicy(w)
+	if cacheControl != "" {
+		w.Header().Set("Cache-Control", cacheControl)
+	}
 	w.Header().Set("Content-Language", "en")
 	w.Header().Set("Content-Type", "text/html;charset=utf-8")
 	w.WriteHeader(status)
-	_, _ = w.Write([]byte(themeErrorPageBody))
+	_, _ = w.Write([]byte(themePageBody(title)))
 }
 
 // suppressDate omits the Date header net/http would otherwise add
