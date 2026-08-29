@@ -1815,15 +1815,23 @@ var adminCases = []Case{
 	{
 		// Direct holders only - the administrator holds admin directly. See
 		// "/roles/{name}/users is direct holders only" in the observed doc.
+		//
+		// **PristineRealm although the body names one bootstrapped user.** The
+		// body is every user in the realm holding a bootstrapped role, so it is
+		// a function of the whole realm and not of this case's fixture. It is
+		// clean today only because no fixture happens to assign admin; measured
+		// 2026-08-29 on a live 26.7.1, granting the realm role to a created
+		// user put that user in this body. See F53.
 		ID: "admin/roles/users",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Roles: get the users that have the specified role name",
 			Retrieved: "2026-08-23",
 		},
-		Status:    Implemented,
-		Operation: "GET /admin/realms/{realm}/roles/{role-name}/users",
-		Fixture:   "admin-token",
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/roles/{role-name}/users",
+		PristineRealm: true,
+		Fixture:       "admin-token",
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/admin/realms/master/roles/admin/users",
@@ -1835,15 +1843,22 @@ var adminCases = []Case{
 	{
 		// Always [] - the realm has no groups until P2's third cut. See
 		// roleGroups in internal/admin/roles.go.
+		//
+		// **PristineRealm for the same reason as the users sibling above.** []
+		// is a statement about every group in the realm, and granting admin to
+		// a created group put that group in this body when it was measured on
+		// 2026-08-29. Eight fixtures create groups; none grants this role, and
+		// nothing but the flag says so. See F53.
 		ID: "admin/roles/groups",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Roles: get the groups that have the specified role name",
 			Retrieved: "2026-08-23",
 		},
-		Status:    Implemented,
-		Operation: "GET /admin/realms/{realm}/roles/{role-name}/groups",
-		Fixture:   "admin-token",
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/roles/{role-name}/groups",
+		PristineRealm: true,
+		Fixture:       "admin-token",
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/admin/realms/master/roles/admin/groups",
@@ -3002,14 +3017,19 @@ var adminCases = []Case{
 		// `{"count":n}`, an **object**, where GET /users/count next door is a
 		// bare JSON number. The two counts do not agree about what a count is.
 		//
-		// **The number is masked and the shape is what this pins.** The count
-		// is over the whole realm, so any fixture that creates a group moves
-		// it, and the recorder shares one container - the first recording of
-		// this case said 3 where a pristine replay says 2. Masking it is
-		// honest about what a golden can hold here; that the body is an object
-		// rather than a bare number is the measurement worth keeping, and the
-		// numeric rules - whole tree, top=true, top ignored under search - are
-		// pinned by TestGroupCountIsTheTreeAndTopIsIgnoredUnderSearch instead.
+		// **The number was masked and is measured again.** The count is over
+		// the whole realm, and while the recorder shared one container any
+		// fixture creating a group moved it - the first recording said 3 where
+		// a pristine replay says 2, so the value was masked to `{{number}}`.
+		// A PristineRealm case now gets a container of its own (F40), which
+		// leaves bootstrap plus this fixture's parent and child: measured
+		// 2026-08-29 on a live 26.7.1, a bootstrapped realm holds no groups
+		// and this pair answers `{"count":2}`. The mask was the one place
+		// F40's defect was papered over rather than fixed. See F47.
+		//
+		// The numeric rules the body cannot show - whole tree, top=true, top
+		// ignored under search - stay pinned by
+		// TestGroupCountIsTheTreeAndTopIsIgnoredUnderSearch.
 		ID: "admin/groups/count",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -3026,7 +3046,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Volatile:      []string{"count"},
 	},
 	{
 		// The single read carries three keys the listing does not - attributes,
@@ -3894,15 +3913,22 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type"},
 	},
 	{
+		// **PristineRealm, and the emptiness is why.** The body is the whole of
+		// gloak-probe-dg's default-groups list, and
+		// admin/realms-admin/default-group-add puts a group into that very list
+		// three cases later. On a shared container this golden is [] only
+		// because the catalogue happens to read before it writes - the exact
+		// disease F40 realised, one realm along. See F53.
 		ID: "admin/realms-admin/default-groups-empty",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Realms Admin: get a realm's default groups",
 			Retrieved: "2026-08-29",
 		},
-		Status:    Implemented,
-		Operation: "GET /admin/realms/{realm}/default-groups",
-		Fixture:   "admin-token-default-groups",
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/default-groups",
+		PristineRealm: true,
+		Fixture:       "admin-token-default-groups",
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/admin/realms/gloak-probe-dg/default-groups",
@@ -4051,6 +4077,15 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type"},
 	},
 	{
+		// **Not PristineRealm, and the reason is a fact rather than a
+		// preference.** Four later cases PUT this realm's profiles and two more
+		// PUT its policies, so the four reads on gloak-probe-profiles - this
+		// one, its -global sibling and the two policy reads - are read-before-
+		// write on a shared container. They survive because every one of those
+		// writes writes the *empty* state: two send `{"profiles":[]}` or
+		// `{"policies":[]}` and the rest are refused. Give any of those PUTs a
+		// non-empty body and these four goldens become wrong, so change the
+		// body and the flag together. Swept 2026-08-29; see F53.
 		ID: "admin/realms-admin/client-profiles-empty",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
