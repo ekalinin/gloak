@@ -139,6 +139,78 @@ func TestDiffAcceptsADifferentVolatileHeaderValue(t *testing.T) {
 	}
 }
 
+// volatileTailCase is the same create as volatileHeaderCase, masked the way
+// F46 says it should have been all along.
+func volatileTailCase() (Case, Golden) {
+	c := Case{
+		ID:                  "admin/clients/create",
+		AssertHeaders:       []string{"Location"},
+		VolatileTailHeaders: []string{"Location"},
+	}
+	want := Golden{
+		Status: 201,
+		Headers: []Header{{
+			Name:  "Location",
+			Value: issuerPlaceholder + "/admin/realms/master/clients/" + uuidTailPlaceholder,
+		}},
+		Body: []byte{},
+	}
+	return c, want
+}
+
+func TestDiffAcceptsADifferentIDInAVolatileTail(t *testing.T) {
+	c, want := volatileTailCase()
+	got := httptest.NewRecorder()
+	got.Header().Set("Location", testIssuer+"/admin/realms/master/clients/00000000-0000-0000-0000-000000000001")
+	got.WriteHeader(201)
+
+	diffs, err := diff(c, want, got, nil)
+
+	if err != nil {
+		t.Fatalf("diff: %v", err)
+	}
+	if len(diffs) != 0 {
+		t.Fatalf("a masked tail should compare equal whatever the id: %v", diffs)
+	}
+}
+
+// TestDiffRejectsAWrongPathUnderAVolatileTail is the gap F46 filed. Masking the
+// whole header made `Location: x` pass; so did a Location naming the wrong
+// collection, which is the mistake an implementation can actually make.
+func TestDiffRejectsAWrongPathUnderAVolatileTail(t *testing.T) {
+	c, want := volatileTailCase()
+	got := httptest.NewRecorder()
+	got.Header().Set("Location", testIssuer+"/admin/realms/master/groups/00000000-0000-0000-0000-000000000001")
+	got.WriteHeader(201)
+
+	diffs, err := diff(c, want, got, nil)
+
+	if err != nil {
+		t.Fatalf("diff: %v", err)
+	}
+	if len(diffs) == 0 {
+		t.Fatal("a Location naming /groups compared equal to one naming /clients")
+	}
+}
+
+// A value with nothing minted in it must not slip through as though it had been
+// checked. `Location: x` is the value F46 names, and it has no tail to mask.
+func TestDiffRejectsAVolatileTailThatIsNotAURL(t *testing.T) {
+	c, want := volatileTailCase()
+	got := httptest.NewRecorder()
+	got.Header().Set("Location", "x")
+	got.WriteHeader(201)
+
+	diffs, err := diff(c, want, got, nil)
+
+	if err != nil {
+		t.Fatalf("diff: %v", err)
+	}
+	if len(diffs) == 0 {
+		t.Fatal("Location: x compared equal to a recorded create URL")
+	}
+}
+
 func TestDiffRejectsAMissingVolatileHeader(t *testing.T) {
 	// Masking that also hid absence would let an endpoint stop sending the
 	// header entirely without anything noticing.
@@ -218,6 +290,10 @@ func diff(c Case, want Golden, got *httptest.ResponseRecorder, vars map[string]s
 	for _, name := range c.VolatileHeaders {
 		volatile[http.CanonicalHeaderKey(name)] = true
 	}
+	tail := make(map[string]bool, len(c.VolatileTailHeaders))
+	for _, name := range c.VolatileTailHeaders {
+		tail[http.CanonicalHeaderKey(name)] = true
+	}
 
 	for _, name := range c.AssertHeaders {
 		canonical := http.CanonicalHeaderKey(name)
@@ -236,6 +312,23 @@ func diff(c Case, want Golden, got *httptest.ResponseRecorder, vars map[string]s
 				out = append(out, fmt.Sprintf("header %s: want a value, got none", name))
 			}
 			continue
+		}
+		// A volatile *tail* keeps everything before the last "/". The served
+		// value gets the mask the recorder gave the golden, so the scheme, the
+		// host and the collection the new object landed in are all compared and
+		// only the minted id is not.
+		if tail[canonical] {
+			masked := make([]string, 0, len(actual))
+			for _, v := range actual {
+				m, ok := MaskURLTail(v)
+				if !ok {
+					out = append(out, fmt.Sprintf(
+						"header %s: %q does not end in a UUID, so its tail cannot be masked", name, v))
+					m = v
+				}
+				masked = append(masked, m)
+			}
+			actual = masked
 		}
 		if !slices.Equal(actual, expected) {
 			out = append(out, fmt.Sprintf("header %s: want %q, got %q", name, expected, actual))

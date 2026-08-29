@@ -60,6 +60,31 @@ func TestCatalogIsWellFormed(t *testing.T) {
 		default:
 			t.Errorf("%q: unknown status %d", c.ID, c.Status)
 		}
+
+		// A volatile tail is only a mask; diff compares nothing a case does not
+		// assert, so declaring one without asserting the header masks a value
+		// nobody looks at. That is the shape of hole F46 is about, one level up.
+		asserted := map[string]bool{}
+		for _, name := range c.AssertHeaders {
+			asserted[http.CanonicalHeaderKey(name)] = true
+		}
+		blanked := map[string]bool{}
+		for _, name := range c.VolatileHeaders {
+			blanked[http.CanonicalHeaderKey(name)] = true
+		}
+		for _, name := range c.VolatileTailHeaders {
+			canonical := http.CanonicalHeaderKey(name)
+			if !asserted[canonical] {
+				t.Errorf("%q: %s is a volatile tail and is not asserted, so nothing compares it",
+					c.ID, name)
+			}
+			// Both masks on one header would be decided by whichever branch
+			// recordedHeaders and diff happen to test first, in two files.
+			if blanked[canonical] {
+				t.Errorf("%q: %s is masked whole and by its tail; the two disagree about what is compared",
+					c.ID, name)
+			}
+		}
 	}
 }
 

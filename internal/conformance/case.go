@@ -134,11 +134,44 @@ type Case struct {
 	// comparing, while the header's presence stays asserted - a header the
 	// implementation stopped sending entirely still fails.
 	//
-	// The measured example is the admin API's Location on a 201, which carries
-	// a UUID minted at request time. Without this, every create case churns on
-	// each recording; four goldens already had that disease. The package-level
-	// VolatileHeaders in golden.go is the same idea applied to every case.
+	// Set-Cookie on the login page is the measured example: every one of its
+	// values is minted per request and none of it is contract. The
+	// package-level VolatileHeaders in golden.go is the same idea applied to
+	// every case.
+	//
+	// It is the blunt instrument. A header whose value is a URL ending in a
+	// server-minted id belongs in VolatileTailHeaders, which keeps the rest of
+	// the URL asserted.
 	VolatileHeaders []string
+
+	// VolatileTailHeaders lists response headers whose value is a URL whose
+	// **final path segment** is minted per request. Everything up to the last
+	// "/" is compared exactly; the segment after it is written to the golden as
+	// {{uuid}} and required to be a UUID on both sides.
+	//
+	// It exists because masking a whole header asserts almost nothing: diff
+	// checks a VolatileHeaders entry is present with a non-empty first value,
+	// so `Location: x` passes. The seven admin creates all masked their
+	// Location that way, and none of them asserted the scheme, the host, or the
+	// path saying which collection the new object landed in. See F46.
+	//
+	// Measured on a live 26.7.1 on 2026-08-29, all seven Locations, which is
+	// why only four of them use this field:
+	//
+	//	POST .../clients          .../clients/<uuid>
+	//	POST .../users            .../users/<uuid>
+	//	POST .../groups           .../groups/<uuid>
+	//	POST .../groups/{id}/children  .../groups/<uuid>   - not under /children
+	//	POST .../roles            .../roles/<the role name>
+	//	POST .../clients/{id}/roles    .../clients/{{client_uuid}}/roles/<name>
+	//	POST /admin/realms        /admin/realms/<the realm name>
+	//
+	// The last three carry nothing minted once ReplaceCaptured and
+	// ReplaceIssuer have run, so they mask nothing at all and assert their
+	// Location whole. Declaring one of them here is a loud failure rather than
+	// a wider mask: the tail is not a UUID and both the recorder and the
+	// verifier say so.
+	VolatileTailHeaders []string
 
 	// AssertAbsentHeaders lists response headers that must not be present.
 	// AssertHeaders only ever checks a header that is named, so it can never

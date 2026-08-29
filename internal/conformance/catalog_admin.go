@@ -214,10 +214,11 @@ var adminCases = []Case{
 			Body: []byte(`{"clientId":"gloak-probe-create","enabled":true}`),
 		},
 		// Measured: 201 with an empty body, no Content-Type, and the new
-		// object's absolute URL in Location. The UUID in it is minted per
-		// request, so the value is masked while its presence stays asserted.
+		// object's absolute URL in Location. Only the UUID at the end of it is
+		// minted per request, so only that segment is masked - the scheme, the
+		// host and `/admin/realms/master/clients` are compared. See F46.
 		AssertHeaders:       []string{"Location"},
-		VolatileHeaders:     []string{"Location"},
+		VolatileTailHeaders: []string{"Location"},
 		AssertAbsentHeaders: []string{"Content-Type"},
 	},
 	{
@@ -762,7 +763,7 @@ var adminCases = []Case{
 		// Unlike the client create, which sends no Content-Length at all, this
 		// 201 sends content-length: 0. Both send no Content-Type.
 		AssertHeaders:       []string{"Location"},
-		VolatileHeaders:     []string{"Location"},
+		VolatileTailHeaders: []string{"Location"},
 		AssertAbsentHeaders: []string{"Content-Type"},
 	},
 	{
@@ -1690,11 +1691,16 @@ var adminCases = []Case{
 			Body: []byte(`{"name":"gloak-probe-role-create","description":"a probe"}`),
 		},
 		// Measured: 201, empty body, Location naming the role by name rather
-		// than by id. Still masked - see clientFixture's Location for why: the
-		// recorder and the verifier serve from different hosts, and only the
-		// body passes through ReplaceIssuer, not a header compared raw.
+		// than by id - `.../roles/gloak-probe-role-create`, re-measured
+		// 2026-08-29. Nothing in it is minted, so nothing is masked.
+		//
+		// It was masked, on the grounds that "only the body passes through
+		// ReplaceIssuer, not a header compared raw". That stopped being true in
+		// P3: diff runs ReplaceCaptured and ReplaceIssuer over the served
+		// headers as well, and the comment that noticed says this family is
+		// exactly where it went unseen, because every asserted Location was
+		// also masked. See F46.
 		AssertHeaders:       []string{"Location"},
-		VolatileHeaders:     []string{"Location"},
 		AssertAbsentHeaders: []string{"Content-Type"},
 	},
 	{
@@ -2024,8 +2030,12 @@ var adminCases = []Case{
 			},
 			Body: []byte(`{"name":"gloak-probe-client-role-created"}`),
 		},
+		// Measured 2026-08-29:
+		// `.../clients/{{client_uuid}}/roles/gloak-probe-client-role-created`.
+		// The UUID in the middle is the fixture's own capture, so
+		// ReplaceCaptured rewrites it on both sides and the whole value is
+		// comparable. Nothing is masked. See F46.
 		AssertHeaders:       []string{"Location"},
-		VolatileHeaders:     []string{"Location"},
 		AssertAbsentHeaders: []string{"Content-Type"},
 	},
 	{
@@ -3010,8 +3020,10 @@ var adminCases = []Case{
 			},
 			Body: []byte(`{"name":"gloak-probe-group-created"}`),
 		},
-		VolatileHeaders: []string{"Location"},
-		AssertHeaders:   []string{"Location"},
+		// Only the minted UUID is masked, so the golden still says the new
+		// group landed under `/admin/realms/master/groups`. See F46.
+		VolatileTailHeaders: []string{"Location"},
+		AssertHeaders:       []string{"Location"},
 	},
 	{
 		// `{"count":n}`, an **object**, where GET /users/count next door is a
@@ -3152,9 +3164,13 @@ var adminCases = []Case{
 			},
 			Body: []byte(`{"name":"gloak-probe-group-made-child"}`),
 		},
-		VolatileHeaders: []string{"Location"},
-		AssertHeaders:   []string{"Content-Type", "Cache-Control", "Location"},
-		Volatile:        []string{"id", "parentId"},
+		// **The Location is `/groups/<child uuid>`, not
+		// `/groups/{{group_id}}/children/<child uuid>`** - measured 2026-08-29,
+		// and the whole-header mask had been hiding it. A child is addressed
+		// like any other group once it exists. See F46.
+		VolatileTailHeaders: []string{"Location"},
+		AssertHeaders:       []string{"Content-Type", "Cache-Control", "Location"},
+		Volatile:            []string{"id", "parentId"},
 	},
 	{
 		// The user representation **without an access block**, where the user
@@ -3696,13 +3712,15 @@ var adminCases = []Case{
 			},
 			Body: []byte(`{"realm":"gloak-probe-realm-created","enabled":true}`),
 		},
-		// The value is masked and the header's presence is asserted, which is
-		// what every other create on this API does. The served side's headers
-		// are not issuer-normalised by the differ today - invisible until now
-		// because every asserted Location was also volatile - so asserting the
-		// value would be asserting the recorder's port.
-		VolatileHeaders: []string{"Location"},
-		AssertHeaders:   []string{"Location"},
+		// **Nothing is masked**, because nothing here is minted:
+		// `{{issuer}}/admin/realms/gloak-probe-realm-created`, measured
+		// 2026-08-29. The mask carried the note that "the served side's headers
+		// are not issuer-normalised by the differ today", and that was already
+		// wrong when it was written - diff runs ReplaceCaptured and
+		// ReplaceIssuer over the served headers, and says so in its own comment
+		// two files away. A mask nobody could see through is where a claim like
+		// that survives. See F46.
+		AssertHeaders: []string{"Location"},
 	},
 	{
 		ID: "admin/realms-admin/read",
