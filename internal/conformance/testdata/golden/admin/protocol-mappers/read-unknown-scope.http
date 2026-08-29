@@ -1,0 +1,11 @@
+# GET /admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-0000000000fe/protocol-mappers/models
+HTTP/1.1 404 Not Found
+Content-Length: {{volatile}}
+Content-Type: application/json
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"error":"Could not find client scope"}

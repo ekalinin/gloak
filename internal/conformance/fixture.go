@@ -567,34 +567,42 @@ var Fixtures = map[string]Fixture{
 	// it is what lets these goldens assert config bytes with no UnorderedKeys
 	// mask. See the plan's section 4.4.
 	"admin-token-mapper-scope": mapperScopeFixture(
-		probeMapperScopeID, "gloak-probe-pm-read", probeReadMappers),
+		probeMapperScopeID, "gloak-probe-pm-read", readMappers(probeMapperAID, probeMapperBID)),
 	"admin-token-mapper-scope-create": mapperScopeFixture(
 		probeMapperScopeCreateID, "gloak-probe-pm-create", ""),
 	"admin-token-mapper-template-create": mapperScopeFixture(
 		probeMapperTemplateCreateID, "gloak-probe-pm-tmpl-create", ""),
 	"admin-token-mapper-scope-update": mapperScopeFixture(
-		probeMapperScopeUpdateID, "gloak-probe-pm-update", probeUpdateMapper),
+		probeMapperScopeUpdateID, "gloak-probe-pm-update",
+		oneMapper(probeMapperUpdateID, "gloak-probe-mapper-update", "gloak-before")),
 	"admin-token-mapper-template-update": mapperScopeFixture(
-		probeMapperTemplateUpdateID, "gloak-probe-pm-tmpl-update", probeUpdateMapper),
+		probeMapperTemplateUpdateID, "gloak-probe-pm-tmpl-update",
+		oneMapper(probeMapperTmplUpdateID, "gloak-probe-mapper-update", "gloak-before")),
 	"admin-token-mapper-scope-delete": mapperScopeFixture(
-		probeMapperScopeDeleteID, "gloak-probe-pm-delete", probeDeleteMapper),
+		probeMapperScopeDeleteID, "gloak-probe-pm-delete",
+		oneMapper(probeMapperDeleteID, "gloak-probe-mapper-delete", "gloak-delete")),
 	"admin-token-mapper-template-delete": mapperScopeFixture(
-		probeMapperTemplateDeleteID, "gloak-probe-pm-tmpl-delete", probeDeleteMapper),
+		probeMapperTemplateDeleteID, "gloak-probe-pm-tmpl-delete",
+		oneMapper(probeMapperTmplDeleteID, "gloak-probe-mapper-delete", "gloak-delete")),
 	"admin-token-mapper-scope-add": mapperScopeFixture(
 		probeMapperScopeAddID, "gloak-probe-pm-add", ""),
 	"admin-token-mapper-template-add": mapperScopeFixture(
 		probeMapperTemplateAddID, "gloak-probe-pm-tmpl-add", ""),
 	"admin-token-mapper-scope-dup": mapperScopeFixture(
-		probeMapperScopeDupID, "gloak-probe-pm-dup", probeDupMapper),
+		probeMapperScopeDupID, "gloak-probe-pm-dup",
+		oneMapper(probeMapperDupID, "gloak-probe-mapper-dup", "gloak-dup")),
 
 	"admin-token-mapper-client": mapperClientFixture(
-		probeMapperClientID, "gloak-probe-pm-client", probeReadMappers),
+		probeMapperClientID, "gloak-probe-pm-client",
+		readMappers(probeMapperClientAID, probeMapperClientBID)),
 	"admin-token-mapper-client-create": mapperClientFixture(
 		probeMapperClientCreateID, "gloak-probe-pm-client-create", ""),
 	"admin-token-mapper-client-update": mapperClientFixture(
-		probeMapperClientUpdateID, "gloak-probe-pm-client-update", probeUpdateMapper),
+		probeMapperClientUpdateID, "gloak-probe-pm-client-update",
+		oneMapper(probeMapperClientUpdMapID, "gloak-probe-mapper-update", "gloak-before")),
 	"admin-token-mapper-client-delete": mapperClientFixture(
-		probeMapperClientDeleteID, "gloak-probe-pm-client-delete", probeDeleteMapper),
+		probeMapperClientDeleteID, "gloak-probe-pm-client-delete",
+		oneMapper(probeMapperClientDelMapID, "gloak-probe-mapper-delete", "gloak-delete")),
 	"admin-token-mapper-client-add": mapperClientFixture(
 		probeMapperClientAddID, "gloak-probe-pm-client-add", ""),
 
@@ -2867,14 +2875,30 @@ const (
 	probeMapperClientDeleteID = "c11e0000-0000-4000-8000-000000000014"
 	probeMapperClientAddID    = "c11e0000-0000-4000-8000-000000000015"
 
-	probeMapperAID       = "9a99e400-0000-4000-8000-000000000001"
-	probeMapperBID       = "9a99e400-0000-4000-8000-000000000002"
-	probeMapperUpdateID  = "9a99e400-0000-4000-8000-000000000003"
-	probeMapperDeleteID  = "9a99e400-0000-4000-8000-000000000004"
-	probeMapperDupID     = "9a99e400-0000-4000-8000-000000000005"
-	probeMapperCreatedID = "9a99e400-0000-4000-8000-000000000006"
-	probeMapperUpdatedID = "9a99e400-0000-4000-8000-000000000007"
-	probeMapperBatchID   = "9a99e400-0000-4000-8000-000000000008"
+	// **A mapper id is unique across the whole realm, not within its
+	// container.** Measured: a second client scope created with a mapper id
+	// already in use answers 409 `Duplicate resource error` and is not
+	// created, and a client created the same way answers
+	// `Client <id> already exists` - a message about the client, for a
+	// conflict on the mapper's id. So no two fixtures may share one, and the
+	// first draft of these did: three fixtures reused one mapper id, three
+	// scopes were silently never created, and idempotentCreate swallowed the
+	// 409 that said so.
+	probeMapperAID            = "9a99e400-0000-4000-8000-000000000001"
+	probeMapperBID            = "9a99e400-0000-4000-8000-000000000002"
+	probeMapperClientAID      = "9a99e400-0000-4000-8000-000000000003"
+	probeMapperClientBID      = "9a99e400-0000-4000-8000-000000000004"
+	probeMapperUpdateID       = "9a99e400-0000-4000-8000-000000000005"
+	probeMapperTmplUpdateID   = "9a99e400-0000-4000-8000-000000000006"
+	probeMapperClientUpdMapID = "9a99e400-0000-4000-8000-000000000007"
+	probeMapperDeleteID       = "9a99e400-0000-4000-8000-000000000008"
+	probeMapperTmplDeleteID   = "9a99e400-0000-4000-8000-000000000009"
+	probeMapperClientDelMapID = "9a99e400-0000-4000-8000-00000000000a"
+	probeMapperDupID          = "9a99e400-0000-4000-8000-00000000000b"
+	probeMapperCreatedID      = "9a99e400-0000-4000-8000-00000000000c"
+	probeMapperBatchID        = "9a99e400-0000-4000-8000-00000000000d"
+	probeMapperUpdatedID      = "9a99e400-0000-4000-8000-00000000000e"
+	probeMapperBatchDupID     = "9a99e400-0000-4000-8000-00000000000f"
 )
 
 // The mapper bodies the fixtures embed, spelled once so a case can quote the
@@ -2885,26 +2909,22 @@ const (
 // scope holding only OIDC mappers cannot tell that route apart from `models`.
 // The saml one also carries a `saml-*` provider, which is one of the fifteen
 // that do **not** gain a mirrored config key.
-const (
-	probeReadMappers = `{"id":"` + probeMapperAID + `","name":"gloak-probe-mapper-a",` +
+func readMappers(idA, idB string) string {
+	return `{"id":"` + idA + `","name":"gloak-probe-mapper-a",` +
 		`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper",` +
 		`"config":{"claim.name":"gloak-a","user.attribute":"gloak"}},` +
-		`{"id":"` + probeMapperBID + `","name":"gloak-probe-mapper-b",` +
+		`{"id":"` + idB + `","name":"gloak-probe-mapper-b",` +
 		`"protocol":"saml","protocolMapper":"saml-user-property-mapper",` +
 		`"config":{"attribute.name":"gloak-b"}}`
+}
 
-	probeUpdateMapper = `{"id":"` + probeMapperUpdateID + `","name":"gloak-probe-mapper-update",` +
+// oneMapper is the body of a single mapper, spelled once so a fixture and the
+// case that reads it cannot disagree about the config.
+func oneMapper(id, name, claim string) string {
+	return `{"id":"` + id + `","name":"` + name + `",` +
 		`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper",` +
-		`"config":{"claim.name":"gloak-before"}}`
-
-	probeDeleteMapper = `{"id":"` + probeMapperDeleteID + `","name":"gloak-probe-mapper-delete",` +
-		`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper",` +
-		`"config":{"claim.name":"gloak-delete"}}`
-
-	probeDupMapper = `{"id":"` + probeMapperDupID + `","name":"gloak-probe-mapper-dup",` +
-		`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper",` +
-		`"config":{"claim.name":"gloak-dup"}}`
-)
+		`"config":{"claim.name":"` + claim + `"}}`
+}
 
 // mapperScopeFixture creates one client scope carrying the mappers it is
 // given, in a single POST.
@@ -3041,7 +3061,8 @@ func updatedMapperFixture() Fixture {
 // before it applies, exactly as a composite batch does, and its 409 alone
 // cannot tell a rejected batch from a half-applied one.
 func batchConflictMapperFixture() Fixture {
-	f := mapperScopeFixture(probeMapperScopeBatchID, "gloak-probe-pm-batch", probeDupMapper)
+	f := mapperScopeFixture(probeMapperScopeBatchID, "gloak-probe-pm-batch",
+		oneMapper(probeMapperBatchDupID, "gloak-probe-mapper-dup", "gloak-dup"))
 	f.Steps = append(f.Steps, Step{
 		Request: Request{
 			Method: http.MethodPost,

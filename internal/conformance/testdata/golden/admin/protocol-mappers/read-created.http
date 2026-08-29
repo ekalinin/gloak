@@ -1,0 +1,12 @@
+# GET /admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-00000000001b/protocol-mappers/models
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"id":"9a99e400-0000-4000-8000-00000000000c","name":"gloak-probe-mapper-created","protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper","consentRequired":false,"config":{"id.token.claim":"true","access.token.claim":"true","introspection.token.claim":"true","userinfo.token.claim":"true"}},{"id":"9a99e400-0000-4000-8000-00000000000d","name":"gloak-probe-mapper-added","protocol":"openid-connect","protocolMapper":"oidc-audience-resolve-mapper","consentRequired":false,"config":{"access.token.claim":"true","introspection.token.claim":"true"}}]

@@ -1,0 +1,11 @@
+# POST /admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000013/protocol-mappers/models
+HTTP/1.1 201 Created
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Location: {{issuer}}/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000013/protocol-mappers/models/9a99e400-0000-4000-8000-0000000000f2
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+

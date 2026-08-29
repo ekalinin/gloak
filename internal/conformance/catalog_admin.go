@@ -5347,7 +5347,7 @@ var adminCases = []Case{
 		Request: Request{
 			Method: http.MethodGet,
 			Path: "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000011" +
-				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000002",
+				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000004",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
@@ -5537,12 +5537,12 @@ var adminCases = []Case{
 		Request: Request{
 			Method: http.MethodPut,
 			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000014" +
-				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000003",
+				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000005",
 			Headers: map[string]string{
 				"Authorization": "Bearer {{access_token}}",
 				"Content-Type":  "application/json",
 			},
-			Body: []byte(`{"id":"9a99e400-0000-4000-8000-000000000003",` +
+			Body: []byte(`{"id":"9a99e400-0000-4000-8000-000000000005",` +
 				`"name":"gloak-probe-mapper-update","protocol":"openid-connect",` +
 				`"protocolMapper":"oidc-usermodel-attribute-mapper",` +
 				`"config":{"claim.name":"gloak-after"}}`),
@@ -5562,12 +5562,12 @@ var adminCases = []Case{
 		Request: Request{
 			Method: http.MethodPut,
 			Path: "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000015" +
-				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000003",
+				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000006",
 			Headers: map[string]string{
 				"Authorization": "Bearer {{access_token}}",
 				"Content-Type":  "application/json",
 			},
-			Body: []byte(`{"id":"9a99e400-0000-4000-8000-000000000003",` +
+			Body: []byte(`{"id":"9a99e400-0000-4000-8000-000000000006",` +
 				`"name":"gloak-probe-mapper-update","protocol":"openid-connect",` +
 				`"protocolMapper":"oidc-usermodel-attribute-mapper",` +
 				`"config":{"claim.name":"gloak-after"}}`),
@@ -5587,12 +5587,12 @@ var adminCases = []Case{
 		Request: Request{
 			Method: http.MethodPut,
 			Path: "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000013" +
-				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000003",
+				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000007",
 			Headers: map[string]string{
 				"Authorization": "Bearer {{access_token}}",
 				"Content-Type":  "application/json",
 			},
-			Body: []byte(`{"id":"9a99e400-0000-4000-8000-000000000003",` +
+			Body: []byte(`{"id":"9a99e400-0000-4000-8000-000000000007",` +
 				`"name":"gloak-probe-mapper-update","protocol":"openid-connect",` +
 				`"protocolMapper":"oidc-usermodel-attribute-mapper",` +
 				`"config":{"claim.name":"gloak-after"}}`),
@@ -5615,7 +5615,7 @@ var adminCases = []Case{
 		Request: Request{
 			Method: http.MethodDelete,
 			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000016" +
-				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000004",
+				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000008",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders:       []string{"Cache-Control"},
@@ -5634,7 +5634,7 @@ var adminCases = []Case{
 		Request: Request{
 			Method: http.MethodDelete,
 			Path: "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000017" +
-				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000004",
+				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000009",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders:       []string{"Cache-Control"},
@@ -5653,7 +5653,7 @@ var adminCases = []Case{
 		Request: Request{
 			Method: http.MethodDelete,
 			Path: "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000014" +
-				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000004",
+				"/protocol-mappers/models/9a99e400-0000-4000-8000-00000000000a",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders:       []string{"Cache-Control"},
@@ -6018,7 +6018,7 @@ var adminCases = []Case{
 		Request: Request{
 			Method: http.MethodGet,
 			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-00000000001c" +
-				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000007",
+				"/protocol-mappers/models/9a99e400-0000-4000-8000-00000000000e",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
