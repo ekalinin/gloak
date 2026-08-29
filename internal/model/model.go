@@ -97,12 +97,28 @@ func DefaultRolesName(realm string) string {
 
 // Realm is a tenant. Lifespans are stored as durations but are emitted as
 // whole seconds in token responses.
+//
+// The four fields above Settings are the ones Gloak reads. Keycloak's
+// RealmRepresentation carries 104 keys on a created realm; the other hundred
+// are configuration this project stores and does not interpret -
+// otpPolicyDigits is P8's, smtpServer is P14's, browserFlow is P8's - so they
+// live in Settings as the JSON they arrived as rather than as a hundred columns
+// across two drivers, each of which would be a migration when a later cut needs
+// the hundred and first.
+//
+// Settings holds the representation **as last written**. Its copies of the four
+// fields above are never read: the admin layer overwrites them from these
+// columns after decoding, so the row stays the single observable truth and the
+// two cannot drift into a divergence. Nil means "never written", which is what
+// a realm bootstrapped before this field existed has, and the admin layer falls
+// back to the measured defaults for that realm's name.
 type Realm struct {
 	ID                   string
 	Name                 string
 	Enabled              bool
 	AccessTokenLifespan  time.Duration
 	RefreshTokenLifespan time.Duration
+	Settings             []byte
 }
 
 // Client is an OAuth2 client. ID is the internal UUID used in admin API paths;

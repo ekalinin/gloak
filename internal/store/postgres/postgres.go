@@ -174,25 +174,27 @@ type scanner interface{ Scan(dest ...any) error }
 
 type realmRepo struct{ pool *pgxpool.Pool }
 
+// realmColumns is spelled once so the four statements below cannot drift apart
+// on the order the scan depends on.
+const realmColumns = `id, name, enabled, access_token_lifespan, refresh_token_lifespan, settings`
+
 func (r *realmRepo) Create(ctx context.Context, m *model.Realm) error {
 	_, err := r.pool.Exec(ctx,
-		`INSERT INTO realm (id, name, enabled, access_token_lifespan, refresh_token_lifespan)
-		 VALUES ($1, $2, $3, $4, $5)`,
-		m.ID, m.Name, m.Enabled, int64(m.AccessTokenLifespan.Seconds()), int64(m.RefreshTokenLifespan.Seconds()))
+		`INSERT INTO realm (`+realmColumns+`) VALUES ($1, $2, $3, $4, $5, $6)`,
+		m.ID, m.Name, m.Enabled, int64(m.AccessTokenLifespan.Seconds()),
+		int64(m.RefreshTokenLifespan.Seconds()), string(m.Settings))
 	return classify(err)
 }
 
 func (r *realmRepo) ByName(ctx context.Context, name string) (*model.Realm, error) {
 	row := r.pool.QueryRow(ctx,
-		`SELECT id, name, enabled, access_token_lifespan, refresh_token_lifespan
-		 FROM realm WHERE name = $1`, name)
+		`SELECT `+realmColumns+` FROM realm WHERE name = $1`, name)
 	return scanRealm(row)
 }
 
 func (r *realmRepo) List(ctx context.Context) ([]*model.Realm, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, name, enabled, access_token_lifespan, refresh_token_lifespan
-		 FROM realm ORDER BY name`)
+		`SELECT `+realmColumns+` FROM realm ORDER BY name`)
 	if err != nil {
 		return nil, classify(err)
 	}
@@ -209,14 +211,39 @@ func (r *realmRepo) List(ctx context.Context) ([]*model.Realm, error) {
 	return out, classify(rows.Err())
 }
 
+func (r *realmRepo) Update(ctx context.Context, m *model.Realm) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE realm SET name = $1, enabled = $2, access_token_lifespan = $3,
+		        refresh_token_lifespan = $4, settings = $5
+		 WHERE id = $6`,
+		m.Name, m.Enabled, int64(m.AccessTokenLifespan.Seconds()),
+		int64(m.RefreshTokenLifespan.Seconds()), string(m.Settings), m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(tag.RowsAffected())
+}
+
+func (r *realmRepo) Delete(ctx context.Context, id string) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM realm WHERE id = $1`, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(tag.RowsAffected())
+}
+
 func scanRealm(row scanner) (*model.Realm, error) {
 	m := &model.Realm{}
 	var accessSeconds, refreshSeconds int64
-	if err := row.Scan(&m.ID, &m.Name, &m.Enabled, &accessSeconds, &refreshSeconds); err != nil {
+	var settings string
+	if err := row.Scan(&m.ID, &m.Name, &m.Enabled, &accessSeconds, &refreshSeconds, &settings); err != nil {
 		return nil, classify(err)
 	}
 	m.AccessTokenLifespan = time.Duration(accessSeconds) * time.Second
 	m.RefreshTokenLifespan = time.Duration(refreshSeconds) * time.Second
+	if settings != "" {
+		m.Settings = []byte(settings)
+	}
 	return m, nil
 }
 
