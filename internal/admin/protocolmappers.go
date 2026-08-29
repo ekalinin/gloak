@@ -90,9 +90,9 @@ type protocolMapperProvider struct {
 // `access.token.claim` and `id.token.claim` set and reading back which keys
 // the server had added.
 //
-// Twenty-one of the twenty-four OIDC providers do both. The four exceptions are
+// Twenty of the twenty-four OIDC providers do both. The four exceptions are
 // the reason this is a table rather than a `strings.HasPrefix(id, "oidc-")`,
-// which would have been right 21 times out of 39 and silently wrong four times
+// which would have been right 20 times out of 39 and silently wrong four times
 // on the family it was written for.
 //
 // **Two providers seed further config keys of their own and this is not

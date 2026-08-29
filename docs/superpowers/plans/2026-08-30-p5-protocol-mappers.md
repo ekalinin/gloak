@@ -243,7 +243,7 @@ and `r.URL.Path`).
 
 `internal/admin/protocolmappers.go` carries the measured provider table: 39 ids
 with two booleans, "mirrors access into introspection" and "mirrors id into
-userinfo". Twenty-one of the twenty-four `oidc-*` providers do both;
+userinfo". Twenty of the twenty-four `oidc-*` providers do both;
 `oidc-allowed-origins-mapper` and `oidc-audience-resolve-mapper` do the first
 only; `oidc-nonce-backwards-compatible-mapper` and
 `oidc-organization-membership-mapper` do neither; all fourteen `saml-*` and

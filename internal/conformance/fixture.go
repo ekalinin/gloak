@@ -2988,7 +2988,7 @@ func mapperClientFixture(uuid, clientID, mappers string) Fixture {
 //
 // The first asks for `id.token.claim` and `access.token.claim` and gets
 // `introspection.token.claim` and `userinfo.token.claim` appended, because
-// `oidc-usermodel-attribute-mapper` is one of the twenty-one providers that
+// `oidc-usermodel-attribute-mapper` is one of the twenty providers that
 // mirror both. The second uses `oidc-audience-resolve-mapper`, which mirrors
 // **only** the first - so a case reading the pair fails if the rule is
 // implemented as one flag rather than two, and fails again if it is
