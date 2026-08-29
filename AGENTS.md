@@ -62,10 +62,16 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `DELETE` with a 405, refuting "the verb decides". And on
   `/realms/{realm}/protocol/openid-connect/auth`, `PUT`, `DELETE` and `PATCH`
   all answer a real 405 with `application/json`, while `HEAD` answers 200 and
-  `OPTIONS` answers 200 with `Allow: HEAD, POST, GET, OPTIONS`. Gloak sends 404
-  to all of them. **Three data points that disagree still do not say what the
-  rule is**, which is exactly why nothing has been changed on the strength of
-  any of them. See F31 before adding a 405 or defending the 404.
+  `OPTIONS` answers 200 with `Allow: HEAD, POST, GET, OPTIONS`. `/logout`
+  answers the same three verbs 405 and `OPTIONS` 200 with **no `Allow` at
+  all**. And a whole Admin API route family - the client-scope attachments -
+  answers a real 405 too, which is the first one outside the protocol side.
+  Gloak sends 404 to all of them. **Five data points that disagree still do not
+  say what the rule is**, which is exactly why nothing has been changed on the
+  strength of any of them. The 405 body is
+  `{"error":"HTTP 405 Method Not Allowed"}`, measured independently on the
+  protocol and admin sides on the same day, so the fallback family has five
+  bodies rather than four. See F31 before adding a 405 or defending the 404.
 - **The five security headers have three exceptions, not one.** A route match
   and a known path hit with the wrong method both get `Referrer-Policy`,
   `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`
@@ -315,24 +321,26 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **Role listings have no stable order across container starts.** Every one of
   them is a bare array at the root of the body, which is why `Case.Unordered`
   learned the root path spelling `"."`.
-- **Twelve spellings of not-found in the admin API now**, including four for
-  one resource and three for a missing group:
-  `Could not find client`, `Client not found`, `User not found`,
-  `Realm not found.` with its full stop, `Credential not found`,
-  `Could not find role`, `Role not found`, `Could not find role with id`,
-  `Could not find composite role`, `Could not find group by id`,
-  `Group not found` for that same missing group from the membership route **and
-  from the default-groups writes**, and `Group path does not exist` from
-  `group-by-path`. One missing group, three answers, decided by which route went
-  looking.
-  (This count said nine while the list held eleven; the two group spellings
-  were added without it. It is at twelve because `group-by-path` added a third
-  group spelling on 2026-08-29 - so the count has now been wrong once and is
-  checked against the list rather than incremented.) `Could not find client` and `Client not found` are the
+- **Fourteen spellings of not-found in the admin API now**, including four for
+  one resource and three for a missing group. Counted from the list, not
+  incremented: (1) `Could not find client`, (2) `Client not found`,
+  (3) `User not found`, (4) `Realm not found.` with its full stop,
+  (5) `Credential not found`, (6) `Could not find role`, (7) `Role not found`,
+  (8) `Could not find role with id`, (9) `Could not find composite role`,
+  (10) `Could not find group by id`, (11) `Group not found` for that same
+  missing group from the membership route **and** from the default-groups
+  writes, (12) `Group path does not exist` from `group-by-path`,
+  (13) `Could not find client scope` from `/client-scopes/{id}`, and
+  (14) `Client scope not found` for that same missing scope from the two
+  default-scope families. One missing group, three answers; one missing client
+  scope, two; each decided by which route went looking.
+  (This count said nine while the list held eleven, so it is now written with
+  the list numbered and is re-counted rather than incremented whenever it
+  moves.) `Could not find client` and `Client not found` are the
   same resource by the same key: the role-mapping routes answer the second for
   an unknown client UUID where the client and role endpoints answer the first
   for that very UUID. The qualifier matters: the protocol side spells a
-  thirteenth, `Realm does not exist` (`internal/oidc/router.go:145`), against the
+  fifteenth, `Realm does not exist` (`internal/oidc/router.go:145`), against the
   admin API's `Realm not found.` for the same missing realm - which is written
   once, in `writeRealmNotFound`, because it was written twice and a measured
   string in two places can drift.
@@ -393,6 +401,17 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   one family and inverted on its neighbour, and the second time the description's
   tag turned out to be the thing that predicts it.
 
+- **A create's `Location` ends in the new object's id on four routes out of
+  seven.** `POST .../clients`, `.../users`, `.../groups` and
+  `.../groups/{id}/children` end in a server-minted UUID; `POST .../roles` and
+  `POST .../clients/{id}/roles` end in the **role's name**, and
+  `POST /admin/realms` in the **realm's name**. And the child create's
+  `Location` is `/groups/<child uuid>`, not
+  `/groups/{parent}/children/<child uuid>` - the route that makes a child is not
+  the route that addresses it. All seven were measured in one session, because a
+  masking rule written from four of them would have been wrong on three.
+  `Case.VolatileTailHeaders` masks the last segment for the four that need it
+  and **refuses** the three that do not.
 - **A realm's key set is four keys and the JWKS beside it publishes two.** The
   HMAC key that signs refresh tokens and an AES key that signs and encrypts
   nothing both appear in `GET /admin/realms/{realm}/keys` as bare `kid`s with no
@@ -441,6 +460,98 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   and a child second came back child first. Neither insertion order, name, id
   nor path explains both. `PUT` is idempotent and `DELETE` of a group that is
   not a default group is 204 rather than 404.
+
+- **A client inherits the realm's client scopes only when it names *neither*
+  list.** Measured over nine creation bodies: naming either list, as an array,
+  empty or not, suppresses inheritance on **both**, so
+  `{"defaultClientScopes":["email"]}` produces a client with one default and
+  **no** optionals rather than one default and the realm's five. A per-list nil
+  check is the obvious implementation and it is wrong. `PUT /clients/{uuid}`
+  ignores both lists outright, so they are write-once at create and only the
+  four dedicated routes move them afterwards.
+- **A client scope's two lists on a client are one attachment with a flag, and
+  the two verbs disagree about which list they mean.**
+  `PUT .../default-client-scopes/{id}` naming a scope the client already holds
+  as an **optional** answers 204 and moves nothing; moving it means deleting
+  from one list and putting into the other. `DELETE .../default-client-scopes/{id}`
+  then **ignores the list its own path names** and removes the scope from
+  whichever list holds it - on the client routes and on the realm's alike.
+  Giving the delete a list argument to make the pair symmetrical is the tidy-up
+  that breaks it.
+- **The realm's `PUT` is a 409 on the repeat where the client's is a 204.**
+  `PUT /admin/realms/{r}/default-default-client-scopes/{id}` twice answers
+  `{"error":"conflict","error_description":"Duplicate resource error"}`, and so
+  does putting a scope into one of the realm's lists when it is already in the
+  other - which is what says the two lists are one row.
+  `PUT /clients/{uuid}/default-client-scopes/{id}` twice answers 204 both times,
+  and `PUT .../default-groups/{groupId}` is idempotent too, so the realm-level
+  client-scope write is the odd one of the three.
+- **A client scope attached to a client of the wrong protocol is a silent
+  no-op.** A `saml` scope offered to an `openid-connect` client answers 204 and
+  attaches nothing. So does an unknown scope *name* at create time: 201 and an
+  empty list. Both are refusals that look like successes.
+- **A client scope's `name` is looked at twice, with the protocol check between
+  the halves.** An **absent** name is a 500 `unknown_error` - Keycloak's own
+  defect, the same family as an empty body on `POST /users` - and is checked
+  first; a **present but empty** name is a 400 naming the empty string and is
+  checked last. That is why `{}` answers about the name and `{"name":"x"}`
+  answers about the protocol. An absent protocol and an invalid one give the
+  identical `Unexpected protocol`, so that check is membership rather than
+  presence.
+- **`protocolMappers` is absent rather than empty; `attributes` is present
+  rather than absent.** `offline_access` is the one bootstrapped client scope
+  with no mappers and its representation has **five** keys where every other
+  scope's has six. `attributes` goes the other way and is always there, `{}`
+  when empty. Two neighbouring keys on one body, opposite rules.
+- **The body's `id` wins on create**, on `POST /client-scopes` and on
+  `POST /clients` alike: a create naming an id produced an object with exactly
+  that id and put it in `Location`. It is what lets a conformance fixture know
+  an object's id before it asks for it, which is how the client-scope fixtures
+  avoid capturing from `Location` on a shared container.
+- **`client-templates` is a path alias for `client-scopes` that echoes its own
+  path.** All five operations serve what their sibling serves, byte for byte,
+  with one exception: `POST /client-templates` answers a `Location` under
+  `/client-templates`. Building that header from a constant rather than from
+  `r.URL.Path` sends a caller of the deprecated path to the other one. Twenty-
+  three of the tag's operations are this aliasing, which is why `Client Scopes`
+  10 plus its alias is not twice the work.
+- **The three shapes of a client scope are decided by the route, not by
+  `briefRepresentation`.** Six keys on `/client-scopes`, three
+  (`id, name, protocol`) on the realm's two default listings, and **two**
+  (`id, name`) on a client's - the client's omits `protocol` even on scopes that
+  have one. A shared serialiser would be wrong on two of the three.
+- **The client-scope family is authorised out of the *clients* role set, and
+  that includes the routes the description tags `Realms Admin`.** `view-realm`
+  and `manage-realm` are 403 on `default-default-client-scopes` and
+  `default-optional-client-scopes`, both verbs; `view-clients` reads them and
+  `manage-clients` writes them. That is the second time the description's tag
+  has failed to predict the guard, and the first time it has failed in this
+  direction. `query-clients` gets the client-scope listing as **200 and `[]`**
+  rather than 403 - the third instance of "200 with a shorter list to a weaker
+  caller".
+- **Three resolution orders on one resource.** On `/client-scopes/{id}` the
+  scope is resolved **before** the caller's write role, so a `view-clients`
+  caller gets 404 for a scope that does not exist and 403 for one that does. On
+  `/default-*-client-scopes/{id}` the role comes first, so the same caller gets
+  403 for the same missing scope. On `/clients/{u}/*-client-scopes/{s}` the
+  **client** comes first, the role second and the scope third.
+- **A realm's fifteen client scopes are identical in every realm** - a realm
+  created through `POST /admin/realms` gets the same fifteen as master, the same
+  thirty-five protocol mappers, the same attributes and the same two default
+  sets, byte for byte once the UUIDs are stripped. But **the realm's default set
+  is nine, not the six a client carries**: the three SAML scopes are in it and
+  are filtered out when an `openid-connect` client inherits.
+- **The realm's default-scope listing has a reproducible order and a client's
+  does not.** `role_list, saml_organization, AuthnContextClassRef, profile,
+  email, roles, web-origins, acr, basic` came back on master and on a created
+  realm across two container starts - insertion order, with a scope added by
+  `PUT` appearing at the end. A client's two lists swapped `roles` and `profile`
+  between two clients created minutes apart in one container, and the protocol
+  mappers inside six of the fifteen scopes came back differently on two starts.
+  So one of the three is asserted in order and the other two are sorted. The
+  observed document's blanket "the client-scope name lists have no stable order"
+  is true of a client's and **false** of the realm's; taking it at face value
+  would have masked an assertion this project can make.
 
 - **The authorization endpoint has two error families and the redirect URI
   decides which.** If the `client_id` resolves and the `redirect_uri` matches
@@ -539,14 +650,56 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   redirect_uri`,** where a missing `code` answers `Missing parameter: code`.
   It is compared against what the authorization request stored, and absent
   compares unequal rather than being caught by a presence check.
-- **Logout without an `id_token_hint` does not redirect.** It serves the theme's
-  `Logging out` confirmation page, 200, whatever the `post_logout_redirect_uri`
-  is. Its successful redirect carries `state` and nothing else - no `iss`,
-  where `/auth`'s redirect carries one - and `Cache-Control: no-cache`, where
-  `/auth` sends `no-store, must-revalidate, max-age=0`.
-- **`post.logout.redirect.uris` is a separate client attribute.** A client whose
+- **Whether a hintless logout redirects is decided by the browser session, not
+  by the hint.** With a live session and no `id_token_hint`, Keycloak serves the
+  theme's `Logging out` confirmation page, 200, and **ends nothing** - the
+  refresh token still works afterwards. With no session, the same request with a
+  `client_id` and a registered target is a **302**. There are four outcomes, not
+  two: that 302, the confirmation page, a `You are logged out` page (a valid
+  hint and no target, 200, and the session *is* ended), and the 400 error page.
+  The successful redirect carries `state` and nothing else - no `iss`, where
+  `/auth`'s redirect carries one - and `Cache-Control: no-cache`, where `/auth`
+  sends `no-store, must-revalidate, max-age=0`.
+  (This bullet read "logout without an `id_token_hint` does not redirect" until
+  2026-08-29. That is what one measurement taken through a cookie jar looked
+  like: the jar was the variable and the hint was not. A case had been filed
+  `Pending` on the strength of it, with the wrong reason attached.)
+- **`post.logout.redirect.uris` is a filter over `redirectUris`, not a separate
+  registration.** A client with no such attribute redirects to its own
+  registered `redirect_uri`; so does one set to `""` or `"+"`. `"-"` refuses
+  everything, including its own `redirectUris` and the literal `-`. Anything
+  else is a `##`-separated pattern list that **replaces** `redirectUris` rather
+  than adding to it, so setting the attribute can only ever narrow what a client
+  accepts. And `-` is a marker for the whole value and not for an entry: inside
+  a `##` list it is an ordinary relative pattern, accepted and resolved against
+  the server's base URL.
+  (This bullet said the opposite until 2026-08-29 - "a client whose
   `redirect_uri` validates at the authorization endpoint is still refused at the
-  logout endpoint until it is set.
+  logout endpoint until it is set". Measured across six clients differing only
+  in this attribute.)
+- **`state=` is echoed at `/auth` and dropped at `/logout`.** One parameter, two
+  endpoints, opposite answers to the same empty value. The page families
+  disagree the same way: `/logout`'s 400 page carries `Cache-Control: no-cache`
+  where `/auth`'s 400 and 403 pages carry none, measured side by side on one
+  container. `httpx.WriteThemeErrorPage` takes the value as an argument for
+  exactly this reason. Two endpoints that look like one endpoint twice.
+- **The logout endpoint forgives four things the authorization endpoint does
+  not.** An **expired** `id_token_hint` still logs out and still redirects; a
+  hint naming a session that has already ended answers the same 302 rather than
+  an error; a **disabled** client redirects, where `/auth` answers it the 400
+  page; and a **duplicated parameter is not an error at all** - the first value
+  wins, where `/auth` answers `duplicated parameter` for any key sent twice.
+  What it does not forgive is a `client_id` disagreeing with the hint's `azp`:
+  that is `Invalid parameter: id_token_hint`, not a client error. A rejected
+  logout ends nothing - validation completes before anything is destroyed.
+- **A `POST` to the logout endpoint is two endpoints wearing one path, and the
+  `refresh_token` decides which.** With one, the request is client-authenticated
+  and answers 204 with `Cache-Control: no-cache` and a
+  `Content-Security-Policy`, ignoring any `post_logout_redirect_uri` it was
+  given, and answering 204 again on a replay. Without one it falls through to
+  the `GET` families and answers a page or a 302. The `GET` family authenticates
+  no client at all, so the same confidential client that must send its secret on
+  the `POST` redirects without one on the `GET`.
 - **A realm created through the API is disabled.** `POST /admin/realms` with a
   body that does not say `enabled` answers 201 and creates a realm nobody can
   log into. `PUT` on a realm **merges and can rename it**: the path segment and
@@ -650,9 +803,13 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
   group, `admin/groups/count` counts the realm three cases later, and that
   case's number is masked to this day because the recorder said 3 where a
   pristine replay says 2. **Ordering also cannot be checked afterwards** -
-  `admin/users/count`'s entire body is the byte `1`, and no guard can tell a
-  polluted count from a clean one. So the container is what resets, not the
-  position. See F40.
+  `admin/users/count`'s entire body is the byte `1`, and no guard **that reads
+  the recorded bytes** can tell a polluted count from a clean one. So the
+  container is what resets, not the position. See F40. (The qualifier is
+  load-bearing and was added on 2026-08-30: re-*serving* a case against a
+  polluted realm does tell the two apart, because the answer moves. That route
+  was tried and rejected on a different ground - the fixtures are deliberately
+  not replayable - and the reason lives in F53, not in the word "no".)
 - **A golden that holds only while the catalogue's order holds is worse than no
   golden**, because it looks like a measurement. That is why F40 was fixed in
   the recorder rather than by marking one case and re-recording: marking alone
@@ -669,6 +826,30 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
   everything recorded after it - and a POST whose body is a JSON **array** is
   not a creation, or the role-mapping writes would put six bootstrapped admin
   role names into the guard's set.
+- **The pollution guard now reads every golden, not the ten pristine ones.**
+  `TestNoGoldenHoldsAnObjectItDidNotCreate` applies the same check to the rest
+  of the catalogue, because the invariant was never the pristine group's: a
+  golden may hold only what bootstrap, the case's own fixture and its own
+  request produced, since those three are exactly what the verifier reproduces.
+  It is a ratchet rather than a finder - every committed golden passes it today -
+  and it fires one step earlier than `TestConformance`, on the re-record that
+  first pollutes a golden rather than on the run that then cannot reproduce it.
+- **`PristineRealm` cannot be derived, and two measurements say so.** The
+  request shape does not determine it: `GET /admin/realms/master/clients` with
+  no query is realm-wide for an administrator and measured `[]` both before and
+  after pollution for a `query-clients` caller. And replaying every case against
+  a realm every fixture has touched does not work, because fixtures are
+  deliberately not idempotent - `idempotentCreate` exists for the creates that
+  may repeat, and the ones capturing a `Location` may not - so putting all of
+  them on one handler produced 22 failures, nine in the pollution pass itself,
+  and none of them order-dependence. The flag stays a declaration and the sweep
+  that checks it is a person reading the catalogue. See F53.
+- **A case can send one query key twice.** `Request.RawQuery` is the query
+  string verbatim, which is the only way to express the authorization
+  endpoint's `duplicated parameter`. It replaces `Query` rather than adding to
+  it, and it is **not** expanded - `Expand` rewrites `Path`, `Query`, `Headers`,
+  `Form` and `Body` and does not reach it, so `TestCatalogIsWellFormed` refuses
+  a `{{name}}` inside one rather than letting the braces reach the server.
 - **CI runs `build`, `vet` and `CGO_ENABLED=0 go test ./...` on every pull
   request, and nothing behind the `docker` tag.** `vet` runs twice, plain and
   `-tags docker`, so the three tagged files still compile; nothing runs them.

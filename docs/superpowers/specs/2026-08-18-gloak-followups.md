@@ -58,6 +58,23 @@ workflow rather than about Keycloak; F42 is the one to read, because the finding
 as filed was wrong in a way that would have made the fix a no-op, and the hazard
 underneath it ran the other way.
 
+**Status, 2026-08-30.** Three more cuts ran in parallel the next day, under the
+same rule, and **closed F46, F47, F48, F49 and F53** and opened **F58 through
+F70**. The pattern of the previous day repeated exactly once more: the most
+valuable thing each stream produced was a line in `AGENTS.md` its measurements
+refuted, and there were four.
+
+Two are worth reading before the rest. **F49** was filed as one defect - a
+client created through the Admin API gets no client scopes - and turned out to
+be six: the scopes could not be fixed without also fixing `standardFlowEnabled`,
+`fullScopeAllowed`, `protocol`, `nodeReRegistrationTimeout` and `name`, because
+with no `protocol` default the scope-inheritance filter matches nothing. And
+**F53** was closed by a sweep that found three cases, then reopened in spirit
+three commits later when the next cut produced a fourth instance of the same
+problem - which is recorded at F53 rather than hidden, because a follow-up that
+closes and immediately recurs is saying something about the check, not about the
+cases.
+
 One thing that is deliberately **not** filed. P4's handover proposes an entry
 for "a golden that enumerates a realm-wide set without `PristineRealm`", naming
 `admin/role-mapper/group-realm-available`. That case gained the flag in
@@ -2244,7 +2261,29 @@ the four families separately, and
 wired - the four families are each also created by some fixture, so deleting the
 catalogue loop left every other test green.
 
-## F46: a masked header is asserted on presence alone, and nothing else
+## F46: a masked header is asserted on presence alone, and nothing else (closed)
+
+**Closed 2026-08-30 by `Case.VolatileTailHeaders`**, which masks a header's
+final path segment and compares everything before it exactly.
+
+The mechanism was designed **after** measuring all seven admin `Location`s, not
+from the four the entry had in mind - and that is what the design turned on.
+Only four end in something minted: `POST .../clients`, `.../users`, `.../groups`
+and `.../groups/{id}/children`. `POST .../roles` and `POST .../clients/{id}/roles`
+end in the **role's name** and `POST /admin/realms` in the **realm's name**, so
+those three carry nothing per-request once `ReplaceCaptured` and `ReplaceIssuer`
+have run, and they now assert their `Location` **whole**. `MaskURLTail` refuses
+a tail that is not a UUID rather than masking it, which is the F39 lesson
+applied: masking nothing while looking as though it had checked is the failure
+mode.
+
+The measurement also corrected a route: the child create's `Location` is
+`/groups/<child uuid>`, **not** `/groups/{parent}/children/<child uuid>`. The
+route that makes a child is not the route that addresses it, and the mask had
+been hiding that too.
+
+What the finding said, kept for the record:
+
 
 Found 2026-08-29 while reading `diff` for F39. A neighbour of F13.
 
@@ -2259,7 +2298,16 @@ It is the same gap F39 describes for the browser redirects, in a family that is
 `Implemented` today rather than `Recorded`. Fixing it means re-recording those
 goldens, so it is filed rather than done.
 
-## F47: `admin/groups/count` can have its measured number back
+## F47: `admin/groups/count` can have its measured number back (closed)
+
+**Closed 2026-08-30.** The claim was verified rather than trusted - a
+bootstrapped realm holds no groups, so the fixture's parent and child make the
+count a deterministic `{"count":2}` on both sides - the mask was dropped and the
+number re-recorded. The one place in the catalogue where F40's defect had been
+papered over instead of fixed is now a measurement again.
+
+What the finding said, kept for the record:
+
 
 `admin/groups/count` masks `count` with a comment saying why: "the recorder
 shares one container, so any fixture that creates a group moves it - the first
@@ -2272,7 +2320,20 @@ back into a measurement. It is the smallest possible piece of work and it undoes
 the one place in the catalogue where F40's defect was papered over instead of
 fixed.
 
-## F48: the conformance harness cannot express a repeated query parameter
+## F48: the conformance harness cannot express a repeated query parameter (closed as a mechanism)
+
+**Closed 2026-08-30 by `Request.RawQuery`**, the query string sent verbatim. It
+**replaces** `Query` rather than adding to it, because merging the two would
+need an order and there is no honest one, and it is deliberately **not**
+expanded: `Expand` rewrites `Path`, `Query`, `Headers`, `Form` and `Body` and
+does not reach it, so `TestCatalogIsWellFormed` refuses a `{{name}}` inside one
+rather than letting the braces reach the server.
+
+The conformance case was deliberately **not** added: `catalog_oidc.go` belonged
+to a concurrent cut. The family is now expressible and the case is owed.
+
+What the finding said, kept for the record:
+
 
 `Request.Query` is a `map[string]string` and `buildRequest` writes it with
 `url.Values.Set`, so no case can send one key twice.
@@ -2282,7 +2343,28 @@ the authorization endpoint's ten - served, unit-tested in `internal/oidc`, and
 under no golden at all. A `[]string` variant, or a raw query-string field on
 `Request`, closes it. `case.go` belonged to another cut the week this was found.
 
-## F49: `internal/admin`'s client create does not default the client scopes
+## F49: `internal/admin`'s client create does not default the client scopes (closed)
+
+**Closed 2026-08-30, and it was six defects rather than one.** Only the scopes
+were filed. Fixing them was not possible without fixing five more, because
+`POST /clients` also served the wrong `standardFlowEnabled`, `fullScopeAllowed`,
+`protocol`, `nodeReRegistrationTimeout` and `name`, and gave a public client a
+`client.secret.creation.time` it does not get. The coupling is the `protocol`
+default: **with no protocol on the client, the scope-inheritance filter matches
+nothing**, so the scope fix could not be tested until the protocol fix existed.
+Both `Recorded` cases that were blocked on this are now `Implemented` and
+matching.
+
+The inheritance rule itself was measured over nine creation bodies and is not
+what the obvious implementation does. **Naming *either* list - as an array,
+empty or not - suppresses inheritance on *both*.** So
+`{"defaultClientScopes":["email"]}` produces a client with one default and **no**
+optionals, where a per-list nil check gives it the realm's five. That per-list
+check was written first here and a mutation caught it, but only after a case was
+added that could tell the two apart; see the mutation notes in
+`docs/superpowers/handover/p5-client-scopes.md`.
+
+What the finding said, kept for the record:
 
 Keycloak gives a client created with no `defaultClientScopes` the realm's six
 defaults and five optionals. Gloak's `POST /admin/realms/{realm}/clients` writes
@@ -2335,7 +2417,51 @@ Adding either means a fixture client with the flag off, which is a fixture
 nothing else needs. Worth doing with the next case that wants such a client
 rather than on its own.
 
-## F53: which other goldens enumerate a realm-wide set without claiming `PristineRealm`?
+## F53: which other goldens enumerate a realm-wide set without claiming `PristineRealm`? (swept, and it came back)
+
+**Swept 2026-08-30. Three cases found, all of them clean today** - which is
+exactly what "order-dependent and currently clean" means, and why the
+byte-reading guard could not have found them:
+
+- `admin/roles/users` and `admin/roles/groups` list every user or group holding
+  a bootstrapped role. Granting `admin` to a created user or group puts it in
+  the body, measured live. No fixture grants it, and that was the whole
+  protection.
+- `admin/realms-admin/default-groups-empty` reads a list that
+  `admin/realms-admin/default-group-add` **writes three cases later in the same
+  realm**. The first instance where the polluter is a case rather than a
+  fixture.
+
+**Then it came back within the week, which is the actual finding.** Three
+commits after the sweep landed, P5's cut produced a fourth:
+`admin/clients/default-client-scopes` reads a client's inherited defaults, and
+two cases earlier in the catalogue add a scope to master's default set, so the
+recorder wrote seven entries where a pristine replay serves six. It does not
+look like a realm-wide body, which is F53's point restated by example. Both it
+and its optional sibling now carry the flag.
+
+The sweep was complete and a one-off sweep cannot hold. Every cut that adds a
+fixture writing to a realm-wide set can add another, and one did immediately.
+
+**The derived check was tried and declined on two measurements**, not on taste.
+Request shape cannot decide it: `GET /admin/realms/master/clients` with no query
+is realm-wide for an administrator, and measured `[]` both before *and* after
+pollution for a `query-clients` caller. And replaying every case against a realm
+every fixture has touched does not work either, because the fixtures are
+deliberately not idempotent - `idempotentCreate` exists for the creates that may
+repeat, and the ones capturing a `Location` may not - so putting them all on one
+handler produced 22 failures, nine inside the pollution pass itself, and none of
+them order-dependence.
+
+What was built instead is a ratchet rather than a finder:
+`TestNoGoldenHoldsAnObjectItDidNotCreate` applies F45's check to **all 273**
+goldens rather than the ten pristine ones, because the invariant was never the
+pristine group's. It fires one step earlier than `TestConformance` - on the
+re-record that first pollutes a golden, rather than on the run that then cannot
+reproduce it. It does not catch a case that is order-dependent and still clean,
+and nothing does; that is what this entry stays open for.
+
+What the finding said, kept for the record:
 
 F40 was one case. The question it raises is not.
 
@@ -2404,3 +2530,156 @@ Filed as a note rather than a defect: serving a field is not implementing it, as
 the parity design's §10 says of the realm representation's other 104. It is here
 so that "client policies work" is never inferred from "client policies round
 trip".
+
+## F58: a paged golden's window is held by a naming convention nobody enforces
+
+`admin/roles/list-realm-page-no-search` sends `first=1&max=2` with no `search`,
+and its golden holds `create-realm` and `default-roles-master`. The case's
+comment argues, correctly, that every realm role a fixture creates is named
+`gloak-probe-...`, which sorts after `default-roles-master` and cannot enter the
+window. Six of the user listings rest on the same kind of argument -
+`?username=admin` is a substring filter no `gloak-probe-*` username matches.
+
+**Every one of those arguments is about names, and nothing enforces the naming
+convention they rest on.** A fixture creating a realm role called `a-probe-role`,
+or a user called `admin-probe`, breaks several goldens at once. It breaks them
+loudly, which is the good case - but it breaks them in cases whose comments then
+read as though they had been checked.
+
+A test asserting that every object any fixture or case creates is named
+`gloak-probe-*` turns six written arguments into one checked one, and it is
+cheap: `createdObjects()` already collects exactly that set for the pollution
+guard, so asserting a prefix over it is three lines. Not done at the time
+because it is a new rule *about the catalogue* rather than a fix to a measured
+divergence, and imposing one belongs to whoever owns the convention.
+
+## F59: `Case.Unordered` silently sorts only the root when the root is one of its paths
+
+`editor.sortArray` decodes the value it matched in one go, so a path matching
+the root consumes the whole document and the nested paths are never visited.
+`Unordered: {".", "*/protocolMappers"}` sorts the first and ignores the second,
+**with no error**.
+
+Silence is the part that matters: the case looks as though it asserts the nested
+set and does not. Both orders are unstable in the case that found this, so
+`admin/client-scopes/list` masks `*/protocolMappers` whole and the thirty-five
+bootstrapped protocol mappers are under no golden at all.
+`TestBootstrappedClientScopeMappers` in `internal/admin` asserts one scope's
+fourteen mappers and one full configuration directly, which closes the hole for
+the richest of them and for none of the rest.
+
+The fix is in `normalize.go`. It should **error** on the combination rather than
+learning to handle it, unless handling it is cheap - an unsorted assertion that
+believes itself sorted is the same disease as F39's.
+
+## F60: a `saml` client created through the Admin API gets no keystore
+
+Keycloak generates a signing certificate and a private key for a `saml` client
+created through `POST /clients`, sets twelve `saml.*` attributes and
+`frontchannelLogout: true`. Gloak sets none of them.
+
+P11's, and filed here because it is observable from an endpoint that already
+ships rather than from SAML itself.
+
+## F61: `PUT /clients/{uuid}` ignoring the two scope lists is unasserted
+
+Keycloak ignores `defaultClientScopes` and `optionalClientScopes` on the update
+path - measured. Gloak also ignores them, because `clientRepo.Update` does not
+touch the attachment table.
+
+**But nothing asserts it**, and the merge in `updateClient` does carry both
+lists through `newClientFrom`. The agreement is an accident of which table the
+repository writes, not a decision anything guards, and a case would cost one
+fixture.
+
+## F62: `scopes_supported` is still a constant
+
+The parity roadmap's §6 second debt. `internal/oidc/discovery.go` emits a list
+no model backs. The realm's client scopes now exist as rows and could back it,
+which they could not when the debt was taken on.
+
+## F63: the protocol mapper engine is still staged
+
+Roadmap §6's first debt, and the note needs updating rather than repeating. All
+thirty-five bootstrapped protocol mappers are now **stored** and served in the
+client scope representation; token issuance still reproduces the measured claim
+set directly rather than deriving it from them.
+
+That was the plan - the roadmap staged the engine behind the scopes - and the
+prerequisite is now built. What remains is the derivation.
+
+## F64: Gloak issues no `AUTH_SESSION_ID`
+
+Keycloak sets a fresh one on the logout 302 and on both 200 pages. Gloak has no
+authentication-session concept and minting a cookie value would be inventing an
+observable, so it sets none.
+
+The conformance cases mask `Set-Cookie` as volatile and assert none of it, so
+nothing catches this. Closes when P13 builds authentication sessions.
+
+## F65: the browser-session branch of the logout confirmation page is unmodelled
+
+Keycloak serves `Logging out` when a session cookie is present and redirects
+when it is not. Gloak has no session cookie and therefore always takes the
+second branch.
+
+That is the correct answer for every request Gloak can receive **today**, and it
+becomes a divergence the moment P13 sets one. It is the one place the logout
+endpoint has fewer branches than Keycloak, and it is written down rather than
+left to be discovered.
+
+## F66: the two logout cookie clears are recorded and no longer measured
+
+`oidc/logout/rp-initiated-with-id-token-hint` moved off the `browser-logged-in`
+fixture, so `KEYCLOAK_IDENTITY` and `KEYCLOAK_SESSION` being cleared with
+`Max-Age=0` now lives in the observed document and in no test.
+
+It was asserted by no test before either - `Set-Cookie` was masked - so this is
+the loss of a recording rather than of a guard. Re-earn it when P13 makes the
+browser fixture replayable.
+
+## F67: the logout page's three instructions are one placeholder
+
+Keycloak distinguishes `Invalid parameter: id_token_hint`, `Invalid redirect
+uri` and `Missing parameters: id_token_hint`; Gloak's placeholder body says
+`We are sorry...` for all three. The envelope is served and the branch that was
+taken is guarded by `internal/oidc`'s own tests, so what is missing is the
+prose. P13's, with F50.
+
+## F68: a relative redirect target is not resolved, at either endpoint
+
+Keycloak accepts `post_logout_redirect_uri=-` against a `##` list containing `-`
+and answers `Location: http://127.0.0.1:8092/-`, resolving the relative value
+against the server's base URL. Gloak's `matchRedirectURI` is a string comparison
+and would emit it unchanged.
+
+**One follow-up for two endpoints**: it is the same unhandled case as
+`security-admin-console`'s host-relative `/admin/master/console/*` at `/auth`.
+
+## F69: `make record` rewrites `Pending` theme-page goldens on every run
+
+Four goldens now churn their whole body on every recording because the
+`/resources/<hash>/` segment is regenerated per container start:
+`oidc/authorization/invalid-redirect-uri`, `oidc/authorization/unknown-client-id`,
+`oidc/logout/invalid-post-logout-redirect-uri` and, since 2026-08-30,
+`oidc/logout/invalid-id-token-hint`. All four are `Pending`, so nothing compares
+them, and the churn is pure noise in the one diff this project asks people to
+read carefully.
+
+The count grew from three to four the same day the problem was filed, by a cut
+that had filed it - which is the argument for fixing it rather than listing it.
+**A recorder that left a `Pending` golden alone unless asked** would make `make
+record`'s diff readable. Reverting the churn by hand works and is not a rule.
+
+This supersedes the "three churners" wording in F23 and in `README.md`.
+
+## F70: `TestFixturesAreWellFormed` assumed a GET never writes (closed)
+
+`GET /logout` with a valid `id_token_hint` ends the session, so a fixture step
+that is a GET, captures nothing and changes everything was rejected by the
+"dead weight" rule - a rule that had been right until an endpoint mutated on a
+GET.
+
+**Closed 2026-08-30**: `Step.Mutates` declares it, and the test now also rejects
+`Mutates` on a step that *does* capture something and on any non-GET, so the
+escape hatch cannot be used to wave through a step that is simply unnecessary.
