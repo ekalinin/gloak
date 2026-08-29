@@ -9,4 +9,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-[{"id":"{{string}}","name":"acr"},{"id":"{{string}}","name":"basic"},{"id":"{{string}}","name":"email"},{"id":"{{string}}","name":"gloak-probe-realm-add"},{"id":"{{string}}","name":"gloak-probe-realm-drop"},{"id":"{{string}}","name":"profile"},{"id":"{{string}}","name":"roles"},{"id":"{{string}}","name":"web-origins"}]
+[{"id":"{{string}}","name":"acr"},{"id":"{{string}}","name":"basic"},{"id":"{{string}}","name":"email"},{"id":"{{string}}","name":"profile"},{"id":"{{string}}","name":"roles"},{"id":"{{string}}","name":"web-origins"}]

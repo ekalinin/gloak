@@ -9,4 +9,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-[{"id":"{{string}}","name":"address"},{"id":"{{string}}","name":"gloak-probe-realm-add-opt"},{"id":"{{string}}","name":"microprofile-jwt"},{"id":"{{string}}","name":"offline_access"},{"id":"{{string}}","name":"organization"},{"id":"{{string}}","name":"phone"}]
+[{"id":"{{string}}","name":"address"},{"id":"{{string}}","name":"microprofile-jwt"},{"id":"{{string}}","name":"offline_access"},{"id":"{{string}}","name":"organization"},{"id":"{{string}}","name":"phone"}]
