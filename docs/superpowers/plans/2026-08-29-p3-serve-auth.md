@@ -303,16 +303,22 @@ Three cases move from `catalog_oidc_pending.go` to `catalog_oidc.go` as
 `Implemented`, losing their `Reason` - `catalog_test.go` requires that, and it
 is a separate rule from the one that fails a matching `Recorded` case.
 
-Five cases are added, all `browser-client`, all recorded before being marked
+Four cases are added, all `browser-client`, all recorded before being marked
 `Implemented`:
 
 | New case | What it pins |
 |---|---|
 | `unsupported-response-type` | the second `response_type` shape: no `error_description` key at all |
 | `invalid-response-mode` | `response_mode` has its own validity check, between `response_type` and the flow check |
-| `duplicated-parameter` | a whole error family nobody had measured |
 | `pkce-missing-challenge` | the first of the PKCE trio, and that scope precedes it |
 | `pkce-invalid-challenge-method` | the second, reachable only with a challenge present |
+
+A fifth was planned and cannot be written. `duplicated-parameter` needs a
+request that sends one query key twice, and `Request.Query` is a
+`map[string]string` that `buildRequest` writes with `Values.Set`. The harness
+cannot express a repeated parameter at all, so the whole "duplicated parameter"
+family is served, unit-tested and **not** under a golden. `case.go` is not this
+cut's file to change; the gap is a follow-up.
 
 Each asserts `Location` and `Cache-Control` and pins `X-Frame-Options` and
 `Content-Security-Policy` **absent** - the same shape the three existing served
@@ -354,6 +360,8 @@ besides.
 
 **No 405 for a wrong method on `/auth`.** Section 7.
 
-**Parity: 129 → 137.** Eight cases served, five of them new, so the chapter
-denominator moves from 11 to 16 and the total from 485 to 490. Stated here so
-that a number that does not move is a failure rather than a surprise.
+**Parity: 129 → 136.** Seven cases served, four of them new, so the chapter
+denominator moves from 11 to 15 and the total from 485 to 489. Stated here so
+that a number that does not move is a failure rather than a surprise. The plan
+first said 137 of 490 on five new cases; the fifth is the one section 8 says
+the harness cannot express.
