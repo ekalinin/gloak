@@ -442,16 +442,20 @@ Ready to paste, in that file's voice.
 **Two, and the second is the more useful.**
 
 1. **"A wrong method on a known path returns 404, not 405, with no `Allow`
-   header"** is now measured too broad a **fourth** time, and this is the
-   cleanest instance yet: `PUT` and `DELETE` on `/admin/realms/{r}/client-scopes`
+   header"** is now measured too broad a **fifth** time - P6's logout cut
+   measured a fourth concurrently, on `/logout`, and merged into `main` while
+   this branch was open - and this is the cleanest instance yet: `PUT` and `DELETE` on `/admin/realms/{r}/client-scopes`
    and `POST` and `PATCH` on `/admin/realms/{r}/client-scopes/{id}` all four
    answer a real **405** `{"error":"HTTP 405 Method Not Allowed"}`, with
    `application/json`, all five security headers, **no `Allow`** and no
    `Cache-Control`. Every previous data point was a mixture within one path
-   family; this is a whole route family answering 405 uniformly. The existing
-   bullet says "three data points that disagree still do not say what the rule
-   is" - there are four now, and the count in that sentence needs updating even
-   if the conclusion does not. Gloak still answers 404, because the decision is
+   family, and every one so far has been on the **protocol** side; this is the
+   first on the **Admin API**, and a whole route family answering 405
+   uniformly. It confirms P6's body independently: `{"error":"HTTP 405 Method
+   Not Allowed"}`, measured on two different endpoints by two branches that
+   never shared a container. The existing bullet says "three data points that
+   disagree still do not say what the rule is" - there are five now, and the
+   count in that sentence needs updating even if the conclusion does not. Gloak still answers 404, because the decision is
    in `internal/oidc`'s `WithKeycloakFallbacks` and this branch may not touch
    it. See F31, and section 3.
 
@@ -486,7 +490,7 @@ in F49 and nobody had looked.
 
 **New follow-ups, to file:**
 
-- **F58: `Case.Unordered` cannot sort a nested array inside an array it also
+- **F59: `Case.Unordered` cannot sort a nested array inside an array it also
   sorts at the root.** `editor.sortArray` decodes the value it matched in one
   go, so a path matching the root consumes the document and the nested paths are
   never visited - `Unordered: {".", "*/protocolMappers"}` silently sorts only
@@ -497,21 +501,22 @@ in F49 and nobody had looked.
   `TestBootstrappedClientScopeMappers` in `internal/admin` asserts one scope's
   fourteen mappers and one full config directly, which closes the hole for the
   richest of them and not for the rest. The fix is in `normalize.go`, which this
-  branch may not touch.
-- **F59: a `saml` client created through the Admin API gets no keystore.**
+  branch may not touch. F58 was taken by `fix/harness-sweep`, which merged
+  into `main` while this branch was open.
+- **F60: a `saml` client created through the Admin API gets no keystore.**
   §1.9. Keycloak generates a signing certificate and private key and sets twelve
   `saml.*` attributes and `frontchannelLogout: true`; Gloak sets none of them.
   P11.
-- **F60: `PUT /clients/{uuid}` accepting `defaultClientScopes` is unguarded in
+- **F61: `PUT /clients/{uuid}` accepting `defaultClientScopes` is unguarded in
   Gloak.** Keycloak ignores both lists on the update path, measured. Gloak also
   ignores them, because `clientRepo.Update` does not touch the attachment table -
   but nothing asserts it, and the merge in `updateClient` does carry the lists
   through `newClientFrom`. A case would cost one fixture.
-- **F61: `scopes_supported` is still a constant.** The parity roadmap's §6
+- **F62: `scopes_supported` is still a constant.** The parity roadmap's §6
   second debt. `internal/oidc/discovery.go` emits a list no model backs; the
   realm's client scopes now exist and could back it. Not in this cut because
   `internal/oidc` was another agent's file this session.
-- **F62: the protocol mapper engine is still staged.** Roadmap §6's first debt.
+- **F63: the protocol mapper engine is still staged.** Roadmap §6's first debt.
   This cut **stores** all thirty-five mappers and serves them in the client
   scope representation, and token issuance still reproduces the measured claim
   set directly rather than deriving it. That was the plan; the prerequisite is
@@ -521,25 +526,38 @@ in F49 and nobody had looked.
 
 - **F31** gains its fourth data point, §1.13. Nothing was changed on the
   strength of it.
-- **F53** - "which other goldens enumerate a realm-wide set without claiming
-  `PristineRealm`?" - **found one, in this cut, before it shipped.**
-  `admin/clients/default-client-scopes` reads a client's inherited defaults; two
-  cases earlier in the catalogue add a scope to master's default set, so the
-  recorder wrote seven entries where a pristine replay serves six. It does not
-  look like a realm-wide body, which is exactly F53's point. Both it and its
-  optional sibling now carry `PristineRealm`. The sweep F53 asks for is still
-  worth doing.
+- **F53 is closed on `main`** by `fix/harness-sweep`, which swept the
+  catalogue, found three such cases and reported all three clean. This cut then
+  **produced a fourth, in a case that was not clean**, three commits after that
+  sweep landed. `admin/clients/default-client-scopes` reads a client's inherited
+  defaults; two cases earlier in the catalogue add a scope to master's default
+  set, so the recorder wrote seven entries where a pristine replay serves six.
+  It does not look like a realm-wide body, which is exactly F53's point.
+  Both it and its optional sibling now carry `PristineRealm`.
+  **The finding is not that the sweep was incomplete - it was complete - but
+  that a one-off sweep cannot hold.** Every cut that adds a fixture writing to a
+  realm-wide set can add another, and this one did within the week. F53's own
+  text says "the only thing standing between the catalogue and a second F40 is
+  that somebody noticed"; that is still true after the sweep, and the derived
+  check F53 discusses and declines is what would change it.
 
 ## 4. Parity before and after
 
 `CGO_ENABLED=0 go test ./internal/conformance/ -run '^TestCoverage$' -count=1 -v`
 
-| | total |
-|---|---|
-| `main` (merge base) | **147 of 489** |
-| `feat/p5-client-scopes` | **169 of 489** |
+The branch merged `main` mid-flight, so the number is reported twice: against
+the merge base it started from and against the `main` it ends on. **The
+increment is the same both times.**
 
-**+22**, which is exactly the 22 operations the plan allocated to this cut.
+| base | before | after | delta |
+|---|---|---|---|
+| `503ecc0`, this branch's merge base | 147 of 489 | 169 of 489 | **+22** |
+| `c0c169f`, `main` after P6 and the harness sweep | 157 of 498 | 179 of 498 | **+22** |
+
++22 is exactly the 22 operations the plan allocated to this cut. The
+denominator moved 489 -> 498 and the base numerator 147 -> 157 because P6's
+logout cut and the harness sweep landed between the two measurements; neither
+touched a chapter this cut moves.
 
 ```
 chapter                         before  after  delta

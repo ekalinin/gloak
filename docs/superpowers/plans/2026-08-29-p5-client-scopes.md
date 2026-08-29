@@ -392,7 +392,7 @@ things the plan did not foresee:
   1.7 of the handover has the nine bodies that say so.
 - **`Case.Unordered` cannot sort a nested array inside one it sorts at the
   root**, silently. The listing case masks the protocol mappers and a Go test
-  in `internal/admin` asserts one scope's directly. Filed as F58.
+  in `internal/admin` asserts one scope's directly. Filed as F59.
 
 ## 6. What this cut deliberately does not do
 
