@@ -3458,7 +3458,12 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "GET /admin/realms/{realm}/groups/{group-id}/role-mappings/realm/available",
-		Fixture:   "admin-token-group-mappings",
+		// Every realm role the group does not hold, so its body is a function
+		// of the whole realm and not of this group: a shared-container
+		// recording put thirteen other fixtures' probe roles in it where the
+		// committed golden has the five Keycloak bootstraps. F40.
+		PristineRealm: true,
+		Fixture:       "admin-token-group-mappings",
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/admin/realms/master/groups/{{group_id}}/role-mappings/realm/available",

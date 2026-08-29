@@ -25,9 +25,23 @@ import (
 // Cases with an empty Fixture are skipped: they need setup that does not exist
 // yet. A case naming a fixture this recorder cannot build is a failure, not a
 // quiet skip.
+//
+// There are two container regimes and the catalogue decides which a case gets.
+// Almost every case is recorded against one shared container, in catalogue
+// order, which is why a whole run costs one Keycloak start and not three
+// hundred. A PristineRealm case gets a container to itself, because its body is
+// a function of everything in the realm and the verifier will serve it from a
+// handler that has seen nothing but its own fixture. Recording those first on
+// the shared container was the previous answer and it does not hold: the
+// pristine group pollutes itself, which is how admin/groups/count came to have
+// its number masked (F40).
 func TestRecordGoldens(t *testing.T) {
 	ctx := context.Background()
-	base := startKeycloak(ctx, t)
+	// Every case that does not enumerate the realm is recorded against this
+	// one, which accumulates state in catalogue order. That is harmless for a
+	// case addressing one object by UUID, and it is the reason the whole run
+	// does not cost one container start per case.
+	shared := startKeycloak(ctx, t)
 	// A redirect is the response being measured, not a step on the way to
 	// one: for the authorization and logout endpoints the contract is the
 	// 3xx status and its Location header (the code/state/session_state/iss,
@@ -44,7 +58,7 @@ func TestRecordGoldens(t *testing.T) {
 	}
 
 	var skipped []string
-	for _, c := range recordingOrder() {
+	for _, c := range Catalog {
 		if c.Fixture == "" {
 			skipped = append(skipped, c.ID)
 			continue
@@ -55,6 +69,16 @@ func TestRecordGoldens(t *testing.T) {
 			continue
 		}
 		t.Run(c.ID, func(t *testing.T) {
+			// A case that enumerates the realm gets a container of its own,
+			// thrown away when the subtest ends. See Case.PristineRealm: the
+			// verifier builds a fresh handler per case, so the only recording
+			// that reproduces what it will serve is one against a realm no
+			// other fixture has touched.
+			base := shared
+			if c.PristineRealm {
+				base = startKeycloak(ctx, t)
+			}
+
 			// The fixture's own steps are run but never recorded: only the
 			// case's response becomes a golden. Recording a step would commit
 			// a live token to the repository.
@@ -112,29 +136,13 @@ func TestRecordGoldens(t *testing.T) {
 	}
 }
 
-// recordingOrder is the catalogue with every PristineRealm case moved to the
-// front, order otherwise preserved.
+// startKeycloak runs the reference server and returns its base URL, and
+// terminates it when t finishes. The image tag is the project's pinned
+// compatibility target and must not drift.
 //
-// The recorder shares one container, so a case that enumerates the realm has
-// to run before any fixture has created anything in it. See
-// Case.PristineRealm.
-func recordingOrder() []Case {
-	out := make([]Case, 0, len(Catalog))
-	for _, c := range Catalog {
-		if c.PristineRealm {
-			out = append(out, c)
-		}
-	}
-	for _, c := range Catalog {
-		if !c.PristineRealm {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
-// startKeycloak runs the reference server and returns its base URL. The image
-// tag is the project's pinned compatibility target and must not drift.
+// It is called once for the shared container and once more per PristineRealm
+// case, where the t it is given is the subtest's, so the container lives for
+// exactly that one recording.
 func startKeycloak(ctx context.Context, t *testing.T) string {
 	t.Helper()
 	req := testcontainers.ContainerRequest{

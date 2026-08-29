@@ -97,17 +97,29 @@ type Case struct {
 	Operation string
 
 	// PristineRealm marks a case whose golden describes the realm as a whole
-	// rather than one object in it. The recorder records these before every
-	// other case.
+	// rather than one object in it. The recorder gives each of these a
+	// container of its own.
 	//
-	// One container is shared across the whole recording, so state
+	// One container is otherwise shared across the whole recording, so state
 	// accumulates in catalogue order. That is harmless for a case addressing
 	// one object by UUID and destructive for one enumerating them: the three
 	// clients the OIDC fixtures create turned up inside the unfiltered client
-	// list golden and would have been committed as the contract. Nothing
-	// resets the realm between cases, so recording first is the whole
-	// guarantee - which is why TestPristineRealmGoldensAreNotPolluted checks
-	// the result rather than trusting the ordering.
+	// list golden and would have been committed as the contract.
+	//
+	// This meant "recorded before every other case" until 2026-08-29, and
+	// ordering cannot carry it. A pristine case whose fixture creates
+	// something pollutes every pristine case after it, which is not a
+	// hypothetical: admin/groups/list creates a group, admin/groups/count
+	// counts it, and that case's number is masked to this day because the
+	// recorder said 3 where a pristine replay says 2. Ordering also cannot be
+	// checked - admin/users/count's body is the single byte `1`, and no guard
+	// can tell a polluted count from a clean one. So the container is what
+	// resets, not the position: bootstrap plus this case's own fixture, which
+	// is exactly what the verifier's newFixture builds.
+	//
+	// TestPristineRealmGoldensAreNotPolluted still checks the bytes
+	// afterwards. Two mechanisms for one property is deliberate here: the
+	// recorder is the thing a reviewer cannot run in CI.
 	PristineRealm bool
 
 	Request Request
