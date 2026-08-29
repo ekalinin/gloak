@@ -346,7 +346,10 @@ func (h *handler) deleteRealm(w http.ResponseWriter, r *http.Request, rc *reqCon
 	}
 	if err := bootstrap.DeleteRealm(r.Context(), h.store, rc.realm); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			httpx.WriteMessageError(w, http.StatusNotFound, "Realm not found.")
+			// Defensive rather than reachable: the guard resolved this realm
+			// before the handler ran, so only a delete racing another one
+			// arrives here. It shares the helper so the two cannot drift.
+			writeRealmNotFound(w)
 			return
 		}
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")

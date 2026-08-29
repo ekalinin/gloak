@@ -533,11 +533,21 @@ func (h *handler) resolveRealm(w http.ResponseWriter, r *http.Request) *model.Re
 	realm, err := h.store.Realms().ByName(r.Context(), r.PathValue("realm"))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			httpx.WriteMessageError(w, http.StatusNotFound, "Realm not found.")
+			writeRealmNotFound(w)
 			return nil
 		}
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return nil
 	}
 	return realm
+}
+
+// writeRealmNotFound is the measured 404 for a realm that does not exist.
+//
+// **It keeps its full stop**, where the protocol side spells the same missing
+// realm "Realm does not exist" without one. It is one function because the
+// string was written out twice - here and in deleteRealm - and a measured
+// string in two places is a measured string that can drift.
+func writeRealmNotFound(w http.ResponseWriter) {
+	httpx.WriteMessageError(w, http.StatusNotFound, "Realm not found.")
 }

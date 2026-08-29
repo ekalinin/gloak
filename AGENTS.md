@@ -296,18 +296,22 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **Role listings have no stable order across container starts.** Every one of
   them is a bare array at the root of the body, which is why `Case.Unordered`
   learned the root path spelling `"."`.
-- **Nine spellings of not-found in the admin API now**, including four for one
-  resource:
+- **Eleven spellings of not-found in the admin API now**, including four for
+  one resource:
   `Could not find client`, `Client not found`, `User not found`,
   `Realm not found.` with its full stop, `Credential not found`,
   `Could not find role`, `Role not found`, `Could not find role with id`,
   `Could not find composite role`, `Could not find group by id`, and
-  `Group not found` for that same missing group from the membership route. The first two are the same resource by the
-  same key: the role-mapping routes answer `Client not found` for an unknown
-  client UUID where the client and role endpoints answer `Could not find
-  client` for that very UUID. The qualifier matters: the protocol side spells a
-  tenth, `Realm does not exist` (`internal/oidc/router.go:145`), against the
-  admin API's `Realm not found.` for the same missing realm.
+  `Group not found` for that same missing group from the membership route.
+  (This count said nine while the list held eleven; the two group spellings
+  were added without it.) `Could not find client` and `Client not found` are the
+  same resource by the same key: the role-mapping routes answer the second for
+  an unknown client UUID where the client and role endpoints answer the first
+  for that very UUID. The qualifier matters: the protocol side spells a
+  twelfth, `Realm does not exist` (`internal/oidc/router.go:145`), against the
+  admin API's `Realm not found.` for the same missing realm - which is written
+  once, in `writeRealmNotFound`, because it was written twice and a measured
+  string in two places can drift.
 
 - **The group tree disagrees with itself in six places, and with the user
   routes in three more.** `POST /groups` answers 201 with an empty body and
@@ -393,6 +397,32 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **`post.logout.redirect.uris` is a separate client attribute.** A client whose
   `redirect_uri` validates at the authorization endpoint is still refused at the
   logout endpoint until it is set.
+- **A realm created through the API is disabled.** `POST /admin/realms` with a
+  body that does not say `enabled` answers 201 and creates a realm nobody can
+  log into. `PUT` on a realm **merges and can rename it**: the path segment and
+  the body's `realm` need not agree, and when they disagree the body wins - the
+  opposite of `PUT` on a role, which replaces, and unlike a client or a user,
+  which merge but cannot be renamed that way.
+- **The realm is resolved before the caller is judged.** A realm that does not
+  exist is 404 to every caller including one holding no admin role, where a
+  realm that exists and the caller may not see is 403. That leaks which realm
+  names exist, and it is Keycloak's behaviour rather than a safe one - the same
+  order `guardGroup` and `guardByRoleContainer` already record.
+- **A caller's rights reach exactly one container, and one read leaks
+  sideways.** A master caller holding `view-users` on `master-realm` reads any
+  realm's top-level representation - in its shortest form - and is 403 on that
+  realm's users, clients and roles, and the listing shows it master alone.
+  Upwards nothing reaches at all: a caller inside another realm holding
+  `realm-admin` is refused master outright. And the single realm read has
+  **three** shapes decided by the caller's roles, where the shortest omits
+  `registrationEmailAsUsername` and the full one omits the `supportedLocales`
+  that both short ones emit.
+- **Deleting master is 400, not 403.** The refusal is about the realm rather
+  than the caller, so it is the `errorMessage` family and not the generic 403.
+  `POST /admin/realms` with a malformed body is a **fourth** spelling of
+  "cannot parse the JSON" - `unable to read contents from stream` - where
+  `POST /users`, the ten role-array endpoints and `PUT /admin/realms/{r}` each
+  have their own. A shared decoder gets three of the four wrong.
 
 ## Boundaries
 
