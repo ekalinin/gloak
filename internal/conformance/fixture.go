@@ -1796,9 +1796,40 @@ func (c cookies) send(r *http.Request) {
 	r.Header.Set("Cookie", strings.Join(pairs, "; "))
 }
 
-// RunFixture executes a fixture's steps in order against do, threading the
-// values each step captures into the requests that follow, and returns
-// everything captured.
+// Session is what a fixture leaves behind: the values its steps captured, and
+// the cookies they collected.
+//
+// The cookies are here rather than staying inside RunFixture because the
+// case's own request is not one of the fixture's steps - it is built and sent
+// by the recorder and by the verifier themselves - and a credential POST that
+// arrives without the authentication session the login page opened is refused
+// with a 400 theme page. That was measured, by recording one.
+type Session struct {
+	Vars    map[string]string
+	Cookies map[string]string
+}
+
+// Apply puts the session's cookies on a request. It is what a fixture's last
+// step and the case's own request have in common.
+func (s *Session) Apply(r *http.Request) {
+	if s == nil {
+		return
+	}
+	cookies(s.Cookies).send(r)
+}
+
+// RunFixture is Run for the callers that need only the captured values.
+func RunFixture(f Fixture, base string, do Do) (map[string]string, error) {
+	s, err := Run(f, base, do)
+	if err != nil {
+		return nil, err
+	}
+	return s.Vars, nil
+}
+
+// Run executes a fixture's steps in order against do, threading the values
+// each step captures into the requests that follow, and returns everything
+// captured along with the cookies collected on the way.
 //
 // A step whose response lacks a captured path is an error, not an empty
 // string. Substituting an empty token would record whatever Keycloak answers
@@ -1807,7 +1838,7 @@ func (c cookies) send(r *http.Request) {
 //
 // A step whose **status** is not the one it expects is an error too, and that
 // is checked before anything is captured: see Step.ExpectStatus and F34.
-func RunFixture(f Fixture, base string, do Do) (map[string]string, error) {
+func Run(f Fixture, base string, do Do) (*Session, error) {
 	vars := map[string]string{}
 	jar := cookies{}
 	for i, s := range f.Steps {
@@ -1866,7 +1897,7 @@ func RunFixture(f Fixture, base string, do Do) (map[string]string, error) {
 	if f.Delay > 0 {
 		time.Sleep(f.Delay)
 	}
-	return vars, nil
+	return &Session{Vars: vars, Cookies: jar}, nil
 }
 
 // acceptedStatus applies a step's ExpectStatus: the listed codes, or any 2xx

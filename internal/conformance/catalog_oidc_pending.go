@@ -65,8 +65,12 @@ var oidcPending = []Case{
 				"credentialId": "",
 			},
 		},
-		AssertHeaders:   []string{"Location", "Cache-Control"},
-		VolatileHeaders: []string{"Location"},
+		AssertHeaders: []string{"Location", "Cache-Control"},
+		// Location carries a code and a session_state minted by this request;
+		// Set-Cookie carries KEYCLOAK_IDENTITY and KEYCLOAK_SESSION, equally
+		// per-request. Neither can be captured by a fixture and masked by
+		// name, so both are masked whole.
+		VolatileHeaders: []string{"Location", "Set-Cookie"},
 	},
 	{
 		ID: "oidc/authorization/pkce-s256",
@@ -87,8 +91,12 @@ var oidcPending = []Case{
 				"credentialId": "",
 			},
 		},
-		AssertHeaders:   []string{"Location", "Cache-Control"},
-		VolatileHeaders: []string{"Location"},
+		AssertHeaders: []string{"Location", "Cache-Control"},
+		// Location carries a code and a session_state minted by this request;
+		// Set-Cookie carries KEYCLOAK_IDENTITY and KEYCLOAK_SESSION, equally
+		// per-request. Neither can be captured by a fixture and masked by
+		// name, so both are masked whole.
+		VolatileHeaders: []string{"Location", "Set-Cookie"},
 	},
 	{
 		ID: "oidc/authorization/pkce-plain",
@@ -114,8 +122,12 @@ var oidcPending = []Case{
 				"credentialId": "",
 			},
 		},
-		AssertHeaders:   []string{"Location", "Cache-Control"},
-		VolatileHeaders: []string{"Location"},
+		AssertHeaders: []string{"Location", "Cache-Control"},
+		// Location carries a code and a session_state minted by this request;
+		// Set-Cookie carries KEYCLOAK_IDENTITY and KEYCLOAK_SESSION, equally
+		// per-request. Neither can be captured by a fixture and masked by
+		// name, so both are masked whole.
+		VolatileHeaders: []string{"Location", "Set-Cookie"},
 	},
 	{
 		ID: "oidc/authorization/implicit-flow",
@@ -166,8 +178,12 @@ var oidcPending = []Case{
 				"credentialId": "",
 			},
 		},
-		AssertHeaders:   []string{"Location", "Cache-Control"},
-		VolatileHeaders: []string{"Location"},
+		AssertHeaders: []string{"Location", "Cache-Control"},
+		// Location carries a code and a session_state minted by this request;
+		// Set-Cookie carries KEYCLOAK_IDENTITY and KEYCLOAK_SESSION, equally
+		// per-request. Neither can be captured by a fixture and masked by
+		// name, so both are masked whole.
+		VolatileHeaders: []string{"Location", "Set-Cookie"},
 	},
 	{
 		ID: "oidc/authorization/response-mode-form-post",
@@ -193,7 +209,8 @@ var oidcPending = []Case{
 				"credentialId": "",
 			},
 		},
-		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		AssertHeaders:   []string{"Content-Type", "Cache-Control"},
+		VolatileHeaders: []string{"Set-Cookie"},
 	},
 	{
 		ID: "oidc/authorization/prompt-none-no-session",
@@ -223,6 +240,11 @@ var oidcPending = []Case{
 			},
 		},
 		AssertHeaders: []string{"Location", "Cache-Control"},
+		// AUTH_SESSION_ID and KC_AUTH_SESSION_HASH are minted per request. The
+		// attributes on them are contract and are recorded in the observed
+		// spec rather than here; nothing asserts this header either way, and
+		// left unmasked it churns the golden on every recording.
+		VolatileHeaders: []string{"Set-Cookie"},
 		// Measured: this redirect is the one response in the whole browser
 		// flow that omits X-Frame-Options, and it omits Content-Security-Policy
 		// with it. login-actions' own error redirect, to the same URI with the
@@ -1015,6 +1037,9 @@ var oidcPending = []Case{
 		// exactly rather than masked. Cache-Control is no-cache here and
 		// "no-store, must-revalidate, max-age=0" at /auth.
 		AssertHeaders: []string{"Location", "Cache-Control"},
+		// A fresh AUTH_SESSION_ID, plus KEYCLOAK_IDENTITY and KEYCLOAK_SESSION
+		// cleared with Max-Age=0. Per-request, so masked.
+		VolatileHeaders: []string{"Set-Cookie"},
 		// The same omission the authorization endpoint's redirect has. The
 		// two endpoints that redirect a browser to a client's registered URI
 		// both drop these two; login-actions, redirecting to the very same

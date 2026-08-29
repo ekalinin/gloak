@@ -88,15 +88,20 @@ func serve(t *testing.T, c Case) (*httptest.ResponseRecorder, map[string]string,
 		h.ServeHTTP(w, req)
 		return w.Result(), nil
 	}
-	vars, err := RunFixture(f, testIssuer, do)
+	sess, err := Run(f, testIssuer, do)
 	if err != nil {
 		return nil, nil, err
 	}
+	vars := sess.Vars
 
 	req, err := buildRequest(testIssuer, Expand(c.Request, vars))
 	if err != nil {
 		return nil, nil, fmt.Errorf("build request: %w", err)
 	}
+	// The case's own request is not one of the fixture's steps, so the session
+	// goes on it here, the same way the recorder does it. Both sides obtaining
+	// their responses the same way is the property this suite rests on.
+	sess.Apply(req)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	return w, vars, nil

@@ -58,14 +58,21 @@ func TestRecordGoldens(t *testing.T) {
 			// The fixture's own steps are run but never recorded: only the
 			// case's response becomes a golden. Recording a step would commit
 			// a live token to the repository.
-			vars, err := RunFixture(f, base, client.Do)
+			sess, err := Run(f, base, client.Do)
 			if err != nil {
 				t.Fatalf("fixture %q: %v", c.Fixture, err)
 			}
+			vars := sess.Vars
 			req, err := buildRequest(base, Expand(c.Request, vars))
 			if err != nil {
 				t.Fatalf("build request: %v", err)
 			}
+			// The case's own request is not one of the fixture's steps, so it
+			// needs the session put on it here. Without this a credential POST
+			// arrives with no authentication session and Keycloak answers a
+			// 400 theme page - which is what the first recording of
+			// oidc/authorization/code-flow-redirect wrote down.
+			sess.Apply(req)
 			resp, err := client.Do(req)
 			if err != nil {
 				t.Fatalf("request: %v", err)

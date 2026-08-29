@@ -1,0 +1,12 @@
+# GET /realms/master/protocol/openid-connect/auth
+HTTP/1.1 302 Found
+Cache-Control: no-store, must-revalidate, max-age=0
+Content-Length: {{volatile}}
+Location: http://localhost:9999/callback?error=login_required&state=xyz123&iss={{issuer}}%2Frealms%2Fmaster
+Referrer-Policy: no-referrer
+Set-Cookie: AUTH_SESSION_ID=bjE3UmpXM1RKRXh4TzFwTEZOcm9Kc3IzLjlRUHIyNm8yb1hyNEhJQ0xMeGtpQldUVkROUFJtXzlrclpURmhLNkdaNGhnRkNQR0VsQWVyT3ZCZkN0SHlydUN3U0xEUlZ3ZzRhZllrVDVUR296WlV3;Version=1;Path=/realms/master/;Secure;HttpOnly;SameSite=None
+Set-Cookie: KC_AUTH_SESSION_HASH="kaceX/udF/nH0DyGrzbNa9zi/cg/C62D5Sl8NGjbqgiApA6yB6JUyRMKbuI50Zpj";Version=1;Path=/realms/master/;Max-Age=60;Secure;SameSite=None
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Robots-Tag: none
+
