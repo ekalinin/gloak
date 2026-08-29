@@ -46,20 +46,27 @@ Working today:
   11 operations, including Keycloak's rule that a caller may hand out a role
   only if its own rights already confer it, which filters the assignable lists
   as well as refusing the writes
+- groups: the tree, membership, and a group's role mappings - 24 operations,
+  where a group is resolved before the caller is judged, `search` pages the
+  matches rather than the rows, and one group has six representations
+- multi-realm: realm CRUD, the key listing, default groups, `group-by-path` and
+  client policies - 16 operations
+- the authorization endpoint's rejections: both error families of `GET`/`POST
+  /auth`, the ten-step order they are decided in, and the redirect URI
+  comparison. Not the login page, which needs themes
 - client secrets, service accounts, user credentials and user logout
 - a documentation-derived conformance suite (`internal/conformance`) that checks
   Gloak's responses byte-for-byte against bytes recorded from a live
   Keycloak 26.7.1
 - a parity meter whose denominator comes from Keycloak's own OpenAPI description
-  rather than from a hand-kept list: **129 of 485 enumerated behaviours served**,
+  rather than from a hand-kept list: **147 of 489 enumerated behaviours served**,
   plus four chapters whose surface has not been counted
 - an external oracle: `make oracle` drives Gloak with `kcadm.sh`, Keycloak's own
   admin CLI, which asks for things no recorded case asks for
 
-Not implemented yet: the browser login flow and the authorization code grant,
-logout endpoints, groups on the admin API, multi-realm, client scopes and
-protocol mappers, SAML, user federation, identity brokering, authorization
-services, the admin console.
+Not implemented yet: the login page and the authorization code grant itself,
+logout endpoints, client scopes and protocol mappers, SAML, user federation,
+identity brokering, authorization services, the admin console.
 
 Where this is going is `docs/superpowers/specs/2026-08-21-gloak-parity-roadmap.md`:
 fourteen sub-projects with their dependencies and what each closes.
@@ -170,11 +177,20 @@ and stay out of the total rather than being dropped from it silently, which
 would inflate the percentage by hiding the parts nobody has counted. It reads:
 
 ```
-total: 129 of 485 enumerated behaviours served; 4 chapters not enumerated
+total: 147 of 489 enumerated behaviours served; 4 chapters not enumerated
 ```
 
+The denominator is 489 rather than 413 plus a fixed 72 because the protocol
+chapters have no OpenAPI source and are counted case by case, so they grow as
+measurements find behaviours nobody had named. It moved from 485 on 2026-08-29,
+the first time since it was set.
+
 CI reruns this meter on every pull request and posts the parity increment as
-a comment, failing the pull request when the total falls. A deliberate fall
+a comment, failing the pull request when the total falls. A flat total is
+reported as `total unchanged` rather than `no change` when chapters moved
+underneath it: four chapters have no denominator, so work served in one of them
+moves a row and cannot move the total, and saying "no change" above a table
+showing `+3` would be a comment contradicting itself. A deliberate fall
 is declared with a `Parity-decrease: <reason>` line in the pull request
 description - the marker must be the first non-whitespace content of its
 own line (leading whitespace is fine, case does not matter, and a mid-line
@@ -202,6 +218,16 @@ naming the sub-project that unblocks it.
 `make record` rewrites the expected values in
 `internal/conformance/testdata/golden`. Read its diff before committing: an
 unreviewed re-record pins a regression as the new contract.
+
+It runs two container regimes. Almost every case is recorded against one shared
+Keycloak in catalogue order, which is why a whole run is one container start and
+not three hundred. A case marked `PristineRealm` - one whose body describes the
+realm as a whole rather than one object in it - gets a container of its own,
+started inside its subtest and thrown away with it, because the verifier will
+serve it from a handler that has seen nothing but that case's own fixture. That
+costs about two minutes for a whole run instead of thirty seconds, and it
+replaced "record the pristine cases first", which cannot work: the pristine
+group pollutes itself.
 
 An endpoint served without a recorded golden fails `make test`. That is
 deliberate - it is how "measured, never remembered" stops being a convention.
