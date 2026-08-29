@@ -204,6 +204,17 @@ func TestPostLogoutRedirectAttribute(t *testing.T) {
 			"http://localhost:9997/other", http.StatusBadRequest},
 		{"- refuses even its own redirectUris", "lo-minus",
 			"http://localhost:9996/callback", http.StatusBadRequest},
+		// The row above does not distinguish "- is a marker" from "- is a
+		// pattern that happens to match no URI", because no URI in the table
+		// above is "-". This one does, and it is the row a mutation removing
+		// the marker survived until it existed.
+		//
+		// Measured 2026-08-29: a client whose attribute is exactly "-" refuses
+		// the literal "-" as a target. A client whose attribute is
+		// "http://localhost:9987/cb##-" **accepts** it, so the marker is the
+		// whole attribute value and not the entry - the same string means two
+		// different things depending on whether it stands alone.
+		{"- refuses the literal - as well", "lo-minus", "-", http.StatusBadRequest},
 		{"## separates two patterns, the wildcard one", "lo-multi",
 			"http://localhost:9995/cbxyz", http.StatusFound},
 		{"## separates two patterns, the exact one", "lo-multi",
