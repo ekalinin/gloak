@@ -65,7 +65,7 @@ var (
 //     attribute. Only admin-cli was thought to.
 //
 // **Three of the six carry the realm's name in their URLs** and the sixth is a
-// different client in master than in any other realm - see adminContainerFor.
+// different client in master than in any other realm - see AdminContainerFor.
 // A function rather than a package variable for both reasons, and because it
 // hands out maps and slices that a shared variable would let one realm's
 // creation edit for every other.
@@ -123,14 +123,18 @@ func realmClients(realm string) []model.Client {
 	}
 }
 
-// adminContainerFor is the client that owns a realm's admin roles as seen from
+// AdminContainerFor is the client that owns a realm's admin roles as seen from
 // inside that realm: master-realm in master, realm-management everywhere else.
 //
 // **The two are not the same client with two names.** master-realm owns 21
 // roles and realm-management owns 22 - the extra one being realm-admin,
 // composite over the other 21 - and master-realm's name is prose derived from
 // the realm name where realm-management's is a theme message key. Both measured.
-func adminContainerFor(realm string) string {
+//
+// It is exported because internal/admin has to make the same distinction, and
+// getting it wrong there is a privilege escalation rather than a cosmetic bug:
+// see ownedByRealmOwnClient.
+func AdminContainerFor(realm string) string {
 	if realm == MasterRealmName {
 		return "master-realm"
 	}
@@ -336,7 +340,7 @@ func roleContainers(realm string) []roleContainer {
 		},
 		{client: "broker", roles: []string{"read-token"}},
 		{
-			client:     adminContainerFor(realm),
+			client:     AdminContainerFor(realm),
 			roles:      adminContainerRoles(realm),
 			composites: adminContainerComposites(realm),
 		},

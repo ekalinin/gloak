@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ekalinin/gloak/internal/bootstrap"
 	"github.com/ekalinin/gloak/internal/httpx"
 	"github.com/ekalinin/gloak/internal/model"
 	"github.com/ekalinin/gloak/internal/roles"
@@ -44,6 +45,25 @@ type caller struct {
 	user        *model.User
 	adminGrants map[string]bool
 	granted     map[string]bool
+
+	// authRealm is the realm that issued the caller's token and holds its
+	// session, which is **not** always the realm named in the path: a master
+	// administrator managing another realm authenticates in master. It is kept
+	// so foreignGrants can read the caller's rights on a second container.
+	authRealm *model.Realm
+	// effective is the caller's whole expanded role set, before adminGrants
+	// narrowed it to one container. foreignGrants narrows it again, to a
+	// different one.
+	effective []*model.Role
+	// container is the client adminGrants were read from - the one
+	// containerFor chose for this pair of realms - or nil when the caller has
+	// no rights over the realm in the path at all. mayGrantRole compares a
+	// role's own container against it to decide whether the implication
+	// closure applies or exact names do.
+	container *model.Client
+	// foreign memoises foreignGrants per container client id, because a
+	// role-mapping batch asks about many roles of one container.
+	foreign map[string]map[string]bool
 }
 
 // has reports whether the caller holds an admin role by name. Names are unique
@@ -174,17 +194,64 @@ func (c *caller) implies(name string) {
 // applies it to the role being handed out. A caller that may grant the role
 // short-circuits on the coverage test and pays no lookup here.
 func (h *handler) mayGrantRole(ctx context.Context, realm *model.Realm, c *caller, role *model.Role) (bool, error) {
-	if c.grants()[role.Name] {
-		return true, nil
-	}
 	if role.ClientID == "" {
+		if c.grants()[role.Name] {
+			return true, nil
+		}
 		return role.Name != "admin" && role.Name != "create-realm", nil
 	}
-	adminRole, err := h.ownedByRealmOwnClient(ctx, realm, role)
+
+	container, err := h.store.Clients().ByID(ctx, realm.ID, role.ClientID)
 	if err != nil {
 		return false, err
 	}
-	return !adminRole, nil
+	owner := adminRealmOf(realm.Name, container.ClientID)
+	if owner == "" {
+		return true, nil
+	}
+	if owner == realm.Name {
+		// The realm being administered. This is the case that existed before
+		// realm creation and its answer is unchanged: the caller's own admin
+		// names, closed over adminRoleImplications.
+		return c.grants()[role.Name], nil
+	}
+
+	// **An admin role belonging to a different realm**, which only exists now
+	// that master holds a {realm}-realm client per realm. Measured on four
+	// cells: a master caller holding manage-users on master-realm may hand out
+	// exactly the one manage-users it holds on another realm's container and
+	// nothing its implications would add, while a full administrator - which
+	// reaches all 21 through the admin composite - may hand out all of them.
+	// So conferral is computed per container and does not travel between them.
+	//
+	// The container is looked up in the caller's **own** realm, not in the
+	// realm being administered: the same rights are spelled other-realm in
+	// master and realm-management inside other, and a caller in master holds
+	// them under the first spelling.
+	ownerContainer, err := h.containerFor(ctx, c.authRealm, owner)
+	if err != nil {
+		return false, err
+	}
+	return c.foreignGrants(ownerContainer)[role.Name], nil
+}
+
+// adminRealmOf names the realm whose admin roles a client carries, or "" when
+// it carries none.
+//
+// Two spellings and a suffix, all measured: master-realm in master and
+// realm-management inside any other realm carry that realm's, and master holds
+// a {realm}-realm client per realm carrying its. The suffix is wider than
+// "names a realm that exists" - a hand-made nosuch-realm in master behaves
+// exactly like master-realm - so no lookup narrows it here; the container it
+// names simply resolves to nothing and confers nothing.
+func adminRealmOf(realmName, clientID string) string {
+	if clientID == bootstrap.AdminContainerFor(realmName) {
+		return realmName
+	}
+	if owner, ok := strings.CutSuffix(clientID, "-realm"); ok && owner != "" {
+		return owner
+	}
+	return ""
 }
 
 // resolveCaller turns a bearer token into the administrator behind it.
@@ -193,122 +260,220 @@ func (h *handler) mayGrantRole(ctx context.Context, realm *model.Realm, c *calle
 // garbage token are byte-identical on this API - unlike userinfo, which
 // distinguishes them - so telling them apart here would be a divergence, not a
 // courtesy.
+// **The caller is not always in the realm it is administering.** A token is
+// accepted from the realm named in the path or from master, and the two are
+// tried in that order - a realm-issued token must not be resolvable against
+// master's keys by accident, and token.ParseAccess checks iss, so a token from
+// the wrong realm fails closed rather than being mistaken for one from the
+// right one. Measured: a caller in master holding view-users on p4e-realm reads
+// /admin/realms/p4e/users, and a caller inside p4e holding realm-admin is 403
+// on /admin/realms/master.
 func (h *handler) resolveCaller(w http.ResponseWriter, r *http.Request, realm *model.Realm) *caller {
 	raw := bearerToken(r)
 	if raw == "" {
 		writeUnauthorized(w)
 		return nil
 	}
-	k, err := h.keys.ForRealm(r.Context(), realm)
-	if err != nil {
-		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
-		return nil
-	}
-	parsed, err := token.ParseAccess(k, h.realmIssuer(realm.Name), raw, time.Now())
-	if err != nil {
-		writeUnauthorized(w)
+
+	authRealm, user := h.authenticate(w, r, raw)
+	if user == nil {
 		return nil
 	}
 
-	session, err := h.store.Sessions().UserSessionByID(r.Context(), realm.ID, parsed.SessionID)
-	if err != nil {
-		writeUnauthorized(w)
-		return nil
-	}
-	user, err := h.store.Users().ByID(r.Context(), realm.ID, session.UserID)
-	if err != nil {
-		writeUnauthorized(w)
-		return nil
-	}
-	if !user.Enabled {
-		writeUnauthorized(w)
-		return nil
-	}
-
-	adminGrants, err := h.effectiveRoles(r, realm, user)
-	if err != nil {
-		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
-		return nil
-	}
-	return &caller{user: user, adminGrants: adminGrants}
-}
-
-// effectiveRoles is the caller's rights: its direct assignments expanded
-// through composites, reduced to the admin role names among them.
-//
-// The expansion is internal/roles' because internal/oidc needs the same one to
-// fill a token's realm_access and resource_access, and the two must not be
-// able to disagree about who is an administrator.
-//
-// A store failure here is a 401/500 at the call site, never an empty role set:
-// resolveCaller returns nil rather than a caller holding nothing, which would
-// be indistinguishable from a caller that legitimately holds nothing only until
-// the first guard let it through.
-func (h *handler) effectiveRoles(r *http.Request, realm *model.Realm, user *model.User) (map[string]bool, error) {
 	effective, err := roles.Effective(r.Context(), h.store.Roles(), user.ID)
 	if err != nil {
-		return nil, err
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return nil
 	}
-	return h.adminRoleNames(r.Context(), realm, effective)
+	container, err := h.containerFor(r.Context(), authRealm, realm.Name)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return nil
+	}
+
+	return &caller{
+		user:        user,
+		adminGrants: adminRoleNames(authRealm, container, effective),
+		authRealm:   authRealm,
+		effective:   effective,
+		container:   container,
+	}
 }
 
-// adminRoleNames reduces a role set to the names of the **admin** roles in it,
-// by the same container test mayGrantRole applies to the role being handed out:
-// the realm's own "{realm}-realm" client owns it, or it is one of the two realm
-// roles admin and create-realm.
+// authenticate resolves the bearer token in **the realm that issued it**, which
+// is read from the token's own iss claim before any verification and then
+// confirmed by it.
+//
+// That order is what makes a 403 reachable for a caller from a third realm. A
+// caller inside `other` reaching `/admin/realms/master/users` was measured
+// getting 403, not 401: Keycloak authenticated it - it holds a real session
+// somewhere - and then found it holds nothing that opens master. Verifying only
+// against the path realm, or only against the path realm and master, answers
+// 401 there and loses the distinction.
+//
+// The unverified read selects a key and decides nothing else: ParseAccess then
+// checks the signature, the issuer, the type and the expiry against that
+// realm's keys, so a token naming a realm it was not issued by fails closed.
+//
+// Every failure is the same measured 401, byte for byte with a missing header.
+func (h *handler) authenticate(w http.ResponseWriter, r *http.Request, raw string) (*model.Realm, *model.User) {
+	iss, err := token.UnverifiedIssuer(raw)
+	if err != nil {
+		writeUnauthorized(w)
+		return nil, nil
+	}
+	name, ok := strings.CutPrefix(iss, h.issuerBase+"/realms/")
+	if !ok || name == "" || strings.Contains(name, "/") {
+		writeUnauthorized(w)
+		return nil, nil
+	}
+	authRealm, err := h.store.Realms().ByName(r.Context(), name)
+	if err != nil {
+		writeUnauthorized(w)
+		return nil, nil
+	}
+
+	k, err := h.keys.ForRealm(r.Context(), authRealm)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return nil, nil
+	}
+	parsed, err := token.ParseAccess(k, h.realmIssuer(authRealm.Name), raw, time.Now())
+	if err != nil {
+		writeUnauthorized(w)
+		return nil, nil
+	}
+	session, err := h.store.Sessions().UserSessionByID(r.Context(), authRealm.ID, parsed.SessionID)
+	if err != nil {
+		writeUnauthorized(w)
+		return nil, nil
+	}
+	user, err := h.store.Users().ByID(r.Context(), authRealm.ID, session.UserID)
+	if err != nil || !user.Enabled {
+		writeUnauthorized(w)
+		return nil, nil
+	}
+	return authRealm, user
+}
+
+// containerFor is the client whose roles decide what this caller may do to the
+// realm named in the path. It lives in the realm the caller authenticated in.
+//
+//	master administering master  -> master-realm
+//	master administering other   -> other-realm
+//	other  administering other   -> realm-management
+//	other  administering a third -> nothing, so the caller holds no admin role
+//
+// Measured on all four: a master caller holding view-users on master-realm is
+// 403 on /admin/realms/p4e/users and 200 on master's, and the same caller
+// holding it on p4e-realm is the mirror. Nothing reaches upwards - realm-admin
+// inside p4e is 403 on master - which the last row produces by having no
+// container to read rights from at all.
+//
+// A container that does not exist is not an error: it is a caller with no admin
+// roles, which every guard then refuses.
+func (h *handler) containerFor(ctx context.Context, authRealm *model.Realm, targetRealm string) (*model.Client, error) {
+	var name string
+	switch {
+	case authRealm.Name == bootstrap.MasterRealmName:
+		name = masterContainerFor(targetRealm)
+	case authRealm.Name == targetRealm:
+		name = bootstrap.AdminContainerFor(targetRealm)
+	default:
+		return nil, nil
+	}
+	c, err := h.store.Clients().ByClientID(ctx, authRealm.ID, name)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, nil
+	}
+	return c, err
+}
+
+// masterContainerFor is the client in master carrying the rights to administer
+// a realm: master-realm for master itself, {realm}-realm for every other.
+// internal/bootstrap creates them; this rebuilds the name rather than importing
+// an unexported one.
+func masterContainerFor(realm string) string {
+	if realm == bootstrap.MasterRealmName {
+		return "master-realm"
+	}
+	return realm + "-realm"
+}
+
+// adminRoleNames reduces a role set to the names of the **admin** roles in it:
+// the ones owned by container, plus the two realm roles admin and create-realm,
+// which exist in master alone.
 //
 // This is the caller side of F28's predicate and the reason it cannot be
 // defeated by a name. Deciding it here rather than in grants() is what keeps
 // grants() a pure name closure over adminRoleImplications, which has to run over
 // names because an implied role is never expanded through the store.
 //
-// The container answer is memoised per owning client, not per role: the
-// bootstrapped administrator reaches all 21 of master-realm's roles, so a naive
-// loop would do 21 identical lookups on every admin request and this does one.
+// **The container is passed in rather than looked up per role, and that is the
+// change realm creation forced.** Until this cut there was one container per
+// realm - "{realm}-realm" - and a role's own client was compared against it. A
+// caller in master administering another realm holds its rights on that other
+// realm's container in master, so the container is decided once by
+// containerFor and every role is compared against that one client id. A nil
+// container is a caller with no admin roles at all, which is what an in-realm
+// caller reaching for a third realm was measured being.
 //
-// **A container that no longer exists is not an admin role, and is not an
-// error here.** F29 leaves a client's role rows behind when the client is
-// deleted, so a caller can hold a role whose owning client is gone. Propagating
-// that ErrNotFound locked such a caller out of the **whole** admin API with a
-// 500 - including the role-mapping route that would remove the offending
-// mapping, so it was unrecoverable through the API, and including the
-// bootstrapped administrator the moment anything deleted the master-realm
-// client, which Gloak answers 204. Skipping the orphan is fail-closed for the
-// decision this set feeds: an orphan cannot be an admin role of a living
-// container, so it confers nothing.
-//
-// **mayGrantRole's lookup must not copy this, and the difference is not an
-// oversight.** That one judges the role being *handed out*, where swallowing
-// ErrNotFound would answer "not an admin role" and make an orphan grantable -
-// fail-open. This one judges roles the caller already holds, where swallowing
-// only ever removes a name from the grant set. Same error, opposite safe
-// direction, so the two are deliberately not shared. See F29 in
-// docs/superpowers/specs/2026-08-18-gloak-followups.md for what this conceals.
-//
-// Only ErrNotFound is swallowed. A dead database is not an orphan and still
-// propagates.
-func (h *handler) adminRoleNames(ctx context.Context, realm *model.Realm, in []*model.Role) (map[string]bool, error) {
+// A role whose owning client no longer exists simply does not match the
+// container, so F29's orphans confer nothing and cost no lookup. The earlier
+// version needed a per-client lookup and a careful decision about swallowing
+// ErrNotFound; this one needs neither, because it compares ids rather than
+// asking what a client is called.
+func adminRoleNames(authRealm *model.Realm, container *model.Client, in []*model.Role) map[string]bool {
 	out := make(map[string]bool, len(in))
-	own := make(map[string]bool, 1)
 	for _, role := range in {
 		if role.ClientID == "" {
-			if role.Name == "admin" || role.Name == "create-realm" {
+			// admin and create-realm exist in master alone, measured, so a
+			// realm role of either name anywhere else is an ordinary role.
+			if authRealm.Name == bootstrap.MasterRealmName &&
+				(role.Name == "admin" || role.Name == "create-realm") {
 				out[role.Name] = true
 			}
 			continue
 		}
-		if _, seen := own[role.ClientID]; !seen {
-			owned, err := h.ownedByRealmOwnClient(ctx, realm, role)
-			if err != nil && !errors.Is(err, store.ErrNotFound) {
-				return nil, err
-			}
-			own[role.ClientID] = err == nil && owned
-		}
-		if own[role.ClientID] {
+		if container != nil && role.ClientID == container.ID {
 			out[role.Name] = true
 		}
 	}
-	return out, nil
+	return out
+}
+
+// foreignGrants is the caller's admin role names on a container that is **not**
+// the one this request's guards were decided by - the case a second realm
+// creates, where a role being handed out lives on another realm's container.
+//
+// **Exact names, no implication closure, and that is measured.** A master
+// caller holding manage-users on master-realm sees seven roles available on
+// master-realm - manage-users and the six adminRoleImplications says it confers
+// - and exactly one on other-realm, the manage-users it holds there. The full
+// administrator, which reaches all 21 of other-realm through the admin
+// composite, sees twenty. So conferral is computed per container and does not
+// travel between them.
+//
+// Memoised per container, because a role-mapping batch asks about many roles of
+// one.
+func (c *caller) foreignGrants(container *model.Client) map[string]bool {
+	if container == nil {
+		return nil
+	}
+	if c.foreign == nil {
+		c.foreign = make(map[string]map[string]bool, 1)
+	}
+	if names, ok := c.foreign[container.ID]; ok {
+		return names
+	}
+	names := make(map[string]bool)
+	for _, role := range c.effective {
+		if role.ClientID == container.ID {
+			names[role.Name] = true
+		}
+	}
+	c.foreign[container.ID] = names
+	return names
 }
 
 // writeUnauthorized emits the measured 401. It is shape 2 carrying the generic

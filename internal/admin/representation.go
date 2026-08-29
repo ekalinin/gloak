@@ -84,9 +84,17 @@ type accessClaim struct {
 // a narrower caller is not, because reaching that recording needs role
 // assignment, which is P2's second cut. The role mapping below is the obvious
 // reading of the names and is inference, not contract.
+//
+// **The "realm's own client" test is a suffix, not one name.** Measured across
+// seven clients and two realms: master-realm, other-realm and a hand-made
+// nosuch-realm are all `"configure":false` in master, realm-management is in a
+// created realm, and broker is fully manageable in both although it carries
+// realm_client "true". So a realm-creating build has to ask
+// isAdminContainerName rather than rebuilding one name, or every realm's own
+// container outside master comes back configurable.
 func clientAccessFor(c *caller, m *model.Client, realmName string) accessClaim {
 	manage := c.has("manage-clients")
-	if m.ClientID == realmName+"-realm" {
+	if isAdminContainerName(realmName, m.ClientID) {
 		return accessClaim{View: manage || c.has("view-clients")}
 	}
 	return accessClaim{
