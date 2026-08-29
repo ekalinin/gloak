@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ekalinin/gloak/internal/bootstrap"
 	"github.com/ekalinin/gloak/internal/httpx"
 	"github.com/ekalinin/gloak/internal/model"
 	"github.com/ekalinin/gloak/internal/store"
@@ -82,7 +83,7 @@ func (h *handler) clientFromPath(w http.ResponseWriter, r *http.Request, rc *req
 // object's absolute URL in Location. A conflicting clientId answers 409 with
 // the errorMessage shape, not the OAuth one.
 func (h *handler) createClient(w http.ResponseWriter, r *http.Request, rc *reqContext) {
-	rep, ok := decodeClient(w, r)
+	rep, ok := decodeNewClient(w, r)
 	if !ok {
 		return
 	}
@@ -92,14 +93,23 @@ func (h *handler) createClient(w http.ResponseWriter, r *http.Request, rc *reqCo
 	}
 
 	m := newClientFrom(rep, rc.realm.ID)
-	// Measured: every client created through this endpoint gains both
-	// attributes, public or not, but only a non-public one gains a secret. A
-	// public client ends up with a creation time and nothing created, which is
-	// why the two are not set together.
+	// Measured: a client created through this endpoint gains realm_client, and
+	// gains a secret and the creation time of that secret only when it is not
+	// public. A public client's attributes are `{"realm_client":"false"}` and
+	// nothing else - it has no secret, so there is no moment to record.
 	m.Attributes["realm_client"] = "false"
-	m.Attributes["client.secret.creation.time"] = strconv.FormatInt(time.Now().Unix(), 10)
 	if !m.PublicClient {
+		m.Attributes["client.secret.creation.time"] = strconv.FormatInt(time.Now().Unix(), 10)
 		m.Secret = model.NewSecret()
+	}
+
+	// The client scopes the body did not name are inherited from the realm's
+	// own two sets, filtered by the client's protocol. This is follow-up F49,
+	// and it has to happen before Create, which is what turns the names into
+	// attachments.
+	if err := bootstrap.InheritClientScopes(r.Context(), h.store, rc.realm.ID, m); err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
 	}
 
 	if err := h.store.Clients().Create(r.Context(), m); err != nil {
@@ -211,6 +221,34 @@ func decodeClient(w http.ResponseWriter, r *http.Request) (clientRepresentation,
 	return rep, true
 }
 
+// decodeNewClient reads a creation body **over** the defaults Keycloak applies,
+// which is the same trick updateClient uses to merge over the stored
+// representation, and for the same reason: a bare `false` in the body and an
+// absent key are the same Go value, so a default can only be applied by putting
+// it there before the decoder runs.
+//
+// It matters. Measured on a client created with `{"clientId":"x"}` alone:
+// `enabled`, `standardFlowEnabled` and `fullScopeAllowed` come back **true**,
+// `protocol` is `openid-connect` and `nodeReRegistrationTimeout` is **-1**;
+// and every one of those is honoured as sent when the body does send it,
+// including `standardFlowEnabled:false`. Filling the defaults after the decode
+// would turn an explicit false into a true.
+func decodeNewClient(w http.ResponseWriter, r *http.Request) (clientRepresentation, bool) {
+	rep := clientRepresentation{
+		Enabled:                   true,
+		StandardFlowEnabled:       true,
+		FullScopeAllowed:          true,
+		Protocol:                  "openid-connect",
+		ClientAuthenticatorType:   "client-secret",
+		NodeReRegistrationTimeout: -1,
+	}
+	if err := json.NewDecoder(r.Body).Decode(&rep); err != nil {
+		httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_request", "Cannot parse the JSON")
+		return rep, false
+	}
+	return rep, true
+}
+
 // newClientFrom turns a representation into a stored client, filling the
 // defaults Keycloak applies to a client created with a minimal body.
 func newClientFrom(rep clientRepresentation, realmID string) *model.Client {
@@ -240,9 +278,15 @@ func newClientFrom(rep clientRepresentation, realmID string) *model.Client {
 		NodeReRegistrationTimeout: rep.NodeReRegistrationTimeout,
 		RedirectURIs:              nonNil(rep.RedirectURIs),
 		WebOrigins:                nonNil(rep.WebOrigins),
-		DefaultClientScopes:       nonNil(rep.DefaultClientScopes),
-		OptionalClientScopes:      nonNil(rep.OptionalClientScopes),
-		Attributes:                nonNilMap(rep.Attributes),
+		// The two scope lists are deliberately **not** put through nonNil. A
+		// nil one means "the body did not name them" and is what
+		// bootstrap.InheritClientScopes fills from the realm; an empty one
+		// means "none", measured: a client created with
+		// `"defaultClientScopes":[]` reads back with an empty list where one
+		// created without the key reads back with the realm's six.
+		DefaultClientScopes:  rep.DefaultClientScopes,
+		OptionalClientScopes: rep.OptionalClientScopes,
+		Attributes:           nonNilMap(rep.Attributes),
 	}
 	if m.ID == "" {
 		m.ID = model.NewID()

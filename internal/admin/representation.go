@@ -26,7 +26,14 @@ import (
 type clientRepresentation struct {
 	ID       string `json:"id"`
 	ClientID string `json:"clientId"`
-	Name     string `json:"name"`
+	// Name joins its three neighbours in carrying omitempty. Measured on a
+	// client created with clientId alone: the representation has **no** `name`
+	// key, exactly as it has no `rootUrl`, `baseUrl` or `description`. The one
+	// case omitempty gets wrong is a client created with `"name":""`, which
+	// Keycloak answers with the key present and empty; nothing distinguishes
+	// that from an absent key on a plain string, and reproducing it means a
+	// *string on four fields to serve a body nobody sends.
+	Name string `json:"name,omitempty"`
 	// Measured between name and rootUrl, and carrying omitempty for the same
 	// reason those two do: none of the six bootstrapped clients has one. It
 	// was missing entirely until kcadm.sh set one and it vanished - see

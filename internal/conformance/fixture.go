@@ -491,6 +491,271 @@ var Fixtures = map[string]Fixture{
 	"admin-token-client-profiles":         realmFixture("gloak-probe-profiles"),
 	"admin-token-client-profiles-written": clientProfilesFixture("gloak-probe-profiles-written"),
 	"admin-token-client-policies-written": clientPoliciesFixture("gloak-probe-policies-written"),
+
+	// P5's first cut. Every one of these creates its client scope with a
+	// **fixed** id, which is measured to be honoured: POST /client-scopes with
+	// `"id":"aaaa..."` in the body created a scope with exactly that id and put
+	// it in Location, on Keycloak and on Gloak alike. That buys two things no
+	// other family in this file has - the case's path can name the id
+	// literally, so nothing has to be captured, and the golden's `id` is
+	// reproducible, so nothing has to be masked. The repeat is a 409, which
+	// idempotentCreate already tolerates.
+	//
+	// One fixture per case that mutates its scope, each with its own name and
+	// id, for realmRoleFixture's reason.
+	"admin-token-client-scope":           clientScopeFixture(probeScopeID, "gloak-probe-scope"),
+	"admin-token-client-scope-update":    clientScopeFixture(probeScopeUpdateID, "gloak-probe-scope-update"),
+	"admin-token-client-scope-delete":    clientScopeFixture(probeScopeDeleteID, "gloak-probe-scope-delete"),
+	"admin-token-client-template-update": clientScopeFixture(probeTemplateUpdateID, "gloak-probe-template-update"),
+	"admin-token-client-template-delete": clientScopeFixture(probeTemplateDeleteID, "gloak-probe-template-delete"),
+
+	// The realm's two default sets. A PUT and a DELETE cannot share a scope:
+	// the PUT is measured 409 on the repeat, so the case that deletes needs one
+	// already in the set and the case that adds needs one in neither.
+	"admin-token-realm-scope-add":      realmDefaultScopeFixture(probeRealmAddID, "gloak-probe-realm-add", false, true),
+	"admin-token-realm-scope-drop":     realmDefaultScopeFixture(probeRealmDropID, "gloak-probe-realm-drop", true, true),
+	"admin-token-realm-scope-add-opt":  realmDefaultScopeFixture(probeRealmAddOptID, "gloak-probe-realm-add-opt", false, false),
+	"admin-token-realm-scope-drop-opt": realmDefaultScopeFixture(probeRealmDropOptID, "gloak-probe-realm-drop-opt", true, false),
+
+	// A client's two sets. Same split, and each case gets its own client as
+	// well as its own scope, because attaching to a shared client would make
+	// the listing case depend on whether the attach case had run.
+	"admin-token-client-scopes-read": clientScopeAttachFixture(
+		probeScopeClientReadID, "gloak-probe-cs-read",
+		probeAttachReadID, "gloak-probe-cs-read-scope", false, true),
+	"admin-token-client-scope-attach": clientScopeAttachFixture(
+		probeScopeClientAttachID, "gloak-probe-cs-attach",
+		probeAttachID, "gloak-probe-cs-attach-scope", false, true),
+	"admin-token-client-scope-detach": clientScopeAttachFixture(
+		probeScopeClientDetachID, "gloak-probe-cs-detach",
+		probeDetachID, "gloak-probe-cs-detach-scope", true, true),
+	"admin-token-client-scope-attach-opt": clientScopeAttachFixture(
+		probeScopeClientAttachOptID, "gloak-probe-cs-attach-opt",
+		probeAttachOptID, "gloak-probe-cs-attach-opt-scope", false, false),
+	"admin-token-client-scope-detach-opt": clientScopeAttachFixture(
+		probeScopeClientDetachOptID, "gloak-probe-cs-detach-opt",
+		probeDetachOptID, "gloak-probe-cs-detach-opt-scope", true, false),
+
+	// A client scope that has been through a partial PUT, so a case can read
+	// back what the PUT left alone. `admin-token-user-updated`'s shape, for
+	// the same reason: a 204 says nothing about what it wrote.
+	"admin-token-client-scope-merged": mergedClientScopeFixture(),
+
+	"admin-token-client-named-scopes": namedScopesClientFixture(
+		probeScopeClientNamedID, "gloak-probe-cs-named", "", "", false),
+	"admin-token-client-saml-scope": namedScopesClientFixture(
+		probeScopeClientSAMLID, "gloak-probe-cs-saml",
+		probeSAMLScopeID, "gloak-probe-cs-saml-scope", true),
+}
+
+// The fixed client-scope ids P5's fixtures create their scopes with. They are
+// spelled here rather than inline so a case can name the same constant its
+// fixture used, and so two fixtures cannot silently pick the same one.
+const (
+	probeScopeID          = "a5c09e00-0000-4000-8000-000000000001"
+	probeScopeUpdateID    = "a5c09e00-0000-4000-8000-000000000002"
+	probeScopeDeleteID    = "a5c09e00-0000-4000-8000-000000000003"
+	probeTemplateUpdateID = "a5c09e00-0000-4000-8000-000000000004"
+	probeTemplateDeleteID = "a5c09e00-0000-4000-8000-000000000005"
+	probeRealmAddID       = "a5c09e00-0000-4000-8000-000000000006"
+	probeRealmDropID      = "a5c09e00-0000-4000-8000-000000000007"
+	probeRealmAddOptID    = "a5c09e00-0000-4000-8000-000000000008"
+	probeRealmDropOptID   = "a5c09e00-0000-4000-8000-000000000009"
+	probeAttachReadID     = "a5c09e00-0000-4000-8000-00000000000a"
+	probeAttachID         = "a5c09e00-0000-4000-8000-00000000000b"
+	probeDetachID         = "a5c09e00-0000-4000-8000-00000000000c"
+	probeAttachOptID      = "a5c09e00-0000-4000-8000-00000000000d"
+	probeDetachOptID      = "a5c09e00-0000-4000-8000-00000000000e"
+
+	// The clients those last five hang their scopes on, fixed for the same
+	// reason - see clientScopeAttachFixture.
+	probeScopeClientReadID      = "c11e0000-0000-4000-8000-00000000000a"
+	probeScopeClientAttachID    = "c11e0000-0000-4000-8000-00000000000b"
+	probeScopeClientDetachID    = "c11e0000-0000-4000-8000-00000000000c"
+	probeScopeClientAttachOptID = "c11e0000-0000-4000-8000-00000000000d"
+	probeScopeClientDetachOptID = "c11e0000-0000-4000-8000-00000000000e"
+	probeScopeClientNamedID     = "c11e0000-0000-4000-8000-00000000000f"
+	probeScopeClientSAMLID      = "c11e0000-0000-4000-8000-000000000010"
+	probeSAMLScopeID            = "a5c09e00-0000-4000-8000-00000000000f"
+	probeScopeMergedID          = "a5c09e00-0000-4000-8000-000000000010"
+)
+
+// clientScopeFixture creates one client scope in master with a fixed id.
+//
+// `protocol` is not optional on the way in: a create without it is a measured
+// 400 "Unexpected protocol", so a fixture that omitted it would fail rather
+// than create anything.
+func clientScopeFixture(id, name string) Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{adminTokenStep(), clientScopeStep(id, name)},
+	}
+}
+
+func clientScopeStep(id, name string) Step {
+	return protocolScopeStep(id, name, "openid-connect")
+}
+
+// mergedClientScopeFixture creates a scope carrying a description and two
+// attributes and then PUTs a body naming only its `name`.
+//
+// The case that reads it afterwards is what says the PUT **merged**: a client
+// scope keeps the description and the attributes the body did not mention,
+// where a role updated the same way loses its description. The update case's
+// own 204 cannot see that, and a mutation replacing the merge with a
+// replacement survived every other case in this cut.
+func mergedClientScopeFixture() Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/client-scopes",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"id":"` + probeScopeMergedID +
+						`","name":"gloak-probe-scope-merged","description":"before",` +
+						`"protocol":"openid-connect","attributes":` +
+						`{"include.in.token.scope":"true","display.on.consent.screen":"false"}}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPut,
+					Path:    "/admin/realms/master/client-scopes/" + probeScopeMergedID,
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"name":"gloak-probe-scope-merged"}`),
+				},
+			},
+		},
+	}
+}
+
+func protocolScopeStep(id, name, protocol string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/client-scopes",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body: []byte(`{"id":"` + id + `","name":"` + name +
+				`","protocol":"` + protocol + `"}`),
+		},
+		ExpectStatus: idempotentCreate,
+	}
+}
+
+// namedScopesClientFixture is a client that names its own client scopes, plus a
+// **saml** scope, optionally already offered to it.
+//
+// It exists for the two rules nothing else in this catalogue can see. Naming
+// either list suppresses inheritance on **both**, so a client naming only
+// `defaultClientScopes` has an empty optional list rather than the realm's
+// five; and attaching a scope whose protocol is not the client's answers 204
+// and attaches nothing. Both were measured, both were guessed wrong first, and
+// a mutation of each survived every other case in this cut.
+func namedScopesClientFixture(clientUUID, clientID, scopeID, scopeName string,
+	offerSAML bool) Fixture {
+	body := `{"id":"` + clientUUID + `","clientId":"` + clientID +
+		`","enabled":true,"defaultClientScopes":["email"]}`
+	f := Fixture{
+		State: "bootstrap",
+		Steps: []Step{adminTokenStep(), {
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(body),
+			},
+			ExpectStatus: idempotentCreate,
+		}},
+	}
+	if !offerSAML {
+		return f
+	}
+	f.Steps = append(f.Steps,
+		protocolScopeStep(scopeID, scopeName, "saml"),
+		Step{
+			Request: Request{
+				Method: http.MethodPut,
+				Path: "/admin/realms/master/clients/" + clientUUID +
+					"/default-client-scopes/" + scopeID,
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+		})
+	return f
+}
+
+// realmDefaultScopeFixture creates a client scope and, when added is true, puts
+// it into one of master's two default sets.
+//
+// It writes to **master's** realm-wide sets, which is why the two listing cases
+// that read them are PristineRealm.
+func realmDefaultScopeFixture(id, name string, added, defaultScope bool) Fixture {
+	f := clientScopeFixture(id, name)
+	if !added {
+		return f
+	}
+	list := "default-default-client-scopes"
+	if !defaultScope {
+		list = "default-optional-client-scopes"
+	}
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/master/" + list + "/" + id,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		// The repeat is a measured 409, and the recorder runs a fixture once
+		// per case naming it.
+		ExpectStatus: []int{http.StatusNoContent, http.StatusConflict},
+	})
+	return f
+}
+
+// clientScopeAttachFixture is a client of its own plus a client scope of its
+// own, optionally already attached to it.
+//
+// The **client** carries a fixed id here where clientFixture captures one from
+// Location, and that is not a preference: `admin-token-client-scopes-read` is
+// named by three cases, the recorder runs a fixture once per case against one
+// shared container, and the second create answers 409 with no Location to
+// capture. Measured on both sides: POST /clients honours an `id` in the body,
+// so the id is known before the request rather than after it and the repeat is
+// a tolerated 409. It is the same reason confidentialClientFixture looks its
+// UUID up, reached by the cheaper route.
+func clientScopeAttachFixture(clientUUID, clientID, scopeID, scopeName string,
+	attached, defaultScope bool) Fixture {
+	f := Fixture{
+		State: "bootstrap",
+		Steps: []Step{adminTokenStep(), {
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"id":"` + clientUUID + `","clientId":"` + clientID + `","enabled":true}`),
+			},
+			ExpectStatus: idempotentCreate,
+		}},
+	}
+	f.Steps = append(f.Steps, clientScopeStep(scopeID, scopeName))
+	if !attached {
+		return f
+	}
+	list := "default-client-scopes"
+	if !defaultScope {
+		list = "optional-client-scopes"
+	}
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/master/clients/" + clientUUID + "/" + list +
+				"/" + scopeID,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+	})
+	return f
 }
 
 // realmFixture creates one realm through POST /admin/realms and captures its

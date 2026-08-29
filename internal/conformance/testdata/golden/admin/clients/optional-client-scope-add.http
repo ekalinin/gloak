@@ -1,0 +1,8 @@
+# PUT /admin/realms/master/clients/c11e0000-0000-4000-8000-00000000000d/optional-client-scopes/a5c09e00-0000-4000-8000-00000000000d
+HTTP/1.1 204 No Content
+Cache-Control: no-cache
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Robots-Tag: none
+

@@ -6,6 +6,7 @@ package storetest
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -1464,4 +1465,237 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	t.Run("a client scope round-trips with its attributes and mappers in order", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := newRealm(t, s)
+
+		want := &model.ClientScope{
+			ID: model.NewID(), RealmID: realm.ID, Name: "probe",
+			Description: "a probe scope", Protocol: "openid-connect",
+			// Deliberately not alphabetical. A Go map here would come back
+			// sorted and the representation would stop matching Keycloak's,
+			// which is the whole reason model.StringMap exists.
+			Attributes: model.StringMap{
+				{Key: "include.in.token.scope", Value: "true"},
+				{Key: "consent.screen.text", Value: "${x}"},
+				{Key: "display.on.consent.screen", Value: "false"},
+			},
+			ProtocolMappers: []model.ProtocolMapper{{
+				ID: model.NewID(), Name: "zeta", Protocol: "openid-connect",
+				ProtocolMapper: "oidc-usermodel-attribute-mapper",
+				Config: model.StringMap{
+					{Key: "introspection.token.claim", Value: "true"},
+					{Key: "access.token.claim", Value: "true"},
+				},
+			}},
+		}
+		if err := s.ClientScopes().Create(ctx, want); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := s.ClientScopes().ByID(ctx, realm.ID, want.ID)
+		if err != nil {
+			t.Fatalf("ByID: %v", err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("round-trip:\n got %+v\nwant %+v", got, want)
+		}
+		byName, err := s.ClientScopes().ByName(ctx, realm.ID, "probe")
+		if err != nil {
+			t.Fatalf("ByName: %v", err)
+		}
+		if byName.ID != want.ID {
+			t.Errorf("ByName id = %q, want %q", byName.ID, want.ID)
+		}
+		if _, err := s.ClientScopes().ByID(ctx, realm.ID, model.NewID()); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("ByID(unknown) = %v, want ErrNotFound", err)
+		}
+
+		// A scope with no attributes and no mappers reads back with both
+		// zero-valued rather than as an error: the representation turns the
+		// first into `{}` and omits the second.
+		bare := &model.ClientScope{ID: model.NewID(), RealmID: realm.ID,
+			Name: "bare", Protocol: "saml"}
+		if err := s.ClientScopes().Create(ctx, bare); err != nil {
+			t.Fatalf("Create(bare): %v", err)
+		}
+		gotBare, err := s.ClientScopes().ByID(ctx, realm.ID, bare.ID)
+		if err != nil {
+			t.Fatalf("ByID(bare): %v", err)
+		}
+		if len(gotBare.Attributes) != 0 || len(gotBare.ProtocolMappers) != 0 {
+			t.Errorf("bare scope came back with %d attributes and %d mappers",
+				len(gotBare.Attributes), len(gotBare.ProtocolMappers))
+		}
+
+		dup := &model.ClientScope{ID: model.NewID(), RealmID: realm.ID, Name: "probe"}
+		if err := s.ClientScopes().Create(ctx, dup); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("duplicate name = %v, want ErrConflict", err)
+		}
+	})
+
+	t.Run("the realm's default client scopes keep their insertion order", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := newRealm(t, s)
+
+		// Added in an order that is neither alphabetical nor reverse, because
+		// the listing's order is measured to be insertion order and nothing
+		// else - ORDER BY name would pass a two-element test by accident.
+		order := []string{"zeta", "alpha", "mid"}
+		ids := map[string]string{}
+		for _, name := range order {
+			sc := &model.ClientScope{ID: model.NewID(), RealmID: realm.ID,
+				Name: name, Protocol: "openid-connect"}
+			if err := s.ClientScopes().Create(ctx, sc); err != nil {
+				t.Fatalf("Create(%q): %v", name, err)
+			}
+			ids[name] = sc.ID
+			if err := s.ClientScopes().AddRealmDefault(ctx, realm.ID, sc.ID, true); err != nil {
+				t.Fatalf("AddRealmDefault(%q): %v", name, err)
+			}
+		}
+		got, err := s.ClientScopes().ListRealmDefaults(ctx, realm.ID, true)
+		if err != nil {
+			t.Fatalf("ListRealmDefaults: %v", err)
+		}
+		var names []string
+		for _, sc := range got {
+			names = append(names, sc.Name)
+		}
+		if !reflect.DeepEqual(names, order) {
+			t.Errorf("realm defaults = %v, want %v", names, order)
+		}
+
+		// The two sets are one row with a flag: a repeat and a move to the
+		// other list are both the measured 409.
+		if err := s.ClientScopes().AddRealmDefault(ctx, realm.ID, ids["zeta"], true); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("adding twice = %v, want ErrConflict", err)
+		}
+		if err := s.ClientScopes().AddRealmDefault(ctx, realm.ID, ids["zeta"], false); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("adding to the other list = %v, want ErrConflict", err)
+		}
+
+		// The remove takes no list argument, because the measured DELETE
+		// ignores the one its path names.
+		if err := s.ClientScopes().RemoveRealmDefault(ctx, realm.ID, ids["alpha"]); err != nil {
+			t.Fatalf("RemoveRealmDefault: %v", err)
+		}
+		if err := s.ClientScopes().RemoveRealmDefault(ctx, realm.ID, ids["alpha"]); err != nil {
+			t.Fatalf("RemoveRealmDefault twice: %v", err)
+		}
+		got, err = s.ClientScopes().ListRealmDefaults(ctx, realm.ID, true)
+		if err != nil {
+			t.Fatalf("ListRealmDefaults after the remove: %v", err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("want two defaults left, got %d", len(got))
+		}
+
+		// Deleting the scope takes the membership row with it.
+		if err := s.ClientScopes().Delete(ctx, realm.ID, ids["zeta"]); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		got, err = s.ClientScopes().ListRealmDefaults(ctx, realm.ID, true)
+		if err != nil {
+			t.Fatalf("ListRealmDefaults after the delete: %v", err)
+		}
+		if len(got) != 1 || got[0].Name != "mid" {
+			t.Errorf("after deleting zeta the defaults are %v, want [mid]", got)
+		}
+	})
+
+	t.Run("a client's scope names are derived from the attachment and survive a rename", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := newRealm(t, s)
+
+		sc := &model.ClientScope{ID: model.NewID(), RealmID: realm.ID,
+			Name: "email", Protocol: "openid-connect"}
+		opt := &model.ClientScope{ID: model.NewID(), RealmID: realm.ID,
+			Name: "phone", Protocol: "openid-connect"}
+		for _, x := range []*model.ClientScope{sc, opt} {
+			if err := s.ClientScopes().Create(ctx, x); err != nil {
+				t.Fatalf("Create(%q): %v", x.Name, err)
+			}
+		}
+
+		// Create turns the names on the model into attachments; a name the
+		// realm does not have is dropped rather than reported, measured.
+		c := &model.Client{ID: model.NewID(), RealmID: realm.ID, ClientID: "probe",
+			Protocol: "openid-connect", RedirectURIs: []string{}, WebOrigins: []string{},
+			Attributes:           map[string]string{},
+			DefaultClientScopes:  []string{"email", "nosuchscope"},
+			OptionalClientScopes: []string{"phone"},
+		}
+		if err := s.Clients().Create(ctx, c); err != nil {
+			t.Fatalf("Clients().Create: %v", err)
+		}
+		got, err := s.Clients().ByClientID(ctx, realm.ID, "probe")
+		if err != nil {
+			t.Fatalf("ByClientID: %v", err)
+		}
+		if !reflect.DeepEqual(got.DefaultClientScopes, []string{"email"}) {
+			t.Errorf("defaults = %v, want [email]", got.DefaultClientScopes)
+		}
+		if !reflect.DeepEqual(got.OptionalClientScopes, []string{"phone"}) {
+			t.Errorf("optionals = %v, want [phone]", got.OptionalClientScopes)
+		}
+
+		// **The attachment survives a rename**, which is the reason the names
+		// are derived rather than stored: renaming a client scope was measured
+		// changing the name in every client's list and keeping the attachment.
+		sc.Name = "email2"
+		if err := s.ClientScopes().Update(ctx, sc); err != nil {
+			t.Fatalf("ClientScopes().Update: %v", err)
+		}
+		got, err = s.Clients().ByClientID(ctx, realm.ID, "probe")
+		if err != nil {
+			t.Fatalf("ByClientID after the rename: %v", err)
+		}
+		if !reflect.DeepEqual(got.DefaultClientScopes, []string{"email2"}) {
+			t.Errorf("defaults after the rename = %v, want [email2]", got.DefaultClientScopes)
+		}
+
+		// Attaching twice, and attaching one already held in the other list,
+		// are both measured no-ops answering 204.
+		for range 2 {
+			if err := s.ClientScopes().AddClientScope(ctx, c.ID, sc.ID, true); err != nil {
+				t.Fatalf("AddClientScope: %v", err)
+			}
+		}
+		if err := s.ClientScopes().AddClientScope(ctx, c.ID, opt.ID, true); err != nil {
+			t.Fatalf("AddClientScope(the other list): %v", err)
+		}
+		got, err = s.Clients().ByClientID(ctx, realm.ID, "probe")
+		if err != nil {
+			t.Fatalf("ByClientID: %v", err)
+		}
+		if !reflect.DeepEqual(got.OptionalClientScopes, []string{"phone"}) {
+			t.Errorf("attaching an optional as a default moved it: %v", got.OptionalClientScopes)
+		}
+
+		// Deleting the scope detaches it from the client.
+		if err := s.ClientScopes().Delete(ctx, realm.ID, sc.ID); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		got, err = s.Clients().ByClientID(ctx, realm.ID, "probe")
+		if err != nil {
+			t.Fatalf("ByClientID after the delete: %v", err)
+		}
+		if len(got.DefaultClientScopes) != 0 {
+			t.Errorf("a deleted scope is still attached: %v", got.DefaultClientScopes)
+		}
+	})
+}
+
+// newRealm creates one realm for a subtest that only needs somewhere to hang
+// its objects.
+func newRealm(t *testing.T, s store.Store) *model.Realm {
+	t.Helper()
+	realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+	if err := s.Realms().Create(context.Background(), realm); err != nil {
+		t.Fatalf("Realms().Create: %v", err)
+	}
+	return realm
 }
