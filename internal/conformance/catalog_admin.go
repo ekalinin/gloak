@@ -3609,4 +3609,222 @@ var adminCases = []Case{
 		},
 		AssertHeaders: []string{"X-Frame-Options"},
 	},
+	// ---- Realms Admin, P4's first cut ----------------------------------
+	{
+		// **PristineRealm, and it has to be.** The body is every realm that
+		// exists, and the recorder shares one container - so this must record
+		// before any fixture creates a second realm. The verifier builds a
+		// fresh handler per case and would see master alone whatever the
+		// order, which is the asymmetry that makes the ordering load-bearing
+		// rather than tidy. TestPristineRealmGoldensAreNotPolluted is what
+		// says it held.
+		//
+		// briefRepresentation defaults to **false** here, the opposite of the
+		// role listings, so this is the full representation per realm.
+		ID: "admin/realms-admin/list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get accessible realms",
+			Retrieved: "2026-08-29",
+		},
+		Status:        Implemented,
+		Operation:     "GET /admin/realms",
+		PristineRealm: true,
+		Fixture:       "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/defaultRole/id", "*/defaultRole/containerId"},
+		// The realm's attributes are a Java map in hash order, and javamap
+		// cannot place them: it gets six of the eight keys right and puts
+		// cibaAuthRequestedUserHint, cibaBackchannelTokenDeliveryMode and
+		// cibaExpiresIn in sorted order where Keycloak has the second, the
+		// third and then the first. Those three share a bucket, and javamap is
+		// exact only where buckets do not collide - its own doc says so. So
+		// this masks the order rather than reproducing it, the retreat a
+		// client's attributes already take.
+		UnorderedKeys: []string{"*/attributes"},
+	},
+	{
+		// 201 with an empty body, content-length 0, and the new realm's URL in
+		// Location - addressed by the **name the caller chose**, not by a
+		// server-minted id, which is what makes a realm unlike every other
+		// resource on this API.
+		ID: "admin/realms-admin/create",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: import a realm",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"realm":"gloak-probe-realm-created","enabled":true}`),
+		},
+		// The value is masked and the header's presence is asserted, which is
+		// what every other create on this API does. The served side's headers
+		// are not issuer-normalised by the differ today - invisible until now
+		// because every asserted Location was also volatile - so asserting the
+		// value would be asserting the recorder's port.
+		VolatileHeaders: []string{"Location"},
+		AssertHeaders:   []string{"Location"},
+	},
+	{
+		ID: "admin/realms-admin/read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get the top-level representation of the realm",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}",
+		Fixture:   "admin-token-realm",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-realm",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"id", "defaultRole/id", "defaultRole/containerId"},
+		// The realm's attributes are a Java map in hash order and javamap
+		// cannot place them - see the listing above for which three keys it
+		// gets wrong and why.
+		UnorderedKeys: []string{"attributes"},
+	},
+	{
+		// The 204 carries X-Frame-Options because the request declared JSON -
+		// where the delete below carries neither it nor Cache-Control, because
+		// a DELETE sends no Content-Type. httpx.WriteNoContent's existing rule,
+		// measured again on this pair rather than assumed.
+		ID: "admin/realms-admin/update",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: update the top-level information of the realm",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}",
+		Fixture:   "admin-token-realm-update",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-realm-update",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"displayName":"Probed"}`),
+		},
+		AssertHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "admin/realms-admin/delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: delete the realm",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}",
+		Fixture:   "admin-token-realm-delete",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/gloak-probe-realm-delete",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Cache-Control"},
+	},
+	{
+		// **"Realm not found." keeps its full stop**, where the protocol side
+		// spells the same missing realm "Realm does not exist" without one.
+		// And it is 404 to every caller, including one with no admin role: the
+		// realm is resolved before anybody is judged.
+		ID: "admin/realms-admin/read-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get the top-level representation, unknown realm",
+			Retrieved: "2026-08-29",
+		},
+		Status: Implemented,
+		// No Operation: a rejection, by the rule admin/users/unknown-realm states.
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-no-such-realm",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// errorMessage, and **no full stop** - where the 404 above has one.
+		// Same resource, two error families, which is what clients and users
+		// already do and what a shared helper would flatten.
+		ID: "admin/realms-admin/create-duplicate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: import a realm, duplicate name",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-realm",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"realm":"gloak-probe-realm","enabled":true}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/realms-admin/create-without-name",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: import a realm, no name",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **400, not 403.** The master realm cannot be deleted at all, by
+		// anybody, and the refusal is about the realm rather than the caller -
+		// which is why it is the errorMessage family and not the generic 403.
+		ID: "admin/realms-admin/delete-master",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: delete the realm, master",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
 }
