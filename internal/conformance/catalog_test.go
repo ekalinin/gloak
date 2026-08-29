@@ -165,6 +165,10 @@ func TestPristineRealmGoldensAreNotPolluted(t *testing.T) {
 // "gloak-probe-group-mapped" a sibling fixture creates, and would report a
 // group that is not there.
 //
+// One entry per creator, so a name two of them create is reported twice -
+// gloak-probe-role is made by a fixture and again by admin/roles/create-duplicate,
+// and both are places to look.
+//
 // It is a function rather than a loop inside the test so that
 // TestPollutionGuardSeesEveryCreatedFamily can feed it a body known to be
 // polluted. A guard nothing can make fail is the failure mode this whole file
