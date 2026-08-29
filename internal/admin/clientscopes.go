@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/ekalinin/gloak/internal/bootstrap"
 	"github.com/ekalinin/gloak/internal/httpx"
 	"github.com/ekalinin/gloak/internal/model"
 	"github.com/ekalinin/gloak/internal/store"
@@ -24,11 +25,11 @@ import (
 //     every other scope reads back with six. Serialising `[]` there is the
 //     tidy-up that breaks it.
 type clientScopeRepresentation struct {
-	ID              string                        `json:"id"`
-	Name            string                        `json:"name"`
-	Description     string                        `json:"description,omitempty"`
-	Protocol        string                        `json:"protocol,omitempty"`
-	Attributes      model.StringMap               `json:"attributes"`
+	ID              string                         `json:"id"`
+	Name            string                         `json:"name"`
+	Description     string                         `json:"description,omitempty"`
+	Protocol        string                         `json:"protocol,omitempty"`
+	Attributes      model.StringMap                `json:"attributes"`
 	ProtocolMappers []protocolMapperRepresentation `json:"protocolMappers,omitempty"`
 }
 
@@ -125,31 +126,33 @@ func (h *handler) readClientScope(w http.ResponseWriter, r *http.Request, rc *re
 
 // createClientScope serves POST /admin/realms/{realm}/client-scopes.
 //
-// Four rejections, measured, and no two of them share a shape:
+// Five rejections, measured, and the order between them is measured too:
 //
+//	{}                                 500 unknown_error
+//	{"protocol":"openid-connect"}      500 unknown_error
 //	{"name":"x"}                       400 {"errorMessage":"Unexpected protocol"}
 //	{"name":"x","protocol":"bogus"}    400 the same message - an absent protocol
 //	                                       and an invalid one are one answer
 //	{"name":"","protocol":"..."}       400 {"errorMessage":"Unexpected name \"\" for ClientScope"}
-//	{"protocol":"openid-connect"}      500 unknown_error
 //
-// The last one is Keycloak's own defect, reproduced: a body with no `name` at
-// all is an internal error, not a 400, the same way an empty body on
-// POST /users is. The name check only fires for a name that is present and
-// empty, so the order here - protocol, then name - is what produces
-// "Unexpected protocol" for `{}` rather than a complaint about the name.
+// An **absent** name is a 500 whatever else the body says - Keycloak's own
+// defect, reproduced, the same family as an empty body on POST /users. A
+// **present and empty** name is a 400, and it is checked *after* the protocol.
+// So `name` is looked at twice with the protocol check between the two halves,
+// which is why `{}` answers about the name and `{"name":"x"}` answers about the
+// protocol. Collapsing the two name checks into one puts the wrong message on
+// one of those two bodies whichever side of the protocol check it lands.
 func (h *handler) createClientScope(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 	rep, ok := decodeClientScope(w, r)
 	if !ok {
 		return
 	}
-	if !knownProtocol(rep.Protocol) {
-		httpx.WriteAdminError(w, http.StatusBadRequest, "Unexpected protocol")
+	if rep.Name == nil {
+		writeClientScopeUnknownError(w)
 		return
 	}
-	if rep.Name == nil {
-		httpx.WriteOAuthError(w, http.StatusInternalServerError, "unknown_error",
-			"For more on this error consult the server log.")
+	if !knownProtocol(rep.Protocol) {
+		httpx.WriteAdminError(w, http.StatusBadRequest, "Unexpected protocol")
 		return
 	}
 	if *rep.Name == "" {
@@ -207,8 +210,7 @@ func (h *handler) updateClientScope(w http.ResponseWriter, r *http.Request, rc *
 		return
 	}
 	if rep.Name == nil {
-		httpx.WriteOAuthError(w, http.StatusInternalServerError, "unknown_error",
-			"For more on this error consult the server log.")
+		writeClientScopeUnknownError(w)
 		return
 	}
 
@@ -304,6 +306,14 @@ func writeClientScopeNotFound(w http.ResponseWriter) {
 // a client's scope routes answer for the very same missing scope.
 func writePlainClientScopeNotFound(w http.ResponseWriter) {
 	httpx.WriteMessageError(w, http.StatusNotFound, "Client scope not found")
+}
+
+// writeClientScopeUnknownError is the 500 both writes answer for a body with no
+// `name` key at all. It is the RFC 6749 shape on the admin API, which is the
+// fourth of the four error shapes this project reproduces.
+func writeClientScopeUnknownError(w http.ResponseWriter) {
+	httpx.WriteOAuthError(w, http.StatusInternalServerError, "unknown_error",
+		"For more on this error consult the server log.")
 }
 
 func writeClientScopeConflict(w http.ResponseWriter, name string) {
@@ -449,7 +459,7 @@ func (h *handler) addClientClientScope(defaultScope bool) func(http.ResponseWrit
 		if !ok {
 			return
 		}
-		if bootstrapScopeMatchesClient(sc, client) {
+		if bootstrap.ScopeMatchesProtocol(sc, client.Protocol) {
 			if err := h.store.ClientScopes().AddClientScope(r.Context(), client.ID, sc.ID, defaultScope); err != nil {
 				httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 				return
@@ -493,12 +503,4 @@ func (h *handler) clientAndScopeFromPath(w http.ResponseWriter, r *http.Request,
 		return nil, nil, false
 	}
 	return client, sc, true
-}
-
-// bootstrapScopeMatchesClient is the protocol filter the attach path applies in
-// silence. It is spelled here rather than reached through internal/bootstrap so
-// the handler reads as one thing; the rule itself is written down once, on
-// bootstrap.ScopeMatchesProtocol, and this defers to it.
-func bootstrapScopeMatchesClient(sc *model.ClientScope, c *model.Client) bool {
-	return scopeMatchesProtocol(sc, c.Protocol)
 }

@@ -286,6 +286,73 @@ func (h *handler) register(mux *http.ServeMux) {
 		h.guardRejecting("manage-clients", deleteRotatedSecretRejection, h.deleteRotatedSecret))
 	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/service-account-user", h.guard("view-clients", h.readServiceAccountUser))
 
+	// Client scopes. The whole family is authorised out of the **clients**
+	// role set, which is the surprise: view-realm and manage-realm are 403 on
+	// every route below, including the three the OpenAPI description tags
+	// `Realms Admin`. Measured 2026-08-29 one role at a time over eight
+	// candidates.
+	//
+	// Reading takes view-clients or manage-clients and writing takes
+	// manage-clients alone, and query-clients is admitted by the coarse gate
+	// and answered with an empty body rather than a refusal - the client
+	// listing's shape, and maySeeClientScopes is what empties it.
+	//
+	// `client-templates` is a deprecated path alias for `client-scopes`.
+	// Measured on all three verbs: the listing is the same fifteen, the single
+	// read is byte-identical, and a DELETE through it removes the scope. Five
+	// operations the description counts separately and one handler serves.
+	for _, base := range []string{"client-scopes", "client-templates"} {
+		mux.HandleFunc("GET /admin/realms/{realm}/"+base,
+			h.guardAny(clientsReadRoles, h.listClientScopes))
+		mux.HandleFunc("POST /admin/realms/{realm}/"+base,
+			h.guard("manage-clients", h.createClientScope))
+		mux.HandleFunc("GET /admin/realms/{realm}/"+base+"/{clientScopeID}",
+			h.guardClientScope(h.readClientScope))
+		mux.HandleFunc("PUT /admin/realms/{realm}/"+base+"/{clientScopeID}",
+			h.guardClientScope(h.updateClientScope))
+		mux.HandleFunc("DELETE /admin/realms/{realm}/"+base+"/{clientScopeID}",
+			h.guardClientScope(h.deleteClientScope))
+	}
+
+	// The realm's own two default sets. Tagged `Realms Admin` and guarded like
+	// a client: manage-clients writes them and view-realm cannot read them.
+	//
+	// The resolution order is the **opposite** of the routes above. Here the
+	// role check runs first and the scope second - a view-clients caller naming
+	// a scope that does not exist gets 403 where the same caller on
+	// /client-scopes/{id} gets 404 - which is why these go through guard() with
+	// the lookup inside the handler rather than through guardClientScope.
+	mux.HandleFunc("GET /admin/realms/{realm}/default-default-client-scopes",
+		h.guardAny(clientsReadRoles, h.listRealmDefaultScopes(true)))
+	mux.HandleFunc("PUT /admin/realms/{realm}/default-default-client-scopes/{clientScopeID}",
+		h.guard("manage-clients", h.addRealmDefaultScope(true)))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/default-default-client-scopes/{clientScopeID}",
+		h.guard("manage-clients", h.removeRealmDefaultScope))
+	mux.HandleFunc("GET /admin/realms/{realm}/default-optional-client-scopes",
+		h.guardAny(clientsReadRoles, h.listRealmDefaultScopes(false)))
+	mux.HandleFunc("PUT /admin/realms/{realm}/default-optional-client-scopes/{clientScopeID}",
+		h.guard("manage-clients", h.addRealmDefaultScope(false)))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/default-optional-client-scopes/{clientScopeID}",
+		h.guard("manage-clients", h.removeRealmDefaultScope))
+
+	// A client's own two sets, tagged `Clients` and built here because the
+	// resource is a client scope. A third resolution order again: the client
+	// first, the manage-clients check second, the scope third - measured, a
+	// view-clients caller gets 404 for an unknown client and 403 for a known
+	// client with an unknown scope.
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/default-client-scopes",
+		h.guardAny(clientsReadRoles, h.listClientClientScopes(true)))
+	mux.HandleFunc("PUT /admin/realms/{realm}/clients/{clientUUID}/default-client-scopes/{clientScopeID}",
+		h.guardAny(clientsReadRoles, h.addClientClientScope(true)))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/clients/{clientUUID}/default-client-scopes/{clientScopeID}",
+		h.guardAny(clientsReadRoles, h.removeClientClientScope))
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/optional-client-scopes",
+		h.guardAny(clientsReadRoles, h.listClientClientScopes(false)))
+	mux.HandleFunc("PUT /admin/realms/{realm}/clients/{clientUUID}/optional-client-scopes/{clientScopeID}",
+		h.guardAny(clientsReadRoles, h.addClientClientScope(false)))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/clients/{clientUUID}/optional-client-scopes/{clientScopeID}",
+		h.guardAny(clientsReadRoles, h.removeClientClientScope))
+
 	// Realm roles: reading admits view-realm or manage-realm and writing needs
 	// manage-realm - measured across eight single-role callers, none of the
 	// users or clients roles opens any of them. manage-realm reading too is
@@ -505,6 +572,38 @@ func (h *handler) guardGroup(fine []string, next func(http.ResponseWriter, *http
 		}
 		next(w, r, rc, g)
 	})
+}
+
+// guardClientScope is the realm, the caller, the coarse clients gate, then the
+// client scope - and the fine per-verb role check is left to the handler,
+// because it runs **after** the lookup.
+//
+// That ordering is measured rather than chosen. A view-clients caller naming a
+// scope that does not exist is answered 404 by GET, PUT and DELETE alike; the
+// same caller naming a scope that does exist is answered 200 by GET and 403 by
+// the two writes. So the 404 precedes the 403 here, the way it does on
+// /roles-by-id/{id} and the way it does not on the realm's default-scope
+// routes next door.
+//
+// A caller holding none of the three clients roles never gets that far: the
+// coarse gate answers 403 even for a scope that does not exist, so the leak is
+// to a client-reading caller only. create-client is not in the gate and is 403
+// on everything.
+func (h *handler) guardClientScope(next func(http.ResponseWriter, *http.Request, *reqContext, *model.ClientScope)) http.HandlerFunc {
+	return h.guardAnyRejecting(clientsReadRoles, writeForbidden,
+		func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+			sc, err := h.store.ClientScopes().ByID(r.Context(), rc.realm.ID,
+				r.PathValue("clientScopeID"))
+			if err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					writeClientScopeNotFound(w)
+					return
+				}
+				httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+				return
+			}
+			next(w, r, rc, sc)
+		})
 }
 
 // guardGroupResolving is the realm, the caller and the group, with no role

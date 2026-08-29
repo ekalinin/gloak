@@ -1545,7 +1545,7 @@ func (r *clientScopeRepo) ListRealmDefaults(ctx context.Context, realmID string,
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT `+prefixedClientScopeColumns+` FROM client_scope s
 		 JOIN realm_default_client_scope d ON d.client_scope_id = s.id
-		 WHERE d.realm_id = ? AND d.default_scope = ? ORDER BY s.name`,
+		 WHERE d.realm_id = ? AND d.default_scope = ? ORDER BY d.ordinal`,
 		realmID, boolToInt(defaultScope))
 	if err != nil {
 		return nil, classify(err)
@@ -1555,8 +1555,10 @@ func (r *clientScopeRepo) ListRealmDefaults(ctx context.Context, realmID string,
 
 func (r *clientScopeRepo) AddRealmDefault(ctx context.Context, realmID, scopeID string, defaultScope bool) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO realm_default_client_scope (realm_id, client_scope_id, default_scope)
-		 VALUES (?, ?, ?)`, realmID, scopeID, boolToInt(defaultScope))
+		`INSERT INTO realm_default_client_scope (realm_id, client_scope_id, default_scope, ordinal)
+		 SELECT ?, ?, ?, COALESCE(MAX(ordinal), -1) + 1
+		 FROM realm_default_client_scope WHERE realm_id = ?`,
+		realmID, scopeID, boolToInt(defaultScope), realmID)
 	return classify(err)
 }
 

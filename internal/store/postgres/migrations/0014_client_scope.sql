@@ -24,10 +24,22 @@ CREATE TABLE client_scope (
 -- measured: PUT of a scope already in the *other* list answered 409
 -- `Duplicate resource error`, so a scope cannot be in both, and the constraint
 -- is what makes that a conflict rather than a silent second row.
+-- ordinal exists because this listing's order **is** reproducible, unlike a
+-- client's. GET .../default-default-client-scopes answered
+-- `role_list, saml_organization, AuthnContextClassRef, profile, email, roles,
+-- web-origins, acr, basic` on master and on a created realm, on two separate
+-- container starts - four measurements, one order, and it is neither
+-- alphabetical nor by protocol. It is the order Keycloak's own bootstrap adds
+-- them in, and a scope added later by PUT appears at the end. So it is stored
+-- and served rather than masked with Case.Unordered.
+--
+-- A client's two lists are the opposite and are masked: two clients created
+-- minutes apart in one container came back with `roles` and `profile` swapped.
 CREATE TABLE realm_default_client_scope (
     realm_id TEXT NOT NULL REFERENCES realm(id) ON DELETE CASCADE,
     client_scope_id TEXT NOT NULL REFERENCES client_scope (id) ON DELETE CASCADE,
     default_scope INTEGER NOT NULL,
+    ordinal INTEGER NOT NULL,
     PRIMARY KEY (realm_id, client_scope_id)
 );
 

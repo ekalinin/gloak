@@ -116,17 +116,29 @@ func ensureClientScopes(ctx context.Context, s store.Store, realmID string) erro
 // own default sets when the client does not name them, and is the one place
 // that decides what "the body did not say" means.
 //
-// Measured on POST /admin/realms/{realm}/clients, three ways:
+// **Inheritance is all-or-nothing across the pair**, which is the part that
+// would be guessed wrong. Measured on POST /admin/realms/{realm}/clients over
+// nine bodies:
 //
-//	{"clientId":"x"}                                  -> the realm's defaults
-//	{"clientId":"x","defaultClientScopes":[]}         -> none
-//	{"clientId":"x","defaultClientScopes":["email"]}  -> exactly email
+//	{}                                            6 defaults, 5 optionals
+//	{"defaultClientScopes":null}                  6 defaults, 5 optionals
+//	{"optionalClientScopes":null}                 6 defaults, 5 optionals
+//	{"defaultClientScopes":["email"]}             ["email"], and **[] optionals**
+//	{"defaultClientScopes":[]}                    [], []
+//	{"optionalClientScopes":["phone"]}            **[] defaults**, ["phone"]
+//	{"optionalClientScopes":[]}                   [], []
+//	{"default...":["email"],"optional...":["phone"]}   exactly those
+//	{"defaultClientScopes":null,"optional...":["phone"]}  [], ["phone"]
 //
-// So nil means inherit and an empty slice means none, which is the distinction
-// encoding/json already draws between an absent key and `[]`. Inheritance is
-// filtered by the client's protocol: a saml client created bare inherits
-// AuthnContextClassRef, role_list and saml_organization and no optionals, where
-// an openid-connect one inherits six and five out of the same nine and five.
+// So naming **either** list - as an array, empty or not - suppresses
+// inheritance on **both**. A per-list nil check gives the realm's five
+// optionals to a client that asked for one default and none, which is what the
+// first version of this function did.
+//
+// Inheritance is filtered by the client's protocol: a saml client created bare
+// inherits AuthnContextClassRef, role_list and saml_organization and no
+// optionals, where an openid-connect one inherits six and five out of the same
+// nine and five.
 //
 // It runs **before** Clients().Create, which is what turns the names into
 // attachments. Names a realm does not have are dropped there, in silence,
@@ -134,24 +146,32 @@ func ensureClientScopes(ctx context.Context, s store.Store, realmID string) erro
 // empty list.
 //
 // It is exported because internal/admin's POST /clients needs exactly this and
-// a second copy would be a second place for the nil/empty distinction to be
-// got wrong. Closing follow-up F49 is what it does.
+// a second copy would be a second place for the rule to be got wrong. Closing
+// follow-up F49 is what it does.
 func InheritClientScopes(ctx context.Context, s store.Store, realmID string, c *model.Client) error {
-	if c.DefaultClientScopes == nil {
-		names, err := inheritedNames(ctx, s, realmID, c.Protocol, true)
-		if err != nil {
-			return err
-		}
-		c.DefaultClientScopes = names
+	if c.DefaultClientScopes != nil || c.OptionalClientScopes != nil {
+		c.DefaultClientScopes = nonNilNames(c.DefaultClientScopes)
+		c.OptionalClientScopes = nonNilNames(c.OptionalClientScopes)
+		return nil
 	}
-	if c.OptionalClientScopes == nil {
-		names, err := inheritedNames(ctx, s, realmID, c.Protocol, false)
-		if err != nil {
-			return err
-		}
-		c.OptionalClientScopes = names
+	defaults, err := inheritedNames(ctx, s, realmID, c.Protocol, true)
+	if err != nil {
+		return err
 	}
+	optionals, err := inheritedNames(ctx, s, realmID, c.Protocol, false)
+	if err != nil {
+		return err
+	}
+	c.DefaultClientScopes = defaults
+	c.OptionalClientScopes = optionals
 	return nil
+}
+
+func nonNilNames(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 // inheritedNames is the realm's own set for this list, kept to the scopes a
