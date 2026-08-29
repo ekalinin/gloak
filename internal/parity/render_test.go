@@ -54,6 +54,55 @@ func TestRenderSaysSoWhenNothingMoved(t *testing.T) {
 	}
 }
 
+// Four chapters have no denominator, so a pull request that served new
+// behaviour in one of them leaves the total where it was. "no change" is
+// arithmetically right and reads as a contradiction against the table of work
+// printed directly underneath it, so the flat total has to be said differently
+// and the reason given.
+func TestRenderExplainsAFlatTotalWhenTheWorkIsUnenumerated(t *testing.T) {
+	d := Diff{BeforeServed: 100, AfterServed: 100, Documented: 485,
+		Moved: []ChapterDelta{{Name: "saml", Before: 0, After: 3, Enumerated: false}}}
+
+	got := Render(d, "")
+
+	if strings.Contains(got, "no change") {
+		t.Fatalf("three behaviours were served; that is not no change:\n%s", got)
+	}
+	if !strings.Contains(got, "100 of 485, total unchanged") {
+		t.Fatalf("want the flat total still stated:\n%s", got)
+	}
+	if !strings.Contains(got, "saml") {
+		t.Fatalf("want the chapter that moved:\n%s", got)
+	}
+	if !strings.Contains(got, "unenumerated") {
+		t.Fatalf("want the reason the total did not move:\n%s", got)
+	}
+}
+
+// A flat total with an enumerated chapter moving is a rearrangement, not
+// uncounted work. It still must not say "no change" - the table says otherwise
+// - but blaming the unenumerated chapters for it would be a second false
+// statement in place of the first.
+func TestRenderDoesNotBlameUnenumeratedChaptersForARearrangement(t *testing.T) {
+	d := Diff{BeforeServed: 100, AfterServed: 100, Documented: 485,
+		Moved: []ChapterDelta{
+			{Name: "admin/new", Before: 3, After: 8, Enumerated: true},
+			{Name: "admin/old", Before: 7, After: 2, Enumerated: true},
+		}}
+
+	got := Render(d, "")
+
+	if strings.Contains(got, "no change") {
+		t.Fatalf("two chapters moved; that is not no change:\n%s", got)
+	}
+	if !strings.Contains(got, "100 of 485, total unchanged") {
+		t.Fatalf("want the flat total stated:\n%s", got)
+	}
+	if strings.Contains(got, "unenumerated") {
+		t.Fatalf("both chapters are enumerated, so the total is flat for another reason:\n%s", got)
+	}
+}
+
 func TestRenderShowsADecreaseAndItsReason(t *testing.T) {
 	d := Diff{BeforeServed: 100, AfterServed: 97, Documented: 485,
 		Moved: []ChapterDelta{{Name: "admin/users", Before: 14, After: 11}}}

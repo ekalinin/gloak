@@ -17,11 +17,16 @@ func Render(d Diff, decreaseReason string) string {
 	b.WriteString("\n\n")
 
 	switch {
-	case d.Delta() == 0:
-		fmt.Fprintf(&b, "Parity: %d of %d, no change.\n", d.AfterServed, d.Documented)
-	default:
+	case d.Delta() != 0:
 		fmt.Fprintf(&b, "Parity: %d -> %d of %d (%+d)\n",
 			d.BeforeServed, d.AfterServed, d.Documented, d.Delta())
+	case len(d.Moved) == 0:
+		fmt.Fprintf(&b, "Parity: %d of %d, no change.\n", d.AfterServed, d.Documented)
+	default:
+		// The total is flat and chapters moved. "no change" would contradict
+		// the table printed below it, which is a comment saying two things at
+		// once and nothing that resolves them.
+		fmt.Fprintf(&b, "Parity: %d of %d, total unchanged.\n", d.AfterServed, d.Documented)
 	}
 
 	if len(d.Moved) > 0 {
@@ -32,6 +37,16 @@ func Render(d Diff, decreaseReason string) string {
 				m.Name, m.Before, m.After, m.After-m.Before)
 		}
 		b.WriteString("```\n")
+	}
+
+	// Why the total did not move, when the reason is that nothing which moved
+	// counts towards it. Without this the reader is left to reconcile a flat
+	// total against a table of work on their own.
+	if d.Delta() == 0 && d.MovedOutsideTheTotal() {
+		b.WriteString("\nEvery chapter above is unenumerated: nobody has counted its " +
+			"surface, so it has no denominator and the meter leaves it out of the " +
+			"total. The total is flat because the work landed where it is not " +
+			"counted, not because nothing was served.\n")
 	}
 
 	if len(d.Appeared) > 0 {

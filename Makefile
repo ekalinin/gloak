@@ -6,8 +6,14 @@ test:
 build:
 	CGO_ENABLED=0 go build -o gloak ./cmd/gloak
 
+# Both invocations, because CI runs both and a target weaker than the gate is
+# worse than no target: a contributor runs it, gets silence, and is broken by
+# CI anyway. Without a tag the docker-tagged files are not compiled at all, so
+# make record, make oracle and the Postgres driver suite can stop building
+# while this stays quiet. Neither invocation covers the other.
 lint:
 	go vet ./...
+	go vet -tags docker ./...
 
 # -run takes an unanchored regex, so a bare TestCoverage also selects
 # TestCoverageWritesAReportWhenAsked, which re-runs the meter as a subtest and
