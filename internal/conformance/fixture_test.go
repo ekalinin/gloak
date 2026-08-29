@@ -637,7 +637,13 @@ func TestFixturesAreWellFormed(t *testing.T) {
 			// confidentialClientFixture has one: it creates a client and then
 			// looks the UUID up in a separate GET, so that a re-run's 409 is
 			// harmless. A GET capturing nothing really is dead weight.
-			capturesNothing := len(s.Capture) == 0 && len(s.CaptureHeader) == 0
+			//
+			// All four capture kinds count. The browser fixtures' GET /auth
+			// takes its value from the login page's HTML, and this test named
+			// only two kinds until they existed - which reported every one of
+			// them as dead weight.
+			capturesNothing := len(s.Capture) == 0 && len(s.CaptureHeader) == 0 &&
+				len(s.CaptureForm) == 0 && len(s.CaptureQuery) == 0
 			if capturesNothing && s.Request.Method == http.MethodGet {
 				t.Errorf("fixture %q step %d: a GET that captures nothing is dead weight", name, i)
 			}

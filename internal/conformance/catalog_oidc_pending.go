@@ -192,14 +192,24 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: response_mode=form_post",
 			Retrieved: "2026-08-20",
 		},
-		Status: Recorded,
-		Reason: "the authorization endpoint is not implemented",
-		// Measured: form_post answers **200** with an auto-submitting form,
-		// not a redirect, and its Content-Type is text/html with no charset
-		// where the login page's is text/html;charset=utf-8. The body is
-		// Keycloak's own markup and not the theme's, so unlike the three
-		// theme-HTML cases it carries no per-container resource hash.
-		Fixture: "browser-login-form",
+		Status: Pending,
+		Reason: "the harness cannot mask a per-request value inside an HTML body",
+		// Measured 2026-08-29 and recorded in the observed spec: form_post
+		// answers **200** with an auto-submitting form, not a redirect, and
+		// its Content-Type is text/html with no charset where the login page's
+		// is text/html;charset=utf-8. The parameter order inside the form is
+		// code, iss, state, session_state, which is not the query redirect's
+		// state, session_state, iss, code.
+		//
+		// It is Pending rather than Recorded because the golden cannot be
+		// written yet. The body carries a live code, session_state, tab_id and
+		// client_data, all minted by this request. Case.Volatile addresses
+		// paths into a JSON document and there is no equivalent for HTML, so
+		// the golden would churn on every recording and could never match a
+		// served implementation. The mechanism is the next cut's; inventing it
+		// here to land one case is how a harness grows a feature nothing
+		// needs twice.
+		Fixture: "",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "{{login_action}}",

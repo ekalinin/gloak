@@ -4,7 +4,9 @@ Cache-Control: no-cache
 Content-Length: {{volatile}}
 Location: http://localhost:9999/callback?state=xyz123
 Referrer-Policy: no-referrer
-Set-Cookie: AUTH_SESSION_ID=UmN6djdwQ1k5V2tXNkw1Yk9SSUVHRzl1Lks0SWpSdmRSRTYzTktnVVdmQ2ppYnBNTjF6TVR2OWdKdENyOXZsYlJLTVN5bTVWWHkwaE0yVlU4aEZSd0l3UkhfUms2UEpvOVhzclNFd1ltamFXRkRn;Version=1;Path=/realms/master/;Secure;HttpOnly;SameSite=None
+Set-Cookie: {{volatile}}
+Set-Cookie: {{volatile}}
+Set-Cookie: {{volatile}}
 Strict-Transport-Security: max-age=31536000; includeSubDomains
 X-Content-Type-Options: nosniff
 X-Robots-Tag: none
