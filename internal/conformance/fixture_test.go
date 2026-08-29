@@ -191,9 +191,13 @@ func TestCaptureFromFormReadsAnInput(t *testing.T) {
 	}
 }
 
-func TestCaptureFromFormTakesTheFirstForm(t *testing.T) {
+func TestCaptureFromFormTakesTheFirstOfTwoSiblings(t *testing.T) {
 	// The login page carries other forms in some themes, and the credential
 	// form is the one served first. Taking the last would post the wrong one.
+	//
+	// This case is guarded by the early return on </form>, not by the nested
+	// check the next test covers. Both are needed and neither implies the
+	// other: mutating away the nested guard leaves this test passing.
 	page := `<form action="/first"></form><form action="/second"></form>`
 
 	got, err := captureFromForm([]byte(page), "action", "")
@@ -203,6 +207,23 @@ func TestCaptureFromFormTakesTheFirstForm(t *testing.T) {
 	}
 	if got != "/first" {
 		t.Fatalf("want /first, got %q", got)
+	}
+}
+
+func TestCaptureFromFormIgnoresAFormNestedInTheFirst(t *testing.T) {
+	// A nested form never reaches the early return, so without the guard the
+	// inner action overwrites the outer one and the credentials go to the
+	// wrong URL. Nested forms are invalid HTML and a tokenizer reports them
+	// anyway, which is the whole risk of tokenising rather than parsing.
+	page := `<form action="/outer"><form action="/inner"></form></form>`
+
+	got, err := captureFromForm([]byte(page), "action", "")
+
+	if err != nil {
+		t.Fatalf("captureFromForm: %v", err)
+	}
+	if got != "/outer" {
+		t.Fatalf("want /outer, got %q", got)
 	}
 }
 
