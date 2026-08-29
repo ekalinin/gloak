@@ -199,7 +199,8 @@ operations is allocated below; none is left unassigned.
 | P2 first cut | Clients and Users, done 2026-08-23 | | 24 of the 69 in those two tags; the other 45 belong to P5, P6, P7, P9, P10, P13, P14 or the second cut - see §1.1 of the P2 design | 24 ops |
 | P2 second cut | Roles and role mappings on a user, specced 2026-08-23, **done 2026-08-27** | P2 first cut | 43 of the 71 in `Roles`, `Roles (by ID)`, `Role Mapper`, `Client Role Mappings`; the other 28 are groups (11), organizations (11) and P10 (6) - see `2026-08-23-p2-roles-and-role-mappings-design.md`. All 43 are served: the roles half 32 (`Roles` 24, `Roles (by ID)` 8) on 2026-08-25, and the role-mapping half 11 (`Role Mapper` 6, `Client Role Mappings` 5) on 2026-08-27 | 43 ops |
 | P2 third cut | Groups, specced 2026-08-28 | P2 second cut | `Groups` 9, a user's group membership 4, the group halves of the two mapping tags 11. The allocation was checked against the description and holds exactly: the `Groups` tag has 11 and the two `management/permissions` operations are P10, and 11 of the 22 group role-mappings are under `/organizations` and so P12. **Done 2026-08-28**, all three cuts: the group tree 9, the membership 4 and the group role-mappings 11 | 24 ops |
-| **P3** | Browser code flow | P1 | `oidc/authorization` 11, `oidc/logout` (part) | ~15 cases |
+| **P3** | Browser code flow | P1, **P2** | `oidc/authorization` 11, `oidc/logout` (part) | ~15 cases |
+| P3 first cut | The recorder learns to log in, **done 2026-08-29** | P2 | no operations: the fixture machinery, and 11 cases moved from `Pending` to `Recorded` | 0 ops |
 | **P4** | Multi-realm | P2 | Realms Admin 45, Key 1 | 46 ops |
 | **P5** | Client scopes and protocol mappers | P2 | Client Scopes 10, Protocol Mappers 21, Scope Mappings 33, Client Attribute Certificate 7, Client Initial Access 3, Client Registration Policy 1 | 75 ops |
 | **P6** | Sessions and logout in full | P3 | back-channel, front-channel, session iframe, offline sessions, Attack Detection 3 | 3 ops + cases |
@@ -222,6 +223,31 @@ after the membership.
 124 is the number this table predicted for P2 before any of it was built: 100
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
+
+**Updated 2026-08-29, after P3's first cut.** `make conformance` still reports
+**124 of 485**, and that is the intended result rather than a stalled one. The
+cut built the fixture machinery this document ordered P2 first to avoid
+building twice - a cookie jar shared by both sides of the harness, an HTML form
+parser, a query capture out of a redirect - and used it to move eleven cases
+from `Pending` to `Recorded`. `Recorded` is measured and not served, and the
+meter counts served, so the number cannot move until the endpoint exists.
+
+Section 5's argument was vindicated more directly than expected. The cut's
+first measurement found that `security-admin-console`, which every
+`oidc/authorization` case named, cannot serve nine of them: it pins
+`pkce.code.challenge.method` to `S256` and registers a host-relative redirect
+pattern. Four of those cases already carried a comment blaming the recorder's
+run-time port, which was half the reason and the half that a client the fixture
+registers now fixes. **P3's recordings need P2's client management** was written
+here before anyone reached the work, and it turned out to be the load-bearing
+dependency rather than a caveat.
+
+Three of the cases in that group changed status on the measurement rather than
+on any code: `oidc/logout/rp-initiated-without-id-token-hint` asserted a
+`Location` that does not exist, since a logout without an `id_token_hint`
+serves a confirmation page. P3's share of `oidc/logout` is one case, not two.
+The design is `2026-08-29-p3-browser-code-flow-design.md`, which supersedes the
+2026-08-22 one and says line by line which of its claims survived.
 
 Four pull requests between 100 and 109 moved the number not at all, and that is
 worth naming rather than reading as a gap: they closed F17, F30, F32, F33, F36
