@@ -4447,25 +4447,28 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		// protocolMappers is masked whole rather than sorted, and that is a
-		// limitation of Case.Unordered rather than a decision. Its sortArray
-		// decodes the array it matched in one go, so a path matching the root
-		// consumes the document and the nested paths are never visited: `.`
-		// and `*/protocolMappers` in one case silently sorts only the first.
-		// The mapper order inside a scope is a Java set's and **is** unstable -
-		// six of the fifteen scopes came back with a different mapper order on
-		// two container starts - so it has to be one or the other, and the
-		// root has to be sorted because the scope order is unstable too.
+		// protocolMappers was masked whole until F59 was fixed, and that was a
+		// limitation of Case.Unordered rather than a decision: sortArray decoded
+		// the array it matched in one go, so a path matching the root consumed
+		// the document and `*/protocolMappers` was never visited - silently. The
+		// walk now runs deepest path first, so both are sorted and both are
+		// asserted.
 		//
-		// What survives: the fifteen scopes, their descriptions, protocols and
-		// attributes, and **whether each has a protocolMappers key at all** -
-		// which is what offline_access's five-key body turns on. What is lost
-		// is the mapper contents. See the follow-up in
-		// docs/superpowers/handover/p5-client-scopes.md, and
-		// TestBootstrappedClientScopeMappers in internal/admin, which asserts
-		// one scope's mappers directly.
-		Volatile:  []string{"*/id", "*/protocolMappers"},
-		Unordered: []string{"."},
+		// Both orders need sorting and neither is contract. The scope order is a
+		// Java set's, and the mapper order inside a scope is too - six of the
+		// fifteen scopes came back with a different mapper order on two container
+		// starts. Only the ids are masked: the scope's own, and each mapper's,
+		// both per-container UUIDs. The sort has to run on masked bytes to be
+		// stable, which it does - Normalize before SortUnordered.
+		//
+		// So the thirty-five bootstrapped protocol mappers are now under a
+		// golden: their names, their protocolMapper types, their consentRequired
+		// flags and every key of their config, in Keycloak's key order.
+		// TestBootstrappedClientScopeMappers in internal/admin asserts one
+		// scope's fourteen directly and keeps doing so; this is the other
+		// thirty-four.
+		Volatile:  []string{"*/id", "*/protocolMappers/*/id"},
+		Unordered: []string{".", "*/protocolMappers"},
 	},
 	{
 		// The alias serves the identical body. Measured, not assumed: this is
@@ -4487,25 +4490,28 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		// protocolMappers is masked whole rather than sorted, and that is a
-		// limitation of Case.Unordered rather than a decision. Its sortArray
-		// decodes the array it matched in one go, so a path matching the root
-		// consumes the document and the nested paths are never visited: `.`
-		// and `*/protocolMappers` in one case silently sorts only the first.
-		// The mapper order inside a scope is a Java set's and **is** unstable -
-		// six of the fifteen scopes came back with a different mapper order on
-		// two container starts - so it has to be one or the other, and the
-		// root has to be sorted because the scope order is unstable too.
+		// protocolMappers was masked whole until F59 was fixed, and that was a
+		// limitation of Case.Unordered rather than a decision: sortArray decoded
+		// the array it matched in one go, so a path matching the root consumed
+		// the document and `*/protocolMappers` was never visited - silently. The
+		// walk now runs deepest path first, so both are sorted and both are
+		// asserted.
 		//
-		// What survives: the fifteen scopes, their descriptions, protocols and
-		// attributes, and **whether each has a protocolMappers key at all** -
-		// which is what offline_access's five-key body turns on. What is lost
-		// is the mapper contents. See the follow-up in
-		// docs/superpowers/handover/p5-client-scopes.md, and
-		// TestBootstrappedClientScopeMappers in internal/admin, which asserts
-		// one scope's mappers directly.
-		Volatile:  []string{"*/id", "*/protocolMappers"},
-		Unordered: []string{"."},
+		// Both orders need sorting and neither is contract. The scope order is a
+		// Java set's, and the mapper order inside a scope is too - six of the
+		// fifteen scopes came back with a different mapper order on two container
+		// starts. Only the ids are masked: the scope's own, and each mapper's,
+		// both per-container UUIDs. The sort has to run on masked bytes to be
+		// stable, which it does - Normalize before SortUnordered.
+		//
+		// So the thirty-five bootstrapped protocol mappers are now under a
+		// golden: their names, their protocolMapper types, their consentRequired
+		// flags and every key of their config, in Keycloak's key order.
+		// TestBootstrappedClientScopeMappers in internal/admin asserts one
+		// scope's fourteen directly and keeps doing so; this is the other
+		// thirty-four.
+		Volatile:  []string{"*/id", "*/protocolMappers/*/id"},
+		Unordered: []string{".", "*/protocolMappers"},
 	},
 	{
 		// A created scope: five keys, no description and no protocolMappers,
