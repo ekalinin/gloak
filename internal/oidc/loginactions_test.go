@@ -748,6 +748,38 @@ func TestClientDataIsParsedAndIgnored(t *testing.T) {
 	}
 }
 
+// TestForgedClientDataCannotRedirectAnywhere guards the one branch where
+// client_data is read for something.
+//
+// On the expiry branch the authentication session that held the redirect URI
+// has been destroyed, so the browser's own copy is the only record of where the
+// request came from. That makes it the one place a forged client_data could
+// steer a redirect - so the value it names is still checked against the
+// client's registered patterns, and a target the client could not have asked
+// for itself falls through to the page instead.
+func TestForgedClientDataCannotRedirectAnywhere(t *testing.T) {
+	b := newBrowser(t)
+	action := b.login(nil)
+	target, params := actionParams(t, action)
+	if w := b.do(http.MethodPost, target, credentials("admin", "admin")); w.Code != http.StatusFound {
+		t.Fatalf("setup login: want 302, got %d", w.Code)
+	}
+	forged, err := json.Marshal(map[string]string{
+		"ru": "http://attacker.example/steal", "rt": "code", "st": "xyz123"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := b.do(http.MethodPost,
+		replaceParam(target, params, "client_data", base64.RawURLEncoding.EncodeToString(forged)),
+		credentials("admin", "admin"))
+	if loc := w.Header().Get("Location"); strings.Contains(loc, "attacker.example") {
+		t.Fatalf("a forged client_data redirected the browser to %q", loc)
+	}
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want the page when the forged target does not validate, got %d", w.Code)
+	}
+}
+
 // TestClientDataIsOptionalButMustParse is the pair of measurements that says
 // client_data is a hint rather than an input: dropping it succeeds, and
 // corrupting it is a 400.
