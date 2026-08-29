@@ -173,7 +173,16 @@ func (h *handler) writeRealmSettings(w http.ResponseWriter, r *http.Request, rc 
 // reproducing Jackson's parser positions, and a wrong column is worse than an
 // honest gap. The conformance case for it is Recorded, not Implemented.
 func decodeClientPolicyBody(w http.ResponseWriter, r *http.Request, into any, field string) bool {
-	body, err := io.ReadAll(r.Body)
+	// r.Body is nil rather than empty when the request was built by
+	// http.NewRequest with no body, which is what the conformance verifier
+	// hands the handler for a case sending none. net/http's server never does
+	// that, so io.ReadAll alone is correct in production and panics in the one
+	// place this endpoint's measured "no body at all" case is exercised.
+	var body []byte
+	var err error
+	if r.Body != nil {
+		body, err = io.ReadAll(r.Body)
+	}
 	if err != nil || len(body) == 0 {
 		httpx.WriteAdminError(w, http.StatusBadRequest, "Passing null "+field+" not allowed")
 		return false

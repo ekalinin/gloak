@@ -447,6 +447,19 @@ var Fixtures = map[string]Fixture{
 	"admin-token-realm":        realmFixture("gloak-probe-realm"),
 	"admin-token-realm-update": realmFixture("gloak-probe-realm-update"),
 	"admin-token-realm-delete": realmFixture("gloak-probe-realm-delete"),
+
+	// P4's second cut. The default groups and the read by path live in a realm
+	// of their own rather than in master, so master's own group goldens - which
+	// are PristineRealm - stay untouched by them.
+	"admin-token-default-groups":      defaultGroupsFixture(false),
+	"admin-token-default-groups-full": defaultGroupsFixture(true),
+
+	// The client-policy writes each get a realm too, for realmFixture's reason:
+	// they replace the realm's whole profile set, so two cases sharing one
+	// realm would make the second depend on whether the first ran.
+	"admin-token-client-profiles":         realmFixture("gloak-probe-profiles"),
+	"admin-token-client-profiles-written": clientProfilesFixture("gloak-probe-profiles-written"),
+	"admin-token-client-policies-written": clientPoliciesFixture("gloak-probe-policies-written"),
 }
 
 // realmFixture creates one realm through POST /admin/realms and captures its
@@ -476,6 +489,112 @@ func realmFixture(name string) Fixture {
 			},
 		},
 	}
+}
+
+// defaultGroupsFixture builds a realm with a parent group, a child of it, and
+// - when populated - both of them made default groups.
+//
+// **The realm is its own rather than master.** The default-groups listing and
+// the read by path are realm-wide reads, and master's group goldens are
+// PristineRealm: adding a group to master to measure these would show up in
+// them. A realm created for the purpose cannot collide with anything.
+//
+// The two variants share one realm name each so the populated one is not
+// affected by the empty one having run.
+func defaultGroupsFixture(populated bool) Fixture {
+	name := "gloak-probe-dg"
+	if populated {
+		name = "gloak-probe-dg-full"
+	}
+	f := realmFixture(name)
+	f.Steps = append(f.Steps, groupInRealmSteps(name, "gloak-probe-dg-top", "", "dg_top")...)
+	f.Steps = append(f.Steps, groupInRealmSteps(name, "gloak-probe-dg-child", "{{dg_top}}", "dg_child")...)
+	if !populated {
+		return f
+	}
+	for _, id := range []string{"{{dg_top}}", "{{dg_child}}"} {
+		f.Steps = append(f.Steps, Step{
+			Request: Request{
+				Method:  http.MethodPut,
+				Path:    "/admin/realms/" + name + "/default-groups/" + id,
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+		})
+	}
+	return f
+}
+
+// groupInRealmSteps creates one group in the named realm and captures its id.
+// parentID empty makes it top-level; otherwise it is created as that group's
+// child.
+//
+// The id is read back with a second request rather than out of the create's
+// Location or body, which both carry it: a create the recorder runs twice
+// answers 409 the second time, and then there is nothing to capture from.
+// groupFixture and groupTreeFixture take the same shape for the same reason.
+func groupInRealmSteps(realm, name, parentID, idVar string) []Step {
+	create, read := "/admin/realms/"+realm+"/groups", "/admin/realms/"+realm+"/groups"
+	query := map[string]string{"search": name}
+	if parentID != "" {
+		create = "/admin/realms/" + realm + "/groups/" + parentID + "/children"
+		read = create
+		query = nil
+	}
+	return []Step{
+		{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    create,
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"name":"` + name + `"}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    read,
+				Query:   query,
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			// The realm holds this one group at this level, so index 0 is not
+			// a bet on list order.
+			Capture: map[string]string{idVar: "0/id"},
+		},
+	}
+}
+
+// clientProfilesFixture is a realm with one client profile written into it,
+// for the read that has something to read.
+func clientProfilesFixture(name string) Fixture {
+	f := realmFixture(name)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/" + name + "/client-policies/profiles",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body: []byte(`{"profiles":[{"name":"gloak-probe-profile","description":"a probe",` +
+				`"executors":[{"executor":"secure-session","configuration":{}}]}]}`),
+		},
+	})
+	return f
+}
+
+// clientPoliciesFixture is clientProfilesFixture plus a policy naming that
+// profile, which is the only cross-reference a policy body has.
+func clientPoliciesFixture(name string) Fixture {
+	f := clientProfilesFixture(name)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/" + name + "/client-policies/policies",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body: []byte(`{"policies":[{"name":"gloak-probe-policy","description":"a probe",` +
+				`"enabled":true,"conditions":[{"condition":"any-client","configuration":{}}],` +
+				`"profiles":["gloak-probe-profile"]}]}`),
+		},
+	})
+	return f
 }
 
 func groupMappingFixture() Fixture {
