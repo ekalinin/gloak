@@ -3015,9 +3015,15 @@ func createdMapperFixture() Fixture {
 			Headers: map[string]string{
 				"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json",
 			},
+			// **Both** sources, not just `access.token.claim`. The first draft
+			// sent only that one and two mutations survived: with no
+			// `id.token.claim` to mirror, "userinfo follows introspection" and
+			// "every oidc-* provider mirrors both" produce exactly the bytes
+			// the measured rule produces. Sending both sources is what makes
+			// the missing `userinfo.token.claim` visible.
 			Body: []byte(`[{"id":"` + probeMapperBatchID + `","name":"gloak-probe-mapper-added",` +
 				`"protocol":"openid-connect","protocolMapper":"oidc-audience-resolve-mapper",` +
-				`"config":{"access.token.claim":"true"}}]`),
+				`"config":{"id.token.claim":"true","access.token.claim":"true"}}]`),
 		},
 		ExpectStatus: []int{http.StatusNoContent, http.StatusConflict},
 	})

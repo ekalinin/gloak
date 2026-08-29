@@ -5979,7 +5979,10 @@ var adminCases = []Case{
 		// `consentRequired` is false on both.
 		//
 		// A mirroring rule written as one flag, or as "every oidc-* provider",
-		// passes every other case in this cut and fails here.
+		// passes every other case in this cut and fails here. **It did not,
+		// until the fixture's second mapper was given `id.token.claim` as
+		// well**: with no source key to mirror, both mutations produce exactly
+		// the right bytes, and both survived. Two survivors, one fixture line.
 		ID: "admin/protocol-mappers/read-created",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -6047,5 +6050,38 @@ var adminCases = []Case{
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 		Unordered:     []string{"."},
+	},
+	{
+		// **`query-clients` is refused here and served one level up.** On
+		// `GET /client-scopes` it is admitted and answered `200 []` - the
+		// client listing's shape, and one of the three places this API answers
+		// a weaker caller with a shorter list. On every protocol-mapper route
+		// it is a flat 403. So the coarse gate on this family is two roles,
+		// not the parent's three, and widening it to clientsReadRoles for
+		// symmetry is the tidy-up that breaks it.
+		//
+		// The scope id names nothing on purpose: the gate runs **before** the
+		// container is resolved, so this caller gets 403 rather than the 404 a
+		// view-clients caller gets for the same path. That is the second thing
+		// the case pins, and it is why it needs no scope fixture.
+		//
+		// Added after a mutation survived: swapping clientScopeMapperReadRoles
+		// for clientsReadRoles passed every other case in this cut.
+		ID: "admin/protocol-mappers/list-to-a-query-clients-caller",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a caller holding query-clients",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "narrow-caller-query-clients",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-0000000000fd" +
+				"/protocol-mappers/models",
+			Headers: map[string]string{"Authorization": "Bearer {{caller_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 }
