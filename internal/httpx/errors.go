@@ -41,6 +41,39 @@ func SetContentSecurityPolicy(w http.ResponseWriter) {
 		"frame-src 'self'; frame-ancestors 'self'; object-src 'none';")
 }
 
+// WriteAuthorizationRedirect writes the authorization endpoint's 302 back to a
+// client's own registered redirect URI: the response every rejection past the
+// redirect-URI check takes, and the one a successful authorization will take
+// once there is a code to carry.
+//
+// Its header set is measured and is not any other response's. Swept 2026-08-29
+// across seven different rejections on GET /auth:
+//
+//	Cache-Control: no-store, must-revalidate, max-age=0
+//	Referrer-Policy, Strict-Transport-Security, X-Content-Type-Options,
+//	X-Robots-Tag
+//	no Content-Type, no body
+//	**no X-Frame-Options and no Content-Security-Policy**
+//
+// The two absences are the part that looks like a bug. They are not "errors
+// omit them": POST /login-actions/authenticate's error redirect, to the same
+// URI with the same status, carries all six. They are not "302s omit them",
+// for the same reason. They are not "failures omit them": prompt=none with a
+// live session redirects with a real code and omits them too. It is this
+// endpoint's redirect, and RP-initiated logout's behaves the same way.
+//
+// X-Frame-Options is deleted rather than never set, because the router sets all
+// five security headers before the mux runs - the same reason
+// SetUserinfoSecurityHeaders deletes it.
+func WriteAuthorizationRedirect(w http.ResponseWriter, location string) {
+	suppressDate(w)
+	SetSecurityHeaders(w)
+	w.Header().Del("X-Frame-Options")
+	w.Header().Set("Cache-Control", "no-store, must-revalidate, max-age=0")
+	w.Header().Set("Location", location)
+	w.WriteHeader(http.StatusFound)
+}
+
 // suppressDate omits the Date header net/http would otherwise add
 // automatically. Keycloak 26.7.1 sends no Date header on any response, so a
 // running Gloak that let net/http add one would differ from Keycloak on
