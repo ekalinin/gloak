@@ -189,6 +189,47 @@ func TestPristineRealmGoldensAreNotPolluted(t *testing.T) {
 	}
 }
 
+// TestNoGoldenHoldsAnObjectItDidNotCreate is the test above, applied to the
+// 260-odd cases that are not PristineRealm.
+//
+// The invariant is the whole harness's, not the pristine group's: a golden may
+// hold only what bootstrap, the case's own fixture and the case's own request
+// produced, because those three are exactly what the verifier reproduces. A
+// non-pristine golden holding a sibling fixture's object is order-dependent
+// whether or not it enumerates anything, and it says so in bytes a reviewer can
+// read.
+//
+// It is separate from the pristine test rather than a widening of it because
+// the two say different things when they fail. The pristine one names its
+// remedy - record against a realm nothing else has touched - and this one has
+// no single remedy: the case may need the flag, or a narrower fixture, or it
+// may be reading state it never meant to.
+//
+// **It is a ratchet, not a finder.** Every golden in the repository passes it
+// today, which is the point: F53's set is the cases that are order-dependent
+// and *currently clean*, and no test that reads committed bytes can see those.
+// This one fires the moment a re-record puts a new fixture's object in a
+// golden, which is one step earlier than TestConformance noticing that the
+// verifier cannot reproduce it.
+func TestNoGoldenHoldsAnObjectItDidNotCreate(t *testing.T) {
+	created := createdObjects()
+	for _, c := range Catalog {
+		if c.PristineRealm {
+			continue // covered above, with a sharper message
+		}
+		raw, err := os.ReadFile(GoldenPath(goldenDir, c.ID))
+		if err != nil {
+			continue // Pending cases have no golden, and that is not a failure here
+		}
+		for _, o := range pollution(raw, created, c.Fixture, c.ID) {
+			t.Errorf("%q: golden holds %s %q, which %q created - "+
+				"neither this case's fixture nor its own request makes it, so the "+
+				"verifier cannot reproduce this body",
+				c.ID, o.key, o.name, o.creator)
+		}
+	}
+}
+
 // pollution is every object in created that raw mentions and that something
 // other than the named owners made. The owners are a case's own fixture and the
 // case itself, which are the two things whose creates the verifier repeats.
