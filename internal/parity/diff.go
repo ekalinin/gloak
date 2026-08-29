@@ -10,6 +10,13 @@ type ChapterDelta struct {
 	Name   string
 	Before int
 	After  int
+	// Enumerated is false for a chapter nobody has counted the surface of. It
+	// has no denominator, so the meter leaves its served count out of the
+	// total: this chapter can move while the total does not. Render needs it to
+	// avoid calling that "no change". It is taken from the after side, which is
+	// the side the total was measured on, and from the before side for a
+	// chapter that disappeared.
+	Enumerated bool
 }
 
 // Diff is what changed between two runs of the meter.
@@ -38,6 +45,27 @@ func (d Diff) Delta() int { return d.AfterServed - d.BeforeServed }
 // looks like, and gating that would fail honest rearrangements.
 func (d Diff) Decreased() bool { return d.Delta() < 0 }
 
+// MovedOutsideTheTotal reports whether every chapter that moved is
+// unenumerated. Four chapters have no denominator, so served behaviour landing
+// in one of them cannot reach the total: the total is arithmetically unchanged
+// and the work is real. Saying "no change" for that is a contradiction against
+// the table printed underneath it.
+//
+// It is false when nothing moved, because there is then nothing to explain,
+// and false as soon as one enumerated chapter moved, because the flat total is
+// then a rearrangement rather than uncounted work.
+func (d Diff) MovedOutsideTheTotal() bool {
+	if len(d.Moved) == 0 {
+		return false
+	}
+	for _, m := range d.Moved {
+		if m.Enumerated {
+			return false
+		}
+	}
+	return true
+}
+
 // Compare diffs two reports. A chapter present on only one side is named in
 // Appeared or Disappeared, and also counts as a move when its served count
 // differs from the zero it implicitly had on the other side.
@@ -64,9 +92,10 @@ func Compare(before, after Report) Diff {
 		}
 		if old.Served != ch.Served {
 			out.Moved = append(out.Moved, ChapterDelta{
-				Name:   ch.Name,
-				Before: old.Served,
-				After:  ch.Served,
+				Name:       ch.Name,
+				Before:     old.Served,
+				After:      ch.Served,
+				Enumerated: ch.Enumerated,
 			})
 		}
 	}
@@ -76,9 +105,10 @@ func Compare(before, after Report) Diff {
 			// A chapter that disappears with non-zero served is also a move.
 			if ch.Served != 0 {
 				out.Moved = append(out.Moved, ChapterDelta{
-					Name:   ch.Name,
-					Before: ch.Served,
-					After:  0,
+					Name:       ch.Name,
+					Before:     ch.Served,
+					After:      0,
+					Enumerated: ch.Enumerated,
 				})
 			}
 		}
