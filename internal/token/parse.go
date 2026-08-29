@@ -83,6 +83,40 @@ func ParseAccess(k *keys.RealmKeys, issuer, raw string, now time.Time) (*Parsed,
 	return check(claims, issuer, TypeAccess, now)
 }
 
+// ParseID verifies an RS256 ID token issued by this realm and **does not check
+// whether it has expired**.
+//
+// The omission is measured, not an oversight. Its one caller is the logout
+// endpoint's id_token_hint, and a client pinned to access.token.lifespan=1,
+// waited out past its ID token's own exp, still logged out and still redirected
+// on a live 26.7.1 (2026-08-29). Routing this through ParseAccess's check and
+// then forgiving ErrExpiredToken would be the same behaviour written so that
+// the next reader has to reconstruct which of the two endpoints wanted it.
+//
+// Everything a valid signature does not assert is still asserted: the realm's
+// own key, the realm's issuer, and typ=ID - so an access token or a refresh
+// token offered as a hint is refused, which is measured too.
+func ParseID(k *keys.RealmKeys, issuer, raw string) (*Parsed, error) {
+	claims, err := verify(raw, []jose.SignatureAlgorithm{jose.RS256}, k.SigningPublicKey())
+	if err != nil {
+		return nil, err
+	}
+	if claims.Iss != issuer || claims.Typ != TypeID {
+		return nil, ErrInvalidToken
+	}
+	return &Parsed{
+		Type:      claims.Typ,
+		Subject:   claims.Sub,
+		SessionID: claims.Sid,
+		ClientID:  claims.Azp,
+		ID:        claims.Jti,
+		Audience:  parseAudience(claims.Aud),
+		Scope:     claims.Scope,
+		IssuedAt:  time.Unix(claims.Iat, 0),
+		ExpiresAt: time.Unix(claims.Exp, 0),
+	}, nil
+}
+
 // ParseRefresh verifies an HS512 refresh token issued by this realm. The
 // algorithm list is separate from ParseAccess's on purpose: accepting RS256
 // here would let an access token stand in for a refresh token, and accepting

@@ -12,6 +12,7 @@ package conformance
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -61,6 +62,29 @@ type Request struct {
 	Headers map[string]string
 	Form    map[string]string // sent as application/x-www-form-urlencoded
 	Body    []byte            // used only when Form is empty
+
+	// RawQuery is the query string sent verbatim, for the one thing a
+	// map[string]string cannot say: **the same key twice**.
+	//
+	// That is not a hypothetical shape. A repeated parameter is its own
+	// measured error on the authorization endpoint - `duplicated parameter`,
+	// step 7 of ten, lower case where every other description there is
+	// capitalised, and it fires on keys the endpoint never reads, so `zz` twice
+	// is enough. internal/oidc serves it and unit-tests it, and no golden could
+	// express the request until this field existed. See F48.
+	//
+	// It replaces Query rather than adding to it: setting both is a catalogue
+	// error, because merging them would need an order and there is no honest
+	// one. It is also **not** expanded, so it cannot carry a {{name}} captured
+	// by a fixture step - TestCatalogIsWellFormed refuses one rather than
+	// letting a case send the braces to the server. Expand lives in
+	// fixture.go and teaching it this field is a one-line change for whoever
+	// needs it.
+	//
+	// Encoding is the case's own business here. url.Values.Encode escapes what
+	// it emits; a raw string is sent as written, which is what makes a
+	// deliberately malformed query expressible too.
+	RawQuery string
 }
 
 // Case is one documented behaviour.
@@ -134,11 +158,44 @@ type Case struct {
 	// comparing, while the header's presence stays asserted - a header the
 	// implementation stopped sending entirely still fails.
 	//
-	// The measured example is the admin API's Location on a 201, which carries
-	// a UUID minted at request time. Without this, every create case churns on
-	// each recording; four goldens already had that disease. The package-level
-	// VolatileHeaders in golden.go is the same idea applied to every case.
+	// Set-Cookie on the login page is the measured example: every one of its
+	// values is minted per request and none of it is contract. The
+	// package-level VolatileHeaders in golden.go is the same idea applied to
+	// every case.
+	//
+	// It is the blunt instrument. A header whose value is a URL ending in a
+	// server-minted id belongs in VolatileTailHeaders, which keeps the rest of
+	// the URL asserted.
 	VolatileHeaders []string
+
+	// VolatileTailHeaders lists response headers whose value is a URL whose
+	// **final path segment** is minted per request. Everything up to the last
+	// "/" is compared exactly; the segment after it is written to the golden as
+	// {{uuid}} and required to be a UUID on both sides.
+	//
+	// It exists because masking a whole header asserts almost nothing: diff
+	// checks a VolatileHeaders entry is present with a non-empty first value,
+	// so `Location: x` passes. The seven admin creates all masked their
+	// Location that way, and none of them asserted the scheme, the host, or the
+	// path saying which collection the new object landed in. See F46.
+	//
+	// Measured on a live 26.7.1 on 2026-08-29, all seven Locations, which is
+	// why only four of them use this field:
+	//
+	//	POST .../clients          .../clients/<uuid>
+	//	POST .../users            .../users/<uuid>
+	//	POST .../groups           .../groups/<uuid>
+	//	POST .../groups/{id}/children  .../groups/<uuid>   - not under /children
+	//	POST .../roles            .../roles/<the role name>
+	//	POST .../clients/{id}/roles    .../clients/{{client_uuid}}/roles/<name>
+	//	POST /admin/realms        /admin/realms/<the realm name>
+	//
+	// The last three carry nothing minted once ReplaceCaptured and
+	// ReplaceIssuer have run, so they mask nothing at all and assert their
+	// Location whole. Declaring one of them here is a loud failure rather than
+	// a wider mask: the tail is not a UUID and both the recorder and the
+	// verifier say so.
+	VolatileTailHeaders []string
 
 	// AssertAbsentHeaders lists response headers that must not be present.
 	// AssertHeaders only ever checks a header that is named, so it can never
@@ -181,7 +238,15 @@ type Case struct {
 // at the in-process handler's issuer.
 func buildRequest(base string, r Request) (*http.Request, error) {
 	target := base + r.Path
-	if len(r.Query) > 0 {
+	switch {
+	case r.RawQuery != "" && len(r.Query) > 0:
+		return nil, fmt.Errorf("conformance: %s %s sets both Query and RawQuery, "+
+			"and nothing says which order to merge them in", r.Method, r.Path)
+	case r.RawQuery != "":
+		// Verbatim, so a key can appear twice. url.Values cannot hold that and
+		// Encode would sort it away besides.
+		target += "?" + r.RawQuery
+	case len(r.Query) > 0:
 		q := url.Values{}
 		for k, v := range r.Query {
 			q.Set(k, v)

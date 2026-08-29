@@ -83,6 +83,21 @@ type Step struct {
 	// with idempotentCreate, which turns each of the comments that documented
 	// that 409 into something checked.
 	ExpectStatus []int
+	// Mutates says a step that captures nothing is here for its effect on the
+	// server rather than for its response.
+	//
+	// TestFixturesAreWellFormed rejects a GET that captures nothing as dead
+	// weight, and that rule rests on "a GET does not change server state" -
+	// which is true of every step in the catalogue except one. **GET /logout
+	// with a valid id_token_hint ends the session**, measured: the refresh
+	// token that worked before it answers "Session not active" after. So
+	// logout-hint-spent's third step is a GET that captures nothing, changes
+	// everything, and is the whole point of the fixture.
+	//
+	// It is a declaration rather than a path list because the next endpoint
+	// whose GET writes should have to say so too, and because a list of paths
+	// in a test is a second place the catalogue's shape is written down.
+	Mutates bool
 }
 
 // idempotentCreate is the ExpectStatus of a create whose repeat is harmless:
@@ -336,6 +351,22 @@ var Fixtures = map[string]Fixture{
 	"browser-code-mismatch": browserCodeFixture("gloak-probe-browser", "", pkceS256Query),
 	"browser-code-spent":    browserSpentCodeFixture("gloak-probe-browser", nil, nil),
 	"browser-logged-in":     browserLogoutFixture(),
+
+	// The logout fixtures. Every one of them signs its user in with a direct
+	// grant rather than through the login form, because the logout endpoint's
+	// answer is measured identical either way and only the direct grant can be
+	// replayed against Gloak. See the block comment above logoutClientBody.
+	//
+	// One client per fixture, as everywhere else: the recorder shares one
+	// container across the catalogue, and two fixtures creating one clientId
+	// would make the second create a 409.
+	"logout-hint":         logoutSessionFixture("gloak-probe-logout", logoutRedirectAttribute),
+	"logout-hint-spent":   logoutSpentHintFixture(),
+	"logout-client":       Fixture{State: "bootstrap", Steps: logoutClientSteps("gloak-probe-logout-client", logoutRedirectAttribute)},
+	"logout-default-uris": logoutSessionFixture("gloak-probe-logout-default", ""),
+	"logout-refresh":      logoutSessionFixture("gloak-probe-logout-refresh", logoutRedirectAttribute),
+	"logout-mismatch":     logoutMismatchFixture(),
+	"logout-confidential": logoutConfidentialFixture(),
 
 	// access.token.lifespan is measured: "1" makes expires_in 1 and the token
 	// verifiably expired a second later. The delay is what makes the case
@@ -1769,10 +1800,19 @@ const (
 	pkceVerifierPlain = "gloak-probe-plain-code-verifier-0123456789A"
 )
 
-// logoutRedirectAttribute registers a post-logout redirect. It is a separate
-// client attribute and is **not** derived from redirectUris: a client whose
-// redirect_uri validates at the authorization endpoint is still refused at the
-// logout endpoint until this is set, measured 2026-08-29.
+// logoutRedirectAttribute registers a post-logout redirect explicitly.
+//
+// It is **not** a separate registration that a client must have before it can
+// redirect. Measured 2026-08-29 across five clients differing only in this
+// attribute: absent, "" and "+" all fall back to the client's own redirectUris,
+// "-" refuses every target including its own redirectUris, and anything else is
+// a "##"-separated pattern list that replaces redirectUris rather than adding
+// to it. So a client with no attribute at all redirects to its registered
+// redirect_uri, which is what `logout-default-uris` exists to pin - and it
+// falsifies the sentence this constant's comment carried until now.
+//
+// It is still set here, because a case measuring the explicit branch and a case
+// measuring the fallback have to be two clients or neither is measured.
 const logoutRedirectAttribute = `,"attributes":{"post.logout.redirect.uris":"` + browserRedirectURI + `"}`
 
 var (
@@ -1945,6 +1985,144 @@ func browserLogoutFixture() Fixture {
 		},
 		Capture: map[string]string{"id_token": "id_token"},
 	})}
+}
+
+// --- The logout fixtures ---
+//
+// Every one of them mints its session with a **direct grant** rather than a
+// browser login, and that is a measurement rather than a convenience.
+//
+// Measured 2026-08-29, the logout endpoint's 302 is byte-identical whether the
+// id_token_hint came from a browser login or from a password grant with no
+// cookie jar at all: same Location, same Cache-Control: no-cache, the same four
+// security headers with X-Frame-Options and Content-Security-Policy absent. The
+// only difference is two cookies - a browser session's KEYCLOAK_IDENTITY and
+// KEYCLOAK_SESSION are cleared with Max-Age=0, and there is nothing to clear
+// when none were sent - and Set-Cookie is masked as volatile on these cases and
+// asserted by none of them.
+//
+// What that buys is that the fixtures **run against Gloak**. browserLogoutFixture
+// drives Keycloak's login form, which Gloak does not serve until P13, so a case
+// naming it can never be promoted past Recorded however well the endpoint
+// works. See docs/superpowers/plans/2026-08-29-p6-logout.md section 1.
+
+// logoutClientBody is a public client that can both log a user in directly and
+// accept them back afterwards. attributes is spliced in as given so a caller
+// can register post-logout targets or deliberately register none.
+func logoutClientBody(clientID, attributes string) string {
+	return `{"clientId":"` + clientID + `","enabled":true,"publicClient":true,` +
+		`"standardFlowEnabled":true,"directAccessGrantsEnabled":true,` +
+		`"redirectUris":["` + browserRedirectURI + `"]` + attributes + `}`
+}
+
+// logoutClientSteps creates that client. Idempotent for the same reason
+// browserClientSteps is: the recorder shares one container across the whole
+// catalogue and nothing is captured from the create.
+func logoutClientSteps(clientID, attributes string) []Step {
+	return []Step{
+		adminTokenStep(),
+		{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(logoutClientBody(clientID, attributes)),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+	}
+}
+
+// logoutGrantStep signs a user in at one of those clients and keeps both the ID
+// token and the refresh token, because the two logout families want different
+// ones: the browser family sends the ID token as id_token_hint, and the POST
+// family sends the refresh token.
+//
+// scope=openid is what makes the response carry an id_token at all.
+func logoutGrantStep(clientID string) Step {
+	return Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type": "password",
+				"client_id":  clientID,
+				"username":   "admin",
+				"password":   "admin",
+				"scope":      "openid",
+			},
+		},
+		Capture: map[string]string{"id_token": "id_token", "refresh_token": "refresh_token"},
+	}
+}
+
+// logoutSessionFixture is the common shape: one client, one session on it.
+func logoutSessionFixture(clientID, attributes string) Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: append(logoutClientSteps(clientID, attributes), logoutGrantStep(clientID)),
+	}
+}
+
+// logoutSpentHintFixture logs the session out once already, so the case's own
+// request is the **second** logout with a hint whose session is gone.
+//
+// Measured: that answers the same 302, not an error. A session that is already
+// ended is a logout that has already succeeded, which is the opposite of how
+// the token endpoint treats a spent authorization code.
+func logoutSpentHintFixture() Fixture {
+	const clientID = "gloak-probe-logout-spent"
+	f := logoutSessionFixture(clientID, logoutRedirectAttribute)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/logout",
+			Query: map[string]string{
+				"id_token_hint":            "{{id_token}}",
+				"post_logout_redirect_uri": browserRedirectURI,
+			},
+		},
+		ExpectStatus: []int{http.StatusFound},
+		Mutates:      true,
+	})
+	return f
+}
+
+// logoutMismatchFixture creates a second client that holds no session, so the
+// case can authenticate as one client while presenting the other's refresh
+// token. Both are public, so nothing but the token differs - the same
+// correction the token endpoint's "another client's code" case needed.
+func logoutMismatchFixture() Fixture {
+	f := logoutSessionFixture("gloak-probe-logout-owner", logoutRedirectAttribute)
+	f.Steps = append(f.Steps, logoutClientSteps("gloak-probe-logout-other", "")[1])
+	return f
+}
+
+// logoutConfidentialFixture is the same session on a client that must
+// authenticate, for the 401 a confidential client gets when it sends no secret.
+// The secret is captured but the case deliberately does not send it.
+func logoutConfidentialFixture() Fixture {
+	const clientID = "gloak-probe-logout-confidential"
+	return confidentialClientFixture(clientID,
+		`{"clientId":"`+clientID+`","enabled":true,"directAccessGrantsEnabled":true,`+
+			`"redirectUris":["`+browserRedirectURI+`"],`+
+			`"attributes":{"post.logout.redirect.uris":"`+browserRedirectURI+`"}}`,
+		Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "/realms/master/protocol/openid-connect/token",
+				Form: map[string]string{
+					"grant_type":    "password",
+					"client_id":     clientID,
+					"client_secret": "{{client_secret}}",
+					"username":      "admin",
+					"password":      "admin",
+					"scope":         "openid",
+				},
+			},
+			Capture: map[string]string{"refresh_token": "refresh_token"},
+		},
+	)
 }
 
 // expiredTokenFixture obtains an access token that is already expired when the

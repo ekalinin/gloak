@@ -1,10 +1,11 @@
-# POST /admin/realms
-HTTP/1.1 201 Created
+# GET /realms/master/protocol/openid-connect/logout
+HTTP/1.1 302 Found
+Cache-Control: no-cache
 Content-Length: {{volatile}}
-Location: {{issuer}}/admin/realms/gloak-probe-realm-created
+Location: http://localhost:9999/callback
 Referrer-Policy: no-referrer
+Set-Cookie: {{volatile}}
 Strict-Transport-Security: max-age=31536000; includeSubDomains
 X-Content-Type-Options: nosniff
-X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 

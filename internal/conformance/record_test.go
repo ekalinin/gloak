@@ -114,10 +114,14 @@ func TestRecordGoldens(t *testing.T) {
 				t.Fatalf("normalize: %v", err)
 			}
 
+			headers, err := recordedHeaders(resp.Header, base, c, vars)
+			if err != nil {
+				t.Fatalf("headers: %v", err)
+			}
 			g := Golden{
 				RequestLine: c.Request.Method + " " + c.Request.Path,
 				Status:      resp.StatusCode,
-				Headers:     recordedHeaders(resp.Header, base, c, vars),
+				Headers:     headers,
 				Body:        body,
 			}
 			path := GoldenPath(goldenDir, c.ID)

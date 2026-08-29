@@ -642,10 +642,22 @@ func TestFixturesAreWellFormed(t *testing.T) {
 			// takes its value from the login page's HTML, and this test named
 			// only two kinds until they existed - which reported every one of
 			// them as dead weight.
+			//
+			// The rule rests on "a GET does not change server state", and one
+			// measured endpoint falsifies it: GET /logout with a valid
+			// id_token_hint ends the session. Such a step says Mutates, which
+			// is a declaration rather than a path list - see Step.Mutates.
 			capturesNothing := len(s.Capture) == 0 && len(s.CaptureHeader) == 0 &&
 				len(s.CaptureForm) == 0 && len(s.CaptureQuery) == 0
-			if capturesNothing && s.Request.Method == http.MethodGet {
+			if capturesNothing && !s.Mutates && s.Request.Method == http.MethodGet {
 				t.Errorf("fixture %q step %d: a GET that captures nothing is dead weight", name, i)
+			}
+			if s.Mutates && !capturesNothing {
+				t.Errorf("fixture %q step %d: Mutates is for a step that captures nothing", name, i)
+			}
+			if s.Mutates && s.Request.Method != http.MethodGet {
+				t.Errorf("fixture %q step %d: Mutates only excuses a GET; a %s is a write already",
+					name, i, s.Request.Method)
 			}
 		}
 	}

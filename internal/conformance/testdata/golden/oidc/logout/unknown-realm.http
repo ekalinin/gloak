@@ -1,10 +1,11 @@
-# POST /admin/realms
-HTTP/1.1 201 Created
+# GET /realms/gloak-no-such-realm/protocol/openid-connect/logout
+HTTP/1.1 404 Not Found
 Content-Length: {{volatile}}
-Location: {{issuer}}/admin/realms/gloak-probe-realm-created
+Content-Type: application/json
 Referrer-Policy: no-referrer
 Strict-Transport-Security: max-age=31536000; includeSubDomains
 X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
+{"error":"Realm does not exist"}

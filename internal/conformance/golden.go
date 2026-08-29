@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,39 @@ const goldenDir = "testdata/golden"
 // response. The header keeps its name, so a header disappearing is still
 // visible in the diff.
 const volatilePlaceholder = "{{volatile}}"
+
+// uuidTailPlaceholder replaces the last path segment of a header whose value
+// is a URL ending in a server-minted id. Everything before it stays in the
+// golden and stays compared. See Case.VolatileTailHeaders.
+const uuidTailPlaceholder = "{{uuid}}"
+
+// uuidPattern is the canonical 8-4-4-4-12 spelling, lower case, which is how
+// every measured admin Location spells the id it ends in.
+var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// MaskURLTail replaces the final path segment of a URL with
+// uuidTailPlaceholder, and reports whether it could.
+//
+// It refuses rather than masking when the tail is not a UUID, and the refusal
+// is the point. Three of the seven admin creates end their Location in a name
+// the request chose - the role name, the realm name - and masking those would
+// throw away a measurement while looking like it had checked one, which is the
+// failure Normalize's doc comment names. A case whose tail is not minted
+// should assert its Location whole instead of declaring it here.
+//
+// It lives beside recordedHeaders rather than in the recorder because the
+// recorder is behind the docker build tag, and both sides of the comparison
+// have to mask identically or the golden and the response can never agree.
+func MaskURLTail(value string) (string, bool) {
+	cut := strings.LastIndex(value, "/")
+	if cut < 0 {
+		return "", false
+	}
+	if !uuidPattern.MatchString(value[cut+1:]) {
+		return "", false
+	}
+	return value[:cut+1] + uuidTailPlaceholder, true
+}
 
 // VolatileHeaders change on every response and would otherwise make every
 // `make record` produce a diff, which is how a recorder's output stops being
@@ -92,21 +126,30 @@ func ParseGolden(raw []byte) (Golden, error) {
 // diff, and blanks the values that change per response. Captured values are
 // masked here too: a token can arrive in a header as easily as in a body.
 //
-// Two masks apply. The package-level VolatileHeaders covers every case;
-// c.VolatileHeaders covers the ones this case knows about, which is how the
-// admin API's per-request Location gets masked without masking Location
-// everywhere.
+// Three masks apply. The package-level VolatileHeaders covers every case;
+// c.VolatileHeaders covers the ones this case knows about; and
+// c.VolatileTailHeaders masks the last path segment alone, which is how the
+// admin API's per-request Location keeps everything before its UUID.
+//
+// It returns an error when a tail cannot be masked. A recorder that quietly
+// wrote a live UUID into a golden would produce churn on every run and a
+// contract nobody can read, so this is loud at the moment of recording rather
+// than a surprise in the diff.
 //
 // It lives here rather than beside the recorder that calls it because the
 // recorder is behind the docker build tag, and logic nothing can test without
 // Docker is logic nothing tests.
-func recordedHeaders(h http.Header, base string, c Case, vars map[string]string) []Header {
+func recordedHeaders(h http.Header, base string, c Case, vars map[string]string) ([]Header, error) {
 	volatile := make(map[string]bool, len(VolatileHeaders)+len(c.VolatileHeaders))
 	for _, name := range VolatileHeaders {
 		volatile[http.CanonicalHeaderKey(name)] = true
 	}
 	for _, name := range c.VolatileHeaders {
 		volatile[http.CanonicalHeaderKey(name)] = true
+	}
+	tail := make(map[string]bool, len(c.VolatileTailHeaders))
+	for _, name := range c.VolatileTailHeaders {
+		tail[http.CanonicalHeaderKey(name)] = true
 	}
 
 	names := make([]string, 0, len(h))
@@ -117,19 +160,29 @@ func recordedHeaders(h http.Header, base string, c Case, vars map[string]string)
 
 	out := make([]Header, 0, len(names))
 	for _, name := range names {
+		canonical := http.CanonicalHeaderKey(name)
 		// Every value, not just the first. userinfo's 200 sends Cache-Control
 		// twice - no-store, then no-cache - and recording one of them would
 		// commit a contract Keycloak does not have.
 		for _, value := range h.Values(name) {
-			if volatile[http.CanonicalHeaderKey(name)] {
+			switch {
+			case volatile[canonical]:
 				value = volatilePlaceholder
-			} else {
+			case tail[canonical]:
+				value = string(ReplaceIssuer(ReplaceCaptured([]byte(value), vars), base))
+				masked, ok := MaskURLTail(value)
+				if !ok {
+					return nil, fmt.Errorf("conformance: %s declares %s a volatile tail, "+
+						"but %q does not end in a UUID - assert it whole instead", c.ID, name, value)
+				}
+				value = masked
+			default:
 				value = string(ReplaceIssuer(ReplaceCaptured([]byte(value), vars), base))
 			}
 			out = append(out, Header{Name: name, Value: value})
 		}
 	}
-	return out
+	return out, nil
 }
 
 // GoldenPath turns a case ID into a file path under dir. IDs are validated as
