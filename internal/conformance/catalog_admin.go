@@ -476,8 +476,7 @@ var adminCases = []Case{
 			Section:   "Clients: get representation of a client created through the API",
 			Retrieved: "2026-08-23",
 		},
-		Status: Recorded,
-		Reason: "a created client inherits the realm's default client scopes, which is P5",
+		Status: Implemented,
 		// No Operation: admin/clients/read already claims it.
 		Fixture: "admin-token-client-to-read",
 		Request: Request{
@@ -507,8 +506,7 @@ var adminCases = []Case{
 			Section:   "Clients: get representation of a client with a description",
 			Retrieved: "2026-08-23",
 		},
-		Status:  Recorded,
-		Reason:  "a created client inherits the realm's default client scopes, which is P5",
+		Status:  Implemented,
 		Fixture: "admin-token-client-described",
 		Request: Request{
 			Method:  http.MethodGet,
