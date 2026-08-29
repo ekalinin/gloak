@@ -4358,4 +4358,676 @@ var adminCases = []Case{
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},
+
+	// ---------------------------------------------------------------------
+	// P5's first cut: client scopes, the realm's two default sets and a
+	// client's two. See docs/superpowers/plans/2026-08-29-p5-client-scopes.md.
+	//
+	// `client-templates` is a deprecated path alias for `client-scopes`. The
+	// vendored description counts its five operations separately, so they are
+	// five cases here rather than a note, and each one is measured through the
+	// alias rather than assumed from its sibling.
+	// ---------------------------------------------------------------------
+	{
+		// PristineRealm because the body is every client scope in the realm.
+		// Two later cases create one and one deletes one, and this case's
+		// number is the whole point of it.
+		//
+		// Unordered at the root because the fifteen come back in a Java set's
+		// order, and on each scope's protocolMappers for the same reason. The
+		// ids are **not** masked: they are per-container UUIDs, so they are
+		// Volatile, but the sort has to run on masked bytes to be stable -
+		// which it does, Normalize before SortUnordered.
+		ID: "admin/client-scopes/list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: get client scopes belonging to the realm",
+			Retrieved: "2026-08-29",
+		},
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/client-scopes",
+		PristineRealm: true,
+		Fixture:       "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-scopes",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/protocolMappers/*/id"},
+		Unordered:     []string{".", "*/protocolMappers"},
+	},
+	{
+		// The alias serves the identical body. Measured, not assumed: this is
+		// the same request through the other spelling and its golden is
+		// recorded separately.
+		ID: "admin/client-scopes/list-templates",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: get client scopes belonging to the realm (client-templates)",
+			Retrieved: "2026-08-29",
+		},
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/client-templates",
+		PristineRealm: true,
+		Fixture:       "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-templates",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/protocolMappers/*/id"},
+		Unordered:     []string{".", "*/protocolMappers"},
+	},
+	{
+		// A created scope: five keys, no description and no protocolMappers,
+		// and `attributes` present and empty. The id is the fixture's own
+		// constant, so nothing here is Volatile.
+		ID: "admin/client-scopes/read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: get representation of the client scope",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-scopes/{client-scope-id}",
+		Fixture:   "admin-token-client-scope",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000001",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/client-scopes/read-template",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: get representation of the client scope (client-templates)",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-templates/{client-scope-id}",
+		Fixture:   "admin-token-client-scope",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000001",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// 201, empty body, absolute Location - and **Cache-Control: no-cache**,
+		// where POST /clients has none. Two creates on one API, one with the
+		// header and one without.
+		ID: "admin/client-scopes/create",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: create a new client scope",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/client-scopes",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"a5c09e00-0000-4000-8000-0000000000f1",` +
+				`"name":"gloak-probe-scope-create","protocol":"openid-connect"}`),
+		},
+		AssertHeaders:       []string{"Cache-Control", "Location"},
+		AssertAbsentHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/client-scopes/create-template",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: create a new client scope (client-templates)",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/client-templates",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-templates",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"a5c09e00-0000-4000-8000-0000000000f2",` +
+				`"name":"gloak-probe-template-create","protocol":"openid-connect"}`),
+		},
+		AssertHeaders:       []string{"Cache-Control", "Location"},
+		AssertAbsentHeaders: []string{"Content-Type"},
+	},
+	{
+		// 204 with **no** Cache-Control, where the delete beside it carries
+		// one. Pinned per endpoint, like every other Cache-Control here.
+		ID: "admin/client-scopes/update",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: update the client scope",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/client-scopes/{client-scope-id}",
+		Fixture:   "admin-token-client-scope-update",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000002",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-scope-updated","description":"after"}`),
+		},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+	},
+	{
+		ID: "admin/client-scopes/update-template",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: update the client scope (client-templates)",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/client-templates/{client-scope-id}",
+		Fixture:   "admin-token-client-template-update",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000004",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-template-updated"}`),
+		},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+	},
+	{
+		// The 204 carries Cache-Control where the update's does not, and no
+		// X-Frame-Options because the request declared no Content-Type.
+		ID: "admin/client-scopes/delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: delete the client scope",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/client-scopes/{client-scope-id}",
+		Fixture:   "admin-token-client-scope-delete",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000003",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		ID: "admin/client-scopes/delete-template",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: delete the client scope (client-templates)",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/client-templates/{client-scope-id}",
+		Fixture:   "admin-token-client-template-delete",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000005",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// The 404 the /client-scopes/{id} routes answer, and it is not the one
+		// the realm's and the client's default-scope routes answer for the
+		// very same missing object. Both spellings are in this catalogue on
+		// purpose.
+		ID: "admin/client-scopes/read-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: get a client scope that does not exist",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-scopes/00000000-0000-0000-0000-000000000000",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// A path segment that is not a UUID at all is the same 404, not a 400.
+		ID: "admin/client-scopes/read-malformed-id",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: get a client scope by an id that is not a UUID",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-scopes/not-a-uuid",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// An absent protocol and an invalid one give the identical message.
+		ID: "admin/client-scopes/create-without-protocol",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: create with no protocol",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-scope-noproto"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// A name that is present and empty is a 400 naming the empty string,
+		// with the quotes escaped into the message.
+		ID: "admin/client-scopes/create-empty-name",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: create with an empty name",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"","protocol":"openid-connect"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// A name that is **absent** is a 500, and it is checked before the
+		// protocol - `{}` answers about the name where `{"name":"x"}` answers
+		// about the protocol. Keycloak's own defect, reproduced.
+		ID: "admin/client-scopes/create-without-name",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: create with no name",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"protocol":"openid-connect"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The name conflicts whatever the protocol says: the same name under
+		// the other protocol is still 409.
+		ID: "admin/client-scopes/create-duplicate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: create a client scope whose name is taken",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-client-scope",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-scope","protocol":"saml"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+
+	// The realm's own two default sets. Tagged Realms Admin by the
+	// description and guarded by the clients role family, which is why they
+	// are built here and counted there.
+	{
+		// Nine on a pristine realm, not six: the three saml scopes are in it
+		// and are filtered out only when an openid-connect client inherits.
+		// The order is insertion order and it is reproducible - four
+		// measurements across two container starts and two realms agreed - so
+		// it is asserted rather than sorted away.
+		ID: "admin/realms-admin/default-default-client-scopes",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get the realm's default default client scopes",
+			Retrieved: "2026-08-29",
+		},
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/default-default-client-scopes",
+		PristineRealm: true,
+		Fixture:       "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/default-default-client-scopes",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id"},
+	},
+	{
+		ID: "admin/realms-admin/default-optional-client-scopes",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get the realm's default optional client scopes",
+			Retrieved: "2026-08-29",
+		},
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/default-optional-client-scopes",
+		PristineRealm: true,
+		Fixture:       "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/default-optional-client-scopes",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id"},
+	},
+	{
+		ID: "admin/realms-admin/default-default-client-scope-add",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: add a client scope to the realm's defaults",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/default-default-client-scopes/{clientScopeId}",
+		Fixture:   "admin-token-realm-scope-add",
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/master/default-default-client-scopes/a5c09e00-0000-4000-8000-000000000006",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		ID: "admin/realms-admin/default-default-client-scope-remove",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: remove a client scope from the realm's defaults",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/default-default-client-scopes/{clientScopeId}",
+		Fixture:   "admin-token-realm-scope-drop",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/default-default-client-scopes/a5c09e00-0000-4000-8000-000000000007",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		ID: "admin/realms-admin/default-optional-client-scope-add",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: add a client scope to the realm's optionals",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/default-optional-client-scopes/{clientScopeId}",
+		Fixture:   "admin-token-realm-scope-add-opt",
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/master/default-optional-client-scopes/a5c09e00-0000-4000-8000-000000000008",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		ID: "admin/realms-admin/default-optional-client-scope-remove",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: remove a client scope from the realm's optionals",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/default-optional-client-scopes/{clientScopeId}",
+		Fixture:   "admin-token-realm-scope-drop-opt",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/default-optional-client-scopes/a5c09e00-0000-4000-8000-000000000009",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// The **second** PUT of one scope is a 409, where the client-level PUT
+		// beside it is idempotent. The fixture has already added this one.
+		ID: "admin/realms-admin/default-default-client-scope-duplicate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: add a client scope that is already a realm default",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-realm-scope-drop",
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/master/default-default-client-scopes/a5c09e00-0000-4000-8000-000000000007",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The realm routes' 404 for a missing client scope is "Client scope
+		// not found", where /client-scopes/{id} answers "Could not find client
+		// scope" for the very same object.
+		ID: "admin/realms-admin/default-default-client-scope-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: add a client scope that does not exist",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/master/default-default-client-scopes/00000000-0000-0000-0000-000000000000",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+
+	// A client's own two sets. Tagged Clients by the description; the
+	// resource is a client scope, so P5 builds them.
+	{
+		// Two keys per entry, where the realm's listing carries three. The
+		// order is a Java set's and is **not** reproducible - two clients
+		// created minutes apart came back with roles and profile swapped - so
+		// this one is sorted where the realm's is asserted in order.
+		ID: "admin/clients/default-client-scopes",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get the client's default client scopes",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/default-client-scopes",
+		Fixture:   "admin-token-client-scopes-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/default-client-scopes",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id"},
+		Unordered:     []string{"."},
+	},
+	{
+		ID: "admin/clients/optional-client-scopes",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get the client's optional client scopes",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/optional-client-scopes",
+		Fixture:   "admin-token-client-scopes-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/optional-client-scopes",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id"},
+		Unordered:     []string{"."},
+	},
+	{
+		ID: "admin/clients/default-client-scope-add",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: add a default client scope to the client",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/clients/{client-uuid}/default-client-scopes/{clientScopeId}",
+		Fixture:   "admin-token-client-scope-attach",
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/default-client-scopes/" +
+				"a5c09e00-0000-4000-8000-00000000000b",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		ID: "admin/clients/default-client-scope-remove",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: remove a default client scope from the client",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/clients/{client-uuid}/default-client-scopes/{clientScopeId}",
+		Fixture:   "admin-token-client-scope-detach",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/default-client-scopes/" +
+				"a5c09e00-0000-4000-8000-00000000000c",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		ID: "admin/clients/optional-client-scope-add",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: add an optional client scope to the client",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/clients/{client-uuid}/optional-client-scopes/{clientScopeId}",
+		Fixture:   "admin-token-client-scope-attach-opt",
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/optional-client-scopes/" +
+				"a5c09e00-0000-4000-8000-00000000000d",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		ID: "admin/clients/optional-client-scope-remove",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: remove an optional client scope from the client",
+			Retrieved: "2026-08-29",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/clients/{client-uuid}/optional-client-scopes/{clientScopeId}",
+		Fixture:   "admin-token-client-scope-detach-opt",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/optional-client-scopes/" +
+				"a5c09e00-0000-4000-8000-00000000000e",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// The client is resolved before the caller's write role and the scope
+		// after it, so an unknown client on this route is "Could not find
+		// client" - the clients family's spelling, not either of the client
+		// scope ones.
+		ID: "admin/clients/default-client-scopes-unknown-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get the default client scopes of a client that does not exist",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/00000000-0000-0000-0000-000000000000/default-client-scopes",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// And a scope that does not exist on a client that does is the third
+		// spelling again: "Client scope not found".
+		ID: "admin/clients/default-client-scope-unknown-scope",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: add a default client scope that does not exist",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-client-scopes-read",
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/default-client-scopes/" +
+				"00000000-0000-0000-0000-000000000000",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
 }
