@@ -56,13 +56,20 @@ const (
 	authErrUnauthorizedClient  = "unauthorized_client"
 	authErrInvalidScope        = "invalid_scope"
 	authErrLoginRequired       = "login_required"
-	descMissingResponseType    = "Missing parameter: response_type"
-	descInvalidResponseMode    = "Invalid parameter: response_mode"
-	descDuplicatedParameter    = "duplicated parameter"
-	descMissingChallenge       = "Missing parameter: code_challenge"
-	descInvalidChallengeMeth   = "Invalid parameter: code_challenge_method"
-	descInvalidChallenge       = "Invalid parameter: code_challenge"
-	descStandardFlowOff        = "Client is not allowed to initiate browser login with given response_type. " +
+	// Measured on POST /login-actions/authenticate, not here: a browser whose
+	// authentication session is gone and whose KC_RESTART has been cleared is
+	// told its login expired, in the same four-key redirect this endpoint's own
+	// rejections use. The description is lower case with an underscore, unlike
+	// every prose description above it.
+	authErrTemporarilyUnavailable = "temporarily_unavailable"
+	descAuthenticationExpired     = "authentication_expired"
+	descMissingResponseType       = "Missing parameter: response_type"
+	descInvalidResponseMode       = "Invalid parameter: response_mode"
+	descDuplicatedParameter       = "duplicated parameter"
+	descMissingChallenge          = "Missing parameter: code_challenge"
+	descInvalidChallengeMeth      = "Invalid parameter: code_challenge_method"
+	descInvalidChallenge          = "Invalid parameter: code_challenge"
+	descStandardFlowOff           = "Client is not allowed to initiate browser login with given response_type. " +
 		"Standard flow is disabled for the client."
 	descImplicitFlowOff = "Client is not allowed to initiate browser login with given response_type. " +
 		"Implicit flow is disabled for the client."
@@ -244,8 +251,96 @@ func (h *handler) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validated. Keycloak renders its login page here; see the doc comment.
-	h.writeErrorPage(w, http.StatusBadRequest)
+	// Validated. Open an authentication session and render the login page.
+	h.beginLogin(w, realm, client, redirectURI, mode, params, state, hasState)
+}
+
+// beginLogin is what a request that survived all ten checks gets: an
+// authentication session, its three cookies, and the login form.
+//
+// **The response mode is taken from the request and stored on the tab**, not
+// re-derived at the login. Measured: a login started with
+// response_mode=fragment puts the code in the fragment, and a client_data that
+// claims rm=fragment on a tab that did not ask for it does not - so the tab is
+// the authority and the browser's copy is not.
+//
+// mode is the already-resolved mode rather than the raw parameter, so a request
+// that named none stores the empty string and client_data omits `rm`, which is
+// what the measured client_data does.
+func (h *handler) beginLogin(w http.ResponseWriter, realm *model.Realm, client *model.Client,
+	redirectURI, mode string, params url.Values, state string, hasState bool) {
+	named := ""
+	if _, present := params["response_mode"]; present {
+		named = mode
+	}
+	tab := &authTab{
+		ClientID:     client.ClientID,
+		ClientUUID:   client.ID,
+		RedirectURI:  redirectURI,
+		ResponseMode: named,
+		State:        state,
+		HasState:     hasState,
+	}
+	sess, err := h.beginAuthSession(w, realm, tab, &restartRecord{
+		Realm:        realm.Name,
+		ClientID:     client.ClientID,
+		RedirectURI:  redirectURI,
+		State:        state,
+		HasState:     hasState,
+		ResponseMode: named,
+	})
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	h.serveLoginPage(w, realm, sess, tab, "", "")
+}
+
+// beginAuthSession mints an authentication session for a tab and writes the
+// cookies that carry it.
+//
+// The Set-Cookie order is measured: AUTH_SESSION_ID, KC_AUTH_SESSION_HASH, then
+// KC_RESTART. Their attribute spellings differ from one another in ways that
+// look accidental and are the contract - KC_AUTH_SESSION_HASH's value is
+// **quoted** and it alone omits HttpOnly, and it carries Max-Age=60 where the
+// session it names lives for half an hour.
+//
+// restart is nil on the restart path itself, which measured sets AUTH_SESSION_ID
+// and KC_AUTH_SESSION_HASH and does **not** set a second KC_RESTART: the one the
+// browser already holds is what it restarted from.
+func (h *handler) beginAuthSession(w http.ResponseWriter, realm *model.Realm, tab *authTab,
+	restart *restartRecord) (*authSession, error) {
+	tabID, err := randomBase64URL(tabIDBytes)
+	if err != nil {
+		return nil, err
+	}
+	tab.TabID = tabID
+	sess, err := h.auth.newAuthSession(realm.Name, tab)
+	if err != nil {
+		return nil, err
+	}
+	path := realmCookiePath(realm.Name)
+	httpx.SetKeycloakCookie(w, httpx.Cookie{
+		Name: authSessionCookie, Value: encodeAuthSessionID(sess.RootID, sess.Secret),
+		Path: path, Secure: true, HTTPOnly: true, SameSite: "None",
+	})
+	httpx.SetKeycloakCookie(w, httpx.Cookie{
+		Name: authHashCookie, Value: sess.Hash, Quoted: true, Path: path,
+		MaxAge: int(authHashMaxAge.Seconds()), SetMaxAge: true,
+		Secure: true, SameSite: "None",
+	})
+	if restart == nil {
+		return sess, nil
+	}
+	value, err := h.auth.newRestart(restart)
+	if err != nil {
+		return nil, err
+	}
+	httpx.SetKeycloakCookie(w, httpx.Cookie{
+		Name: restartCookie, Value: value, Path: path,
+		Secure: true, HTTPOnly: true, SameSite: "None",
+	})
+	return sess, nil
 }
 
 // responseFlow is which of the client's flow flags a response_type asks for.

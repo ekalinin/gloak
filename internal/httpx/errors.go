@@ -11,7 +11,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -100,6 +102,141 @@ func WriteLogoutRedirect(w http.ResponseWriter, location string) {
 	w.WriteHeader(http.StatusFound)
 }
 
+// WriteLoginActionRedirect writes POST /realms/{realm}/login-actions/authenticate's
+// 302, and it is deliberately not WriteAuthorizationRedirect.
+//
+// The two are the same status, to the same client-registered URI, in the same
+// flow - and their header sets differ. Measured 2026-08-30 on one container:
+//
+//	GET  /auth                        302   no X-Frame-Options, no Content-Security-Policy
+//	POST /login-actions/authenticate  302   both present
+//
+// So the two omissions are `/auth`'s, not "errors omit them" and not "302s omit
+// them": this endpoint's *error* redirect carries all six too, and so does its
+// success. Sharing one writer and passing a flag would put that difference one
+// call site away from being invisible, which is the reason WriteLogoutRedirect
+// is separate as well.
+//
+// Cache-Control is the same string /auth's redirect sends. That is measured
+// rather than inherited - the logout redirect beside them sends "no-cache".
+func WriteLoginActionRedirect(w http.ResponseWriter, location string) {
+	suppressDate(w)
+	SetSecurityHeaders(w)
+	SetContentSecurityPolicy(w)
+	w.Header().Set("Cache-Control", "no-store, must-revalidate, max-age=0")
+	w.Header().Set("Location", location)
+	w.WriteHeader(http.StatusFound)
+}
+
+// Cookie is one Set-Cookie header in Keycloak's own spelling.
+//
+// It exists because net/http's http.SetCookie cannot produce that spelling at
+// all. Keycloak 26.7.1 writes its attributes with **no space after the
+// semicolon** and leads with `Version=1`, an RFC 2965 attribute
+// http.Cookie has no field for:
+//
+//	AUTH_SESSION_ID=<v>;Version=1;Path=/realms/master/;Secure;HttpOnly;SameSite=None
+//	KC_AUTH_SESSION_HASH="<v>";Version=1;Path=/realms/master/;Max-Age=60;Secure;SameSite=None
+//	KC_RESTART=;Version=1;Path=/realms/master/;Max-Age=0
+//
+// A Set-Cookie header is observable, so this is response formatting and it
+// belongs in this package with every other byte Gloak writes.
+//
+// Quoted is for KC_AUTH_SESSION_HASH alone, whose value arrives wrapped in
+// double quotes where no other cookie in the flow does. MaxAge is emitted only
+// when Set is true, because 0 is a meaningful value - it is how the login
+// clears KC_RESTART - and an int cannot say "absent" on its own.
+type Cookie struct {
+	Name      string
+	Value     string
+	Quoted    bool
+	Path      string
+	MaxAge    int
+	SetMaxAge bool
+	Secure    bool
+	HTTPOnly  bool
+	SameSite  string
+}
+
+// SetKeycloakCookie appends one Set-Cookie header in the spelling above.
+//
+// The header is appended through the map rather than through http.SetCookie so
+// that the value is written exactly as given: SetCookie sanitises, and
+// sanitising drops the double quotes around KC_AUTH_SESSION_HASH's value - so
+// the cookie a browser sent back would not be the cookie it received. The
+// conformance suite cannot catch that, because every case in the flow masks
+// Set-Cookie as volatile; internal/httpx's own test is the guard.
+func SetKeycloakCookie(w http.ResponseWriter, c Cookie) {
+	value := c.Value
+	if c.Quoted {
+		value = `"` + value + `"`
+	}
+	parts := []string{c.Name + "=" + value, "Version=1"}
+	if c.Path != "" {
+		parts = append(parts, "Path="+c.Path)
+	}
+	if c.SetMaxAge {
+		parts = append(parts, "Max-Age="+strconv.Itoa(c.MaxAge))
+	}
+	if c.Secure {
+		parts = append(parts, "Secure")
+	}
+	if c.HTTPOnly {
+		parts = append(parts, "HttpOnly")
+	}
+	if c.SameSite != "" {
+		parts = append(parts, "SameSite="+c.SameSite)
+	}
+	w.Header().Add("Set-Cookie", strings.Join(parts, ";"))
+}
+
+// LoginPageTitle is the heading Keycloak's login page carries, and the one
+// WriteThemeLoginPage renders. Measured: the page's <title> is "Sign in to
+// Keycloak" and its kc-page-title heading is "Sign in to your account". The
+// heading is what the other theme pages differ in, so it is the heading Gloak's
+// placeholder reproduces - the same choice ThemeErrorTitle already makes.
+const LoginPageTitle = "Sign in to your account"
+
+// ExpiredPageTitle is the heading of the page an unknown or absent `execution`
+// answers: 200, "Page has expired". It is a third theme page, distinct from the
+// login page and from the error page, and it is a 200 rather than a 400.
+const ExpiredPageTitle = "Page has expired"
+
+// WriteThemeLoginPage writes the login page: the one response in this flow
+// whose body a fixture actually reads.
+//
+// Everything else Gloak serves through this package is a placeholder nobody
+// parses. This one is parsed - `internal/conformance`'s CaptureForm tokenises
+// the first <form> out of it and takes its action - so the form is real even
+// though the styling is not. Measured, the page holds exactly one form, and its
+// only inputs are username (text), password (password) and credentialId
+// (hidden, with **no value attribute at all**).
+//
+// message is the feedback line a re-served page carries: "Invalid username or
+// password." after a wrong credential, "Account is disabled, contact your
+// administrator." for a disabled user, and empty on the first render. username
+// is echoed back into the input the way the measured page echoes it.
+//
+// The action is written with the raw ampersands the tokeniser expects to
+// unescape, so it is HTML-escaped here exactly once.
+func WriteThemeLoginPage(w http.ResponseWriter, action, username, message string) {
+	var body strings.Builder
+	body.WriteString(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
+		`<title>Sign in to Keycloak</title></head><body>` +
+		`<h1 id="kc-page-title">` + LoginPageTitle + `</h1>`)
+	if message != "" {
+		body.WriteString(`<span class="kc-feedback-text">` + html.EscapeString(message) + `</span>`)
+	}
+	body.WriteString(`<form id="kc-form-login" action="` + html.EscapeString(action) +
+		`" method="post" novalidate="novalidate">` +
+		`<input id="username" name="username" value="` + html.EscapeString(username) +
+		`" type="text" autocomplete="username"/>` +
+		`<input id="password" name="password" value="" type="password" autocomplete="current-password"/>` +
+		`<input type="hidden" id="id-hidden-input" name="credentialId"/>` +
+		`</form></body></html>`)
+	writeThemeHTML(w, http.StatusOK, "no-store, must-revalidate, max-age=0", body.String())
+}
+
 // themePageBody is Gloak's placeholder for a page the login theme renders.
 //
 // Keycloak serves 3574 to 4645 bytes of keycloak.v2 Freemarker output here,
@@ -166,6 +303,14 @@ func WriteThemeErrorPage(w http.ResponseWriter, status int, cacheControl string)
 // the five security headers. Only the status, the Cache-Control and the body
 // differ, which is why those three are the parameters and nothing else is.
 func WriteThemePage(w http.ResponseWriter, status int, cacheControl, title string) {
+	writeThemeHTML(w, status, cacheControl, themePageBody(title))
+}
+
+// writeThemeHTML is the envelope itself, shared by the placeholder pages and by
+// the login page, whose body is real where theirs is a placeholder. It is one
+// function so that a page gaining a real body cannot quietly gain a different
+// header set with it.
+func writeThemeHTML(w http.ResponseWriter, status int, cacheControl, body string) {
 	suppressDate(w)
 	SetSecurityHeaders(w)
 	SetContentSecurityPolicy(w)
@@ -175,7 +320,7 @@ func WriteThemePage(w http.ResponseWriter, status int, cacheControl, title strin
 	w.Header().Set("Content-Language", "en")
 	w.Header().Set("Content-Type", "text/html;charset=utf-8")
 	w.WriteHeader(status)
-	_, _ = w.Write([]byte(themePageBody(title)))
+	_, _ = w.Write([]byte(body))
 }
 
 // suppressDate omits the Date header net/http would otherwise add
