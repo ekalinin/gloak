@@ -54,6 +54,34 @@ func TestWriteBearerChallengeOmitsDateHeader(t *testing.T) {
 	}
 }
 
+// TestWriteNoContentOmitsDateHeader is the third of these, and the one that
+// was missing while the rule it guards was false.
+//
+// Every 204 Gloak sent carried a Date header until this was added: the two
+// tests above both go through writeJSON, and a 204 has no body to go through
+// it. It was found by reading a live PUT .../default-groups/{id} off the wire
+// while measuring P4, not by any test - which is the same blind spot the
+// conformance harness has, since ResponseRecorder adds no Date either.
+func TestWriteNoContentOmitsDateHeader(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpx.WriteNoContent(w, r)
+	}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("want 204, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Date"); got != "" {
+		t.Fatalf("want no Date header, got %q", got)
+	}
+}
+
 func TestWriteOAuthError(t *testing.T) {
 	w := httptest.NewRecorder()
 
