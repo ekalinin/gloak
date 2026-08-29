@@ -347,6 +347,18 @@ var Fixtures = map[string]Fixture{
 	"browser-login-plain":   browserFormFixture("gloak-probe-browser", "", pkcePlainQuery),
 	"browser-login-frag":    browserFormFixture("gloak-probe-browser", "", map[string]string{"response_mode": "fragment"}),
 	"browser-login-form":    browserFormFixture("gloak-probe-browser", "", map[string]string{"response_mode": "form_post"}),
+	// A login that has already completed, so the case's own request is the
+	// **replay** of its credential POST.
+	//
+	// Its client is its own for the usual reason, and its jar is the point: the
+	// successful login clears KC_RESTART with Max-Age=0, and `cookies` stores a
+	// cleared cookie as an empty value and resends it - which is what a browser
+	// that has not yet expired it does. Measured 2026-08-30 as a grid over the
+	// three cookies, an **empty KC_RESTART counts as absent**, so this fixture
+	// reaches the one branch of the three whose Location holds nothing
+	// per-request and can therefore be asserted by value.
+	"browser-login-expired": browserCodeFixture("gloak-probe-browser-expired", "", nil),
+
 	"browser-code":          browserCodeFixture("gloak-probe-browser", "", nil),
 	"browser-code-mismatch": browserCodeFixture("gloak-probe-browser", "", pkceS256Query),
 	"browser-code-spent":    browserSpentCodeFixture("gloak-probe-browser", nil, nil),

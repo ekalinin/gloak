@@ -160,6 +160,48 @@ var oidcPending = []Case{
 		VolatileHeaders: []string{"Location", "Set-Cookie"},
 	},
 	{
+		// The replay of a credential POST, and the one response in this flow
+		// whose Location can be asserted **by value**.
+		//
+		// Every other case here masks its Location whole, because a success
+		// carries a code and a session_state this request minted. This one
+		// carries `error`, `error_description`, `state` and `iss` and nothing
+		// else, so its key order and both its strings are pinned exactly - and
+		// they are the strings a browser meets whenever it uses its back button
+		// after signing in.
+		//
+		// Measured 2026-08-30 as a grid over the three cookies. Which of three
+		// answers a replay gets depends on the cookies alone: KC_RESTART
+		// present restarts, KEYCLOAK_IDENTITY alone answers this, and neither
+		// answers a 400 page. The fixture reaches this branch because the login
+		// itself clears KC_RESTART.
+		ID: "oidc/authorization/replayed-session-code",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authentication: replaying a spent session code",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "browser-login-expired",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "{{login_action}}",
+			Form: map[string]string{
+				"username":     "admin",
+				"password":     "admin",
+				"credentialId": "",
+			},
+		},
+		// Location is asserted by value, which nothing else in this family can
+		// do. Set-Cookie is not asserted at all: measured, this branch sets
+		// none, and AssertAbsentHeaders says so rather than leaving it to the
+		// golden nobody compares.
+		AssertHeaders: []string{
+			"Location", "Cache-Control", "Content-Security-Policy", "X-Frame-Options",
+		},
+		AssertAbsentHeaders: []string{"Set-Cookie"},
+	},
+	{
 		ID: "oidc/authorization/implicit-flow",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
