@@ -2,7 +2,9 @@ package keys_test
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509"
 	"path/filepath"
 	"testing"
 
@@ -67,6 +69,87 @@ func TestManagerKeepsKidAcrossRestarts(t *testing.T) {
 	if first.HMACKeyID != second.HMACKeyID {
 		t.Errorf("HMAC kid changed across restarts: %q then %q", first.HMACKeyID, second.HMACKeyID)
 	}
+	if first.AESKeyID != second.AESKeyID {
+		t.Errorf("AES kid changed across restarts: %q then %q", first.AESKeyID, second.AESKeyID)
+	}
+}
+
+// TestManagerCompletesAKeySetMissingItsAESKey covers the upgrade path: a realm
+// bootstrapped before the AES key existed has three rows, and the server has to
+// start rather than declare it corrupt. The other three ids must survive,
+// because those are the ones a cached JWKS and every live refresh token name.
+//
+// The three rows are written directly rather than by generating four and
+// removing one: KeyRepo has no delete, deliberately, and inventing one for a
+// test would put a method in the interface that production code never calls.
+func TestManagerCompletesAKeySetMissingItsAESKey(t *testing.T) {
+	s, realm := newStore(t)
+	ctx := context.Background()
+
+	sigID, encID, hmacID := writeThreeKeyRows(t, s, realm.ID)
+
+	k, err := keys.NewManager(s).ForRealm(ctx, realm)
+	if err != nil {
+		t.Fatalf("ForRealm: %v", err)
+	}
+
+	if k.AESKeyID == "" {
+		t.Error("want an AES kid minted for the incomplete set")
+	}
+	if k.RSAKeyID != sigID || k.EncKeyID != encID || k.HMACKeyID != hmacID {
+		t.Errorf("completing the set moved another kid: rsa %q->%q enc %q->%q hmac %q->%q",
+			sigID, k.RSAKeyID, encID, k.EncKeyID, hmacID, k.HMACKeyID)
+	}
+	rows, err := s.Keys().ListByRealm(ctx, realm.ID)
+	if err != nil {
+		t.Fatalf("ListByRealm: %v", err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("want the AES row persisted, got %d rows", len(rows))
+	}
+	// And it survives the next restart with the id it was given, rather than
+	// being minted afresh on every start.
+	again, err := keys.NewManager(s).ForRealm(ctx, realm)
+	if err != nil {
+		t.Fatalf("second ForRealm: %v", err)
+	}
+	if again.AESKeyID != k.AESKeyID {
+		t.Errorf("AES kid changed on the next start: %q then %q", k.AESKeyID, again.AESKeyID)
+	}
+}
+
+// writeThreeKeyRows stores the key set a realm bootstrapped before the AES key
+// existed would hold, and returns the three ids.
+func writeThreeKeyRows(t *testing.T, s store.Store, realmID string) (sigID, encID, hmacID string) {
+	t.Helper()
+	ctx := context.Background()
+	pkcs8 := func() []byte {
+		t.Helper()
+		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			t.Fatalf("GenerateKey: %v", err)
+		}
+		der, err := x509.MarshalPKCS8PrivateKey(key)
+		if err != nil {
+			t.Fatalf("MarshalPKCS8PrivateKey: %v", err)
+		}
+		return der
+	}
+	sigID, encID, hmacID = model.NewID(), model.NewID(), model.NewID()
+	rows := []*model.RealmKey{
+		{ID: sigID, RealmID: realmID, Algorithm: "RS256", Use: "sig",
+			PrivateKey: pkcs8(), Certificate: []byte{}, CreatedAt: 1},
+		{ID: encID, RealmID: realmID, Algorithm: "RSA-OAEP", Use: "enc",
+			PrivateKey: pkcs8(), Certificate: []byte{}, CreatedAt: 1},
+		{ID: hmacID, RealmID: realmID, Algorithm: "HS512",
+			PrivateKey: []byte("secret"), Certificate: []byte{}, CreatedAt: 1},
+	}
+	for _, row := range rows {
+		if err := s.Keys().Create(ctx, row); err != nil {
+			t.Fatalf("Keys().Create(%s): %v", row.Algorithm, err)
+		}
+	}
+	return sigID, encID, hmacID
 }
 
 func TestManagerRestoresUsableKeyMaterial(t *testing.T) {

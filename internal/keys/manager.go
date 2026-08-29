@@ -18,6 +18,7 @@ const (
 	algRS256   = "RS256"
 	algRSAOAEP = "RSA-OAEP"
 	algHS512   = "HS512"
+	algAES     = "AES"
 )
 
 // Manager resolves a realm's key set, generating and persisting one the first
@@ -51,13 +52,58 @@ func (m *Manager) ForRealm(ctx context.Context, realm *model.Realm) (*RealmKeys,
 	if err != nil {
 		return nil, err
 	}
-	if k == nil {
+	switch {
+	case k == nil:
 		if k, err = m.create(ctx, realm); err != nil {
+			return nil, err
+		}
+	case len(k.aesKey) == 0:
+		if err := m.addAES(ctx, realm, k); err != nil {
 			return nil, err
 		}
 	}
 	m.cached[realm.ID] = k
 	return k, nil
+}
+
+// addAES mints the AES key for a realm whose set predates it and persists it.
+//
+// **This is the one missing key that is completed rather than reported**, and
+// the asymmetry is the point. load refuses a set missing its RSA or HMAC key
+// because generating one would publish a kid no client has ever seen while
+// leaving the others alone - a JWKS a client cached would stop matching, and
+// every refresh token already issued would stop verifying. The AES key is in
+// no JWKS, signs nothing and encrypts nothing here: it is published only as an
+// entry in the Admin API's key listing. So a realm bootstrapped before this
+// key existed can gain one with nothing observable breaking, where declaring
+// it corrupt would take the whole server down at startup.
+func (m *Manager) addAES(ctx context.Context, realm *model.Realm, k *RealmKeys) error {
+	aesKey, err := generateAES()
+	if err != nil {
+		return err
+	}
+	row := &model.RealmKey{
+		ID: model.NewID(), RealmID: realm.ID, Algorithm: algAES, Use: "enc",
+		PrivateKey: aesKey, Certificate: []byte{}, CreatedAt: time.Now().UnixMilli(),
+	}
+	if err := m.store.Keys().Create(ctx, row); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			// Another process got there first. Read its key back rather than
+			// keeping the one this call generated, so the two agree on the kid.
+			existing, lerr := m.load(ctx, realm)
+			if lerr != nil {
+				return lerr
+			}
+			if existing == nil || len(existing.aesKey) == 0 {
+				return fmt.Errorf("keys: realm %q lost its AES key mid-creation", realm.Name)
+			}
+			k.AESKeyID, k.aesKey = existing.AESKeyID, existing.aesKey
+			return nil
+		}
+		return fmt.Errorf("keys: store realm key: %w", err)
+	}
+	k.AESKeyID, k.aesKey = row.ID, aesKey
+	return nil
 }
 
 // Forget drops a realm's cached key set.
@@ -73,9 +119,13 @@ func (m *Manager) Forget(realmID string) {
 }
 
 // load rebuilds a key set from the store, or returns nil when the realm has no
-// keys yet. A realm holding some but not all three is reported as corrupt
-// rather than quietly completed: generating the missing key would publish a
-// kid no client has ever seen while leaving the others alone.
+// keys yet. A realm holding some but not all three of the RSA, encryption and
+// HMAC keys is reported as corrupt rather than quietly completed: generating
+// the missing key would publish a kid no client has ever seen while leaving
+// the others alone.
+//
+// **The AES key is deliberately not on that list.** A set without one loads,
+// and ForRealm mints it; addAES says why it is the exception.
 func (m *Manager) load(ctx context.Context, realm *model.Realm) (*RealmKeys, error) {
 	rows, err := m.store.Keys().ListByRealm(ctx, realm.ID)
 	if err != nil {
@@ -102,6 +152,8 @@ func (m *Manager) load(ctx context.Context, realm *model.Realm) (*RealmKeys, err
 			k.EncKeyID, k.encKey, k.encCertDER = row.ID, rsaKey, row.Certificate
 		case algHS512:
 			k.HMACKeyID, k.hmacKey = row.ID, row.PrivateKey
+		case algAES:
+			k.AESKeyID, k.aesKey = row.ID, row.PrivateKey
 		}
 	}
 	if k.rsaKey == nil || k.encKey == nil || len(k.hmacKey) == 0 {
@@ -172,5 +224,7 @@ func (k *RealmKeys) rows(realmID string, now int64) ([]*model.RealmKey, error) {
 			PrivateKey: encDER, Certificate: k.encCertDER, CreatedAt: now},
 		{ID: k.HMACKeyID, RealmID: realmID, Algorithm: algHS512,
 			PrivateKey: k.hmacKey, Certificate: []byte{}, CreatedAt: now},
+		{ID: k.AESKeyID, RealmID: realmID, Algorithm: algAES, Use: "enc",
+			PrivateKey: k.aesKey, Certificate: []byte{}, CreatedAt: now},
 	}, nil
 }
