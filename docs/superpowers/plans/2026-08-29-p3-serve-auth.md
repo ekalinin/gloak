@@ -347,12 +347,23 @@ form, a cookie, an auth session, a code store and a code exchange, and half of
 those are visible to a client. Serving three of the five is worse than serving
 none.
 
-**No `form_post` and no fragment response mode on the success path.** The error
-redirect honours `response_mode=fragment` - measured - and that is served,
-because it is a rejection. `form_post` answers 200 with an HTML form even for an
-error, which is a body Gloak cannot yet produce; a `response_mode=form_post`
-request that would be rejected therefore gets the page family, and that is
-written down in the handler.
+**Only two of the seven response modes are transported.** `query` and
+`fragment` are served, because a rejection under either is a redirect Gloak can
+write. The other five are recognised as valid - refusing them would contradict
+a measurement - and answer the page family:
+
+```
+form_post, form_post.jwt   200, an auto-submitting HTML form
+jwt, query.jwt             302 whose query is response=<a signed JARM assertion>
+fragment.jwt               the same, in the fragment
+```
+
+All five measured on the **error** path, which is what makes them this cut's
+problem rather than the success path's. Emitting the plain parameters instead
+would hand a JARM client an unsigned error where it asked for a signed one, so
+the refusal is the conservative answer and not a shortcut. This was found while
+writing the handover, by checking a claim in it against the code rather than
+against the container - which is the check that caught it.
 
 **No change to `internal/admin`'s client scope defaulting**, though section 5
 measured that it diverges. It is another agent's file this week and P5's work
