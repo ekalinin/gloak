@@ -8,8 +8,131 @@ import (
 	"testing"
 )
 
-// The CaptureHeader tests below live at the top of this file because they are
-// the newest thing in it; the rest is P1's body-capture coverage.
+// The cookie tests are the newest thing in this file; the CaptureHeader block
+// under them is P2's, and the rest is P1's body-capture coverage.
+
+// twoStepFixture is two requests against one recording handler, which is the
+// smallest shape that can show a value crossing from one step to the next.
+func twoStepFixture() Fixture {
+	return Fixture{State: "bootstrap", Steps: []Step{
+		{Request: Request{Method: http.MethodGet, Path: "/first"}},
+		{Request: Request{Method: http.MethodGet, Path: "/second"}},
+	}}
+}
+
+// recordingDo answers every request from h and keeps the requests it saw.
+func recordingDo(h http.HandlerFunc) (Do, *[]*http.Request) {
+	var seen []*http.Request
+	do := func(r *http.Request) (*http.Response, error) {
+		seen = append(seen, r)
+		w := httptest.NewRecorder()
+		h(w, r)
+		return w.Result(), nil
+	}
+	return do, &seen
+}
+
+func TestRunFixtureCarriesACookieToTheNextStep(t *testing.T) {
+	// A login is a session. Without this every step is an independent request
+	// and the credential POST arrives with no authentication session at all.
+	do, seen := recordingDo(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/first" {
+			w.Header().Add("Set-Cookie", "AUTH_SESSION_ID=abc;Version=1;Path=/realms/master/;Secure;HttpOnly")
+		}
+		w.WriteHeader(200)
+	})
+
+	if _, err := RunFixture(twoStepFixture(), "http://localhost:8080", do); err != nil {
+		t.Fatalf("RunFixture: %v", err)
+	}
+
+	if len(*seen) != 2 {
+		t.Fatalf("want 2 requests, got %d", len(*seen))
+	}
+	if got := (*seen)[0].Header.Get("Cookie"); got != "" {
+		t.Fatalf("the first step sent a cookie it could not have had: %q", got)
+	}
+	// The value only, with every attribute dropped: Version, Path, Secure and
+	// HttpOnly are instructions to a browser, not part of what one sends back.
+	if got := (*seen)[1].Header.Get("Cookie"); got != "AUTH_SESSION_ID=abc" {
+		t.Fatalf("want AUTH_SESSION_ID=abc, got %q", got)
+	}
+}
+
+func TestRunFixtureSendsEveryCookieInNameOrder(t *testing.T) {
+	// A recording that reordered its Cookie header between runs would make any
+	// golden downstream of a login churn for no reason.
+	do, seen := recordingDo(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/first" {
+			w.Header().Add("Set-Cookie", "KC_RESTART=jwe;Path=/realms/master/")
+			w.Header().Add("Set-Cookie", "AUTH_SESSION_ID=abc;Path=/realms/master/")
+		}
+		w.WriteHeader(200)
+	})
+
+	if _, err := RunFixture(twoStepFixture(), "http://localhost:8080", do); err != nil {
+		t.Fatalf("RunFixture: %v", err)
+	}
+
+	want := "AUTH_SESSION_ID=abc; KC_RESTART=jwe"
+	if got := (*seen)[1].Header.Get("Cookie"); got != want {
+		t.Fatalf("want %q, got %q", want, got)
+	}
+}
+
+func TestRunFixtureKeepsTheQuotesKeycloakSends(t *testing.T) {
+	// KC_AUTH_SESSION_HASH's value arrives wrapped in double quotes.
+	// http.Request.AddCookie sanitises them away, so the cookie sent back would
+	// not be the cookie received; send writes the header itself for this.
+	do, seen := recordingDo(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/first" {
+			w.Header().Add("Set-Cookie", `KC_AUTH_SESSION_HASH="wc8IgcQt+LWFo/sO6";Version=1;Max-Age=60`)
+		}
+		w.WriteHeader(200)
+	})
+
+	if _, err := RunFixture(twoStepFixture(), "http://localhost:8080", do); err != nil {
+		t.Fatalf("RunFixture: %v", err)
+	}
+
+	want := `KC_AUTH_SESSION_HASH="wc8IgcQt+LWFo/sO6"`
+	if got := (*seen)[1].Header.Get("Cookie"); got != want {
+		t.Fatalf("want %q, got %q", want, got)
+	}
+}
+
+func TestRunFixtureResendsAClearedCookie(t *testing.T) {
+	// The measured login clears KC_RESTART with Max-Age=0 and an empty value.
+	// This jar has no expiry semantics on purpose, so the cookie stays as an
+	// empty value - which is what a browser that has not yet expired it sends.
+	f := Fixture{State: "bootstrap", Steps: []Step{
+		{Request: Request{Method: http.MethodGet, Path: "/first"}},
+		{Request: Request{Method: http.MethodGet, Path: "/second"}},
+		{Request: Request{Method: http.MethodGet, Path: "/third"}},
+	}}
+	do, seen := recordingDo(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/first":
+			w.Header().Add("Set-Cookie", "KC_RESTART=jwe;Path=/realms/master/")
+		case "/second":
+			w.Header().Add("Set-Cookie", "KC_RESTART=;Version=1;Path=/realms/master/;Max-Age=0")
+		}
+		w.WriteHeader(200)
+	})
+
+	if _, err := RunFixture(f, "http://localhost:8080", do); err != nil {
+		t.Fatalf("RunFixture: %v", err)
+	}
+
+	if got := (*seen)[1].Header.Get("Cookie"); got != "KC_RESTART=jwe" {
+		t.Fatalf("step 2 want KC_RESTART=jwe, got %q", got)
+	}
+	if got := (*seen)[2].Header.Get("Cookie"); got != "KC_RESTART=" {
+		t.Fatalf("step 3 want the cleared value, got %q", got)
+	}
+}
+
+// The CaptureHeader tests below are P2's.
 
 func TestRunFixtureCapturesFromAHeader(t *testing.T) {
 	// The admin API answers a create with 201, an empty body and the new

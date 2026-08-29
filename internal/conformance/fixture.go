@@ -1472,6 +1472,65 @@ func loggedOutUserFixture() Fixture {
 // through httptest. Both return the response with its body still readable.
 type Do func(*http.Request) (*http.Response, error)
 
+// cookies is what a fixture's steps share so that a login is a session rather
+// than a sequence of strangers. Name to value, resent on every step.
+//
+// It lives here, inside RunFixture, and not on the recorder's http.Client.
+// The recorder would get a jar free from http.Client.Jar and the verifier -
+// which calls ServeHTTP into an httptest.ResponseRecorder - would get nothing,
+// so the two sides would obtain their responses in different ways. That is the
+// one thing this suite cannot afford; see the Fixtures doc comment.
+//
+// It is deliberately **not** a cookie jar's semantics. net/http/cookiejar
+// needs a *url.URL per call and a public-suffix list to behave, and the
+// fixtures address one host and no case tests scoping - so Path, Domain,
+// Secure and Max-Age are all ignored. A cookie cleared with Max-Age=0 and an
+// empty value is stored and resent as an empty value, which is what a browser
+// that has not yet expired it would send, and what Keycloak accepts: the
+// measured login clears KC_RESTART exactly that way.
+type cookies map[string]string
+
+// store folds a response's Set-Cookie headers in, keeping the last value for a
+// name a response repeats.
+func (c cookies) store(h http.Header) {
+	for _, raw := range h.Values("Set-Cookie") {
+		name, value, ok := strings.Cut(raw, "=")
+		if !ok {
+			continue
+		}
+		// Only the value, up to the first attribute separator. Keycloak spells
+		// its attributes with no space after the semicolon, so cutting on ";"
+		// rather than "; " is what reads AUTH_SESSION_ID=x;Version=1 correctly.
+		value, _, _ = strings.Cut(value, ";")
+		c[strings.TrimSpace(name)] = value
+	}
+}
+
+// send puts every stored cookie on a request, in name order so that a golden
+// recorded from one run is reproducible by the next.
+//
+// It writes the Cookie header itself rather than calling
+// http.Request.AddCookie. AddCookie sanitises the value, and sanitising drops
+// the double quotes Keycloak wraps KC_AUTH_SESSION_HASH's value in - so the
+// cookie sent back would not be the cookie received. This project's rule is
+// byte for byte wherever a client can observe it, and a request header is
+// observable.
+func (c cookies) send(r *http.Request) {
+	if len(c) == 0 {
+		return
+	}
+	names := make([]string, 0, len(c))
+	for name := range c {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	pairs := make([]string, 0, len(names))
+	for _, name := range names {
+		pairs = append(pairs, name+"="+c[name])
+	}
+	r.Header.Set("Cookie", strings.Join(pairs, "; "))
+}
+
 // RunFixture executes a fixture's steps in order against do, threading the
 // values each step captures into the requests that follow, and returns
 // everything captured.
@@ -1485,15 +1544,18 @@ type Do func(*http.Request) (*http.Response, error)
 // is checked before anything is captured: see Step.ExpectStatus and F34.
 func RunFixture(f Fixture, base string, do Do) (map[string]string, error) {
 	vars := map[string]string{}
+	jar := cookies{}
 	for i, s := range f.Steps {
 		req, err := buildRequest(base, Expand(s.Request, vars))
 		if err != nil {
 			return nil, fmt.Errorf("fixture step %d: build request: %w", i, err)
 		}
+		jar.send(req)
 		resp, err := do(req)
 		if err != nil {
 			return nil, fmt.Errorf("fixture step %d: %w", i, err)
 		}
+		jar.store(resp.Header)
 		body, err := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if err != nil {
