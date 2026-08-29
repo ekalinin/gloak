@@ -179,6 +179,15 @@ write  manage-clients
 door it is admitted and answered `200 []`. Same resource, one level down,
 opposite treatment.
 
+> **Corrected after the code was written, and left here rather than edited
+> away.** That sweep asked only what `query-clients` gets on a scope that
+> **exists**, and 403 is the same answer whether it is refused at the gate or
+> admitted and refused after. A scope that does **not** exist tells them apart,
+> and it answers `query-clients` **404**. So the coarse gate is the parent
+> family's three roles and only the fine check is two. The implementation was
+> built from the wrong reading and shipped a 403 where Keycloak sends a 404; a
+> golden recorded the 404 and the branch fixed it. Handover §1.8.
+
 The order, measured by giving one caller one role and varying which id is bad:
 
 ```
