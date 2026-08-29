@@ -201,7 +201,8 @@ operations is allocated below; none is left unassigned.
 | P2 third cut | Groups, specced 2026-08-28 | P2 second cut | `Groups` 9, a user's group membership 4, the group halves of the two mapping tags 11. The allocation was checked against the description and holds exactly: the `Groups` tag has 11 and the two `management/permissions` operations are P10, and 11 of the 22 group role-mappings are under `/organizations` and so P12. **Done 2026-08-28**, all three cuts: the group tree 9, the membership 4 and the group role-mappings 11 | 24 ops |
 | **P3** | Browser code flow | P1, **P2** | `oidc/authorization` 11, `oidc/logout` (part) | ~15 cases |
 | P3 first cut | The recorder learns to log in, **done 2026-08-29** | P2 | no operations: the fixture machinery, and 11 cases moved from `Pending` to `Recorded` | 0 ops |
-| **P4** | Multi-realm, specced 2026-08-29 | P2 | Realms Admin 45, Key 1. The tag's 45 is a denominator and **16** is what P4 builds: the rest is P5's client scopes, P8's authentication, P12's organizations and P14's events, export and import, and the roadmap already said the last of those. **First cut done 2026-08-29**: the realm as a resource, 5 ops | 46 ops |
+| P3 second cut | `/auth`'s two error families, **done 2026-08-29** | P3 first cut | the validation half of `GET`/`POST /auth`: 7 cases served, 4 new. **Not the success path** - the four cases that need a login page stay `Recorded` and P13 closes them | 0 ops |
+| **P4** | Multi-realm, specced 2026-08-29, **complete 2026-08-29** | P2 | Realms Admin 45, Key 1. The tag's 45 is a denominator and **16** is what P4 builds: the rest is P5's client scopes, P8's authentication, P12's organizations and P14's events, export and import, and the roadmap already said the last of those. Both cuts done: the realm as a resource 5 ops, then keys, default groups, group-by-path, client policies and client types 11 ops. `Realms Admin` stays at 15 of 45 and that is the finished state | 46 ops |
 | **P5** | Client scopes and protocol mappers | P2 | Client Scopes 10, Protocol Mappers 21, Scope Mappings 33, Client Attribute Certificate 7, Client Initial Access 3, Client Registration Policy 1 | 75 ops |
 | **P6** | Sessions and logout in full | P3 | back-channel, front-channel, session iframe, offline sessions, Attack Detection 3 | 3 ops + cases |
 | **P7** | Advanced grants | P1, P5 | `device` 5, `ciba` 3, `registration` 6, token exchange, JWT bearer, DPoP, PAR | ~20 cases |
@@ -213,19 +214,48 @@ operations is allocated below; none is left unassigned.
 | **P13** | Themes, i18n, account console, admin console | P5 | - | not in OpenAPI |
 | **P14** | Operational parity | P4 | events and audit, SMTP, health and metrics, clustering | not in OpenAPI |
 
-Denominator today: **413 Admin API operations plus 72 protocol behaviours, 485
+Denominator today: **413 Admin API operations plus 76 protocol behaviours, 489
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **129** after
-P4's first cut, and **P2 is complete** - up from 8 before P1, 25 after it, 89 after the second cut's
+surface is not counted and which the report says so about. Served: **147** after
+P4 completed, and **P2 is complete** - up from 8 before P1, 25 after it, 89 after the second cut's
 roles half, 100 after that cut was complete, 109 after the group tree and 113
 after the membership.
+
+The denominator moved from 485 to 489 for the first time since it was set. P3's
+second cut added four `oidc/authorization` cases that no earlier recording had
+named, so the enumerated surface grew with the served count rather than being a
+fixed target. That is expected of a protocol chapter, whose behaviours are
+counted case by case rather than read out of the OpenAPI description; the Admin
+API chapters cannot move this way.
 
 124 is the number this table predicted for P2 before any of it was built: 100
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-08-29, after P3's first cut.** `make conformance` still reports
-**124 of 485**, and that is the intended result rather than a stalled one. The
+**Updated 2026-08-29, after four parallel cuts.** `make conformance` reports
+**147 of 489**. Four streams ran concurrently in separate worktrees against
+separate reference containers - P3's second cut, P4's second cut, the harness
+debt (F38, F39, F40) and the CI residuals - and the two that moved the meter
+moved it by seven and eleven. The other two moved nothing on purpose: one fixed
+how the two sides of the comparison are obtained, the other fixed the workflow
+that reports the number.
+
+They collided nowhere in code. P3 lived in `internal/oidc`, P4 in
+`internal/admin` and `internal/store`, the harness in `internal/conformance`'s
+machinery, CI in `.github` and `internal/parity`. The only shared surface was
+this document and four others like it, which is why all five were taken out of
+the agents' scope and folded in afterwards in one pass. That is the practice
+worth repeating: **parallelism is cheap when the collision surface is prose, and
+prose is the one thing that can be written once at the end.**
+
+One finding was handed over that had already been fixed - P4 reported
+`admin/role-mapper/group-realm-available` as lacking `PristineRealm`, and the
+harness stream had added the flag in a commit P4's own branch had merged. It was
+dropped at the fold rather than filed, which is the second reason the
+consolidation is not the agents' job.
+
+**Earlier, after P3's first cut.** `make conformance` still reported
+**124 of 485**, and that was the intended result rather than a stalled one. The
 cut built the fixture machinery this document ordered P2 first to avoid
 building twice - a cookie jar shared by both sides of the harness, an HTML form
 parser, a query capture out of a redirect - and used it to move eleven cases

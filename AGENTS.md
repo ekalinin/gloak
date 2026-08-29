@@ -56,12 +56,16 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   find matching target resource method"}`, a wrong method on a known path
   answers `{"error":"HTTP 404 Not Found"}`. That is why `withKeycloakFallbacks`
   still tells the two cases apart even though both return the same status.
-- **That rule is measured too broad.** On the role-mapping paths `PUT` and
-  `PATCH` answer a real 405 while `POST` and `DELETE` answer the 404 above -
-  same path, four verbs, two statuses - so the verb decides and not the path.
-  Gloak sends 404 to all four. What the actual rule is has not been measured;
-  only that one line cannot be it. See F31 before adding a 405 or defending
-  the 404.
+- **That rule is measured too broad, three times now.** On the role-mapping
+  paths `PUT` and `PATCH` answer a real 405 while `POST` and `DELETE` answer the
+  404 above - same path, four verbs, two statuses. `/admin/realms` answers
+  `DELETE` with a 405, refuting "the verb decides". And on
+  `/realms/{realm}/protocol/openid-connect/auth`, `PUT`, `DELETE` and `PATCH`
+  all answer a real 405 with `application/json`, while `HEAD` answers 200 and
+  `OPTIONS` answers 200 with `Allow: HEAD, POST, GET, OPTIONS`. Gloak sends 404
+  to all of them. **Three data points that disagree still do not say what the
+  rule is**, which is exactly why nothing has been changed on the strength of
+  any of them. See F31 before adding a 405 or defending the 404.
 - **The five security headers have three exceptions, not one.** A route match
   and a known path hit with the wrong method both get `Referrer-Policy`,
   `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`
@@ -83,7 +87,13 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   the request's headers before believing the method.
 - **`Cache-Control` on a 204 does not follow the method.** Four of the five
   measured deletes carry `no-cache` and `DELETE .../client-secret/rotated`
-  does not; no `PUT` carries it. It is pinned per endpoint.
+  does not. It is pinned per endpoint.
+  (This bullet ended "no `PUT` carries it" until 2026-08-29, when one cut added
+  a `PUT` that does - `.../default-groups/{groupId}`, `no-cache`, and its
+  `DELETE` sibling too - and two `PUT`s that do not, the client-policy pair, in
+  the same commit. Both directions in one measurement. "Pinned per endpoint" is
+  the part that survives; every generalisation over the method has now failed
+  twice.)
 - **A client with no secret answers `GET .../client-secret` with 200 and no
   `value` key**, not 404 - and none of the six bootstrapped clients has one.
   `POST` mints a secret even for a public client, whose representation then
@@ -104,6 +114,12 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   it serves through `httptest.ResponseRecorder`, which never adds a `Date`
   header either. The guard is `internal/httpx`'s own test, which uses a real
   `httptest.NewServer` instead.
+  **It was false for 204s until 2026-08-29.** `WriteNoContent` was the one
+  writer that never called `suppressDate`, so every delete, update, credential
+  move and group join carried a `Date`. Two tests guarded the rule and both went
+  through `WriteJSON`, so the hole was exactly where the third writer is. A
+  per-writer rule needs a per-writer test; found by reading bytes off a socket,
+  not by running anything. See F54.
 - **A dead session and a bad refresh token answer differently.** A token whose
   session was ended - by an admin logout or by revocation - answers
   `"Session not active"`; one that was never valid answers
@@ -145,10 +161,13 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   issuing client - the one place the two tokens disagree.
 - **Keycloak's JSON key order for a Java `Map` is `HashMap` bucket order**, not
   sorted and not insertion order. `internal/javamap` reproduces it and is
-  confirmed against five measured key sets - four in its own tests, and the
+  confirmed against six measured key sets - four in its own tests; the
   `clientMappings` of a combined role-mapping view, where six clients created
   and assigned `cx1..cx6` came back `cx6, cx5, cx2, cx1, cx4, cx3` and
-  `internal/admin` pins it. It cannot resolve a bucket
+  `internal/admin` pins it; and the `active` map of
+  `GET /admin/realms/{realm}/keys`, `RSA-OAEP, HS512, RS256, AES` on both
+  master and a created realm, which is the first confirmed vector with **no**
+  bucket collision at all. It cannot resolve a bucket
   collision, because those chain in insertion order and nothing observable says
   what that was; the 21 admin role names collide twice and come back the other
   way round. Sorting instead is what makes `resource_access` come out
@@ -296,19 +315,24 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **Role listings have no stable order across container starts.** Every one of
   them is a bare array at the root of the body, which is why `Case.Unordered`
   learned the root path spelling `"."`.
-- **Eleven spellings of not-found in the admin API now**, including four for
-  one resource:
+- **Twelve spellings of not-found in the admin API now**, including four for
+  one resource and three for a missing group:
   `Could not find client`, `Client not found`, `User not found`,
   `Realm not found.` with its full stop, `Credential not found`,
   `Could not find role`, `Role not found`, `Could not find role with id`,
-  `Could not find composite role`, `Could not find group by id`, and
-  `Group not found` for that same missing group from the membership route.
+  `Could not find composite role`, `Could not find group by id`,
+  `Group not found` for that same missing group from the membership route **and
+  from the default-groups writes**, and `Group path does not exist` from
+  `group-by-path`. One missing group, three answers, decided by which route went
+  looking.
   (This count said nine while the list held eleven; the two group spellings
-  were added without it.) `Could not find client` and `Client not found` are the
+  were added without it. It is at twelve because `group-by-path` added a third
+  group spelling on 2026-08-29 - so the count has now been wrong once and is
+  checked against the list rather than incremented.) `Could not find client` and `Client not found` are the
   same resource by the same key: the role-mapping routes answer the second for
   an unknown client UUID where the client and role endpoints answer the first
   for that very UUID. The qualifier matters: the protocol side spells a
-  twelfth, `Realm does not exist` (`internal/oidc/router.go:145`), against the
+  thirteenth, `Realm does not exist` (`internal/oidc/router.go:145`), against the
   admin API's `Realm not found.` for the same missing realm - which is written
   once, in `writeRealmNotFound`, because it was written twice and a measured
   string in two places can drift.
@@ -321,11 +345,15 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `GET /users/count` is a bare number. The count counts the whole tree where the
   listing beside it is top-level only, and `top=true` narrows it **except** when
   `search` is set, where it is ignored. `subGroups` is `[]` everywhere except
-  under `search`, and `subGroupCount` carries the truth. There are **five**
+  under `search`, and `subGroupCount` carries the truth. There are **six**
   representations of one group, and they are not a hierarchy: the child create's
   response omits `subGroupCount` where the children listing carries it, and the
   membership listing under `briefRepresentation=false` gains the attributes trio
-  while gaining neither `subGroupCount` nor `access`. `path` is derived from
+  while gaining neither `subGroupCount` nor `access`. The sixth is
+  `GET .../group-by-path/{path}`: the single group read **minus its `access`
+  block** and identical otherwise. A `default-groups` entry is the membership
+  shape rather than a seventh, and `briefRepresentation` does nothing to either.
+  `path` is derived from
   the ancestry and cascades on a rename. Membership does not reach upwards: a
   user in a child is not a member of its parent.
 - **`search` on the group listing pages the matches, not the rows.** It matches
@@ -347,12 +375,72 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   unknown client answers about the holder. So the client's absence is not gated
   and the subject's is, on the user family; on the group family the group comes
   first and the client second, and neither is gated.
-- **A group is resolved before the caller is judged at all.** Every route naming
-  a `{groupID}` answers 404 for a group that does not exist to **every** caller,
-  including one holding no admin role. That is not the user family's shape,
-  where a coarse gate runs first; it is `/roles-by-id/{id}`'s. Groups are
+- **A group is resolved before the caller is judged - on the routes the
+  description tags `Groups`, and not on the two it tags `Realms Admin`.** Every
+  route naming a `{groupID}` under `/groups` answers 404 for a group that does
+  not exist to **every** caller, including one holding no admin role. That is
+  not the user family's shape, where a coarse gate runs first; it is
+  `/roles-by-id/{id}`'s. Groups are
   otherwise authorised out of the users family - `manage-realm` is 403 on all of
   them - and `query-groups` opens the listing and the count and nothing else.
+  **The exception, measured 2026-08-29:** `PUT` and `DELETE
+  /admin/realms/{realm}/default-groups/{groupId}` answer **403** for a group
+  that does not exist - to a `view-realm` caller, which may read that listing
+  but not write it, and to a caller holding nothing. Measured on both verbs.
+  `GET .../group-by-path/{path}` goes the other way and matches the `Groups`
+  family. So the ordering follows the **tag**, not the presence of a group in
+  the path. That is the third time this project has met a rule that is right on
+  one family and inverted on its neighbour, and the second time the description's
+  tag turned out to be the thing that predicts it.
+
+- **A realm's key set is four keys and the JWKS beside it publishes two.** The
+  HMAC key that signs refresh tokens and an AES key that signs and encrypts
+  nothing both appear in `GET /admin/realms/{realm}/keys` as bare `kid`s with no
+  material - no `publicKey`, no `certificate`, no `validTo`. Serving three keys
+  is a divergence on that endpoint alone, which is why Gloak generates an AES
+  secret nothing uses.
+- **An RSA key's `kid` is a digest of the key and an OCT key's is a UUID.**
+  `base64url(sha256(SubjectPublicKeyInfo))`, unpadded - **not** the RFC 7638 JWK
+  thumbprint, which is the obvious guess, was computed first, and gives a
+  different value. Master's recorded `publicKey` digests to its recorded `kid`
+  byte for byte, and the pair is a vector in `internal/keys/keys_test.go`. There
+  is no "the kid rule" to share between the two key types.
+- **`use` is `SIG`/`ENC` on the Admin API's key listing and `sig`/`enc` in the
+  JWKS**, for the same two keys. One constant shared between them is wrong on
+  one of them.
+- **The `keys` array is ordered by `providerId`, a random UUID**, so its order
+  is not reproducible and the case needs `Case.Unordered`. `providerId` is the
+  id of the key *provider component*, a different value from the `kid` on every
+  measured key; Gloak has no component table and derives it from the `kid` by a
+  fixed hash.
+- **`client-types` answers 501 to every authenticated caller and that is the
+  contract**, not a stub. `CLIENT_TYPES` is a disabled preview feature, the same
+  situation as `GET .../client-secret/rotated`'s permanent 404. The check runs
+  after the realm is resolved and **before** authorization, so a caller holding
+  no admin role at all gets the 501 rather than a 403 - the only route in P4
+  whose guard has no role list.
+- **A `PUT` with no body is a 400 on the client-policy routes and a 500 on
+  `PUT /admin/realms/{realm}`.** Same verb, neighbouring routes on one resource,
+  two answers. A shared decoder gets one of them wrong, which is the fourth time
+  this API has punished sharing one.
+- **Client policies and client profiles are the realm representation's own
+  state.** Two endpoint pairs, one storage location, measured in both
+  directions: a `PUT` on `.../client-policies/profiles` changes what
+  `GET /admin/realms/{realm}` answers, and the reverse. Giving them a table of
+  their own would create a second truth. `PUT /admin/realms/{r}` with
+  `{"clientProfiles":{}}` **clears** them to `[]`.
+- **A `PUT` on a realm replaces `clientProfiles` rather than merging into it**,
+  and Go's `encoding/json` does the opposite by default: it unmarshals a JSON
+  array into an existing slice **element by element** and keeps whatever the new
+  element does not name, so a profile sent without a description kept the old
+  one. Both arrays have to be emptied before the merge. Every other slice in
+  that 104-key representation holds strings, where the reuse is invisible; these
+  two hold structs, where it is not.
+- **The default-groups listing has no reproducible order.** Three groups added
+  `zzz, aaa, mmm` came back in that order; in another realm a parent added first
+  and a child second came back child first. Neither insertion order, name, id
+  nor path explains both. `PUT` is idempotent and `DELETE` of a group that is
+  not a default group is 204 rather than 404.
 
 - **The authorization endpoint has two error families and the redirect URI
   decides which.** If the `client_id` resolves and the `redirect_uri` matches
@@ -362,8 +450,70 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `text/html;charset=utf-8`, with **no `Cache-Control` at all**. So the order -
   realm, client, redirect URI, then everything else - is not a preference: get
   it wrong and the status, the family and the `Content-Type` are all wrong.
+- **The page family has three statuses, not one.** An unknown, absent, empty or
+  disabled `client_id` and an unregistered `redirect_uri` are 400; a
+  **bearer-only** client is **403**, and its check runs *before* the redirect
+  URI rather than after - `master-realm` answers 403 with a bad redirect URI,
+  with none at all, and with a missing `response_type` alike. All three carry
+  `Content-Language: en`, `Content-Security-Policy`, the five security headers,
+  and no `Cache-Control`.
+- **The rejection order is measured ten steps deep and two steps are not where
+  they look.** A duplicated parameter is checked **seventh** - after the
+  client's flow flags and before the scope - so a repeated `nonce` on a client
+  with the standard flow off answers about the flow, and the same repeat with a
+  bad scope answers about the repeat. And the PKCE check is three checks whose
+  **first** is the *absent* challenge: `code_challenge_method=bogus` with no
+  challenge answers `Missing parameter: code_challenge`, never
+  `Invalid parameter: code_challenge_method`. Reordering either "because a
+  request-shape check should come first" changes the answer to a request that is
+  wrong in two ways, which is most of them. Pinned by twenty-nine paired
+  requests, each pair deciding one adjacency.
+- **A redirect URI is compared as a string and nothing about it is normalised.**
+  A trailing slash, an added query, an added fragment, an uppercased scheme,
+  host or path, a `..` segment, a percent-encoded character and `127.0.0.1` for
+  `localhost` are all refused by a client registering the literal. Parsing
+  either side as a URL is the tidy-up that makes half of those start comparing
+  equal. And a wildcard is **not** a bare prefix: `http://localhost:9998/*`
+  accepts `http://localhost:9998` and refuses `http://localhost:99980/evil`. It
+  is a prefix match on the pattern minus its `*`, plus an equality check against
+  that prefix with a trailing slash removed, with the query and fragment cut
+  first - and the cutting happens in the wildcard branch **only**, which is why
+  an exact registration refuses `?x=1`. A pattern containing a `?` is not a
+  wildcard even when it ends in one, and a `*` that is not last matches nothing.
+- **The scope a request may ask for follows the client, not the realm.**
+  `openid` plus the client's own `defaultClientScopes` and
+  `optionalClientScopes`. `service_account`, `role_list`, `AuthnContextClassRef`
+  and `saml_organization` are client scopes **of master** that a normal client
+  does not carry, and every one of them is refused. An absent `scope` is not
+  checked at all; an empty `scope=` is checked and fails. The description echoes
+  the parameter **raw**, doubled spaces and all, so it cannot be rebuilt by
+  joining the parsed words.
+- **`POST /auth` reads the request body and ignores the query string.** The same
+  parameters that work on a `GET`'s query answer the 400 page on a `POST` that
+  puts them there. `r.Form` merges the two and would hide it, so the two sources
+  are read separately.
+- **The response mode decides how a *rejection* travels, and two of the seven
+  modes are not a redirect at all.** The accepted set is seven, not three:
+  `query`, `fragment`, `form_post` and the four `jwt` spellings, compared
+  case-sensitively. `form_post` and `form_post.jwt` answer **200** with an
+  auto-submitting form even for a missing `response_type`; `jwt`, `query.jwt`
+  and `fragment.jwt` replace every parameter with one signed **JARM** assertion
+  in `response`. Reading response mode as "which separator" produces a 302 where
+  Keycloak sends a 200, and plain parameters where it sends a signature. The
+  invalid-`response_mode` rejection itself always goes to the **query**, even
+  for `response_type=token`, whose every other rejection lands in the fragment.
+- **A repeated query parameter is its own error and its description is lower
+  case.** `duplicated parameter`, where every other description on this endpoint
+  is capitalised, and it applies to keys the endpoint never reads - `zz` twice
+  is enough. A repeated `client_id` never reaches the check, because the client
+  cannot be resolved and the answer is the page family.
+- **`state` is echoed whenever it was sent, including when it was sent empty.**
+  `state=` comes back as `state=`; an absent `state` comes back as three keys
+  rather than an empty fourth. `nonce`, `login_hint` and `ui_locales` are not
+  echoed at all.
 - **`GET /auth`'s redirect back to the client is the one response in the
-  browser flow that omits `X-Frame-Options`,** and it omits
+  browser flow that omits `X-Frame-Options`,** measured across seven different
+  rejections including the one that sets cookies, and it omits
   `Content-Security-Policy` with it. It is not "errors omit them":
   `POST /login-actions/authenticate`'s *error* redirect, to the same URI with
   the same status, carries all six. It is not "302s omit them", for the same
@@ -487,12 +637,54 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
 - Adding a store interface method means implementing it in **both** drivers. The
   conformance suite in `internal/store/storetest` does not exercise every method, so
   compiling is not proof.
+- **`make record` runs two container regimes and the catalogue decides which.**
+  Almost every case is recorded against one shared Keycloak in catalogue order,
+  which is why a whole run costs one container start and not three hundred. A
+  `PristineRealm` case gets a container of its own, started inside its subtest
+  and terminated with it, because its body is a function of the whole realm and
+  the verifier will serve it from a handler that has seen nothing but that
+  case's own fixture. Two minutes for a whole run instead of thirty seconds;
+  budget minutes rather than seconds when other containers are alive.
+- **Recording pristine cases *first* was the previous answer and it does not
+  hold.** The pristine group pollutes itself: `admin/groups/list` creates a
+  group, `admin/groups/count` counts the realm three cases later, and that
+  case's number is masked to this day because the recorder said 3 where a
+  pristine replay says 2. **Ordering also cannot be checked afterwards** -
+  `admin/users/count`'s entire body is the byte `1`, and no guard can tell a
+  polluted count from a clean one. So the container is what resets, not the
+  position. See F40.
+- **A golden that holds only while the catalogue's order holds is worse than no
+  golden**, because it looks like a measurement. That is why F40 was fixed in
+  the recorder rather than by marking one case and re-recording: marking alone
+  produces the right bytes today purely because none of the eight pristine
+  fixtures happens to create a realm role.
+- **`TestPristineRealmGoldensAreNotPolluted` watches four resource families**,
+  read out of the creation bodies themselves: clients by `clientId`, users by
+  `username`, realms by `realm`, roles and groups both by `name`. A fixture
+  creating a fifth kind of object named by some other key is invisible to it
+  until that key joins `createdKeys`. It watched `clientId` alone until
+  2026-08-29, which is exactly how F40 got past it. Two things it reads that are
+  easy to drop: a **case's own request** creates objects too - `admin/roles/create`
+  POSTs `{"name":"gloak-probe-role-create"}` and that role is in the realm for
+  everything recorded after it - and a POST whose body is a JSON **array** is
+  not a creation, or the role-mapping writes would put six bootstrapped admin
+  role names into the guard's set.
 - **CI runs `build`, `vet` and `CGO_ENABLED=0 go test ./...` on every pull
   request, and nothing behind the `docker` tag.** `vet` runs twice, plain and
   `-tags docker`, so the three tagged files still compile; nothing runs them.
+  `make lint` runs both invocations too, so the local target and the gate are
+  the same check. They were not until 2026-08-29, and a contributor who ran
+  `make lint` and got silence could still be broken by CI.
   A green run does not mean the two store drivers agree: that evidence still
   comes only from running the
-  Postgres suite by hand. CI also posts the pull request's parity increment
+  Postgres suite by hand. The comment is posted with the job's own token, and a
+  failure to post fails the job - with one exception: a 403 **on a pull request
+  from a fork**, whose token is read-only whatever the workflow's `permissions`
+  block says. That case falls back to the run summary and passes. The fork is
+  read from `github.event.pull_request.head.repo.fork` and not inferred from the
+  error text: a rate limit and a revoked permission are also 403s, they are this
+  repository's own problem, and they go red.
+  CI also posts the pull request's parity increment
   and fails when the total falls. A deliberate fall is declared with a
   `Parity-decrease: <reason>` line in the pull request description - the
   marker must be the first non-whitespace content on its own line (leading
@@ -527,7 +719,16 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
 
   `-run` takes an unanchored regex, so the anchors are not decoration: a bare
   `TestCoverage` also selects `TestCoverageWritesAReportWhenAsked`, which
-  re-runs the meter and prints the whole table a second time.
+  re-runs the meter and prints the whole table a second time. `-run` also splits
+  its pattern on `/`, so a regex group containing a slash is destroyed and
+  matches nothing - which rules out selecting several cases by ID in one
+  invocation.
+- **A flat parity total is not the same claim as "no change".** Four chapters
+  have no denominator and are left out of the total, so behaviour served in one
+  of them moves a row and cannot move the total. The comment says
+  `total unchanged` and names the reason for those, and reserves `no change` for
+  a diff where nothing moved at all. `internal/parity`'s tests pin all three
+  shapes.
 
 ## Where a new case can come from
 

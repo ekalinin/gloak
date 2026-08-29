@@ -42,6 +42,30 @@ called `manage-realm` is indistinguishable from the real one. That is older and
 wider than F28 - it is the whole guard layer - and measured diverging from
 Keycloak on both sides.
 
+**Status, 2026-08-29.** Four cuts ran in parallel, each in its own worktree
+against its own reference container, and each was forbidden this file so that
+the entries below could be written once rather than three times in conflict.
+They **closed F38 and F40**, corrected the design inside **F39**, and opened
+**F41 through F57**.
+
+Two of those are worth reading before the rest. **F40** was not fixed where it
+was found: the entry proposed marking one case `PristineRealm`, and the
+measurement showed that marking is what cannot carry the property - the pristine
+group pollutes itself, and `admin/groups/count` is the same defect already
+realised and already papered over with a mask. The fix moved into the recorder.
+And **F41 through F44** are the first entries in this list that are about the CI
+workflow rather than about Keycloak; F42 is the one to read, because the finding
+as filed was wrong in a way that would have made the fix a no-op, and the hazard
+underneath it ran the other way.
+
+One thing that is deliberately **not** filed. P4's handover proposes an entry
+for "a golden that enumerates a realm-wide set without `PristineRealm`", naming
+`admin/role-mapper/group-realm-available`. That case gained the flag in
+`9732342`, which P4's own branch had merged by the time it was written; the
+finding was true when it was measured and was already fixed when it was handed
+over. The sweep it asks for - which other cases enumerate a realm-wide set
+without claiming the flag - is real and is filed as **F53**.
+
 ## F3: two shipped endpoints have no measured contract (closed)
 
 `docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md` records the token
@@ -1925,7 +1949,36 @@ the `available` filtering, `admin/users/list-without-view-users`, and F36's
 sweep over which roles open the user and credential routes are all currently
 unrecordable for the same reason.
 
-## F38: a golden cannot mask a per-request value inside an HTML body
+## F38: a golden cannot mask a per-request value inside an HTML body (closed, not built)
+
+**Closed 2026-08-29 as not worth building**, on four grounds, and it should not
+sit here as a standing to-do. The gap is real; the mechanism is not the answer.
+
+1. It is **one** `Pending` case, and what its golden would assert - the 200, the
+   `text/html` with no charset, the form's `code, iss, state, session_state`
+   order - is already measured and written into the observed document in full,
+   the body included verbatim. A golden would be a second copy of a
+   measurement rather than a new one.
+2. **It is not one masker but two positions.** The entry below asks for "mask
+   the value of this attribute at this place in the HTML", which reaches the
+   four `<INPUT ... VALUE="...">`s. The measured body also carries a `<SCRIPT>`
+   whose `history.replaceState` argument is a URL holding `tab_id` and
+   `client_data`, both minted by the same request. A `VALUE` masker leaves the
+   case churning on every recording, which is the disease it was for.
+3. The blunt alternatives are larger retreats than the one AGENTS.md permits. A
+   whole-body mask leaves the case asserting a status line and headers, and
+   AGENTS.md names `UnorderedKeys` as "the only such retreat - do not add a
+   second without writing down why". A list of regexes in the catalogue is
+   powerful enough to mask any body and moves the reviewing burden into
+   regexes.
+4. The natural moment to revisit is not now. F23's three login-theme goldens
+   need a substitution pass for a per-container resource version, and that pass
+   and this one may be the same shape.
+
+**If it is reopened, reopen it against a second case that wants the same
+mechanism.** One case is not a mechanism's evidence.
+
+What the finding said, kept for the record:
 
 Found 2026-08-29 while recording P3's first cut.
 
@@ -1982,7 +2035,66 @@ cut's job was the fixture, the five affected cases are `Recorded` rather than
 `Implemented`, and a mechanism added to improve a golden nothing yet compares is
 a guess about what the next cut wants.
 
-## F40: an `available` golden is order-dependent and the shared container pollutes it
+**2026-08-29: still open, and the design above is wrong.** It does not cover its
+own fifth case. `oidc/authorization/response-mode-fragment` puts `state`,
+`session_state`, `iss` and `code` in the `Location`'s **fragment**, not its
+query - measured, and in the observed document's `response_mode` table. A masker
+reading `url.Parse(v).Query()` finds nothing there, masks nothing, and writes a
+live authorization code into a committed golden which then churns on every
+recording. That is precisely the failure `normalize.go` names in its own doc
+comment: masking nothing while claiming to have checked is worse than failing
+loud.
+
+Corrected requirement, for whoever promotes those five cases: mask the named
+parameters in the query **and** the fragment, and **error** when a named
+parameter is in neither rather than passing. The trigger is unchanged - the cut
+that promotes them to `Implemented`, because that cut can record the goldens
+that prove the masker works on both sides.
+
+## F40: an `available` golden is order-dependent and the shared container pollutes it (closed)
+
+**Closed 2026-08-29, and not at the place this entry points to.** The entry
+below offers two candidate fixes and says the choice is a measurement. It is,
+and the measurement rejects both: `PristineRealm` meant "recorded before every
+other case", and **ordering cannot carry the property at all**.
+
+The proof was already in the repository. The pristine group pollutes itself.
+`admin/groups/list` creates a group; `admin/groups/count` counts the realm three
+cases later; and that case's `count` is masked to this day because the recorder
+said 3 where a pristine replay says 2. Nor can ordering be checked afterwards -
+`admin/users/count`'s entire body is the byte `1`, and no guard can tell a
+polluted count from a clean one.
+
+So the container resets, not the position. A `PristineRealm` case now gets a
+Keycloak of its own, started inside its subtest and terminated with it:
+bootstrap plus that case's own fixture, which is exactly what the verifier's
+`newFixture` builds. `recordingOrder` is deleted. This case is marked
+`PristineRealm`, and that marking now means something the catalogue's order
+cannot take away.
+
+Rejected on merit, both in the commit message. *Mark the case and leave the
+recorder alone* produces the right bytes today purely because none of the eight
+pristine fixtures happens to create a realm role, and pins the golden to
+catalogue order - which is `admin/groups/count`'s defect, already realised.
+*Record every case against its own container* is honest and costs three hundred
+Keycloak starts, over two hours for a run meant to be a habit.
+
+Measured on both regimes, whole `make record` runs against a live 26.7.1 with
+the image already pulled:
+
+| Recorder | Whole run | Goldens wrongly rewritten |
+|---|---|---|
+| shared container, pristine cases first | 27s | `admin/role-mapper/group-realm-available`, with **18 roles, 13 of them probes** - and PASS reported |
+| a container per pristine case | 147s | none |
+
+Every other golden came back byte-identical apart from F23's three known
+churners, which is the evidence that the new recorder reproduces the committed
+contract rather than merely producing a different one.
+
+The guard was widened in the same cut: see **F45**, which is what the last
+paragraph below was really pointing at.
+
+What the finding said, kept for the record:
 
 Found 2026-08-29 while re-recording for P3.
 
@@ -2009,3 +2121,286 @@ membership and not order. The real question - whether Keycloak's `available`
 listing is meant to be read as "the whole realm minus what the holder has", in
 which case any golden of it on a shared container is fragile - has not been
 asked.
+
+## F41: the parity comment's 403 tolerance identified the wrong thing (closed)
+
+Found 2026-08-29 by reading the workflow rather than by a failing run.
+
+The "Compare and comment" step grepped `gh`'s stderr for `HTTP 403` and, on a
+match, wrote the comment to the run summary and let the job pass with a summary
+asserting the cause: "a pull request from a fork gets a read-only token, so the
+API answered 403". Nothing had checked that. A fork's read-only token is **one**
+cause of a 403; a secondary rate limit is another and a permission revoked at
+the repository or organisation level is a third. The last two are this
+repository's own configuration, both deserve a red build, and both were being
+swallowed under a sentence naming a cause nobody had established. The failure
+mode is the bad one: the job goes green, the comment is not on the pull request,
+and the summary explains it with a fact that is false.
+
+**Closed** by requiring `github.event.pull_request.head.repo.fork` - passed in
+as `IS_FORK` - in addition to the grep, and by rewriting the message to say only
+what the two conditions together establish.
+
+Two things for a later reader. `head.repo` is `null` when the fork has been
+deleted, so `IS_FORK` arrives empty and the tolerance does not fire; the job
+goes red, which is the safe direction, but the message will not say why. And the
+tolerance now covers a refused **lookup** as well as a refused post, because F42
+routed both through one status.
+
+Untested, and that is not an oversight: it is YAML, and the parity design's §10
+says YAML is not tested here. What exists instead is a local `bash` simulation
+with `gh` and `cmd/parity` stubbed, run against the old script and the new one
+over eight scenarios, and it is evidence about `bash` rather than about GitHub
+Actions.
+
+## F42: `set -o pipefail` was read as missing its `set -e`, and the hazard runs the other way (declined as stated, hazard fixed)
+
+Found 2026-08-29. **The finding as filed was wrong, and acting on it literally
+would have made a no-op that misinforms.**
+
+The claim was that `set -o pipefail` without `set -e` is half a safety measure.
+It is not: GitHub runs a `run:` step with no `shell:` as `bash -e {0}`, so `-e`
+is already on. Writing `set -e` into the script would tell a reader it was
+turned on by that line.
+
+The real hazard runs the opposite way. `id=$(gh pr view ... | sed ...)` is a
+plain assignment, so `-e` applies to it, and `pipefail` hands it `gh`'s status
+rather than `sed`'s. A transient lookup failure therefore killed the step
+outright - before the 403 fallback and before `exit $status`. And with
+`pipefail` **off** it is worse rather than better: the empty `id` is
+indistinguishable from "no comment posted yet", so the script posts a second
+comment beside the one it could not see, against the design's
+one-comment-updated-in-place rule.
+
+**Fixed** by giving the lookup its own `|| gh_status=$?` and routing it into the
+same handling as a failed post, so the step behaves identically whichever flags
+the platform sets. `pipefail` stays, and is now load-bearing rather than inert.
+
+The general lesson, which is why this entry keeps its wrong premise: a finding
+about a shell flag is a finding about a platform's defaults, and the defaults
+were not checked before it was filed.
+
+## F43: `make lint` was weaker than the gate it stands in for (closed)
+
+`make lint` ran `go vet ./...`. CI runs that **and** `go vet -tags docker ./...`.
+Without the tag the docker-tagged files are not compiled at all, so `make
+record`, `make oracle` and the Postgres driver suite could stop building while
+the local target stayed silent. A target weaker than the gate is worse than no
+target: a contributor runs it, gets silence, and is broken by CI anyway.
+
+**Closed**: `make lint` now runs both invocations. Neither covers the other.
+
+## F44: the parity comment said "no change" for work that changed something (closed)
+
+Four chapters have no denominator - nobody has counted their surface - so the
+meter leaves their served counts out of the total. Behaviour served in one of
+them moves a row in the table and cannot move the total, and the comment printed
+`Parity: N of M, no change.` directly above a table reading `+3`. A comment that
+says two things at once and resolves neither.
+
+**Closed**: `Render` now tells three cases apart - nothing moved (`no change`),
+a rearrangement with a flat total (`total unchanged`), and work in an
+unenumerated chapter (`total unchanged` plus a paragraph naming why the total
+could not move). `ChapterDelta` carries the `Enumerated` flag to make the third
+distinguishable, and `internal/parity`'s tests pin all three shapes. Ten
+mutations were applied and ten died, the original defect restored verbatim among
+them.
+
+## F45: the pollution guard watched one resource family of four (closed)
+
+Found 2026-08-29 while fixing F40, and it is **why** F40 got past the guard.
+
+`TestPristineRealmGoldensAreNotPolluted` searched goldens for
+`"clientId":"<value>"` against the clients fixtures create. Fixtures create
+roles, groups, users and - since P4's first cut - realms as well, so the blind
+spot was four times the size of the one thing being watched. The body that
+produced F40 holds **zero** occurrences of `clientId`.
+
+**Closed.** The guard now reads every creation body for the key it named its
+object by - `clientId`, `username`, `realm`, `name` - from two sources: fixture
+steps **and a case's own request**. The second source is not decoration:
+`admin/roles/create` POSTs `{"name":"gloak-probe-role-create"}` and that role is
+in the realm for everything recorded after it. Reading fixtures alone named
+twelve of the thirteen probe roles in the polluted recording, and the
+thirteenth was this one.
+
+Three details that are load-bearing rather than defensive, each established by
+breaking it:
+
+- A case's **own** fixture and the case itself are exempt, because both run on
+  both sides of the comparison. Removing the exemption fails on
+  `admin/groups/list`, whose golden legitimately holds its own fixture's group.
+- A name is matched **against the key its creation body used**, not as a bare
+  substring, or `gloak-probe-group` would report the
+  `gloak-probe-group-mapped` a sibling fixture creates.
+- A POST whose body is a JSON **array** is not a creation. The role-mapping and
+  composite writes are POSTs naming roles that already exist, and reading
+  `[{"id":"...","name":"manage-users"}]` as a creation puts six bootstrapped
+  admin role names into the guard's set.
+
+`TestPollutionGuardSeesEveryCreatedFamily` proves the guard can fail in each of
+the four families separately, and
+`TestPollutionGuardReadsTheCataloguesOwnCreates` proves the second source is
+wired - the four families are each also created by some fixture, so deleting the
+catalogue loop left every other test green.
+
+## F46: a masked header is asserted on presence alone, and nothing else
+
+Found 2026-08-29 while reading `diff` for F39. A neighbour of F13.
+
+`diff` compares a `VolatileHeaders` entry by checking it is present and its
+first value is non-empty. So the seven admin cases that mask `Location` would
+accept `Location: x`. The value really is per-request - it ends in a
+server-minted UUID - but everything before that UUID is not, and none of it is
+asserted: not the scheme, not the host, not the path that says which collection
+the new object landed in.
+
+It is the same gap F39 describes for the browser redirects, in a family that is
+`Implemented` today rather than `Recorded`. Fixing it means re-recording those
+goldens, so it is filed rather than done.
+
+## F47: `admin/groups/count` can have its measured number back
+
+`admin/groups/count` masks `count` with a comment saying why: "the recorder
+shares one container, so any fixture that creates a group moves it - the first
+recording of this case said 3 where a pristine replay says 2". That reason is
+gone. With a container per pristine case, its fixture (`admin-token-group-tree`:
+a parent and a child) makes the count a deterministic 2 on both sides.
+
+Dropping `Volatile: []string{"count"}` and re-recording turns a masked number
+back into a measurement. It is the smallest possible piece of work and it undoes
+the one place in the catalogue where F40's defect was papered over instead of
+fixed.
+
+## F48: the conformance harness cannot express a repeated query parameter
+
+`Request.Query` is a `map[string]string` and `buildRequest` writes it with
+`url.Values.Set`, so no case can send one key twice.
+
+That leaves an entire measured error family - `duplicated parameter`, step 7 of
+the authorization endpoint's ten - served, unit-tested in `internal/oidc`, and
+under no golden at all. A `[]string` variant, or a raw query-string field on
+`Request`, closes it. `case.go` belonged to another cut the week this was found.
+
+## F49: `internal/admin`'s client create does not default the client scopes
+
+Keycloak gives a client created with no `defaultClientScopes` the realm's six
+defaults and five optionals. Gloak's `POST /admin/realms/{realm}/clients` writes
+`[]` for both.
+
+Nothing noticed until `/auth` started validating `scope` against them, and the
+consequence is now measurable: **Gloak refuses `scope=profile` on a client
+created through its own admin API, where Keycloak accepts it.** The constants
+already exist as `defaultScopeNames` and `optionalScopeNames` in
+`internal/bootstrap`. Client scopes are P5's; this is the part of them that is
+already observable from an endpoint that is already served.
+
+## F50: `GET /auth` answers a fully valid request with the page family's 400
+
+Deliberate, and documented at the handler rather than hidden. A request that
+survives all ten checks reaches the point where Keycloak renders its login page,
+which is P13's theme work, so Gloak answers the same 400 envelope its
+unknown-client and bad-redirect rejections take.
+
+It is a real divergence from Keycloak, which answers 200 with a login form. The
+alternatives were a login form whose `POST` target does not exist, or a status no
+measurement supports. It closes when the success path lands. Anyone driving
+Gloak by hand will meet it, which is why it is filed and not only commented.
+
+## F51: five of the seven response modes are accepted and not transported
+
+`form_post` and `form_post.jwt` answer **200** with an auto-submitting HTML form;
+`jwt`, `query.jwt` and `fragment.jwt` answer with a signed **JARM** assertion in
+a `response` parameter, the plain parameters gone.
+
+Measured 2026-08-29 on the **error** path - a request with no `response_type` -
+so this is not extrapolated from the success one. Gloak recognises all five as
+valid, because refusing them would contradict a measurement, and answers the
+page family instead of transporting them: emitting the plain parameters would
+hand a JARM client an unsigned error where it asked for a signed one, which is
+worse than answering nothing.
+
+The observed document records `form_post` only on the success path and records
+JARM nowhere before this.
+
+## F52: the two disabled-flow rejections are served and under no golden
+
+Both spellings - "Client is not allowed to initiate browser login with given
+response_type. Standard flow is disabled for the client." and its Implicit twin -
+are implemented and unit-tested. No conformance case covers either:
+`oidc/authorization/implicit-flow` is deliberately `Pending` as outside P3's
+scope, and there is no case for the standard-flow one at all.
+
+Adding either means a fixture client with the flag off, which is a fixture
+nothing else needs. Worth doing with the next case that wants such a client
+rather than on its own.
+
+## F53: which other goldens enumerate a realm-wide set without claiming `PristineRealm`?
+
+F40 was one case. The question it raises is not.
+
+`PristineRealm` is a claim a case makes about itself, and nothing derives it. A
+golden whose body is a function of the whole realm - every `available` listing,
+every count, every unfiltered listing - needs the flag, and the only thing
+standing between the catalogue and a second F40 is that somebody noticed. The
+widened guard (F45) catches the ones that get **polluted**, which is not the same
+set: a case can be order-dependent and currently clean.
+
+The work is a sweep of the catalogue asking, per case, whether a fixture running
+before it could change its body. It is cheap to do and cheaper still to do while
+the reasoning in F40 is fresh.
+
+## F54: every 204 Gloak sent carried a `Date` header (closed)
+
+Found 2026-08-29 by reading a live 204 off the wire while measuring P4's default
+groups.
+
+AGENTS.md says "Gloak deletes the `Date` header on every response". It did not.
+`httpx.WriteNoContent` was the one writer that never called `suppressDate`, so
+every 204 carried one - the deletes, the client and user updates, the credential
+moves, the group joins alike.
+
+**Neither existing guard could see it.** Both go through `WriteJSON`, and the
+conformance harness serves through `httptest.ResponseRecorder`, which adds no
+`Date` either. So this is a rule with two tests and a hole exactly where the
+third writer is, and it was found by looking at bytes on a socket rather than by
+running anything.
+
+**Closed**, with a third real-server test beside the two that already existed.
+
+## F55: two client-policy error bodies Gloak does not reproduce
+
+Both measured 2026-08-29 on the client-policies routes.
+
+- An unrecognised field answers 400 `Invalid json representation for
+  ClientProfilesRepresentation. Unrecognized field "nosuchfield" at line 1
+  column 20.` The line and column are a function of the request body, so
+  reproducing the string means reproducing Jackson's parser positions. Gloak
+  ignores the field and answers 204. **`PUT /admin/realms/{realm}` has the same
+  gap for its own copy of that error**, so this is one follow-up covering two
+  endpoints; the conformance case is `Recorded`.
+- A profile naming an executor that is not a registered provider answers 400
+  `proposed client profile contains the executor, which does not have valid
+  provider, or has invalid configuration.` Gloak accepts it. The executor and
+  condition inventories belong to an engine it has not built - see F57.
+
+## F56: a new user does not join the realm's default groups
+
+Measured on Keycloak: `POST /users` in a realm holding two default groups
+produced a user who was a member of both. Gloak's `POST /users` joins none.
+
+No existing golden changes, because `master` has no default groups and nothing
+in the catalogue creates one - but the moment an operator sets a default group,
+Gloak and Keycloak disagree about **every user created afterwards**. It is `POST
+/users`' behaviour, which is P2's, and P4's cut deliberately did not reach into
+it.
+
+## F57: nothing enforces a client policy
+
+Gloak stores client profiles and policies and serves them back on both routes
+that read them. No client request is evaluated against any of them.
+
+Filed as a note rather than a defect: serving a field is not implementing it, as
+the parity design's §10 says of the realm representation's other 104. It is here
+so that "client policies work" is never inferred from "client policies round
+trip".
