@@ -141,6 +141,215 @@ var oidcCore = []Case{
 			"X-Robots-Tag",
 		},
 	},
+	// --- Authorization endpoint, the rejections that never reach a login form ---
+	//
+	// Every one of these registers its own client through the browser-client
+	// fixture. The six bootstrapped ones cannot serve them:
+	// security-admin-console pins pkce.code.challenge.method to S256 and
+	// registers the host-relative "/admin/master/console/*", admin-cli has the
+	// standard flow off, account and account-console redirect only inside
+	// /realms/master/account/*, and broker and master-realm are confidential.
+	// See browserRedirectURI in fixture.go.
+	//
+	// None is masked. After ReplaceIssuer an error redirect holds nothing
+	// per-request, so the error code, the description and the query key order -
+	// measured as error, error_description, state, iss - are all compared byte
+	// for byte. That is the whole contract of the family and it is why these
+	// were worth serving before the success path.
+	//
+	// All of them pin X-Frame-Options and Content-Security-Policy **absent**.
+	// GET /auth's redirect back to the client is the one response in the browser
+	// flow that omits them, and AssertHeaders can only check a header that is
+	// named, so the negative needs its own field.
+	{
+		ID: "oidc/authorization/missing-response-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authorization endpoint: request validation",
+			Retrieved: "2026-08-20",
+		},
+		Status:  Implemented,
+		Fixture: "browser-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/auth",
+			Query: map[string]string{
+				"client_id":    "gloak-probe-browser",
+				"redirect_uri": "http://localhost:9999/callback",
+				"scope":        "openid",
+				"state":        "xyz123",
+			},
+		},
+		AssertHeaders:       []string{"Location", "Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
+	},
+	{
+		ID: "oidc/authorization/unsupported-response-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authorization endpoint: request validation",
+			Retrieved: "2026-08-29",
+		},
+		Status: Implemented,
+		// The sibling above sends no response_type and this one sends an
+		// unusable value, and they are two different answers: a missing one is
+		// invalid_request with a description, an unusable one is
+		// unsupported_response_type with **no error_description key at all**.
+		// One case cannot pin both.
+		Fixture: "browser-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/auth",
+			Query: map[string]string{
+				"response_type": "foo",
+				"client_id":     "gloak-probe-browser",
+				"redirect_uri":  "http://localhost:9999/callback",
+				"scope":         "openid",
+				"state":         "xyz123",
+			},
+		},
+		AssertHeaders:       []string{"Location", "Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
+	},
+	{
+		ID: "oidc/authorization/invalid-response-mode",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authorization endpoint: response_mode validation",
+			Retrieved: "2026-08-29",
+		},
+		Status: Implemented,
+		// response_mode has a validity check of its own, and it sits between
+		// the response type and the flow check: a bogus mode with
+		// response_type=foo answers about the response type, and with
+		// response_type=token about the mode. Measured 2026-08-29.
+		Fixture: "browser-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/auth",
+			Query: map[string]string{
+				"response_type": "code",
+				"client_id":     "gloak-probe-browser",
+				"redirect_uri":  "http://localhost:9999/callback",
+				"scope":         "openid",
+				"state":         "xyz123",
+				"response_mode": "bogus",
+			},
+		},
+		AssertHeaders:       []string{"Location", "Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
+	},
+	{
+		ID: "oidc/authorization/unsupported-scope",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authorization endpoint: scope validation",
+			Retrieved: "2026-08-20",
+		},
+		Status:  Implemented,
+		Fixture: "browser-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/auth",
+			Query: map[string]string{
+				"response_type": "code",
+				"client_id":     "gloak-probe-browser",
+				"redirect_uri":  "http://localhost:9999/callback",
+				"scope":         "openid nosuchscope",
+				"state":         "xyz123",
+			},
+		},
+		AssertHeaders:       []string{"Location", "Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
+	},
+	{
+		ID: "oidc/authorization/pkce-missing-challenge",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authorization endpoint: PKCE, request validation",
+			Retrieved: "2026-08-29",
+		},
+		Status: Implemented,
+		// The first of the three PKCE checks, and the one whose position is
+		// the surprise: a code_challenge_method with no code_challenge answers
+		// about the **challenge**, whatever the method is - see the sibling
+		// below, which needs a challenge present to be reachable at all.
+		Fixture: "browser-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/auth",
+			Query: map[string]string{
+				"response_type":         "code",
+				"client_id":             "gloak-probe-browser",
+				"redirect_uri":          "http://localhost:9999/callback",
+				"scope":                 "openid",
+				"state":                 "xyz123",
+				"code_challenge_method": "S256",
+			},
+		},
+		AssertHeaders:       []string{"Location", "Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
+	},
+	{
+		ID: "oidc/authorization/pkce-invalid-challenge-method",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authorization endpoint: PKCE, request validation",
+			Retrieved: "2026-08-29",
+		},
+		Status: Implemented,
+		// The challenge is RFC 7636 appendix B's, the same literal the fixtures
+		// use, and it is here only to get past the check above.
+		Fixture: "browser-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/auth",
+			Query: map[string]string{
+				"response_type":         "code",
+				"client_id":             "gloak-probe-browser",
+				"redirect_uri":          "http://localhost:9999/callback",
+				"scope":                 "openid",
+				"state":                 "xyz123",
+				"code_challenge":        "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+				"code_challenge_method": "bogus",
+			},
+		},
+		AssertHeaders:       []string{"Location", "Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
+	},
+	{
+		ID: "oidc/authorization/prompt-none-no-session",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authorization endpoint: prompt=none",
+			Retrieved: "2026-08-20",
+		},
+		Status:  Implemented,
+		Fixture: "browser-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/auth",
+			Query: map[string]string{
+				"response_type": "code",
+				"client_id":     "gloak-probe-browser",
+				"redirect_uri":  "http://localhost:9999/callback",
+				"scope":         "openid",
+				"state":         "xyz123",
+				"prompt":        "none",
+			},
+		},
+		AssertHeaders: []string{"Location", "Cache-Control"},
+		// This is the only rejection in the family that sets cookies:
+		// prompt=none is checked after the authentication session exists, so
+		// AUTH_SESSION_ID and KC_AUTH_SESSION_HASH are already minted. Their
+		// attributes are contract and are recorded in the observed spec rather
+		// than here; left unmasked they churn the golden on every recording.
+		// Gloak has no session and sends none, which is why Set-Cookie is not
+		// in AssertHeaders.
+		VolatileHeaders:     []string{"Set-Cookie"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
+	},
+
 	{
 		ID: "http/fallback/unknown-path",
 		Doc: Doc{
