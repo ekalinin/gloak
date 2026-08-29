@@ -550,3 +550,295 @@ func names(roles []*model.Role) []string {
 	}
 	return out
 }
+
+// withRealm returns a bootstrapped store with a second realm created through
+// CreateRealm, which is the path POST /admin/realms takes.
+func withRealm(t *testing.T, name string) (store.Store, *model.Realm, *model.Realm) {
+	t.Helper()
+	s, master := bootstrapped(t)
+	created, err := bootstrap.CreateRealm(context.Background(), s, name, nil)
+	if err != nil {
+		t.Fatalf("CreateRealm: %v", err)
+	}
+	return s, master, created
+}
+
+func clientRoleNames(t *testing.T, s store.Store, realmID, clientID string) []string {
+	t.Helper()
+	c, err := s.Clients().ByClientID(context.Background(), realmID, clientID)
+	if err != nil {
+		t.Fatalf("ByClientID %s: %v", clientID, err)
+	}
+	roles, err := s.Roles().ListClientRoles(context.Background(), realmID, c.ID)
+	if err != nil {
+		t.Fatalf("ListClientRoles %s: %v", clientID, err)
+	}
+	out := names(roles)
+	sort.Strings(out)
+	return out
+}
+
+// TestCreateRealmMakesTheSixClients pins the six a created realm carries. Five
+// of them are master's; the sixth is realm-management where master has
+// master-realm, and getting that wrong is the privilege-escalation trap
+// internal/admin's ownedByRealmOwnClient warns about.
+func TestCreateRealmMakesTheSixClients(t *testing.T) {
+	s, _, created := withRealm(t, "other")
+
+	clients, err := s.Clients().ListByRealm(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("ListByRealm: %v", err)
+	}
+	got := make([]string, 0, len(clients))
+	for _, c := range clients {
+		got = append(got, c.ClientID)
+	}
+	sort.Strings(got)
+	want := []string{"account", "account-console", "admin-cli", "broker", "realm-management", "security-admin-console"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("clients = %v, want %v", got, want)
+	}
+	if slices.Contains(got, "master-realm") {
+		t.Error("a created realm carries master-realm; measured absent")
+	}
+}
+
+// TestCreateRealmCarriesTheRealmNameInThreeURLs pins the three clients whose
+// URLs are not constants. Copying master's would give every realm links into
+// master's account and console pages.
+func TestCreateRealmCarriesTheRealmNameInThreeURLs(t *testing.T) {
+	s, _, created := withRealm(t, "other")
+	ctx := context.Background()
+
+	for _, tc := range []struct{ client, base, redirect string }{
+		{"account", "/realms/other/account/", "/realms/other/account/*"},
+		{"account-console", "/realms/other/account/", "/realms/other/account/*"},
+		{"security-admin-console", "/admin/other/console/", "/admin/other/console/*"},
+	} {
+		c, err := s.Clients().ByClientID(ctx, created.ID, tc.client)
+		if err != nil {
+			t.Fatalf("ByClientID %s: %v", tc.client, err)
+		}
+		if c.BaseURL != tc.base {
+			t.Errorf("%s baseUrl = %q, want %q", tc.client, c.BaseURL, tc.base)
+		}
+		if !slices.Contains(c.RedirectURIs, tc.redirect) {
+			t.Errorf("%s redirectUris = %v, want %q", tc.client, c.RedirectURIs, tc.redirect)
+		}
+	}
+}
+
+// TestCreateRealmMakesThreeRealmRoles: admin and create-realm exist in master
+// alone. Giving every realm master's five would hand every realm the right to
+// create realms.
+func TestCreateRealmMakesThreeRealmRoles(t *testing.T) {
+	s, _, created := withRealm(t, "other")
+
+	roles, err := s.Roles().ListRealmRoles(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("ListRealmRoles: %v", err)
+	}
+	got := names(roles)
+	sort.Strings(got)
+	want := []string{"default-roles-other", "offline_access", "uma_authorization"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("realm roles = %v, want %v", got, want)
+	}
+}
+
+// TestRealmManagementHasTwentyTwoRoles is the count that distinguishes the two
+// containers: 22 inside a realm, 21 in master. realm-admin is the difference,
+// and it is composite over the other 21.
+func TestRealmManagementHasTwentyTwoRoles(t *testing.T) {
+	s, master, created := withRealm(t, "other")
+	ctx := context.Background()
+
+	inRealm := clientRoleNames(t, s, created.ID, "realm-management")
+	if len(inRealm) != 22 {
+		t.Fatalf("realm-management has %d roles, want 22: %v", len(inRealm), inRealm)
+	}
+	if !slices.Contains(inRealm, "realm-admin") {
+		t.Error("realm-management has no realm-admin")
+	}
+
+	inMaster := clientRoleNames(t, s, master.ID, "master-realm")
+	if len(inMaster) != 21 {
+		t.Fatalf("master-realm has %d roles, want 21", len(inMaster))
+	}
+	if slices.Contains(inMaster, "realm-admin") {
+		t.Error("master-realm has realm-admin; measured absent")
+	}
+
+	c, err := s.Clients().ByClientID(ctx, created.ID, "realm-management")
+	if err != nil {
+		t.Fatalf("ByClientID: %v", err)
+	}
+	realmAdmin, err := s.Roles().ByName(ctx, created.ID, c.ID, "realm-admin")
+	if err != nil {
+		t.Fatalf("ByName realm-admin: %v", err)
+	}
+	children, err := s.Roles().ListComposites(ctx, realmAdmin.ID)
+	if err != nil {
+		t.Fatalf("ListComposites: %v", err)
+	}
+	if len(children) != 21 {
+		t.Fatalf("realm-admin is composite over %d, want 21", len(children))
+	}
+	if !realmAdmin.Composite {
+		t.Error("realm-admin is not marked composite")
+	}
+}
+
+// TestCreateRealmAddsAContainerToMaster is the half of realm creation that
+// happens outside the realm: a {realm}-realm client in master with 21 roles,
+// empty scope lists and a prose name.
+func TestCreateRealmAddsAContainerToMaster(t *testing.T) {
+	s, master, _ := withRealm(t, "other")
+	ctx := context.Background()
+
+	c, err := s.Clients().ByClientID(ctx, master.ID, "other-realm")
+	if err != nil {
+		t.Fatalf("ByClientID other-realm: %v", err)
+	}
+	if c.Name != "other Realm" {
+		t.Errorf("name = %q, want %q", c.Name, "other Realm")
+	}
+	if c.Protocol != "" {
+		t.Errorf("protocol = %q, want empty", c.Protocol)
+	}
+	if len(c.DefaultClientScopes) != 0 || len(c.OptionalClientScopes) != 0 {
+		t.Errorf("scopes = %v / %v, want both empty", c.DefaultClientScopes, c.OptionalClientScopes)
+	}
+	if !c.BearerOnly {
+		t.Error("not bearer-only")
+	}
+
+	roles := clientRoleNames(t, s, master.ID, "other-realm")
+	if len(roles) != 21 {
+		t.Fatalf("other-realm has %d roles, want 21: %v", len(roles), roles)
+	}
+	if slices.Contains(roles, "realm-admin") {
+		t.Error("other-realm has realm-admin; measured absent from this container")
+	}
+}
+
+// TestCreateRealmExtendsMastersAdminRole is the measured edit to an object that
+// already exists: master's admin realm role went from 22 composites to 43 when
+// one realm was created. It is the reason this package's boundary in AGENTS.md
+// had to be rewritten.
+func TestCreateRealmExtendsMastersAdminRole(t *testing.T) {
+	s, master := bootstrapped(t)
+	ctx := context.Background()
+
+	before := adminComposites(t, s, master.ID)
+	if before != 22 {
+		t.Fatalf("admin starts with %d composites, want 22", before)
+	}
+
+	if _, err := bootstrap.CreateRealm(ctx, s, "other", nil); err != nil {
+		t.Fatalf("CreateRealm: %v", err)
+	}
+	after := adminComposites(t, s, master.ID)
+	if after != 43 {
+		t.Fatalf("admin has %d composites after one realm, want 43", after)
+	}
+
+	if _, err := bootstrap.CreateRealm(ctx, s, "third", nil); err != nil {
+		t.Fatalf("CreateRealm: %v", err)
+	}
+	if got := adminComposites(t, s, master.ID); got != 64 {
+		t.Fatalf("admin has %d composites after two realms, want 64", got)
+	}
+}
+
+// TestDeleteRealmTakesTheCompositesBackOut is the inverse, and it is the one
+// that F29 would otherwise break: keycloak_role has no foreign key to client,
+// so deleting the container client alone would leave 21 orphan roles still
+// listed in master's admin composite.
+func TestDeleteRealmTakesTheCompositesBackOut(t *testing.T) {
+	s, master, created := withRealm(t, "other")
+	ctx := context.Background()
+
+	if got := adminComposites(t, s, master.ID); got != 43 {
+		t.Fatalf("admin has %d composites, want 43", got)
+	}
+
+	if err := bootstrap.DeleteRealm(ctx, s, created); err != nil {
+		t.Fatalf("DeleteRealm: %v", err)
+	}
+
+	if got := adminComposites(t, s, master.ID); got != 22 {
+		t.Fatalf("admin has %d composites after the delete, want 22", got)
+	}
+	if _, err := s.Clients().ByClientID(ctx, master.ID, "other-realm"); err == nil {
+		t.Error("other-realm survived the delete")
+	}
+	if _, err := s.Realms().ByName(ctx, "other"); err == nil {
+		t.Error("the realm survived the delete")
+	}
+}
+
+// TestDeleteRealmRefusesMaster: measured 400 "Can't remove master realm".
+func TestDeleteRealmRefusesMaster(t *testing.T) {
+	s, master := bootstrapped(t)
+
+	if err := bootstrap.DeleteRealm(context.Background(), s, master); err == nil {
+		t.Fatal("master was deleted")
+	}
+}
+
+// TestCreateRealmIsIdempotent: it converges rather than short-circuiting, for
+// the same reason EnsureMaster does. Two calls must not double master's admin
+// composites.
+func TestCreateRealmIsIdempotent(t *testing.T) {
+	s, master, _ := withRealm(t, "other")
+	ctx := context.Background()
+
+	if _, err := bootstrap.CreateRealm(ctx, s, "other", nil); err != nil {
+		t.Fatalf("second CreateRealm: %v", err)
+	}
+
+	if got := adminComposites(t, s, master.ID); got != 43 {
+		t.Fatalf("admin has %d composites after two calls, want 43", got)
+	}
+	if got := clientRoleNames(t, s, master.ID, "other-realm"); len(got) != 21 {
+		t.Fatalf("other-realm has %d roles, want 21", len(got))
+	}
+}
+
+// TestCreateRealmWiresDefaultRoles: default-roles-{realm} is what puts account
+// in every token's aud, and a realm whose users hold no roles issues tokens
+// with no audience at all.
+func TestCreateRealmWiresDefaultRoles(t *testing.T) {
+	s, _, created := withRealm(t, "other")
+	ctx := context.Background()
+
+	role, err := s.Roles().ByName(ctx, created.ID, "", "default-roles-other")
+	if err != nil {
+		t.Fatalf("ByName: %v", err)
+	}
+	children, err := s.Roles().ListComposites(ctx, role.ID)
+	if err != nil {
+		t.Fatalf("ListComposites: %v", err)
+	}
+	got := names(children)
+	sort.Strings(got)
+	want := []string{"manage-account", "offline_access", "uma_authorization", "view-profile"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("default-roles-other = %v, want %v", got, want)
+	}
+}
+
+func adminComposites(t *testing.T, s store.Store, masterID string) int {
+	t.Helper()
+	ctx := context.Background()
+	admin, err := s.Roles().ByName(ctx, masterID, "", "admin")
+	if err != nil {
+		t.Fatalf("ByName admin: %v", err)
+	}
+	children, err := s.Roles().ListComposites(ctx, admin.ID)
+	if err != nil {
+		t.Fatalf("ListComposites: %v", err)
+	}
+	return len(children)
+}

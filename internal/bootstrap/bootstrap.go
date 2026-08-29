@@ -1,7 +1,12 @@
-// Package bootstrap creates the master realm on first startup: the realm
-// itself, its default clients, its default realm roles and the
-// administrator account. EnsureMaster is idempotent, so it is safe to call
-// on every process start.
+// Package bootstrap creates a realm and everything Keycloak was measured
+// creating with it: its default clients, its default realm roles, its admin
+// role container and - for a realm that is not master - the client in master
+// that carries the rights to administer it.
+//
+// EnsureMaster is the master-only part on top of that: the two realm roles only
+// master has, the administrator account and its credential. Both it and
+// CreateRealm are idempotent, so EnsureMaster is safe to call on every process
+// start.
 package bootstrap
 
 import (
@@ -17,7 +22,12 @@ import (
 	"github.com/ekalinin/gloak/internal/store"
 )
 
-const masterRealmName = "master"
+// MasterRealmName is the one realm that is bootstrapped at startup, carries the
+// admin and create-realm realm roles, holds a {realm}-realm client for every
+// other realm, and cannot be deleted. It is exported because internal/admin has
+// to make the same distinction and a second copy of the string would be a
+// second place to get it wrong.
+const MasterRealmName = "master"
 
 // passwordCredentialType is Keycloak's CredentialRepresentation.type value
 // for a password credential.
@@ -39,100 +49,174 @@ var (
 	optionalScopeNames = []string{"address", "phone", "organization", "offline_access", "microprofile-jwt"}
 )
 
-// defaultClients is the measured configuration of the six clients Keycloak
-// creates in a fresh master realm, transcribed from a recording of
-// GET /admin/realms/master/clients rather than from the OpenAPI schema. See
-// "Client representation" in
+// realmClients is the measured configuration of the six clients Keycloak
+// creates in a realm, transcribed from recordings of
+// GET /admin/realms/{realm}/clients on master and on a realm created through
+// POST /admin/realms rather than from the OpenAPI schema. See "Client
+// representation" and "Realms" in
 // docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
 //
 // Two values here correct what this file had before, and neither was
 // contradicted by an earlier measurement - nobody had looked:
 //
-//   - broker and master-realm are bearer-only. They were created as ordinary
-//     confidential clients.
+//   - broker and the admin role container are bearer-only. They were created as
+//     ordinary confidential clients.
 //   - security-admin-console also carries the lightweight-access-token
 //     attribute. Only admin-cli was thought to.
 //
-// Name is a theme message key for five of the six; master-realm's is prose
-// derived from the realm name, which is why it is filled in at creation time
-// rather than listed here.
-var defaultClients = []model.Client{
-	{
-		ClientID: "account", Name: "${client_account}",
-		RootURL: "${authBaseUrl}", BaseURL: "/realms/master/account/",
-		Protocol: "openid-connect", PublicClient: true, StandardFlowEnabled: true,
-		RedirectURIs: []string{"/realms/master/account/*"},
-		Attributes: map[string]string{
-			"realm_client": "false", "post.logout.redirect.uris": "+",
+// **Three of the six carry the realm's name in their URLs** and the sixth is a
+// different client in master than in any other realm - see adminContainerFor.
+// A function rather than a package variable for both reasons, and because it
+// hands out maps and slices that a shared variable would let one realm's
+// creation edit for every other.
+func realmClients(realm string) []model.Client {
+	return []model.Client{
+		{
+			ClientID: "account", Name: "${client_account}",
+			RootURL: "${authBaseUrl}", BaseURL: "/realms/" + realm + "/account/",
+			Protocol: "openid-connect", PublicClient: true, StandardFlowEnabled: true,
+			RedirectURIs: []string{"/realms/" + realm + "/account/*"},
+			Attributes: map[string]string{
+				"realm_client": "false", "post.logout.redirect.uris": "+",
+			},
 		},
-	},
-	{
-		ClientID: "account-console", Name: "${client_account-console}",
-		RootURL: "${authBaseUrl}", BaseURL: "/realms/master/account/",
-		Protocol: "openid-connect", PublicClient: true, StandardFlowEnabled: true,
-		RedirectURIs: []string{"/realms/master/account/*"},
-		Attributes: map[string]string{
-			"realm_client": "false", "post.logout.redirect.uris": "+",
-			"pkce.code.challenge.method": "S256",
+		{
+			ClientID: "account-console", Name: "${client_account-console}",
+			RootURL: "${authBaseUrl}", BaseURL: "/realms/" + realm + "/account/",
+			Protocol: "openid-connect", PublicClient: true, StandardFlowEnabled: true,
+			RedirectURIs: []string{"/realms/" + realm + "/account/*"},
+			Attributes: map[string]string{
+				"realm_client": "false", "post.logout.redirect.uris": "+",
+				"pkce.code.challenge.method": "S256",
+			},
 		},
-	},
-	{
-		ClientID: "admin-cli", Name: "${client_admin-cli}",
-		Protocol: "openid-connect", PublicClient: true,
-		StandardFlowEnabled: false, DirectAccessGrantsEnabled: true,
-		FullScopeAllowed: true,
-		Attributes: map[string]string{
-			"realm_client": "false",
-			"client.use.lightweight.access.token.enabled": "true",
+		{
+			ClientID: "admin-cli", Name: "${client_admin-cli}",
+			Protocol: "openid-connect", PublicClient: true,
+			StandardFlowEnabled: false, DirectAccessGrantsEnabled: true,
+			FullScopeAllowed: true,
+			Attributes: map[string]string{
+				"realm_client": "false",
+				"client.use.lightweight.access.token.enabled": "true",
+			},
 		},
-	},
-	{
-		ClientID: "broker", Name: "${client_broker}",
+		{
+			ClientID: "broker", Name: "${client_broker}",
+			Protocol: "openid-connect", PublicClient: false, BearerOnly: true,
+			StandardFlowEnabled: true,
+			Attributes:          map[string]string{"realm_client": "true"},
+		},
+		adminContainerClient(realm),
+		{
+			ClientID: "security-admin-console", Name: "${client_security-admin-console}",
+			RootURL: "${authAdminUrl}", BaseURL: "/admin/" + realm + "/console/",
+			Protocol: "openid-connect", PublicClient: true, StandardFlowEnabled: true,
+			FullScopeAllowed: true,
+			RedirectURIs:     []string{"/admin/" + realm + "/console/*"},
+			WebOrigins:       []string{"+"},
+			Attributes: map[string]string{
+				"realm_client": "false", "post.logout.redirect.uris": "+",
+				"pkce.code.challenge.method":                  "S256",
+				"client.use.lightweight.access.token.enabled": "true",
+			},
+		},
+	}
+}
+
+// adminContainerFor is the client that owns a realm's admin roles as seen from
+// inside that realm: master-realm in master, realm-management everywhere else.
+//
+// **The two are not the same client with two names.** master-realm owns 21
+// roles and realm-management owns 22 - the extra one being realm-admin,
+// composite over the other 21 - and master-realm's name is prose derived from
+// the realm name where realm-management's is a theme message key. Both measured.
+func adminContainerFor(realm string) string {
+	if realm == MasterRealmName {
+		return "master-realm"
+	}
+	return "realm-management"
+}
+
+// masterContainerFor is the client **in master** that carries the rights to
+// administer a realm: master-realm for master itself, {realm}-realm for every
+// other. Creating a realm was measured creating this client in master and
+// adding its 21 roles to master's admin realm role.
+func masterContainerFor(realm string) string {
+	if realm == MasterRealmName {
+		return "master-realm"
+	}
+	return realm + "-realm"
+}
+
+// adminContainerClient is the sixth of the six, and the one that differs.
+//
+// realm-management carries a theme message key for its name, a protocol and the
+// usual six and five client scopes. master-realm carries prose, no protocol at
+// all - measured absent on that client alone - and its scopes are filled in with
+// the others'. The {realm}-realm client in master is a third shape again and is
+// built by masterContainerClient rather than here.
+func adminContainerClient(realm string) model.Client {
+	if realm == MasterRealmName {
+		return model.Client{
+			ClientID: "master-realm", PublicClient: false, BearerOnly: true,
+			StandardFlowEnabled: true,
+			Attributes:          map[string]string{"realm_client": "true"},
+		}
+	}
+	return model.Client{
+		ClientID: "realm-management", Name: "${client_realm-management}",
 		Protocol: "openid-connect", PublicClient: false, BearerOnly: true,
 		StandardFlowEnabled: true,
 		Attributes:          map[string]string{"realm_client": "true"},
-	},
-	{
-		// No Protocol: measured absent on this client alone.
-		ClientID: "master-realm", PublicClient: false, BearerOnly: true,
-		StandardFlowEnabled: true,
-		Attributes:          map[string]string{"realm_client": "true"},
-	},
-	{
-		ClientID: "security-admin-console", Name: "${client_security-admin-console}",
-		RootURL: "${authAdminUrl}", BaseURL: "/admin/master/console/",
-		Protocol: "openid-connect", PublicClient: true, StandardFlowEnabled: true,
-		FullScopeAllowed: true,
-		RedirectURIs:     []string{"/admin/master/console/*"},
-		WebOrigins:       []string{"+"},
-		Attributes: map[string]string{
-			"realm_client": "false", "post.logout.redirect.uris": "+",
-			"pkce.code.challenge.method":                  "S256",
-			"client.use.lightweight.access.token.enabled": "true",
-		},
-	},
+	}
 }
 
-// defaultRealmRoles is the measured set of realm-level roles Keycloak
-// creates in a fresh master realm.
+// masterContainerClient is the {realm}-realm client a created realm gets **in
+// master**, recorded from GET /admin/realms/master/clients?clientId=p4cl-realm.
+//
+// It is not adminContainerClient's shape and not master-realm's either: it
+// carries prose for a name like master-realm, no protocol like master-realm,
+// and **empty** default and optional client scope lists where every other
+// bootstrapped client carries six and five. The empty lists are why it is built
+// here rather than run through the loop in createRealm.
+func masterContainerClient(realm string) model.Client {
+	return model.Client{
+		ClientID: masterContainerFor(realm), Name: realm + " Realm",
+		PublicClient: false, BearerOnly: true, StandardFlowEnabled: true,
+		Attributes:           map[string]string{"realm_client": "true"},
+		RedirectURIs:         []string{},
+		WebOrigins:           []string{},
+		DefaultClientScopes:  []string{},
+		OptionalClientScopes: []string{},
+	}
+}
+
+// realmRoles is the measured set of realm-level roles a realm carries.
+//
+// **A created realm has three of these and master has five.** admin and
+// create-realm exist in master alone, measured on a realm created through
+// POST /admin/realms, so extending master's five to every realm would hand
+// every realm a role that confers the right to create realms.
 //
 // Two of the descriptions do not follow the ${role_<name>} pattern the client
 // roles all follow, measured 2026-08-23: offline_access is described as
 // ${role_offline-access} with a hyphen where the name has an underscore, and
-// default-roles-master as ${role_default-roles} without the realm name. They
+// default-roles-{realm} as ${role_default-roles} without the realm name. They
 // are spelled out for that reason rather than derived.
-var defaultRealmRoles = []model.Role{
-	{Name: "admin", Description: "${role_admin}", Composite: true},
-	{Name: "create-realm", Description: "${role_create-realm}"},
-	{Name: defaultRolesRealmRole, Description: "${role_default-roles}", Composite: true},
-	{Name: "offline_access", Description: "${role_offline-access}"},
-	{Name: "uma_authorization", Description: "${role_uma_authorization}"},
+func realmRoles(realm string) []model.Role {
+	roles := []model.Role{
+		{Name: model.DefaultRolesName(realm), Description: "${role_default-roles}", Composite: true},
+		{Name: "offline_access", Description: "${role_offline-access}"},
+		{Name: "uma_authorization", Description: "${role_uma_authorization}"},
+	}
+	if realm == MasterRealmName {
+		roles = append(roles,
+			model.Role{Name: "admin", Description: "${role_admin}", Composite: true},
+			model.Role{Name: adminCompositeRealmRole, Description: "${role_create-realm}"},
+		)
+	}
+	return roles
 }
-
-// defaultRolesRealmRole is the composite every user in the realm is given, and
-// the reason an ordinary user's token carries any role at all. Its name
-// carries the realm's, so a second realm gets its own.
-const defaultRolesRealmRole = "default-roles-master"
 
 // defaultRolesComposites is what that role contains, measured 2026-08-23:
 // two realm roles and two of the account client's.
@@ -146,11 +230,6 @@ var defaultRolesComposites = struct {
 	realm:   []string{"offline_access", "uma_authorization"},
 	account: []string{"manage-account", "view-profile"},
 }
-
-// adminRoleContainer is the client that owns the admin roles in the master
-// realm. `realm-management` is the equivalent inside non-master realms, which
-// is P4's problem; the original design named it for master and was wrong.
-const adminRoleContainer = "master-realm"
 
 // adminClientRoles is the measured set of 21 roles on the master-realm client.
 // See "Admin roles on the master-realm client" in
@@ -190,6 +269,37 @@ var adminRoleComposites = map[string][]string{
 	"view-organizations": {"query-organizations"},
 }
 
+// realmAdminRole is the twenty-second role, and realm-management has it where
+// master-realm does not. It is composite over the other 21 and is what makes a
+// realm administrable from inside itself: a caller holding it reads, writes and
+// deletes its own realm and is 403 on every other, measured.
+const realmAdminRole = "realm-admin"
+
+// adminContainerRoles is what the container inside a realm owns: 21 in master,
+// 22 everywhere else.
+func adminContainerRoles(realm string) []string {
+	if realm == MasterRealmName {
+		return adminClientRoles
+	}
+	return append(append([]string{}, adminClientRoles...), realmAdminRole)
+}
+
+// adminContainerComposites is the composite structure on that container. The
+// three view- roles are the same either side; realm-admin over all 21 is the
+// difference, and it is what a realm-management caller's rights are expanded
+// through.
+func adminContainerComposites(realm string) map[string][]string {
+	if realm == MasterRealmName {
+		return adminRoleComposites
+	}
+	out := make(map[string][]string, len(adminRoleComposites)+1)
+	for k, v := range adminRoleComposites {
+		out[k] = v
+	}
+	out[realmAdminRole] = adminClientRoles
+	return out
+}
+
 // roleContainers is every bootstrapped client that owns roles, measured
 // 2026-08-23 by reading GET .../clients/{uuid}/roles on all six.
 // account-console, admin-cli and security-admin-console own none, which is why
@@ -199,30 +309,38 @@ var adminRoleComposites = map[string][]string{
 // ordinary user has roles on, so leaving it out did not merely lose three role
 // names: it left every access token with an empty resource_access and, since
 // aud is derived from that, no audience at all.
-var roleContainers = []struct {
+type roleContainer struct {
 	client     string
 	roles      []string
 	composites map[string][]string
-}{
-	{
-		client: "account",
-		roles: []string{
-			"delete-account",
-			"manage-account",
-			"manage-account-links",
-			"manage-consent",
-			"view-applications",
-			"view-consent",
-			"view-groups",
-			"view-profile",
+}
+
+func roleContainers(realm string) []roleContainer {
+	return []roleContainer{
+		{
+			client: "account",
+			roles: []string{
+				"delete-account",
+				"manage-account",
+				"manage-account-links",
+				"manage-consent",
+				"view-applications",
+				"view-consent",
+				"view-groups",
+				"view-profile",
+			},
+			composites: map[string][]string{
+				"manage-account": {"manage-account-links"},
+				"manage-consent": {"view-consent"},
+			},
 		},
-		composites: map[string][]string{
-			"manage-account": {"manage-account-links"},
-			"manage-consent": {"view-consent"},
+		{client: "broker", roles: []string{"read-token"}},
+		{
+			client:     adminContainerFor(realm),
+			roles:      adminContainerRoles(realm),
+			composites: adminContainerComposites(realm),
 		},
-	},
-	{client: "broker", roles: []string{"read-token"}},
-	{client: adminRoleContainer, roles: adminClientRoles, composites: adminRoleComposites},
+	}
 }
 
 // adminComposites is what the realm role `admin` contains: measured as all 21
@@ -254,51 +372,11 @@ const (
 // in particular, an existing admin credential is left alone rather than
 // reset, so this is safe to call on every process start.
 func EnsureMaster(ctx context.Context, s store.Store, adminUser, adminPassword string) error {
-	realm, err := ensureRealm(ctx, s)
+	realm, err := CreateRealm(ctx, s, MasterRealmName, nil)
 	if err != nil {
 		return err
 	}
-
-	for _, c := range defaultClients {
-		c.ID = model.NewID()
-		c.RealmID = realm.ID
-		c.Enabled = true
-		// Measured on every one of the six, so held here rather than repeated
-		// in each literal above.
-		c.ClientAuthenticatorType = "client-secret"
-		c.DefaultClientScopes = defaultScopeNames
-		c.OptionalClientScopes = optionalScopeNames
-		if c.RedirectURIs == nil {
-			c.RedirectURIs = []string{}
-		}
-		if c.WebOrigins == nil {
-			c.WebOrigins = []string{}
-		}
-		if c.ClientID == adminRoleContainer {
-			// "master Realm" - prose derived from the realm's name, not a
-			// theme message key like the other five.
-			c.Name = realm.Name + " Realm"
-		}
-		if err := s.Clients().Create(ctx, &c); err != nil && !errors.Is(err, store.ErrConflict) {
-			return fmt.Errorf("bootstrap: create client %q: %w", c.ClientID, err)
-		}
-	}
-
-	for _, r := range defaultRealmRoles {
-		r.ID = model.NewID()
-		r.RealmID = realm.ID
-		if err := s.Roles().Create(ctx, &r); err != nil && !errors.Is(err, store.ErrConflict) {
-			return fmt.Errorf("bootstrap: create role %q: %w", r.Name, err)
-		}
-	}
-
-	if err := ensureClientRoles(ctx, s, realm.ID); err != nil {
-		return err
-	}
 	if err := ensureAdminComposites(ctx, s, realm.ID); err != nil {
-		return err
-	}
-	if err := ensureDefaultRoles(ctx, s, realm.ID); err != nil {
 		return err
 	}
 
@@ -313,6 +391,171 @@ func EnsureMaster(ctx context.Context, s store.Store, adminUser, adminPassword s
 	return ensureAdminCredential(ctx, s, user.ID, adminPassword)
 }
 
+// CreateRealm builds a realm and everything Keycloak was measured creating
+// alongside it: six clients, three realm roles, the admin role container with
+// its 21 or 22 roles, the default-roles composite, and - for any realm that is
+// not master - the {realm}-realm client **in master** that carries the rights
+// to administer it.
+//
+// realm carries the fields the caller wants set; only ID, Name and the two
+// lifespans are read, and a nil realm means "the defaults for this name". It is
+// idempotent for the same reason EnsureMaster is: every object is ensured
+// individually, so a process that crashed midway through is repaired on the
+// next call rather than left permanently half-built.
+//
+// **It modifies master's admin realm role, and that is measured, not a
+// shortcut.** Creating a realm was measured taking master's admin from 22
+// composites to 43, and deleting it taking them back out. AGENTS.md's boundary
+// for this package was rewritten in the same change that added this function
+// rather than worked around.
+func CreateRealm(ctx context.Context, s store.Store, name string, want *model.Realm) (*model.Realm, error) {
+	realm, err := ensureRealm(ctx, s, name, want)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, c := range realmClients(name) {
+		if err := createClient(ctx, s, realm.ID, c); err != nil {
+			return nil, err
+		}
+	}
+
+	for _, r := range realmRoles(name) {
+		r.ID = model.NewID()
+		r.RealmID = realm.ID
+		if err := s.Roles().Create(ctx, &r); err != nil && !errors.Is(err, store.ErrConflict) {
+			return nil, fmt.Errorf("bootstrap: create role %q: %w", r.Name, err)
+		}
+	}
+
+	if err := ensureClientRoles(ctx, s, realm.ID, name); err != nil {
+		return nil, err
+	}
+	if err := ensureDefaultRoles(ctx, s, realm.ID, name); err != nil {
+		return nil, err
+	}
+	if name != MasterRealmName {
+		if err := ensureMasterContainer(ctx, s, name); err != nil {
+			return nil, err
+		}
+	}
+	return realm, nil
+}
+
+// createClient fills in the seven fields measured identical on every
+// bootstrapped client and stores it, ignoring one that is already there.
+//
+// The two scope lists are **not** forced: masterContainerClient carries them
+// empty, measured, where the other six carry six and five. Overwriting them
+// here unconditionally is what the earlier single-realm version did, and it
+// would be wrong on the one client this cut adds.
+func createClient(ctx context.Context, s store.Store, realmID string, c model.Client) error {
+	c.ID = model.NewID()
+	c.RealmID = realmID
+	c.Enabled = true
+	c.ClientAuthenticatorType = "client-secret"
+	if c.DefaultClientScopes == nil {
+		c.DefaultClientScopes = defaultScopeNames
+	}
+	if c.OptionalClientScopes == nil {
+		c.OptionalClientScopes = optionalScopeNames
+	}
+	if c.RedirectURIs == nil {
+		c.RedirectURIs = []string{}
+	}
+	if c.WebOrigins == nil {
+		c.WebOrigins = []string{}
+	}
+	if err := s.Clients().Create(ctx, &c); err != nil && !errors.Is(err, store.ErrConflict) {
+		return fmt.Errorf("bootstrap: create client %q: %w", c.ClientID, err)
+	}
+	return nil
+}
+
+// ensureMasterContainer creates the {realm}-realm client in **master** and adds
+// its 21 roles to master's admin realm role.
+//
+// Both halves are measured: master gained a p4a-realm client when p4a was
+// created, and its admin role went from 22 composites to 43. The client's name
+// is prose - "p4a Realm" - not a theme message key.
+func ensureMasterContainer(ctx context.Context, s store.Store, name string) error {
+	master, err := s.Realms().ByName(ctx, MasterRealmName)
+	if err != nil {
+		return fmt.Errorf("bootstrap: look up master realm: %w", err)
+	}
+	if err := createClient(ctx, s, master.ID, masterContainerClient(name)); err != nil {
+		return err
+	}
+
+	container, err := s.Clients().ByClientID(ctx, master.ID, masterContainerFor(name))
+	if err != nil {
+		return fmt.Errorf("bootstrap: look up %s client: %w", masterContainerFor(name), err)
+	}
+	for _, role := range adminClientRoles {
+		r := &model.Role{
+			ID: model.NewID(), RealmID: master.ID, ClientID: container.ID, Name: role,
+			Description: "${role_" + role + "}",
+			Composite:   len(adminRoleComposites[role]) > 0,
+		}
+		if err := s.Roles().Create(ctx, r); err != nil && !errors.Is(err, store.ErrConflict) {
+			return fmt.Errorf("bootstrap: create %s role %q: %w", container.ClientID, role, err)
+		}
+	}
+	for parent, children := range adminRoleComposites {
+		if err := composeRoles(ctx, s, master.ID, container.ID, parent, container.ID, children); err != nil {
+			return err
+		}
+	}
+	// The measured edit to an object that already exists.
+	return composeRoles(ctx, s, master.ID, "", "admin", container.ID, adminClientRoles)
+}
+
+// DeleteRealm removes a realm and the client in master that administered it.
+//
+// The realm row cascades to its clients, users, roles, groups, sessions and
+// keys. The client in master does **not** cascade to its roles - keycloak_role
+// carries no foreign key to client, which is F29 - so the 21 are deleted
+// explicitly, and deleting them is what takes their 21 rows back out of
+// master's admin composite through composite_role's cascade. Measured: master's
+// admin went from 127 composites to 106 when one realm was deleted.
+func DeleteRealm(ctx context.Context, s store.Store, realm *model.Realm) error {
+	if realm.Name == MasterRealmName {
+		return fmt.Errorf("bootstrap: master realm cannot be deleted")
+	}
+	master, err := s.Realms().ByName(ctx, MasterRealmName)
+	if err != nil {
+		return fmt.Errorf("bootstrap: look up master realm: %w", err)
+	}
+
+	container, err := s.Clients().ByClientID(ctx, master.ID, masterContainerFor(realm.Name))
+	switch {
+	case err == nil:
+		roles, err := s.Roles().ListClientRoles(ctx, master.ID, container.ID)
+		if err != nil {
+			return fmt.Errorf("bootstrap: list %s roles: %w", container.ClientID, err)
+		}
+		for _, r := range roles {
+			if err := s.Roles().Delete(ctx, master.ID, r.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("bootstrap: delete role %q: %w", r.Name, err)
+			}
+		}
+		if err := s.Clients().Delete(ctx, master.ID, container.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("bootstrap: delete client %q: %w", container.ClientID, err)
+		}
+	case errors.Is(err, store.ErrNotFound):
+		// A realm whose container in master is already gone still deletes.
+		// Converging rather than failing is the same reason CreateRealm
+		// ensures each object individually.
+	default:
+		return fmt.Errorf("bootstrap: look up %s client: %w", masterContainerFor(realm.Name), err)
+	}
+
+	if err := s.Realms().Delete(ctx, realm.ID); err != nil {
+		return fmt.Errorf("bootstrap: delete realm %q: %w", realm.Name, err)
+	}
+	return nil
+}
+
 // ensureClientRoles creates every role the bootstrapped clients own and wires
 // the composites among them - the three admin view- roles over their query-
 // counterparts, manage-account over manage-account-links, manage-consent over
@@ -321,8 +564,8 @@ func EnsureMaster(ctx context.Context, s store.Store, adminUser, adminPassword s
 // Client role descriptions are all theme message keys of the form
 // ${role_<name>}, measured on all 30, so they are derived rather than listed.
 // The realm roles next door are not so tidy; see defaultRealmRoles.
-func ensureClientRoles(ctx context.Context, s store.Store, realmID string) error {
-	for _, container := range roleContainers {
+func ensureClientRoles(ctx context.Context, s store.Store, realmID, realmName string) error {
+	for _, container := range roleContainers(realmName) {
 		c, err := s.Clients().ByClientID(ctx, realmID, container.client)
 		if err != nil {
 			return fmt.Errorf("bootstrap: look up %s client: %w", container.client, err)
@@ -347,8 +590,10 @@ func ensureClientRoles(ctx context.Context, s store.Store, realmID string) error
 }
 
 // ensureAdminComposites wires the realm role admin over all 21 admin client
-// roles plus create-realm.
+// roles plus create-realm. It is master's alone: no other realm has an admin
+// realm role at all, measured.
 func ensureAdminComposites(ctx context.Context, s store.Store, realmID string) error {
+	const adminRoleContainer = "master-realm"
 	container, err := s.Clients().ByClientID(ctx, realmID, adminRoleContainer)
 	if err != nil {
 		return fmt.Errorf("bootstrap: look up %s client: %w", adminRoleContainer, err)
@@ -362,17 +607,19 @@ func ensureAdminComposites(ctx context.Context, s store.Store, realmID string) e
 	return composeRoles(ctx, s, realmID, "", "admin", "", []string{adminCompositeRealmRole})
 }
 
-// ensureDefaultRoles wires default-roles-master over the two realm roles and
-// the two account client roles it was measured containing.
-func ensureDefaultRoles(ctx context.Context, s store.Store, realmID string) error {
+// ensureDefaultRoles wires default-roles-{realm} over the two realm roles and
+// the two account client roles it was measured containing. A created realm's
+// four are the same four master's has.
+func ensureDefaultRoles(ctx context.Context, s store.Store, realmID, realmName string) error {
 	account, err := s.Clients().ByClientID(ctx, realmID, "account")
 	if err != nil {
 		return fmt.Errorf("bootstrap: look up account client: %w", err)
 	}
-	if err := composeRoles(ctx, s, realmID, "", defaultRolesRealmRole, "", defaultRolesComposites.realm); err != nil {
+	defaultRoles := model.DefaultRolesName(realmName)
+	if err := composeRoles(ctx, s, realmID, "", defaultRoles, "", defaultRolesComposites.realm); err != nil {
 		return err
 	}
-	return composeRoles(ctx, s, realmID, "", defaultRolesRealmRole, account.ID, defaultRolesComposites.account)
+	return composeRoles(ctx, s, realmID, "", defaultRoles, account.ID, defaultRolesComposites.account)
 }
 
 // composeRoles adds each child to parent, ignoring a composite that is already
@@ -398,7 +645,7 @@ func composeRoles(ctx context.Context, s store.Store, realmID, parentClientID, p
 // measured holding - admin and default-roles-master - and no client role
 // directly.
 func ensureAdminRoleAssignment(ctx context.Context, s store.Store, realmID, userID string) error {
-	for _, name := range []string{"admin", defaultRolesRealmRole} {
+	for _, name := range []string{"admin", model.DefaultRolesName(MasterRealmName)} {
 		r, err := s.Roles().ByName(ctx, realmID, "", name)
 		if err != nil {
 			return fmt.Errorf("bootstrap: look up role %q: %w", name, err)
@@ -410,28 +657,42 @@ func ensureAdminRoleAssignment(ctx context.Context, s store.Store, realmID, user
 	return nil
 }
 
-// ensureRealm creates the master realm, or looks up the existing one if a
+// ensureRealm creates the realm row, or looks up the existing one if a
 // previous run (or a concurrent one) already created it.
-func ensureRealm(ctx context.Context, s store.Store) (*model.Realm, error) {
+//
+// want carries what the caller asked for and may be nil. The defaults it fills
+// in are **master's**, and they are not the product's: master's
+// accessTokenLifespan is 60 where a realm created through POST /admin/realms
+// gets 300, and a created realm is disabled where master is enabled. Both
+// measured, and both are the admin handler's to supply rather than this
+// function's to guess.
+func ensureRealm(ctx context.Context, s store.Store, name string, want *model.Realm) (*model.Realm, error) {
 	realm := &model.Realm{
 		ID:                   model.NewID(),
-		Name:                 masterRealmName,
+		Name:                 name,
 		Enabled:              true,
 		AccessTokenLifespan:  accessTokenLifespan,
 		RefreshTokenLifespan: refreshTokenLifespan,
+	}
+	if want != nil {
+		realm = want
+		realm.Name = name
+		if realm.ID == "" {
+			realm.ID = model.NewID()
+		}
 	}
 	err := s.Realms().Create(ctx, realm)
 	switch {
 	case err == nil:
 		return realm, nil
 	case errors.Is(err, store.ErrConflict):
-		existing, err := s.Realms().ByName(ctx, masterRealmName)
+		existing, err := s.Realms().ByName(ctx, name)
 		if err != nil {
-			return nil, fmt.Errorf("bootstrap: look up master realm: %w", err)
+			return nil, fmt.Errorf("bootstrap: look up realm %q: %w", name, err)
 		}
 		return existing, nil
 	default:
-		return nil, fmt.Errorf("bootstrap: create master realm: %w", err)
+		return nil, fmt.Errorf("bootstrap: create realm %q: %w", name, err)
 	}
 }
 
