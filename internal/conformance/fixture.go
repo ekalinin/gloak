@@ -504,6 +504,12 @@ var Fixtures = map[string]Fixture{
 	"admin-token-client-scope-detach-opt": clientScopeAttachFixture(
 		probeScopeClientDetachOptID, "gloak-probe-cs-detach-opt",
 		probeDetachOptID, "gloak-probe-cs-detach-opt-scope", true, false),
+
+	"admin-token-client-named-scopes": namedScopesClientFixture(
+		probeScopeClientNamedID, "gloak-probe-cs-named", "", "", false),
+	"admin-token-client-saml-scope": namedScopesClientFixture(
+		probeScopeClientSAMLID, "gloak-probe-cs-saml",
+		probeSAMLScopeID, "gloak-probe-cs-saml-scope", true),
 }
 
 // The fixed client-scope ids P5's fixtures create their scopes with. They are
@@ -532,6 +538,9 @@ const (
 	probeScopeClientDetachID    = "c11e0000-0000-4000-8000-00000000000c"
 	probeScopeClientAttachOptID = "c11e0000-0000-4000-8000-00000000000d"
 	probeScopeClientDetachOptID = "c11e0000-0000-4000-8000-00000000000e"
+	probeScopeClientNamedID     = "c11e0000-0000-4000-8000-00000000000f"
+	probeScopeClientSAMLID      = "c11e0000-0000-4000-8000-000000000010"
+	probeSAMLScopeID            = "a5c09e00-0000-4000-8000-00000000000f"
 )
 
 // clientScopeFixture creates one client scope in master with a fixed id.
@@ -547,16 +556,61 @@ func clientScopeFixture(id, name string) Fixture {
 }
 
 func clientScopeStep(id, name string) Step {
+	return protocolScopeStep(id, name, "openid-connect")
+}
+
+func protocolScopeStep(id, name, protocol string) Step {
 	return Step{
 		Request: Request{
 			Method:  http.MethodPost,
 			Path:    "/admin/realms/master/client-scopes",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body: []byte(`{"id":"` + id + `","name":"` + name +
-				`","protocol":"openid-connect"}`),
+				`","protocol":"` + protocol + `"}`),
 		},
 		ExpectStatus: idempotentCreate,
 	}
+}
+
+// namedScopesClientFixture is a client that names its own client scopes, plus a
+// **saml** scope, optionally already offered to it.
+//
+// It exists for the two rules nothing else in this catalogue can see. Naming
+// either list suppresses inheritance on **both**, so a client naming only
+// `defaultClientScopes` has an empty optional list rather than the realm's
+// five; and attaching a scope whose protocol is not the client's answers 204
+// and attaches nothing. Both were measured, both were guessed wrong first, and
+// a mutation of each survived every other case in this cut.
+func namedScopesClientFixture(clientUUID, clientID, scopeID, scopeName string,
+	offerSAML bool) Fixture {
+	body := `{"id":"` + clientUUID + `","clientId":"` + clientID +
+		`","enabled":true,"defaultClientScopes":["email"]}`
+	f := Fixture{
+		State: "bootstrap",
+		Steps: []Step{adminTokenStep(), {
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(body),
+			},
+			ExpectStatus: idempotentCreate,
+		}},
+	}
+	if !offerSAML {
+		return f
+	}
+	f.Steps = append(f.Steps,
+		protocolScopeStep(scopeID, scopeName, "saml"),
+		Step{
+			Request: Request{
+				Method: http.MethodPut,
+				Path: "/admin/realms/master/clients/" + clientUUID +
+					"/default-client-scopes/" + scopeID,
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+		})
+	return f
 }
 
 // realmDefaultScopeFixture creates a client scope and, when added is true, puts

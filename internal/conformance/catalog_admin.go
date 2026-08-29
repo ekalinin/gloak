@@ -5080,4 +5080,73 @@ var adminCases = []Case{
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},
+	{
+		// `{}` is what says the **order** of the two checks. A body with no
+		// name and no protocol answers about the name - the 500 - where
+		// `{"name":"x"}` answers about the protocol. Without this case a
+		// mutation that swaps the two survives every other case in this cut,
+		// which is exactly what it did before this case was added.
+		ID: "admin/client-scopes/create-empty-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: create from an empty JSON object",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **Naming either list suppresses inheritance on both.** The fixture's
+		// client names `defaultClientScopes` and says nothing about the
+		// optional one, and its optional list is empty rather than the realm's
+		// five. A per-list nil check gives the five, and nothing else in this
+		// cut can tell the difference.
+		ID: "admin/clients/optional-client-scopes-not-inherited",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: a client naming only its default scopes inherits no optional ones",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-client-named-scopes",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/c11e0000-0000-4000-8000-00000000000f/optional-client-scopes",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **A protocol mismatch is a silent no-op.** The fixture PUT a saml
+		// scope onto this openid-connect client and got 204; the list still
+		// holds the one scope the client was created with. Asserting the 204
+		// alone does not see it - the write answers 204 either way - so this
+		// case reads the list afterwards.
+		ID: "admin/clients/default-client-scopes-protocol-mismatch",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: a saml client scope offered to an openid-connect client",
+			Retrieved: "2026-08-29",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-client-saml-scope",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000010/default-client-scopes",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id"},
+		Unordered:     []string{"."},
+	},
 }
