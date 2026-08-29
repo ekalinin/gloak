@@ -60,6 +60,18 @@ func (m *Manager) ForRealm(ctx context.Context, realm *model.Realm) (*RealmKeys,
 	return k, nil
 }
 
+// Forget drops a realm's cached key set.
+//
+// A key is immutable once created, which is why the cache has no expiry - but a
+// realm is not: DELETE /admin/realms/{realm} takes its keys with it through the
+// schema's cascade, and a realm later created with the same id would otherwise
+// be served the dead one's. Nothing else in this package invalidates anything.
+func (m *Manager) Forget(realmID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.cached, realmID)
+}
+
 // load rebuilds a key set from the store, or returns nil when the realm has no
 // keys yet. A realm holding some but not all three is reported as corrupt
 // rather than quietly completed: generating the missing key would publish a

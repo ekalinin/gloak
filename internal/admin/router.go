@@ -33,6 +33,28 @@ func Register(mux *http.ServeMux, s store.Store, k *keys.Manager, issuerBase str
 // route with no required role cannot be written by accident: guard takes the
 // role as a parameter, so omitting it does not compile.
 func (h *handler) register(mux *http.ServeMux) {
+	// The realm as a resource. The two collection routes carry no {realm}
+	// segment, so neither resolveRealm nor any of the twelve combinators below
+	// can serve them - guardRealms authenticates and hands the caller over.
+	//
+	// POST takes the realm role create-realm and nothing else: manage-realm and
+	// realm-admin are both 403 on it, measured, and a create-realm holder is
+	// 403 on the listing beside it. The collection's two verbs disagree about
+	// who may use them in both directions.
+	mux.HandleFunc("GET /admin/realms", h.guardRealms(h.listRealms))
+	mux.HandleFunc("POST /admin/realms", h.guardRealmsWithRole("create-realm", h.createRealm))
+
+	// The three that name a realm resolve it **before** judging the caller, so
+	// an unknown realm is 404 to a caller holding nothing - guardAny's order,
+	// which is guardGroup's and not guardUserSubject's.
+	//
+	// The read has its own guard because its admission is wider than any other
+	// route's: see maySeeRealm. The two writes take manage-realm alone, on the
+	// container the caller's rights come from, measured across all 21 roles.
+	mux.HandleFunc("GET /admin/realms/{realm}", h.guardRealmRead(h.readRealm))
+	mux.HandleFunc("PUT /admin/realms/{realm}", h.guardAny(realmWriteRoles, h.updateRealm))
+	mux.HandleFunc("DELETE /admin/realms/{realm}", h.guardAny(realmWriteRoles, h.deleteRealm))
+
 	// Listing and counting accept query-users as well as view-users, measured:
 	// a caller holding only query-users gets 200 on both. Reading one user
 	// does not - it answers 403.
@@ -583,6 +605,68 @@ func (h *handler) guardByRoleContainer(realmRoles, clientRoles []string, next fu
 	}
 }
 
+// guardRealms is the guard for the two routes with no {realm} segment.
+//
+// Every other combinator in this file starts with resolveRealm, which reads
+// r.PathValue("realm"); there is none here, so the caller is authenticated in
+// the realm its token names and the handler decides the rest. The listing
+// filters per realm and the create takes one role, and neither question can be
+// asked before the caller is known.
+func (h *handler) guardRealms(next func(http.ResponseWriter, *http.Request, *caller)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		c := h.resolveCaller(w, r, nil)
+		if c == nil {
+			return
+		}
+		next(w, r, c)
+	}
+}
+
+// guardRealmsWithRole is guardRealms plus one role, for POST /admin/realms.
+// create-realm is a **realm** role in master, so it reaches adminGrants by name
+// rather than through a container - see adminRoleNames - and a caller outside
+// master holds no such role at all.
+func (h *handler) guardRealmsWithRole(role string, next func(http.ResponseWriter, *http.Request, *caller)) http.HandlerFunc {
+	return h.guardRealms(func(w http.ResponseWriter, r *http.Request, c *caller) {
+		if !c.has(role) {
+			writeForbidden(w)
+			return
+		}
+		next(w, r, c)
+	})
+}
+
+// guardRealmRead is GET /admin/realms/{realm}'s guard, and it is the only one
+// whose admission is not a role list.
+//
+// A caller in master holding **any** admin role on **any** container reads
+// every realm, at the reduced level if it holds no view-realm there - measured
+// on a caller holding only the realm role create-realm, which owns no container
+// at all. impersonation is the one admin role that opens nothing. See
+// maySeeRealm.
+func (h *handler) guardRealmRead(next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		realm := h.resolveRealm(w, r)
+		if realm == nil {
+			return
+		}
+		c := h.resolveCaller(w, r, realm)
+		if c == nil {
+			return
+		}
+		ok, err := h.maySeeRealm(r.Context(), c, realm.Name)
+		if err != nil {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		if !ok {
+			writeForbidden(w)
+			return
+		}
+		next(w, r, &reqContext{realm: realm, caller: c})
+	}
+}
+
 // guardAnyRejecting is the one implementation the three wrappers share:
 // resolve the realm, resolve the caller, admit it if it holds any of the
 // roles.
@@ -701,6 +785,13 @@ var groupReadRoles = []string{"view-users", "manage-users"}
 // groupWriteRoles is what creating, updating and deleting a group take:
 // manage-users alone, measured, like the rest of the user family's writes.
 var groupWriteRoles = []string{"manage-users"}
+
+// realmWriteRoles is what PUT and DELETE on a realm take: manage-realm alone,
+// measured against all 21 admin roles on a realm created for the sweep. Nothing
+// else opens either, and view-realm - which opens the full read - is 403 on
+// both. realm-admin is absent because it does not need to be here: it is
+// composite over manage-realm and internal/roles expands it.
+var realmWriteRoles = []string{"manage-realm"}
 
 // realmRolesReadRoles is what both realm-role reads accept: view-realm or
 // manage-realm, measured across eight single-role callers.

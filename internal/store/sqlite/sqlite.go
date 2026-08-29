@@ -333,7 +333,7 @@ func (r *clientRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.
 func (r *clientRepo) Update(ctx context.Context, m *model.Client) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE client SET
-			 name = ?, description = ?, root_url = ?, base_url = ?, enabled = ?, public_client = ?, secret = ?,
+			 client_id = ?, name = ?, description = ?, root_url = ?, base_url = ?, enabled = ?, public_client = ?, secret = ?,
 			 protocol = ?, client_authenticator_type = ?, surrogate_auth_required = ?,
 			 always_display_in_console = ?, bearer_only = ?, consent_required = ?,
 			 standard_flow_enabled = ?, implicit_flow_enabled = ?, direct_access_grants_enabled = ?,
@@ -342,7 +342,7 @@ func (r *clientRepo) Update(ctx context.Context, m *model.Client) error {
 			 redirect_uris = ?, web_origins = ?, default_client_scopes = ?,
 			 optional_client_scopes = ?, attributes = ?
 			 WHERE realm_id = ? AND id = ?`,
-		m.Name, m.Description, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
+		m.ClientID, m.Name, m.Description, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
 		m.Protocol, m.ClientAuthenticatorType, m.SurrogateAuthRequired,
 		m.AlwaysDisplayInConsole, m.BearerOnly, m.ConsentRequired,
 		m.StandardFlowEnabled, m.ImplicitFlowEnabled, m.DirectAccessGrantsEnabled,

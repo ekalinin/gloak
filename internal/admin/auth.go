@@ -285,10 +285,18 @@ func (h *handler) resolveCaller(w http.ResponseWriter, r *http.Request, realm *m
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return nil
 	}
-	container, err := h.containerFor(r.Context(), authRealm, realm.Name)
-	if err != nil {
-		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
-		return nil
+	// realm is nil on the two routes with no {realm} segment, where there is no
+	// target realm to choose a container for. adminGrants then carries only the
+	// realm roles admin and create-realm, which is exactly what
+	// POST /admin/realms needs and all the listing needs before it starts
+	// asking per realm.
+	var container *model.Client
+	if realm != nil {
+		container, err = h.containerFor(r.Context(), authRealm, realm.Name)
+		if err != nil {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return nil
+		}
 	}
 
 	return &caller{
@@ -424,18 +432,34 @@ func masterContainerFor(realm string) string {
 // ErrNotFound; this one needs neither, because it compares ids rather than
 // asking what a client is called.
 func adminRoleNames(authRealm *model.Realm, container *model.Client, in []*model.Role) map[string]bool {
-	out := make(map[string]bool, len(in))
+	out := containerRoleNames(container, in)
+	if authRealm.Name != bootstrap.MasterRealmName {
+		return out
+	}
 	for _, role := range in {
-		if role.ClientID == "" {
-			// admin and create-realm exist in master alone, measured, so a
-			// realm role of either name anywhere else is an ordinary role.
-			if authRealm.Name == bootstrap.MasterRealmName &&
-				(role.Name == "admin" || role.Name == "create-realm") {
-				out[role.Name] = true
-			}
-			continue
+		// admin and create-realm exist in master alone, measured, so a realm
+		// role of either name anywhere else is an ordinary role.
+		if role.ClientID == "" && (role.Name == "admin" || role.Name == "create-realm") {
+			out[role.Name] = true
 		}
-		if container != nil && role.ClientID == container.ID {
+	}
+	return out
+}
+
+// containerRoleNames is adminRoleNames without the two master-only realm roles.
+//
+// The realm **listing** asks it rather than adminRoleNames, and the difference
+// is measured: a caller holding only create-realm gets 403 on the listing and
+// 200 on the single read of every realm. Rolling the realm roles in here would
+// have shown it every realm in the listing, which is the opposite of what it
+// sees.
+func containerRoleNames(container *model.Client, in []*model.Role) map[string]bool {
+	out := make(map[string]bool, len(in))
+	if container == nil {
+		return out
+	}
+	for _, role := range in {
+		if role.ClientID == container.ID {
 			out[role.Name] = true
 		}
 	}
