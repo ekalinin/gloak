@@ -296,6 +296,77 @@ func TestSortUnorderedReachesTheDocumentRoot(t *testing.T) {
 	}
 }
 
+// TestSortUnorderedSortsANestedPathUnderTheRoot is F59.
+//
+// editor.value matched the root first and editor.sortArray decoded the whole
+// document in one go, so "*/protocolMappers" was never visited and no error
+// said so. The case that found it - admin/client-scopes/list - looked as
+// though it asserted each scope's mappers and did not.
+//
+// Both orders have to come out sorted here. The element bytes are chosen so
+// that sorting the inner arrays changes which element sorts first at the root:
+// with the mappers left alone, {"m":["z","a"]} sorts after {"m":["b"]}, and
+// with them sorted it sorts before. So a version that sorts only the root
+// fails on the root as well, and this cannot pass by only half working.
+func TestSortUnorderedSortsANestedPathUnderTheRoot(t *testing.T) {
+	in := []byte(`[{"m":["z","a"]},{"m":["b"]}]`)
+
+	got, err := SortUnordered(in, []string{".", "*/m"})
+	if err != nil {
+		t.Fatalf("SortUnordered: %v", err)
+	}
+
+	want := `[{"m":["a","z"]},{"m":["b"]}]`
+	if string(got) != want {
+		t.Fatalf("want %s, got %s", want, got)
+	}
+}
+
+// The same shape one level in, so the fix is not about the root spelling: an
+// outer path and an inner path are both honoured wherever they sit.
+func TestSortUnorderedSortsAPathInsideAnotherPath(t *testing.T) {
+	in := []byte(`{"outer":[{"m":["z","a"]},{"m":["b"]}]}`)
+
+	got, err := SortUnordered(in, []string{"outer", "outer/*/m"})
+	if err != nil {
+		t.Fatalf("SortUnordered: %v", err)
+	}
+
+	want := `{"outer":[{"m":["a","z"]},{"m":["b"]}]}`
+	if string(got) != want {
+		t.Fatalf("want %s, got %s", want, got)
+	}
+}
+
+// A nested path that names something that is not an array still fails loudly.
+// The depth passes must not turn F59's silence into a different silence: the
+// inner walk reaches the value, so the wrong path is reported as it always was.
+func TestSortUnorderedStillRejectsANonArrayNestedPath(t *testing.T) {
+	in := []byte(`[{"m":"not-an-array"}]`)
+
+	if _, err := SortUnordered(in, []string{".", "*/m"}); err == nil {
+		t.Fatal("want an error for a nested path that is not an array, got nil")
+	}
+}
+
+// Normalize's outer mask still wins over an inner one. The depth passes make
+// the inner edit first and the outer replacement then covers it, which is the
+// same answer the single walk gave - the point being that the refactor did not
+// quietly change what a case with both paths declares.
+func TestNormalizeMasksAnOuterPathThatContainsAnInnerOne(t *testing.T) {
+	in := []byte(`{"a":{"b":"secret"},"z":1}`)
+
+	got, err := Normalize(in, []string{"a", "a/b"})
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+
+	want := `{"a":"{{object}}","z":1}`
+	if string(got) != want {
+		t.Fatalf("want %s, got %s", want, got)
+	}
+}
+
 // "." addresses the root and nothing else. A key that happens to be spelled
 // "." is not something Keycloak emits, but the pattern language has to be
 // unambiguous or a later reader will assume the wrong one.
