@@ -88,6 +88,7 @@ func realmClients(realm string) []model.Client {
 				"realm_client": "false", "post.logout.redirect.uris": "+",
 				"pkce.code.challenge.method": "S256",
 			},
+			ProtocolMappers: []model.ProtocolMapper{audienceResolveMapper()},
 		},
 		{
 			ClientID: "admin-cli", Name: "${client_admin-cli}",
@@ -118,6 +119,57 @@ func realmClients(realm string) []model.Client {
 				"pkce.code.challenge.method":                  "S256",
 				"client.use.lightweight.access.token.enabled": "true",
 			},
+			ProtocolMappers: []model.ProtocolMapper{localeMapper()},
+		},
+	}
+}
+
+// audienceResolveMapper and localeMapper are the two protocol mappers a
+// bootstrapped realm's clients carry, recorded verbatim from
+// GET /admin/realms/{realm}/clients/{uuid}/protocol-mappers/models on a live
+// 26.7.1 on 2026-08-30.
+//
+// **Four of the six clients carry none and these two carry one each.** That is
+// worth stating because it was missed: the client scopes' thirty-five mappers
+// were stored a day earlier and a client's own were not, so a token engine
+// reading only the client scopes would have produced the wrong claim set for
+// exactly these two clients and the fault would have looked like an engine bug.
+//
+// The config key order is the recorded one and is Keycloak's own Java map
+// order, not insertion order and not sorted - the same reason
+// internal/bootstrap/clientscopes.json is a recording rather than a
+// transcription.
+//
+// `audience resolve` is one of two providers that mirror `access.token.claim`
+// into `introspection.token.claim` and do **not** mirror `id.token.claim`,
+// which is why it has two config keys where `locale` has seven.
+func audienceResolveMapper() model.ProtocolMapper {
+	return model.ProtocolMapper{
+		ID:             model.NewID(),
+		Name:           "audience resolve",
+		Protocol:       "openid-connect",
+		ProtocolMapper: "oidc-audience-resolve-mapper",
+		Config: model.StringMap{
+			{Key: "introspection.token.claim", Value: "true"},
+			{Key: "access.token.claim", Value: "true"},
+		},
+	}
+}
+
+func localeMapper() model.ProtocolMapper {
+	return model.ProtocolMapper{
+		ID:             model.NewID(),
+		Name:           "locale",
+		Protocol:       "openid-connect",
+		ProtocolMapper: "oidc-usermodel-attribute-mapper",
+		Config: model.StringMap{
+			{Key: "introspection.token.claim", Value: "true"},
+			{Key: "userinfo.token.claim", Value: "true"},
+			{Key: "user.attribute", Value: "locale"},
+			{Key: "id.token.claim", Value: "true"},
+			{Key: "access.token.claim", Value: "true"},
+			{Key: "claim.name", Value: "locale"},
+			{Key: "jsonType.label", Value: "String"},
 		},
 	}
 }

@@ -1,0 +1,18 @@
+-- A client's own protocol mappers.
+--
+-- Two of the six bootstrapped clients carry one - account-console's
+-- `audience resolve` and security-admin-console's `locale` - and a client
+-- created through the Admin API may be given any number. They are addressed by
+-- the same seven operations a client scope's are, which is why the storage is
+-- the same shape as 0014's rather than something new.
+--
+-- A JSON column and not a table, for 0014's reason and one more of its own.
+-- The order Keycloak serves a container's mappers in is **not reproducible
+-- across container starts** - six of the fifteen bootstrapped scopes came back
+-- differently on two starts - so `internal/bootstrap/clientscopes.json` holds
+-- the recorded order and Gloak serves it verbatim. A normalised table would
+-- replace that order with an ORDER BY, which is a different order and therefore
+-- a different body. A column keeps it by construction, and a container holds at
+-- most fourteen mappers, so a uniqueness check over a slice is cheaper than the
+-- query that would replace it.
+ALTER TABLE client ADD COLUMN protocol_mappers TEXT NOT NULL DEFAULT '[]';

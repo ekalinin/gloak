@@ -280,14 +280,15 @@ func (r *clientRepo) Create(ctx context.Context, m *model.Client) error {
 		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
 		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
 		 full_scope_allowed, not_before, node_re_registration_timeout,
-		 redirect_uris, web_origins, attributes)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 redirect_uris, web_origins, attributes, protocol_mappers)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.RealmID, m.ClientID, m.Name, m.Description, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
 		m.Protocol, m.ClientAuthenticatorType, m.SurrogateAuthRequired, m.AlwaysDisplayInConsole,
 		m.BearerOnly, m.ConsentRequired, m.StandardFlowEnabled, m.ImplicitFlowEnabled,
 		m.DirectAccessGrantsEnabled, m.ServiceAccountsEnabled, m.FrontchannelLogout,
 		m.FullScopeAllowed, m.NotBefore, m.NodeReRegistrationTimeout,
-		encode(m.RedirectURIs), encode(m.WebOrigins), encode(m.Attributes))
+		encode(m.RedirectURIs), encode(m.WebOrigins), encode(m.Attributes),
+		encode(m.ProtocolMappers))
 	if err != nil {
 		return classify(err)
 	}
@@ -331,7 +332,7 @@ func (r *clientRepo) ByClientID(ctx context.Context, realmID, clientID string) (
 		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
 		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
 		 full_scope_allowed, not_before, node_re_registration_timeout,
-		 redirect_uris, web_origins, attributes
+		 redirect_uris, web_origins, attributes, protocol_mappers
 		 FROM client WHERE realm_id = ? AND client_id = ?`, realmID, clientID)
 	return r.scanWithScopes(ctx, row)
 }
@@ -343,7 +344,7 @@ func (r *clientRepo) ByID(ctx context.Context, realmID, id string) (*model.Clien
 		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
 		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
 		 full_scope_allowed, not_before, node_re_registration_timeout,
-		 redirect_uris, web_origins, attributes
+		 redirect_uris, web_origins, attributes, protocol_mappers
 		 FROM client WHERE realm_id = ? AND id = ?`, realmID, id)
 	return r.scanWithScopes(ctx, row)
 }
@@ -355,7 +356,7 @@ func (r *clientRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.
 		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
 		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
 		 full_scope_allowed, not_before, node_re_registration_timeout,
-		 redirect_uris, web_origins, attributes
+		 redirect_uris, web_origins, attributes, protocol_mappers
 		 FROM client WHERE realm_id = ? ORDER BY client_id`, realmID)
 	if err != nil {
 		return nil, classify(err)
@@ -392,7 +393,7 @@ func (r *clientRepo) Update(ctx context.Context, m *model.Client) error {
 			 standard_flow_enabled = ?, implicit_flow_enabled = ?, direct_access_grants_enabled = ?,
 			 service_accounts_enabled = ?, frontchannel_logout = ?, full_scope_allowed = ?,
 			 not_before = ?, node_re_registration_timeout = ?,
-			 redirect_uris = ?, web_origins = ?, attributes = ?
+			 redirect_uris = ?, web_origins = ?, attributes = ?, protocol_mappers = ?
 			 WHERE realm_id = ? AND id = ?`,
 		m.ClientID, m.Name, m.Description, m.RootURL, m.BaseURL, m.Enabled, m.PublicClient, m.Secret,
 		m.Protocol, m.ClientAuthenticatorType, m.SurrogateAuthRequired,
@@ -401,6 +402,7 @@ func (r *clientRepo) Update(ctx context.Context, m *model.Client) error {
 		m.ServiceAccountsEnabled, m.FrontchannelLogout, m.FullScopeAllowed,
 		m.NotBefore, m.NodeReRegistrationTimeout,
 		encode(m.RedirectURIs), encode(m.WebOrigins), encode(m.Attributes),
+		encode(m.ProtocolMappers),
 		m.RealmID, m.ID)
 	if err != nil {
 		return classify(err)
@@ -466,14 +468,14 @@ func (r *clientRepo) loadClientScopeNames(ctx context.Context, m *model.Client) 
 
 func scanClient(row scanner) (*model.Client, error) {
 	m := &model.Client{}
-	var redirectURIs, webOrigins, attributes string
+	var redirectURIs, webOrigins, attributes, protocolMappers string
 	err := row.Scan(&m.ID, &m.RealmID, &m.ClientID, &m.Name, &m.Description, &m.RootURL, &m.BaseURL,
 		&m.Enabled, &m.PublicClient, &m.Secret,
 		&m.Protocol, &m.ClientAuthenticatorType, &m.SurrogateAuthRequired, &m.AlwaysDisplayInConsole,
 		&m.BearerOnly, &m.ConsentRequired, &m.StandardFlowEnabled, &m.ImplicitFlowEnabled,
 		&m.DirectAccessGrantsEnabled, &m.ServiceAccountsEnabled, &m.FrontchannelLogout,
 		&m.FullScopeAllowed, &m.NotBefore, &m.NodeReRegistrationTimeout,
-		&redirectURIs, &webOrigins, &attributes)
+		&redirectURIs, &webOrigins, &attributes, &protocolMappers)
 	if err != nil {
 		return nil, classify(err)
 	}
@@ -485,6 +487,7 @@ func scanClient(row scanner) (*model.Client, error) {
 		{redirectURIs, &m.RedirectURIs, "redirect_uris"},
 		{webOrigins, &m.WebOrigins, "web_origins"},
 		{attributes, &m.Attributes, "attributes"},
+		{protocolMappers, &m.ProtocolMappers, "protocol_mappers"},
 	} {
 		if err := decode(f.raw, f.into); err != nil {
 			return nil, fmt.Errorf("sqlite: decode %s: %w", f.name, err)
