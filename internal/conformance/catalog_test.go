@@ -226,6 +226,29 @@ func TestPollutionGuardSeesEveryCreatedFamily(t *testing.T) {
 	}
 }
 
+// TestPollutionGuardReadsTheCataloguesOwnCreates proves the second of
+// createdObjects' two sources is wired.
+//
+// Deleting the loop over Catalog leaves every test above green, because each
+// of the four families is also created by some fixture and the tests only ask
+// for one victim per family. The source that was missing when F40 slipped
+// through is the case's own request - gloak-probe-role-create is POSTed by
+// admin/roles/create-realm and by nothing else - so it is asserted on its own
+// rather than left to be implied.
+func TestPollutionGuardReadsTheCataloguesOwnCreates(t *testing.T) {
+	byID := map[string]bool{}
+	for _, c := range Catalog {
+		byID[c.ID] = true
+	}
+	for _, o := range createdObjects() {
+		if byID[o.creator] {
+			return
+		}
+	}
+	t.Error("no created object is attributed to a case's own request; " +
+		"createdObjects has stopped reading the catalogue and only fixtures are watched")
+}
+
 // createdObjects is every object a recording creates, read out of the creation
 // bodies themselves so that a new fixture is covered without anyone
 // remembering to list it here.
