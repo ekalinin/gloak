@@ -1,14 +1,18 @@
 package oidc
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ekalinin/gloak/internal/keys"
 )
 
 // The authentication session is what carries state from GET /auth to
@@ -41,6 +45,8 @@ const (
 	// authHashBytes makes the 64-character **standard** base64 value
 	// KC_AUTH_SESSION_HASH carries, quoted, and KEYCLOAK_SESSION carries with
 	// "+/" rewritten to "-_".
+	//
+	// It is derived rather than drawn; see sessionHash for why.
 	authHashBytes = 48
 	// cookieSecretBytes makes the 86-character second half of AUTH_SESSION_ID's
 	// decoded value. Keycloak's is a signature; nothing observable says over
@@ -154,6 +160,20 @@ type authTab struct {
 	// Username is echoed back into the re-served form's value attribute, the way
 	// the measured page echoes it.
 	Username string
+	// Prompt is the authorization request's raw prompt parameter, kept because
+	// the consent decision is taken **after** the credentials and prompt=consent
+	// is measured to force the page on a client whose grant already exists.
+	Prompt string
+	// UserID is set once the credentials verify and before the consent page is
+	// served, because the login and the approval are two requests: measured, the
+	// login's own 302 to the consent page sets no cookies, so the user has to be
+	// carried on the tab rather than in a session that does not exist yet.
+	UserID string
+	// DeviceUserCode is the user_code a device verification landing put here, and
+	// it is what makes finishFlow two endings rather than one. It is the user
+	// code and not the device code because the device code never leaves the
+	// device.
+	DeviceUserCode string
 }
 
 // restartRecord is what KC_RESTART holds: enough of the original authorization
@@ -178,7 +198,11 @@ type restartRecord struct {
 	Nonce               string
 	CodeChallenge       string
 	CodeChallengeMethod string
-	ExpiresAt           time.Time
+	// DeviceUserCode carries a device authorization across a restart, so that a
+	// browser whose device login timed out restarts into the same approval
+	// rather than into an authorization request that has no client to answer.
+	DeviceUserCode string
+	ExpiresAt      time.Time
 }
 
 // authCode is a minted authorization code and everything the token endpoint
@@ -230,16 +254,14 @@ func newAuthStore() *authStore {
 }
 
 // newAuthSession mints a session and its first tab, and returns both.
-func (s *authStore) newAuthSession(realm string, tab *authTab) (*authSession, error) {
-	rootID, err := randomBase64URL(rootIDBytes)
-	if err != nil {
-		return nil, err
-	}
+//
+// **The root id is an argument rather than something minted here**, because the
+// SSO branch needs an authentication session whose root id is the user session
+// the browser already has: measured, the AUTH_SESSION_ID on an SSO redirect
+// decodes to the *original* session id and a fresh opaque half. Minting one here
+// would give the SSO redirect a session_state the browser had never seen.
+func (s *authStore) newAuthSession(realm, rootID, hash string, tab *authTab) (*authSession, error) {
 	secret, err := randomBase64URL(cookieSecretBytes)
-	if err != nil {
-		return nil, err
-	}
-	hash, err := randomBase64Std(authHashBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -583,15 +605,70 @@ func randomBase64URL(n int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// randomBase64Std returns n random bytes as **standard** base64, which is what
-// KC_AUTH_SESSION_HASH carries - the one value in the flow that is not
-// base64url, and the reason keycloakSessionValue exists.
-func randomBase64Std(n int) (string, error) {
-	buf := make([]byte, n)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(buf), nil
+// sessionHash is KC_AUTH_SESSION_HASH's value: **standard** base64, which is
+// the one value in the flow that is not base64url and the reason
+// keycloakSessionValue exists.
+//
+// It is derived from the session id under the realm's HMAC key rather than
+// drawn at random, and that is a measurement rather than a convenience.
+// KC_AUTH_SESSION_HASH and KEYCLOAK_SESSION are **stable for the life of a user
+// session**: three SSO redirects on a jar carrying only KEYCLOAK_IDENTITY each
+// re-emitted the value the original login had set, and a second, independent
+// login emitted a different one. A random value would have to outlive the
+// authentication session that minted it - and the login destroys that session -
+// so deriving is what makes the invariant hold rather than storing a string
+// somewhere it can be lost.
+//
+// The bytes themselves are not observable: Keycloak's are 64 characters that
+// look like a MAC over something nothing reveals. What is observable is the
+// length, the alphabet and the stability, and all three hold here. The realm's
+// HMAC key is the input so that one realm's value cannot be computed from
+// another's, and so that a session id - which a client does see, as
+// session_state - is not enough on its own.
+func sessionHash(k *keys.RealmKeys, sessionID string) string {
+	mac := hmac.New(sha512.New, k.HMACSecret())
+	mac.Write([]byte("gloak-auth-session-hash:" + sessionID))
+	return base64.StdEncoding.EncodeToString(mac.Sum(nil)[:authHashBytes])
+}
+
+// consentStore remembers which clients a user has approved, and it is in memory
+// for a reason that is **not** the one authStore and deviceStore give.
+//
+// Keycloak persists a consent: it is a row a user can read and revoke through
+// `GET`/`DELETE /admin/realms/{realm}/users/{id}/consents/{clientId}`, and it
+// survives a restart. Measured: after one accept, later logins at that client
+// skip the consent page entirely. Gloak keeps it in memory only because
+// internal/store and internal/model belong to another stream this session, so a
+// restart forgets every grant and asks again. That is a real divergence and it
+// is filed rather than hidden - see the follow-ups, where it is named separately
+// from F75 precisely because F75's three objects are short-lived by design and
+// this one is not.
+type consentStore struct {
+	mu     sync.Mutex
+	grants map[string]bool
+}
+
+func newConsentStore() *consentStore {
+	return &consentStore{grants: map[string]bool{}}
+}
+
+// consentKey is scoped by realm as well as by user and client, because two
+// realms mint their own user ids and nothing stops them colliding across a
+// restore.
+func consentKey(realmID, userID, clientUUID string) string {
+	return realmID + "\x00" + userID + "\x00" + clientUUID
+}
+
+func (s *consentStore) granted(realmID, userID, clientUUID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.grants[consentKey(realmID, userID, clientUUID)]
+}
+
+func (s *consentStore) grant(realmID, userID, clientUUID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.grants[consentKey(realmID, userID, clientUUID)] = true
 }
 
 // uuidShaped returns 16 random bytes wearing a UUID's punctuation, with no

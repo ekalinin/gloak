@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ekalinin/gloak/internal/httpx"
+	"github.com/ekalinin/gloak/internal/keys"
 	"github.com/ekalinin/gloak/internal/model"
 )
 
@@ -39,7 +40,20 @@ import (
 //  9. code_challenge absent     invalid_request "Missing parameter: code_challenge"
 //     9b. method invalid           invalid_request "Invalid parameter: code_challenge_method"
 //     9c. challenge malformed      invalid_request "Invalid parameter: code_challenge"
-//  10. prompt=none, no session   login_required
+//  10. prompt and max_age        see resolveSSO
+//
+// Two more steps were measured on 2026-08-30 and both are in the page family,
+// on the far side of the client rather than the far side of the redirect URI:
+//
+//	2c. max_age unparseable      400 page, "Invalid Request", **no Cache-Control**
+//	10. prompt=create            400 page, "Registration not allowed", **with one**
+//
+// max_age's is placed by six pairs: it loses to an unknown client_id and to a
+// bearer-only client and beats a bad redirect_uri, an absent response_type, a
+// bad scope and prompt=none. So it sits between step 2b and step 3 - a page
+// rejection between two page rejections, which is why it cannot be folded into
+// either. prompt=create's is placed by five more and sits at step 10, behind
+// every 302 rejection.
 //
 // Two steps sit where nobody would have guessed. **Step 7 is seventh**: a
 // duplicated parameter on a client with the standard flow off answers "Standard
@@ -56,6 +70,10 @@ const (
 	authErrUnauthorizedClient  = "unauthorized_client"
 	authErrInvalidScope        = "invalid_scope"
 	authErrLoginRequired       = "login_required"
+	// Measured on a consent page a browser cancelled: three keys, error, state
+	// and iss, with **no error_description**. It is the same code the device
+	// grant's poll answers with a sentence attached, and here there is none.
+	authErrAccessDenied = "access_denied"
 	// Measured on POST /login-actions/authenticate, not here: a browser whose
 	// authentication session is gone and whose KC_RESTART has been cleared is
 	// told its login expired, in the same four-key redirect this endpoint's own
@@ -128,11 +146,9 @@ var servableResponseModes = map[string]bool{
 // the measured one carries - which is what a browser, and the conformance
 // fixtures, actually need to get to the next request.
 //
-// What it still does not do is recognise a browser that is **already** signed
-// in. Gloak sets KEYCLOAK_IDENTITY and does not read it, so a second
-// authorization request on a live session serves the form again where Keycloak
-// redirects with a code, and prompt=none still answers login_required. That is
-// a follow-up rather than a hidden gap.
+// A browser that is already signed in is now recognised: KEYCLOAK_IDENTITY is
+// read, and a request that survives all ten checks on a live session redirects
+// with a code rather than serving the form. See sso.go, which owns step 10.
 func (h *handler) authorize(w http.ResponseWriter, r *http.Request) {
 	realm := h.resolveRealm(w, r)
 	if realm == nil {
@@ -159,6 +175,19 @@ func (h *handler) authorize(w http.ResponseWriter, r *http.Request) {
 		h.writeErrorPage(w, http.StatusForbidden)
 		return
 	}
+	// Step 2c. max_age has to be a whole number, and it is checked **here**:
+	// before the redirect URI and therefore before this endpoint can report
+	// anything to the client at all. An empty max_age= is refused with the
+	// non-numeric ones, which is the opposite of prompt=, where empty means
+	// absent - two parameters on one endpoint, opposite answers to emptiness.
+	//
+	// The page it writes carries no Cache-Control, where prompt=create's page at
+	// step 10 carries one. See writeRegistrationPage.
+	if _, _, ok := parseMaxAge(params); !ok {
+		h.writeErrorPage(w, http.StatusBadRequest)
+		return
+	}
+
 	// Step 3. From here on the client can be told what went wrong.
 	redirectURI := params.Get("redirect_uri")
 	if !matchRedirectURI(client.RedirectURIs, redirectURI) {
@@ -251,20 +280,81 @@ func (h *handler) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 10. Gloak has no browser session, so prompt=none is always the
-	// no-session case. A prompt=none on a live session redirects with a real
-	// code, which is the success path this cut does not serve.
-	if strings.Contains(params.Get("prompt"), "none") {
-		reject(mode, authErrLoginRequired, "")
-		return
-	}
-
-	// Validated. Open an authentication session and render the login page.
-	h.beginLogin(w, r, realm, client, redirectURI, mode, params, state, hasState)
+	// Step 10. prompt, max_age and the browser session between them decide
+	// whether this browser has to type a password. sso.go owns the whole of it,
+	// because the answer is one of five and only two of them are rejections.
+	h.resolveSSO(w, r, realm, client, parsePrompt(params.Get("prompt")),
+		&authRequest{Params: params, RedirectURI: redirectURI, Mode: mode, State: state, HasState: hasState},
+		func(code, description string) { reject(mode, code, description) })
 }
 
-// beginLogin is what a request that survived all ten checks gets: an
-// authentication session, its three cookies, and the login form.
+// authRequest is the part of a validated authorization request that outlives
+// step 3, carried as one value because step 10 has five outcomes and each of
+// them needs a different subset of it.
+type authRequest struct {
+	Params      url.Values
+	RedirectURI string
+	// Mode is the already-resolved response mode rather than the raw parameter,
+	// so a request that named none carries the empty string here - which is what
+	// makes client_data omit `rm`, the way the measured one does.
+	Mode     string
+	State    string
+	HasState bool
+}
+
+// namedMode is the response mode the tab records: the resolved one when the
+// request named a mode, and the empty string when it did not.
+func (a *authRequest) namedMode() string {
+	if _, present := a.Params["response_mode"]; present {
+		return a.Mode
+	}
+	return ""
+}
+
+// tab builds the authentication tab an authorization request opens.
+//
+// **Four more of the request are stored than the login itself needs**: the
+// scope, the nonce and the PKCE pair are consumed at the *token* endpoint, and
+// the authorization code has nowhere to carry them - its three parts are a
+// random value, the session_state and the client's UUID.
+func (a *authRequest) tab(client *model.Client) *authTab {
+	return &authTab{
+		ClientID:            client.ClientID,
+		ClientUUID:          client.ID,
+		RedirectURI:         a.RedirectURI,
+		ResponseMode:        a.namedMode(),
+		State:               a.State,
+		HasState:            a.HasState,
+		Scope:               a.Params.Get("scope"),
+		Nonce:               a.Params.Get("nonce"),
+		CodeChallenge:       a.Params.Get("code_challenge"),
+		CodeChallengeMethod: a.Params.Get("code_challenge_method"),
+		Prompt:              a.Params.Get("prompt"),
+	}
+}
+
+// restart is what KC_RESTART will point at: the same request again.
+//
+// It carries the PKCE pair for a reason worth spelling out: a restart that
+// dropped it would let a client downgrade its own PKCE by discarding one cookie.
+func (a *authRequest) restart(realm *model.Realm, client *model.Client) *restartRecord {
+	return &restartRecord{
+		Realm:               realm.Name,
+		ClientID:            client.ClientID,
+		RedirectURI:         a.RedirectURI,
+		State:               a.State,
+		HasState:            a.HasState,
+		ResponseMode:        a.namedMode(),
+		Scope:               a.Params.Get("scope"),
+		Nonce:               a.Params.Get("nonce"),
+		CodeChallenge:       a.Params.Get("code_challenge"),
+		CodeChallengeMethod: a.Params.Get("code_challenge_method"),
+	}
+}
+
+// beginLoginFromParams is what a request that survived all ten checks and has
+// to be authenticated gets: an authentication session, its three cookies, and
+// the login form.
 //
 // **The response mode is taken from the request and stored on the tab**, not
 // re-derived at the login. Measured: a login started with
@@ -272,47 +362,20 @@ func (h *handler) authorize(w http.ResponseWriter, r *http.Request) {
 // claims rm=fragment on a tab that did not ask for it does not - so the tab is
 // the authority and the browser's copy is not.
 //
-// mode is the already-resolved mode rather than the raw parameter, so a request
-// that named none stores the empty string and client_data omits `rm`, which is
-// what the measured client_data does.
-//
-// **Four more of the request are stored than the login itself needs**: the
-// scope, the nonce and the PKCE pair are consumed at the *token* endpoint, and
-// the authorization code has nowhere to carry them - its three parts are a
-// random value, the session_state and the client's UUID. They go on the tab and
-// on the restart record together, because a login that restarts and lost its
-// code_challenge would be a PKCE downgrade a client could ask for by discarding
-// a cookie.
-func (h *handler) beginLogin(w http.ResponseWriter, r *http.Request, realm *model.Realm,
-	client *model.Client, redirectURI, mode string, params url.Values, state string, hasState bool) {
-	named := ""
-	if _, present := params["response_mode"]; present {
-		named = mode
+// It is also `prompt=login`'s answer on a browser that is already signed in.
+// Keycloak serves a different **body** there - 7975 bytes against 6824, with a
+// readonly kc-attempted-username, a `Please re-authenticate to continue` alert
+// and a `Restart login` button - and the same status, the same headers and the
+// same form action. The branch is right and the markup is P13's later work, the
+// arrangement F67 already records for the other theme pages.
+func (h *handler) beginLoginFromParams(w http.ResponseWriter, r *http.Request, realm *model.Realm,
+	client *model.Client, req *authRequest) {
+	k := h.realmKeys(w, r, realm)
+	if k == nil {
+		return
 	}
-	tab := &authTab{
-		ClientID:            client.ClientID,
-		ClientUUID:          client.ID,
-		RedirectURI:         redirectURI,
-		ResponseMode:        named,
-		State:               state,
-		HasState:            hasState,
-		Scope:               params.Get("scope"),
-		Nonce:               params.Get("nonce"),
-		CodeChallenge:       params.Get("code_challenge"),
-		CodeChallengeMethod: params.Get("code_challenge_method"),
-	}
-	sess, err := h.beginAuthSession(w, r, realm, tab, &restartRecord{
-		Realm:               realm.Name,
-		ClientID:            client.ClientID,
-		RedirectURI:         redirectURI,
-		State:               state,
-		HasState:            hasState,
-		ResponseMode:        named,
-		Scope:               tab.Scope,
-		Nonce:               tab.Nonce,
-		CodeChallenge:       tab.CodeChallenge,
-		CodeChallengeMethod: tab.CodeChallengeMethod,
-	})
+	tab := req.tab(client)
+	sess, err := h.beginAuthSession(w, r, realm, k, tab, req.restart(realm, client))
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
@@ -343,44 +406,90 @@ func (h *handler) beginLogin(w http.ResponseWriter, r *http.Request, realm *mode
 // restart is nil on the restart path itself: the KC_RESTART the browser already
 // holds is what it restarted from, and measured, no second one is set.
 func (h *handler) beginAuthSession(w http.ResponseWriter, r *http.Request, realm *model.Realm,
-	tab *authTab, restart *restartRecord) (*authSession, error) {
-	tabID, err := randomBase64URL(tabIDBytes)
+	k *keys.RealmKeys, tab *authTab, restart *restartRecord) (*authSession, error) {
+	if sess, reused := h.liveAuthSession(r, realm); reused {
+		if err := h.openTab(tab); err != nil {
+			return nil, err
+		}
+		h.auth.addTab(sess, tab)
+		return sess, h.writeRestartCookie(w, realm, restart)
+	}
+	rootID, err := randomBase64URL(rootIDBytes)
 	if err != nil {
 		return nil, err
 	}
-	tab.TabID = tabID
-	path := realmCookiePath(realm.Name)
+	return h.resumeAuthSession(w, r, realm, k, rootID, tab, restart)
+}
 
-	sess, reused := h.liveAuthSession(r, realm)
-	if reused {
-		h.auth.addTab(sess, tab)
-	} else {
-		sess, err = h.auth.newAuthSession(realm.Name, tab)
-		if err != nil {
-			return nil, err
-		}
-		httpx.SetKeycloakCookie(w, httpx.Cookie{
-			Name: authSessionCookie, Value: encodeAuthSessionID(sess.RootID, sess.Secret),
-			Path: path, Secure: true, HTTPOnly: true, SameSite: "None",
-		})
-		httpx.SetKeycloakCookie(w, httpx.Cookie{
-			Name: authHashCookie, Value: sess.Hash, Quoted: true, Path: path,
-			MaxAge: int(authHashMaxAge.Seconds()), SetMaxAge: true,
-			Secure: true, SameSite: "None",
-		})
+// resumeAuthSession opens an authentication session whose root id is **given**
+// and writes AUTH_SESSION_ID and KC_AUTH_SESSION_HASH for it.
+//
+// It is what the SSO branch needs and what beginAuthSession falls back to.
+// Measured, the AUTH_SESSION_ID on an SSO redirect base64url-decodes to the
+// *original user session id* and a fresh 86-character opaque half, so the root
+// id is an input here rather than something minted - and KC_AUTH_SESSION_HASH
+// is derived from it, which is what makes the value the same one the original
+// login set.
+//
+// The browser's existing authentication session is deliberately **not** reused
+// on the SSO path: it has to name the user session, and a session opened by an
+// earlier tab does not. Every measured SSO redirect sets both cookies, on a jar
+// holding all four and on one holding KEYCLOAK_IDENTITY alone.
+func (h *handler) resumeAuthSession(w http.ResponseWriter, r *http.Request, realm *model.Realm,
+	k *keys.RealmKeys, rootID string, tab *authTab, restart *restartRecord) (*authSession, error) {
+	if err := h.openTab(tab); err != nil {
+		return nil, err
 	}
+	sess, err := h.auth.newAuthSession(realm.Name, rootID, sessionHash(k, rootID), tab)
+	if err != nil {
+		return nil, err
+	}
+	path := realmCookiePath(realm.Name)
+	httpx.SetKeycloakCookie(w, httpx.Cookie{
+		Name: authSessionCookie, Value: encodeAuthSessionID(sess.RootID, sess.Secret),
+		Path: path, Secure: true, HTTPOnly: true, SameSite: "None",
+	})
+	httpx.SetKeycloakCookie(w, httpx.Cookie{
+		Name: authHashCookie, Value: sess.Hash, Quoted: true, Path: path,
+		MaxAge: int(authHashMaxAge.Seconds()), SetMaxAge: true,
+		Secure: true, SameSite: "None",
+	})
+	return sess, h.writeRestartCookie(w, realm, restart)
+}
+
+// openTab gives a tab its id. It is the one thing every path into an
+// authentication session does, and it is separate so that neither path can
+// forget it: a tab with no id is a tab the login form cannot address.
+func (h *handler) openTab(tab *authTab) error {
+	tabID, err := randomBase64URL(tabIDBytes)
+	if err != nil {
+		return err
+	}
+	tab.TabID = tabID
+	return nil
+}
+
+// writeRestartCookie sets KC_RESTART, and a nil record means no cookie at all
+// rather than an empty one.
+//
+// Two paths pass nil and they are measured separately. The restart 302 passes
+// nil because the KC_RESTART the browser already holds is what it restarted
+// from; the prompt=none paths pass nil because **prompt=none never sets one** -
+// its code carries four Set-Cookie headers and its login_required carries two,
+// and no Max-Age=0 KC_RESTART appears on either.
+func (h *handler) writeRestartCookie(w http.ResponseWriter, realm *model.Realm, restart *restartRecord) error {
 	if restart == nil {
-		return sess, nil
+		return nil
 	}
 	value, err := h.auth.newRestart(restart)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	httpx.SetKeycloakCookie(w, httpx.Cookie{
-		Name: restartCookie, Value: value, Path: path,
+		Name: restartCookie, Value: value, Path: realmCookiePath(realm.Name),
 		Secure: true, HTTPOnly: true, SameSite: "None",
 	})
-	return sess, nil
+	return nil
 }
 
 // liveAuthSession resolves the authentication session a request's

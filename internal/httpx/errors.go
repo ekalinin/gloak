@@ -237,6 +237,88 @@ func WriteThemeLoginPage(w http.ResponseWriter, action, username, message string
 	writeThemeHTML(w, http.StatusOK, "no-store, must-revalidate, max-age=0", body.String())
 }
 
+// The headings the three pages this flow gained on 2026-08-30 carry. All three
+// are measured on a live 26.7.1, and like every other page in this family the
+// <title> is "Sign in to Keycloak" and the kc-page-title heading is what moves.
+//
+// DeviceStatusPageTitle and DeviceStatusFailedTitle are the **two** headings
+// /realms/{realm}/device/status has, and the split is not the one the query
+// suggests: `?error=` with an empty value is the success heading, and every
+// non-empty value - including one Keycloak does not recognise - is the failure
+// heading. The *instruction* underneath does distinguish `access_denied`
+// ("Consent denied for connecting the device.") from an unknown code ("… and try
+// connecting again."), so the page has two headings and three bodies.
+const (
+	DevicePageTitle         = "Device Login"
+	DeviceStatusPageTitle   = "Device Login Successful"
+	DeviceStatusFailedTitle = "Device Login Failed"
+)
+
+// ConsentPageTitle builds the consent page's heading, which names the client:
+// measured "Grant Access to dev-a" and "Grant Access to con-a" on two clients.
+// It is a function rather than a constant because it is the one heading in the
+// family that is not fixed.
+func ConsentPageTitle(clientID string) string { return "Grant Access to " + clientID }
+
+// WriteThemeConsentPage writes the OAUTH_GRANT page: the second page in this
+// flow whose body a fixture reads, after the login page.
+//
+// Measured, its form is a POST to /realms/{realm}/login-actions/consent with the
+// authorization request's own three parameters on the query, one hidden input
+// named `code`, and two submit buttons named `accept` and `cancel`. The buttons
+// are what the endpoint reads - `cancel` alone decides, and the absence of both
+// is an approval - so they are real inputs here even though the styling is not.
+//
+// The hidden `code` is rendered because Keycloak renders it. It is measurably
+// **not checked**: a POST carrying `code=BOGUS` with `accept` granted the
+// consent and redirected with a real authorization code. Serving the page
+// without it would be a page a browser could still submit, and would hide the
+// thing the endpoint's own test pins.
+func WriteThemeConsentPage(w http.ResponseWriter, action, clientID, code string) {
+	title := ConsentPageTitle(clientID)
+	body := `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
+		`<title>Sign in to Keycloak</title></head><body>` +
+		`<h1 id="kc-page-title">` + html.EscapeString(title) + `</h1>` +
+		`<form id="kc-form-consent" action="` + html.EscapeString(action) + `" method="post">` +
+		`<input type="hidden" name="code" value="` + html.EscapeString(code) + `"/>` +
+		`<button name="accept" id="kc-login" type="submit">Yes</button>` +
+		`<button name="cancel" id="kc-cancel" type="submit">No</button>` +
+		`</form></body></html>`
+	writeThemeHTML(w, http.StatusOK, "no-store, must-revalidate, max-age=0", body)
+}
+
+// WriteThemeDeviceCodePage writes the device verification page, the one that
+// asks for a user code.
+//
+// **The form it renders cannot work, and that is measured rather than a
+// shortcut.** Keycloak's own page posts `device_user_code` to
+// /realms/{realm}/device, and that path's POST is the RFC 8628 device
+// *authorization* request - the same handler /protocol/openid-connect/auth/device
+// serves - so a submission with no client_id answers 401
+// {"error":"invalid_client",...}. Six probes: with the page's own cookies, with
+// none, with a valid code, with an invalid one, with the code renamed and with
+// it on the query. The only route through a device login is
+// verification_uri_complete, the GET. Rendering a form that works would be the
+// tidy-up that diverges.
+//
+// message is the feedback line an unusable code produces: measured "Invalid
+// code, please try again." for both a well-formed unknown code and a malformed
+// one, and empty on the first render.
+func WriteThemeDeviceCodePage(w http.ResponseWriter, action, message string) {
+	var body strings.Builder
+	body.WriteString(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
+		`<title>Sign in to Keycloak</title></head><body>` +
+		`<h1 id="kc-page-title">` + DevicePageTitle + `</h1>`)
+	if message != "" {
+		body.WriteString(`<span class="kc-feedback-text">` + html.EscapeString(message) + `</span>`)
+	}
+	body.WriteString(`<form id="kc-user-verify-device-user-code-form" action="` +
+		html.EscapeString(action) + `" method="post">` +
+		`<input id="device_user_code" name="device_user_code" value="" type="text" autocomplete="off"/>` +
+		`</form></body></html>`)
+	writeThemeHTML(w, http.StatusOK, "no-store, must-revalidate, max-age=0", body.String())
+}
+
 // themePageBody is Gloak's placeholder for a page the login theme renders.
 //
 // Keycloak serves 3574 to 4645 bytes of keycloak.v2 Freemarker output here,
