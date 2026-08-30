@@ -7480,6 +7480,50 @@ var adminCases = []Case{
 		Volatile:      []string{"id", "createdTimestamp"},
 	},
 	{
+		// **temporary is a disjunction over the array, not last-wins.** The
+		// second entry says false and the user still carries UPDATE_PASSWORD.
+		// Applying the entries in order with the last flag winning is the
+		// obvious implementation, passes admin/users/inline-credential-temporary
+		// beside it, and fails here.
+		ID: "admin/users/inline-credential-temporary-then-not",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, temporary then permanent inline credentials",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "inline-credential-temporary-then-not",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"id", "createdTimestamp"},
+	},
+	{
+		// **The inline array only ever adds the required action.** A
+		// non-temporary credential put over a user that has UPDATE_PASSWORD
+		// leaves it there, where reset-password with temporary false takes it
+		// away. Reusing resetPassword's withAction call is one line and it is
+		// wrong here and nowhere else.
+		ID: "admin/users/inline-credential-keeps-temporary",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: update the user, permanent inline credential over a temporary one",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "inline-credential-keeps-temporary",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"id", "createdTimestamp"},
+	},
+	{
 		// The same array on PUT /users/{id}. F84 was filed against the create
 		// and is a defect on both routes, so the update has its own fixture,
 		// its own grant and its own golden rather than being assumed from the

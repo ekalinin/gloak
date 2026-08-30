@@ -692,6 +692,17 @@ var Fixtures = map[string]Fixture{
 	// An empty value, which is a 201 and a credential describing no hash.
 	"inline-credential-empty-value": inlineCredentialFixture("gloak-probe-inline-empty",
 		`[{"type":"password","value":""}]`, ""),
+	// Two entries whose temporary flags disagree. The **second** is false, so a
+	// last-wins implementation leaves the user with no required action and a
+	// disjunction leaves UPDATE_PASSWORD. Nothing else in the catalogue tells
+	// the two apart.
+	"inline-credential-temporary-then-not": inlineCredentialFixture("gloak-probe-inline-mixed",
+		`[{"type":"password","value":"probe-first","temporary":true},`+
+			`{"type":"password","value":"probe-second","temporary":false}]`, ""),
+	// A user with UPDATE_PASSWORD, then a **non**-temporary inline credential
+	// put over it. reset-password with temporary false removes the action; this
+	// route leaves it, and the two are one withAction call apart.
+	"inline-credential-keeps-temporary": inlineCredentialKeepsTemporaryFixture(),
 	// A user with no password, for the update route's own inline array.
 	"inline-credential-update": inlineCredentialUpdateFixture(),
 	// A create that was refused for a valueless credential, so the case after
@@ -3716,6 +3727,28 @@ func inlineCredentialTwiceFixture() Fixture {
 			inlineCredentialGrantStep("gloak-probe-inline-twice", "probe-first",
 				[]int{http.StatusBadRequest})),
 	}
+}
+
+// inlineCredentialKeepsTemporaryFixture makes a user carrying UPDATE_PASSWORD
+// and then puts a non-temporary inline credential over it.
+//
+// Measured: the action stays. reset-password with temporary false removes it -
+// that is measured too, and asserted by admin/users/reset-password - so the two
+// routes differ by exactly the branch this fixture reaches. No grant follows,
+// because a user carrying the action is refused with "Account is not fully set
+// up" whatever its password is.
+func inlineCredentialKeepsTemporaryFixture() Fixture {
+	f := inlineCredentialFixture("gloak-probe-inline-keeps",
+		`[{"type":"password","value":"probe-first","temporary":true}]`, "")
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`{"credentials":[{"type":"password","value":"probe-second","temporary":false}]}`),
+		},
+	})
+	return f
 }
 
 // inlineCredentialUpdateFixture makes a user with no password and then sets one
