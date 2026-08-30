@@ -959,11 +959,18 @@ func volatileMasksOverCaptures(paths []string, body []byte, vars map[string]stri
 // capturedMasksLeftInPlace, the way inertMasksLeftInPlace does it.
 func TestNoVolatileMaskCoversACapturedValue(t *testing.T) {
 	matched := map[string]bool{}
+	visited := map[string]bool{}
 	for _, c := range Catalog {
 		if c.Status != Implemented || len(c.Volatile) == 0 {
 			continue
 		}
 		t.Run(c.ID, func(t *testing.T) {
+			// go test -run selects subtests, so a run narrowed to one case
+			// visits one case. The stale check below can only speak for the
+			// cases that actually ran; without this it reports every other
+			// entry as stale, which is a guard crying wolf at whoever is
+			// debugging a single case.
+			visited[c.ID] = true
 			got, vars, err := serve(t, c)
 			if err != nil {
 				t.Fatalf("serve: %v", err)
@@ -990,7 +997,8 @@ func TestNoVolatileMaskCoversACapturedValue(t *testing.T) {
 
 	stale := make([]string, 0, len(capturedMasksLeftInPlace))
 	for entry := range capturedMasksLeftInPlace {
-		if !matched[entry] {
+		id, _, _ := strings.Cut(entry, " ")
+		if visited[id] && !matched[entry] {
 			stale = append(stale, entry)
 		}
 	}
