@@ -697,6 +697,87 @@ var Fixtures = map[string]Fixture{
 	"narrow-caller-manage-clients": callerFixture("gloak-probe-caller-manage-clients", "manage-clients"),
 	// The same caller, with a scope and a realm role to aim at.
 	"scope-mappings-narrow-caller": scopeMappingNarrowCallerFixture(),
+
+	// F84's fixtures. Every one of them puts the password in the create's own
+	// `credentials` array rather than in a following reset-password, which is
+	// the shape scopeMappingCallerSteps' comment says was tried and reverted
+	// because Gloak ignored it. See inlineCredentialFixture for why the grant
+	// step is the assertion.
+	"inline-credential": inlineCredentialFixture("gloak-probe-inline",
+		`[{"type":"password","value":"probe-pass"}]`, "probe-pass"),
+	// A temporary inline password, for the requiredActions read. It cannot log
+	// in - "Account is not fully set up" - so this one grants nothing.
+	"inline-credential-temporary": inlineCredentialFixture("gloak-probe-inline-temp",
+		`[{"type":"password","value":"probe-pass","temporary":true}]`, ""),
+	// type "otp" and a userLabel, both of which the array drops: the credential
+	// comes back as a password with no label.
+	"inline-credential-otp": inlineCredentialFixture("gloak-probe-inline-otp",
+		`[{"type":"otp","value":"probe-pass","userLabel":"office laptop"}]`, "probe-pass"),
+	// Two entries. The **second** password is the one that works, which the
+	// grant steps assert in both directions.
+	"inline-credential-twice": inlineCredentialTwiceFixture(),
+	// An empty value, which is a 201 and a credential describing no hash.
+	"inline-credential-empty-value": inlineCredentialFixture("gloak-probe-inline-empty",
+		`[{"type":"password","value":""}]`, ""),
+	// Two entries whose temporary flags disagree. The **second** is false, so a
+	// last-wins implementation leaves the user with no required action and a
+	// disjunction leaves UPDATE_PASSWORD. Nothing else in the catalogue tells
+	// the two apart.
+	"inline-credential-temporary-then-not": inlineCredentialFixture("gloak-probe-inline-mixed",
+		`[{"type":"password","value":"probe-first","temporary":true},`+
+			`{"type":"password","value":"probe-second","temporary":false}]`, ""),
+	// A user with UPDATE_PASSWORD, then a **non**-temporary inline credential
+	// put over it. reset-password with temporary false removes the action; this
+	// route leaves it, and the two are one withAction call apart.
+	"inline-credential-keeps-temporary": inlineCredentialKeepsTemporaryFixture(),
+	// A user with no password, for the update route's own inline array.
+	"inline-credential-update": inlineCredentialUpdateFixture(),
+	// F78's fixtures. Every one of them puts a mapper id somewhere and then
+	// lets a case try to take it from somewhere else.
+	//
+	// The ids are fixed rather than captured, which the body's-id-wins rule on
+	// POST /clients and POST /client-scopes allows and which the goldens need:
+	// the whole measurement is which container an id is already in.
+	"mapper-id-holder":        mapperIDHolderFixture(false, false),
+	"mapper-id-holder-second": mapperIDHolderFixture(true, false),
+	"mapper-id-holder-client": mapperIDHolderFixture(false, true),
+	// A second realm, so the case can try the id from outside master. This is
+	// the correction the follow-up carries: the uniqueness is server-wide, and
+	// a realm-wide index would answer this one 201.
+	"mapper-id-holder-realm": mapperIDHolderRealmFixture(),
+	// A refused create, so the case after it can read that the container is
+	// not there. Same reason inline-credential-rollback is a fixture.
+	"mapper-id-rollback": mapperIDRollbackFixture(),
+	// A client whose mapper was re-sent under its own name with somebody
+	// else's id, which Keycloak matches by name and leaves the id alone.
+	"mapper-renamed-by-put": mapperRenamedByPutFixture(),
+
+	// F89's fixture: two mappers whose config key order is **not** the order
+	// the request wrote them in. Every other mapper in this catalogue uses a
+	// key set measured to be order-stable, which is why nothing here could see
+	// the count SizedKeyOrder needs going missing.
+	"mapper-config-order": mapperConfigOrderFixture(),
+
+	// A create that was refused for a valueless credential, so the case after
+	// it can read that the user is not there. The refusal is a fixture step
+	// rather than the case before it, because a golden that needs its
+	// neighbour to have run first is not a measurement.
+	"inline-credential-rollback": {
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/users",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"username":"gloak-probe-rollback","enabled":true,` +
+						`"credentials":[{"type":"password"}]}`),
+				},
+				ExpectStatus: []int{http.StatusInternalServerError},
+			},
+		},
+	},
 }
 
 // The fixed client-scope ids P5's fixtures create their scopes with. They are
@@ -3764,4 +3845,359 @@ func scopeMappingCallerSteps(username string) []Step {
 			Capture: map[string]string{"caller_token": "access_token"},
 		},
 	}
+}
+
+// inlineCredentialFixture creates a user whose password arrives in the
+// `credentials` array of the create itself, captures its id, and - when
+// password is non-empty - logs in as it.
+//
+// **The grant step is what makes this fixture worth having.** F84 is a defect
+// in POST /users that no case for POST /users can see: the create answers 201
+// with an empty body whether the array was honoured or ignored, and the only
+// observable that moves is a login two steps later. It was found exactly that
+// way, by a fixture written this shape recording green against the reference
+// container and then failing the verifier at the grant. A step with no
+// ExpectStatus accepts any 2xx, so an ignored array is a 400 here and the
+// failure is loud.
+//
+// An empty password means the fixture stops after the create: a temporary
+// password answers "Account is not fully set up" and a hashless one is a 500,
+// so neither can be granted, and both are measured that way.
+func inlineCredentialFixture(username, credentials, password string) Fixture {
+	f := Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/users",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"username":"` + username + `","enabled":true,` +
+						`"credentials":` + credentials + `}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/users",
+					Query:   map[string]string{"username": username, "exact": "true"},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"user_id": "0/id"},
+			},
+		},
+	}
+	if password != "" {
+		f.Steps = append(f.Steps, inlineCredentialGrantStep(username, password, nil))
+	}
+	return f
+}
+
+// inlineCredentialGrantStep is a password grant as the user the fixture just
+// made. expect is nil for the grant that must succeed and carries 400 for the
+// one that must not.
+//
+// It captures nothing: what it asserts is its own status, which is the whole
+// reason it is in the fixture. TestFixturesAreWellFormed lets a POST through
+// without a capture; only a GET has to justify itself.
+func inlineCredentialGrantStep(username, password string, expect []int) Step {
+	return Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type": "password", "client_id": "admin-cli",
+				"username": username, "password": password,
+			},
+		},
+		ExpectStatus: expect,
+	}
+}
+
+// inlineCredentialTwiceFixture creates a user with **two** password entries in
+// one array and then proves which one survived.
+//
+// Measured: the array is applied in order and each entry replaces the one
+// before it, so the user ends with a single credential holding the second
+// value. Both grants are here because only the pair says that: the second
+// succeeding alone would also be true of an implementation that stored both.
+func inlineCredentialTwiceFixture() Fixture {
+	f := inlineCredentialFixture("gloak-probe-inline-twice",
+		`[{"type":"password","value":"probe-first"},{"type":"password","value":"probe-second"}]`,
+		"probe-second")
+	return Fixture{
+		State: f.State,
+		Steps: append(f.Steps,
+			inlineCredentialGrantStep("gloak-probe-inline-twice", "probe-first",
+				[]int{http.StatusBadRequest})),
+	}
+}
+
+// The fixed ids F78's fixtures build with. A mapper id is unique across the
+// server, so these must not collide with anything any other fixture creates -
+// which is what the f78 infix is for.
+const (
+	f78HolderScopeID = "f7800000-0000-4000-8000-000000000001"
+	f78SecondScopeID = "f7800000-0000-4000-8000-000000000002"
+	f78ClientID      = "f7800000-0000-4000-8000-000000000003"
+	f78RollbackID    = "f7800000-0000-4000-8000-000000000004"
+	f78RenamedID     = "f7800000-0000-4000-8000-000000000005"
+	// The id every case in the family tries to take, held by the scope above.
+	f78HeldMapperID = "f7800000-0000-4000-8000-0000000000aa"
+	// One id per container that holds one. **They must all differ**, and not
+	// only for tidiness: the recorder shares a container, so an id one
+	// fixture's holder carries is an id another case's body cannot reuse
+	// without its answer depending on which case ran first.
+	f78SecondMapperID = "f7800000-0000-4000-8000-0000000000bb"
+	f78ClientMapperID = "f7800000-0000-4000-8000-0000000000cc"
+	f78BodyMapperID   = "f7800000-0000-4000-8000-0000000000dd"
+	f78PutBodyID      = "f7800000-0000-4000-8000-0000000000ee"
+	f78KeptMapperID   = "f7800000-0000-4000-8000-0000000000f1"
+	f78SentMapperID   = "f7800000-0000-4000-8000-0000000000f2"
+	// The name the second scope holds, for the one body that is wrong about
+	// the name and about the id at once.
+	f78TakenMapperName = "gloak-probe-f78-taken"
+)
+
+// f78HeldMapper is the mapper the holder scope carries, spelled once so a case
+// can send the same id its fixture put in the store.
+const f78HeldMapper = `{"id":"` + f78HeldMapperID + `","name":"gloak-probe-f78-held",` +
+	`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}`
+
+// mapperIDHolderFixture creates a client scope holding one mapper at a known
+// id, and optionally a second empty container to aim at it from.
+//
+// second adds an empty client scope; client adds an empty client. They are two
+// flags rather than two fixtures because the measurement is the same one over
+// both kinds of container, and the id has to be held by exactly one thing on
+// the server for any of it to mean anything.
+func mapperIDHolderFixture(second, client bool) Fixture {
+	f := Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/client-scopes",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"id":"` + f78HolderScopeID + `","name":"gloak-probe-f78-holder",` +
+						`"protocol":"openid-connect","protocolMappers":[` + f78HeldMapper + `]}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+		},
+	}
+	if second {
+		// The second scope holds a **name** and not the id, which is what lets
+		// a case send a body that is wrong in both ways at once and see which
+		// check answers.
+		f.Steps = append(f.Steps, Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/client-scopes",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"id":"` + f78SecondScopeID + `","name":"gloak-probe-f78-second",` +
+					`"protocol":"openid-connect","protocolMappers":[{"id":"` + f78SecondMapperID + `",` +
+					`"name":"` + f78TakenMapperName + `","protocol":"openid-connect",` +
+					`"protocolMapper":"oidc-usermodel-attribute-mapper"}]}`),
+			},
+			ExpectStatus: idempotentCreate,
+		})
+	}
+	if client {
+		f.Steps = append(f.Steps, Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"id":"` + f78ClientID + `","clientId":"gloak-probe-f78-client",` +
+					`"enabled":true,"protocolMappers":[{"id":"` + f78ClientMapperID + `",` +
+					`"name":"gloak-probe-f78-own","protocol":"openid-connect",` +
+					`"protocolMapper":"oidc-usermodel-attribute-mapper"}]}`),
+			},
+			ExpectStatus: idempotentCreate,
+		})
+	}
+	return f
+}
+
+// mapperIDHolderRealmFixture is the holder plus a realm of its own, for the one
+// case that asks the question the follow-up got wrong: whether the id is unique
+// across the realm or across the server.
+func mapperIDHolderRealmFixture() Fixture {
+	f := mapperIDHolderFixture(false, false)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`{"realm":"gloak-probe-f78-realm","enabled":true}`),
+		},
+		ExpectStatus: idempotentCreate,
+	})
+	return f
+}
+
+// mapperIDRollbackFixture holds the id and then has a create refused for it, so
+// the case that follows can read that the refused scope is not there.
+//
+// A create that is rejected halfway is the shape this implementation has to get
+// right without a transaction, and a 409 alone does not say whether it did.
+func mapperIDRollbackFixture() Fixture {
+	f := mapperIDHolderFixture(false, false)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/client-scopes",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body: []byte(`{"id":"` + f78RollbackID + `","name":"gloak-probe-f78-rollback",` +
+				`"protocol":"openid-connect","protocolMappers":[` + f78HeldMapper + `]}`),
+		},
+		ExpectStatus: []int{http.StatusConflict},
+	})
+	return f
+}
+
+// mapperRenamedByPutFixture creates a client with one mapper and then PUTs the
+// same **name** back carrying a different id.
+//
+// Keycloak matches the body's mappers to the client's by (protocol, name) and
+// keeps the id it already had, so the case after this reads the original id -
+// which is what tells a name match from the wholesale replace Gloak used to do.
+func mapperRenamedByPutFixture() Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"id":"` + f78RenamedID + `","clientId":"gloak-probe-f78-renamed",` +
+						`"enabled":true,"protocolMappers":[{"id":"` + f78KeptMapperID + `",` +
+						`"name":"gloak-probe-f78-kept","protocol":"openid-connect",` +
+						`"protocolMapper":"oidc-usermodel-attribute-mapper","config":{"claim.name":"one"}}]}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPut,
+					Path:    "/admin/realms/master/clients/" + f78RenamedID,
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"protocolMappers":[{"id":"` + f78SentMapperID + `",` +
+						`"name":"gloak-probe-f78-kept","protocol":"openid-connect",` +
+						`"protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"two"}}]}`),
+				},
+			},
+		},
+	}
+}
+
+// The fixed ids F89's fixture builds with. A mapper id is unique across the
+// server - see f78HeldMapperID - so these carry their own infix too.
+const (
+	f89ScopeID    = "f8900000-0000-4000-8000-000000000001"
+	f89GrownID    = "f8900000-0000-4000-8000-0000000000aa"
+	f89UngrownID  = "f8900000-0000-4000-8000-0000000000bb"
+	f89ScopeName  = "gloak-probe-f89"
+	f89GrownName  = "gloak-probe-f89-grown"
+	f89PlainName  = "gloak-probe-f89-plain"
+	f89MapperPath = "/admin/realms/master/client-scopes/" + f89ScopeID + "/protocol-mappers/models"
+)
+
+// mapperConfigOrderFixture creates a client scope holding two mappers whose
+// config comes back in an order the request did not write.
+//
+// The first grows: `oidc-usermodel-attribute-mapper` mirrors two of its four
+// keys, so the map is **built for four** and **serialised at six**, and the
+// three candidate orders are all different -
+//
+//	SizedKeyOrder(4)  id.token.claim, access.token.claim,
+//	                  introspection.token.claim, claim.name, jsonType.label,
+//	                  userinfo.token.claim      <- measured
+//	SizedKeyOrder(6)  ... introspection.token.claim second
+//	the request's     claim.name first
+//
+// so one body separates "no ordering at all", "ordering with the wrong count"
+// and the answer. The second does not grow, and is there so the ordering can be
+// seen without the count in the way: `oidc-nonce-backwards-compatible-mapper`
+// mirrors nothing, and three keys written claim.name, jsonType.label,
+// user.attribute come back claim.name, user.attribute, jsonType.label.
+func mapperConfigOrderFixture() Fixture {
+	mapper := func(id, name, provider, config string) Step {
+		return Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    f89MapperPath,
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"id":"` + id + `","name":"` + name + `","protocol":"openid-connect",` +
+					`"protocolMapper":"` + provider + `","config":` + config + `}`),
+			},
+			ExpectStatus: idempotentCreate,
+		}
+	}
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/client-scopes",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"id":"` + f89ScopeID + `","name":"` + f89ScopeName + `",` +
+						`"protocol":"openid-connect"}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			mapper(f89GrownID, f89GrownName, "oidc-usermodel-attribute-mapper",
+				`{"claim.name":"c","jsonType.label":"String",`+
+					`"access.token.claim":"true","id.token.claim":"true"}`),
+			mapper(f89UngrownID, f89PlainName, "oidc-nonce-backwards-compatible-mapper",
+				`{"claim.name":"c","jsonType.label":"String","user.attribute":"u"}`),
+		},
+	}
+}
+
+// inlineCredentialKeepsTemporaryFixture makes a user carrying UPDATE_PASSWORD
+// and then puts a non-temporary inline credential over it.
+//
+// Measured: the action stays. reset-password with temporary false removes it -
+// that is measured too, and asserted by admin/users/reset-password - so the two
+// routes differ by exactly the branch this fixture reaches. No grant follows,
+// because a user carrying the action is refused with "Account is not fully set
+// up" whatever its password is.
+func inlineCredentialKeepsTemporaryFixture() Fixture {
+	f := inlineCredentialFixture("gloak-probe-inline-keeps",
+		`[{"type":"password","value":"probe-first","temporary":true}]`, "")
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`{"credentials":[{"type":"password","value":"probe-second","temporary":false}]}`),
+		},
+	})
+	return f
+}
+
+// inlineCredentialUpdateFixture makes a user with no password and then sets one
+// through PUT /users/{id}'s own inline array, which is the second route F84
+// turned out to be a defect on.
+func inlineCredentialUpdateFixture() Fixture {
+	f := userFixture("gloak-probe-inline-put")
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`{"credentials":[{"type":"password","value":"probe-pass"}]}`),
+		},
+	}, inlineCredentialGrantStep("gloak-probe-inline-put", "probe-pass", nil))
+	return f
 }

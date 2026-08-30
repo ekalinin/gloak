@@ -1,0 +1,12 @@
+# GET /admin/realms/master/client-scopes/f8900000-0000-4000-8000-000000000001/protocol-mappers/models/f8900000-0000-4000-8000-0000000000bb
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"id":"f8900000-0000-4000-8000-0000000000bb","name":"gloak-probe-f89-plain","protocol":"openid-connect","protocolMapper":"oidc-nonce-backwards-compatible-mapper","consentRequired":false,"config":{"claim.name":"c","user.attribute":"u","jsonType.label":"String"}}

@@ -7406,4 +7406,798 @@ var adminCases = []Case{
 		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
+
+	// --- F84: the credentials array POST /users and PUT /users/{id} carry ---
+	//
+	// None of these claims an Operation. All three routes they touch are
+	// claimed already; what they add is the part of those routes' contract that
+	// was being served wrong.
+	{
+		// **The case F84 says no case for POST /users would have found.** The
+		// create answers 201 with an empty body whether the array was honoured
+		// or dropped, so the assertion is split: the fixture logs in as the
+		// user - a step that simply fails when the password was not stored -
+		// and this reads the credential the array produced.
+		ID: "admin/users/inline-credential",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user with an inline credentials array",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "inline-credential",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/credentials",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/createdDate"},
+	},
+	{
+		// **type is ignored and userLabel is dropped**, both in one body. The
+		// entry asked for an `otp` labelled "office laptop"; the credential is
+		// a `password` with no userLabel key, and the fixture's grant says the
+		// value really is the password.
+		//
+		// The type half is reset-password's measured behaviour arriving on a
+		// second route; the label half is not - reset-password *clears* a
+		// label, and this never reads one.
+		ID: "admin/users/inline-credential-ignores-type-and-label",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, inline credential of another type",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "inline-credential-otp",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/credentials",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/createdDate"},
+	},
+	{
+		// Two entries, one credential. The fixture already proved which value
+		// survived - the second grants and the first is refused - and this is
+		// the other half: the listing has one row, not two.
+		ID: "admin/users/inline-credential-twice",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, two inline credentials",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "inline-credential-twice",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/credentials",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/createdDate"},
+	},
+	{
+		// **An empty value is a 201 and a credential that describes no hash.**
+		// Three keys where every other credential has four or five: there is no
+		// credentialData at all. Keycloak's own defect - the password grant
+		// against this user is a 500 - and reproduced as far as the admin API
+		// reaches.
+		ID: "admin/users/inline-credential-empty-value",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, inline credential with an empty value",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "inline-credential-empty-value",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/credentials",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/createdDate"},
+	},
+	{
+		// temporary true puts UPDATE_PASSWORD on the user, the way it does
+		// through reset-password. What it does **not** do is the mirror image:
+		// a later non-temporary inline credential leaves the action in place,
+		// where reset-password with temporary false removes it. Only the add is
+		// asserted here; the difference is written up in AGENTS.md.
+		ID: "admin/users/inline-credential-temporary",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, temporary inline credential",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "inline-credential-temporary",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"id", "createdTimestamp"},
+	},
+	{
+		// **temporary is a disjunction over the array, not last-wins.** The
+		// second entry says false and the user still carries UPDATE_PASSWORD.
+		// Applying the entries in order with the last flag winning is the
+		// obvious implementation, passes admin/users/inline-credential-temporary
+		// beside it, and fails here.
+		ID: "admin/users/inline-credential-temporary-then-not",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, temporary then permanent inline credentials",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "inline-credential-temporary-then-not",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"id", "createdTimestamp"},
+	},
+	{
+		// **The inline array only ever adds the required action.** A
+		// non-temporary credential put over a user that has UPDATE_PASSWORD
+		// leaves it there, where reset-password with temporary false takes it
+		// away. Reusing resetPassword's withAction call is one line and it is
+		// wrong here and nowhere else.
+		ID: "admin/users/inline-credential-keeps-temporary",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: update the user, permanent inline credential over a temporary one",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "inline-credential-keeps-temporary",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"id", "createdTimestamp"},
+	},
+	{
+		// The same array on PUT /users/{id}. F84 was filed against the create
+		// and is a defect on both routes, so the update has its own fixture,
+		// its own grant and its own golden rather than being assumed from the
+		// create's.
+		ID: "admin/users/update-inline-credential",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: update the user with an inline credentials array",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "inline-credential-update",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/credentials",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/createdDate"},
+	},
+	{
+		// **An entry with no value is a 500 and the user is rolled back.** The
+		// user this body names does not exist afterwards, which is what the
+		// next case reads.
+		//
+		// It is the third answer this API gives to a missing password:
+		// reset-password says 400 "No password provided", the update route says
+		// 400 "Could not update user!", and the create says this.
+		ID: "admin/users/create-credential-without-value",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, inline credential with no value",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"username":"gloak-probe-novalue","enabled":true,` +
+				`"credentials":[{"type":"password"}]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The rollback, read back. Without it the 500 above is satisfied by a
+		// handler that creates the user and then fails, which is what a
+		// first attempt at this actually did.
+		//
+		// The rejected create is in the **fixture**, not in the case before
+		// this one. Reading it out of catalogue order would make the golden
+		// hold only while that order holds - and worse, it would pass for the
+		// wrong reason under the verifier, which serves each case from a
+		// handler that has seen nothing but this case's own fixture and would
+		// answer `[]` whether or not anything had ever been rolled back.
+		ID: "admin/users/create-credential-without-value-rolled-back",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, inline credential with no value, rolled back",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "inline-credential-rollback",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users",
+			Query:   map[string]string{"username": "gloak-probe-rollback", "exact": "true"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The update route's answer to the body the create answers 500: 400,
+		// and the errorMessage shape rather than the OAuth one. Two routes on
+		// one resource, one bad body, two families - the fifth time this API has
+		// punished a decoder shared by a pair.
+		ID: "admin/users/update-credential-without-value",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: update the user, inline credential with no value",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-created-user",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"credentials":[{"type":"password"}]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The same body the create answers 500. This is the boundary probe for
+		// the shared decoder: admin/users/create-null-body pins the 500 and
+		// this pins that the PUT does **not** answer it, which is the half a
+		// decoder written once gets wrong.
+		ID: "admin/users/update-null-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: update the user, null body",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-created-user",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`null`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **A binding failure is unknown_error where a syntax failure is
+		// invalid_request.** admin/users/create-malformed sends a truncated
+		// object and gets invalid_request; this sends a well-formed object
+		// whose credentials key holds a string and gets the other code.
+		//
+		// Every earlier probe of this endpoint sent a truncated document, which
+		// is why invalid_request looked like the answer to "malformed body". It
+		// is the answer to "malformed JSON", and this is the body that tells
+		// them apart.
+		ID: "admin/users/create-credentials-wrong-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, credentials of the wrong JSON type",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"username":"gloak-probe-badcreds","credentials":"nonsense"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The same rule reached through a body that names no credential at all,
+		// so the code cannot be read as something the credentials key does.
+		ID: "admin/users/create-enabled-wrong-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, enabled of the wrong JSON type",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"username":"gloak-probe-badenabled","enabled":"yes"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// A body whose first token is not `{` at all. Same code as the two
+		// above and a different reason for it, which is why all three are here:
+		// wrong shape and wrong type share an answer that a truncated object
+		// does not.
+		ID: "admin/users/create-array-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, array body",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+
+	// --- F78: a protocol mapper id is unique across the server ---
+	//
+	// Five routes enforce it and they answer with two bodies, and which body a
+	// caller gets is decided by the route **and** by where the colliding mapper
+	// is. The follow-up said the location alone decides; the four cells below
+	// are what says otherwise, and the two add-models rows are the pair that
+	// does it. None of these claims an Operation - every route is claimed.
+	{
+		// An id the container it is aimed at already holds. This one route
+		// answers it with the name conflict, for a request whose name is free.
+		ID: "admin/protocol-mappers/duplicate-id-same-container",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: create a mapper, id already in this container",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes/" + f78HolderScopeID + "/protocol-mappers/models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"` + f78HeldMapperID + `","name":"gloak-probe-f78-free",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The same id, aimed at a container that does not hold it. Same route,
+		// same status, a different body - which is the half of the follow-up's
+		// claim that survived.
+		ID: "admin/protocol-mappers/duplicate-id-other-container",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: create a mapper, id held by another container",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder-second",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes/" + f78SecondScopeID + "/protocol-mappers/models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"` + f78HeldMapperID + `","name":"gloak-probe-f78-free",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **The cell that refutes "the location decides".** Same container,
+		// same id, the batch route - and the generic duplicate, where the
+		// single create beside it answers its own name conflict. An
+		// implementation that shared one predicate between the two routes
+		// passes the three other cells and fails this one.
+		ID: "admin/protocol-mappers/add-models-duplicate-id-same-container",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: add mappers, id already in this container",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes/" + f78HolderScopeID + "/protocol-mappers/add-models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"` + f78HeldMapperID + `","name":"gloak-probe-f78-free",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}]`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The fourth cell, which is the third's twin. Two cells of one route
+		// answering identically is what a 2x2 is for; without it the batch
+		// route's answer could still be read as "the location decides, and this
+		// route's local answer happens to be the generic one".
+		ID: "admin/protocol-mappers/add-models-duplicate-id-other-container",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: add mappers, id held by another container",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder-second",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes/" + f78SecondScopeID + "/protocol-mappers/add-models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"` + f78HeldMapperID + `","name":"gloak-probe-f78-free",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}]`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **A body wrong in both ways at once, and the name answers.** The id
+		// belongs to another container and the name belongs to this one; the
+		// reply is the name conflict, so the id check runs last on this route.
+		// Both cells of this route already share that message, which is why the
+		// order between them needs a body that reaches only one of the two.
+		ID: "admin/protocol-mappers/duplicate-id-and-name",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: create a mapper, id held elsewhere and name held here",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder-second",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes/" + f78SecondScopeID + "/protocol-mappers/models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"` + f78HeldMapperID + `","name":"` + f78TakenMapperName + `",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The same adjacency on the batch route, where the two answers really
+		// are different bodies: the name conflict is `Protocol mapper name must
+		// be unique per protocol` and the id conflict is `Duplicate resource
+		// error`. Swapping the two checks is invisible on the route above and
+		// visible here.
+		ID: "admin/protocol-mappers/add-models-duplicate-id-and-name",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: add mappers, id held elsewhere and name held here",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder-second",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes/" + f78SecondScopeID + "/protocol-mappers/add-models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"` + f78HeldMapperID + `","name":"` + f78TakenMapperName + `",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}]`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// A create whose nested mapper carries an id another container holds.
+		ID: "admin/client-scopes/create-duplicate-mapper-id",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: create a client scope, mapper id already in use",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-f78-collide","protocol":"openid-connect",` +
+				`"protocolMappers":[` + f78HeldMapper + `]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The refused create left nothing behind. Without this the 409 above is
+		// satisfied by a handler that writes the scope and then reports the
+		// conflict - which, with no transaction in the store, is exactly the
+		// shape the fix has.
+		ID: "admin/client-scopes/create-duplicate-mapper-id-rolled-back",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: create a client scope, mapper id already in use, rolled back",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-rollback",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-scopes/" + f78RollbackID,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **Two mappers in one body sharing an id**, which the route answers
+		// with its own conflict - the same message a taken name gets, for a
+		// name nobody has taken.
+		ID: "admin/client-scopes/create-duplicate-mapper-id-in-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: create a client scope, two mappers sharing an id",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-f78-dupbody","protocol":"openid-connect",` +
+				`"protocolMappers":[{"id":"` + f78BodyMapperID + `","name":"gloak-probe-f78-a",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"},` +
+				`{"id":"` + f78BodyMapperID + `","name":"gloak-probe-f78-b",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The client create's two cells, the same pair over the other kind of
+		// container. Its local message names the clientId where the scope's
+		// names the scope.
+		ID: "admin/clients/create-duplicate-mapper-id",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: create a client, mapper id already in use",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"clientId":"gloak-probe-f78-collide-client","enabled":true,` +
+				`"protocolMappers":[` + f78HeldMapper + `]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/clients/create-duplicate-mapper-id-in-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: create a client, two mappers sharing an id",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"clientId":"gloak-probe-f78-dupbody-client","enabled":true,` +
+				`"protocolMappers":[{"id":"` + f78BodyMapperID + `","name":"gloak-probe-f78-a",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"},` +
+				`{"id":"` + f78BodyMapperID + `","name":"gloak-probe-f78-b",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **The route the follow-up's correction turns on.** The colliding
+		// mapper is in another *realm* and the create is still a 409, so the
+		// uniqueness is server-wide. A realm-wide index answers this one 201
+		// and passes every other case in this family.
+		ID: "admin/client-scopes/create-duplicate-mapper-id-across-realms",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: create a client scope in another realm, mapper id already in use",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder-realm",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-f78-realm/client-scopes",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-f78-cross","protocol":"openid-connect",` +
+				`"protocolMappers":[` + f78HeldMapper + `]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The fifth route. An id another container holds is the generic 409
+		// here as everywhere else.
+		ID: "admin/clients/update-duplicate-mapper-id",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: update a client, mapper id already in use",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder-client",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/clients/" + f78ClientID,
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"protocolMappers":[` + f78HeldMapper + `]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **A sixth body, and it is not a 409 at all.** Two entries sharing an
+		// id on the update route answer 400 `invalid_input`, naming the second
+		// mapper. Five routes, three local messages and two statuses.
+		ID: "admin/clients/update-duplicate-mapper-id-in-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: update a client, two mappers sharing an id",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder-client",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/clients/" + f78ClientID,
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"protocolMappers":[{"id":"` + f78PutBodyID + `",` +
+				`"name":"gloak-probe-f78-a","protocol":"openid-connect",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper"},` +
+				`{"id":"` + f78PutBodyID + `",` +
+				`"name":"gloak-probe-f78-b","protocol":"openid-connect",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper"}]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **The update matches by name and keeps the id it already had.** The
+		// fixture's PUT sent the same name under a different id; the mapper
+		// read back carries the id the create gave it, with the provider and
+		// the config the PUT sent.
+		//
+		// This is what makes the route's uniqueness check land only on the add
+		// path: without it, a client's own representation put straight back
+		// would be a 400.
+		//
+		// It reads the mapper through its own route rather than reading the
+		// client, and that is not a preference. The client representation
+		// carries `defaultClientScopes`, which the shared container's earlier
+		// cases have added realm defaults to and the verifier's fresh handler
+		// has not - so the golden would hold three scopes this fixture never
+		// made and fail for a reason that has nothing to do with the mapper.
+		// Addressing the mapper by the id the create gave it is also a stronger
+		// assertion: a wholesale replace answers this request 404.
+		ID: "admin/clients/update-mapper-keeps-its-id",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: update a client, a mapper matched by name",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-renamed-by-put",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/" + f78RenamedID +
+				"/protocol-mappers/models/" + f78KeptMapperID,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+
+	// --- F89: the count SizedKeyOrder needs ---
+	//
+	// Neither of these carries UnorderedKeys. The point of both is the key
+	// order inside `config`, so sorting it away would leave the case asserting
+	// nothing it was written for.
+	{
+		// **The case that makes F89 observable.** Four config keys grown to six
+		// by the provider's two mirrors: the map is built for four and
+		// serialised at six, and the three candidate orders - no ordering,
+		// ordering at six, ordering at four - are three different bodies.
+		//
+		// Every other mapper in this catalogue uses a key set whose hash order
+		// happens to be its insertion order, which is why the lost count broke
+		// nothing that anything could see.
+		ID: "admin/protocol-mappers/config-key-order-grown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: the config key order of a mapper the create grew",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-config-order",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    f89MapperPath + "/" + f89GrownID,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The same rule with the count out of the way: a provider that mirrors
+		// nothing, so the map is built for three and serialised at three. It
+		// still comes back in an order the request did not write, which is what
+		// separates "the count is wrong" from "there is no ordering at all".
+		ID: "admin/protocol-mappers/config-key-order",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: the config key order of a mapper the create left alone",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-config-order",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    f89MapperPath + "/" + f89UngrownID,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
 }

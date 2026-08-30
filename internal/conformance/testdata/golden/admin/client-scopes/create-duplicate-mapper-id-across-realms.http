@@ -1,0 +1,6 @@
+# POST /admin/realms/gloak-probe-f78-realm/client-scopes
+HTTP/1.1 409 Conflict
+Content-Length: {{volatile}}
+Content-Type: application/json
+
+{"error":"conflict","error_description":"Duplicate resource error"}

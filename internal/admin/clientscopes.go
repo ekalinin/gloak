@@ -183,6 +183,15 @@ func (h *handler) createClientScope(w http.ResponseWriter, r *http.Request, rc *
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
+	// The mapper ids, after the scope's own name conflict - the same order
+	// POST /clients was measured in, and the same rollback for want of a
+	// transaction. See the id uniqueness note in protocolmappers.go.
+	if refusal := h.protocolMapperConflict(r.Context(), m.ProtocolMappers, m.ID,
+		"Client Scope "+m.Name+" already exists"); refusal != nil {
+		_ = h.store.ClientScopes().Delete(r.Context(), rc.realm.ID, m.ID)
+		refusal(w)
+		return
+	}
 	// Unlike POST /clients, this 201 carries Cache-Control: no-cache. Two
 	// creates on one API, one with the header and one without; it is pinned per
 	// endpoint like every other Cache-Control on this API.
