@@ -196,17 +196,44 @@ top-level integers") and not master's.
 
 ### 1.4 CIBA
 
-| Request | Status | Body |
-|---|---|---|
-| the grant disabled on the client | 401 | `{"error":"invalid_grant","error_description":"Client not allowed OIDC CIBA Grant"}` |
-| unknown client | 401 | `{"error":"invalid_client","error_description":"Invalid client or Invalid client credentials"}` |
-| no `scope` | 400 | `{"error":"invalid_request","error_description":"missing parameter : scope"}` |
-| no `login_hint` | 400 | `{"error":"invalid_request","error_description":"missing parameter : login_hint"}` |
-| everything present | **503** | `{"error":"server_error","error_description":"Failed to send authentication request"}` |
+**This section was written from four probes and was wrong about the order and
+about two of the checks. Corrected in place, with what it said kept below**, in
+this repository's convention for a measurement that turned out to be one step
+past its evidence.
+
+| # | Condition | Status | Body |
+|---|---|---|---|
+| 1 | unknown client | 401 | `{"error":"invalid_client","error_description":"Invalid client or Invalid client credentials"}` |
+| 2 | the grant disabled on the client | 401 | `{"error":"invalid_grant","error_description":"Client not allowed OIDC CIBA Grant"}` |
+| 3 | `login_hint` **absent** | 400 | `{"error":"invalid_request","error_description":"missing parameter : login_hint"}` |
+| 4 | `scope` **absent** | 400 | `{"error":"invalid_request","error_description":"missing parameter : scope"}` |
+| 5 | `login_hint` resolves to nobody | 400 | `{"error":"invalid_request","error_description":"invalid_user"}` |
+| 6 | `scope` invalid | 400 | `{"error":"invalid_scope","error_description":"Invalid scopes: <raw>"}` |
+| 7 | everything valid | **503** | `{"error":"server_error","error_description":"Failed to send authentication request"}` |
+
+Three things the first four probes could not see:
+
+- **`login_hint` is checked before `scope`.** A request missing both is told
+  about the hint. Only a request missing both says so, and the four probes each
+  broke one parameter.
+- **Presence and value are separate steps that interleave.** An empty `scope=`
+  passes step 4 and fails step 6 with `Invalid scopes: ` and its trailing space;
+  an empty `login_hint=` passes step 3 and fails step 5 with the identical
+  `invalid_user` a hint naming nobody gets. And step 5 sits *between* them, so
+  an empty scope with an unresolvable hint answers about the hint.
+- **There is no duplicated-parameter check on this endpoint at all.** `zz` twice
+  and `login_hint` twice both reach the 503.
 
 `missing parameter : scope` has a space on both sides of the colon and is lower
 case, where every other missing-parameter description on the protocol side is
-`Missing parameter: x`. It is not a typo in this document.
+`Missing parameter: x` - including the CIBA grant's own `Missing parameter:
+auth_req_id` one endpoint away. It is not a typo in this document.
+
+What this section said before the re-measurement, kept for the record: a
+five-row table with `scope` above `login_hint` and no `invalid_user` or
+`invalid_scope` row at all. The implementation was written from it, shipped
+checking `scope` first, and **passed every case in the catalogue**, because
+each case breaks exactly one parameter.
 
 At the token endpoint, `urn:openid:params:grant-type:ciba`:
 
