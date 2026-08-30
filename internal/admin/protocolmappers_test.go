@@ -2,7 +2,10 @@ package admin
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/ekalinin/gloak/internal/model"
@@ -252,5 +255,80 @@ func TestProtocolMapperProviderTable(t *testing.T) {
 	if both != 20 || introspectionOnly != 2 || neither != 17 {
 		t.Errorf("provider table = %d both, %d introspection-only, %d neither; want 20, 2, 17",
 			both, introspectionOnly, neither)
+	}
+}
+
+// TestUpdateWritesTheMapperTheBodyNamesNotThePath pins the strangest thing
+// measured on this family.
+//
+// `PUT .../protocol-mappers/models/{id}` resolves the mapper it writes from the
+// **body's** `id`, not the path's. A PUT addressed to one mapper and carrying
+// another's id answers 204 and changes the other one. Keycloak's
+// `ClientScopeAdapter` looks the entity up by the model's id, and the path
+// segment only decides whether the request is a 404 at all.
+//
+// It was measured and written into updateProtocolMapper's doc comment and
+// nothing tested it: swapping the second lookup to the path's id left the whole
+// suite green, because every other case sends a body whose id agrees with its
+// path. This is the case where the two disagree, which is the only place the
+// difference is observable.
+func TestUpdateWritesTheMapperTheBodyNamesNotThePath(t *testing.T) {
+	h, _, _ := newServer(t)
+	token := tokenFor(t, h, "admin", "admin")
+
+	scope := `{"id":"11111111-1111-1111-1111-111111111111","name":"gloak-probe-pm-swap",` +
+		`"protocol":"openid-connect","protocolMappers":[` +
+		`{"id":"aaaaaaaa-1111-1111-1111-111111111111","name":"a",` +
+		`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper",` +
+		`"config":{"claim.name":"before-a"}},` +
+		`{"id":"bbbbbbbb-2222-2222-2222-222222222222","name":"b",` +
+		`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper",` +
+		`"config":{"claim.name":"before-b"}}]}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/realms/master/client-scopes",
+		strings.NewReader(scope))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create scope: %d %s", w.Code, w.Body)
+	}
+
+	// Addressed to a, carrying b's id.
+	body := `{"id":"bbbbbbbb-2222-2222-2222-222222222222","name":"b",` +
+		`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper",` +
+		`"config":{"claim.name":"after-b"}}`
+	req = httptest.NewRequest(http.MethodPut,
+		"/admin/realms/master/client-scopes/11111111-1111-1111-1111-111111111111"+
+			"/protocol-mappers/models/aaaaaaaa-1111-1111-1111-111111111111",
+		strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("update: %d %s", w.Code, w.Body)
+	}
+
+	w = get(t, h, "/admin/realms/master/client-scopes/11111111-1111-1111-1111-111111111111"+
+		"/protocol-mappers/models", token)
+	var got []struct {
+		Name   string            `json:"name"`
+		Config map[string]string `json:"config"`
+	}
+	if err := decodeJSON(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("parse listing: %v: %s", err, w.Body)
+	}
+	claims := map[string]string{}
+	for _, m := range got {
+		claims[m.Name] = m.Config["claim.name"]
+	}
+	if claims["b"] != "after-b" {
+		t.Errorf("b's claim.name = %q, want %q - the body named b and b is what must move",
+			claims["b"], "after-b")
+	}
+	if claims["a"] != "before-a" {
+		t.Errorf("a's claim.name = %q, want %q - a was only the path, and the path does not decide",
+			claims["a"], "before-a")
 	}
 }
