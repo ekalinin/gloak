@@ -297,7 +297,10 @@ array here is `Case.Unordered` at the root for the reason the role listings
 already are, rather than because this cut saw it move.
 
 The combined view's `clientMappings` key order is `javamap.KeyOrder`'s, the same
-as `GET /users/{id}/role-mappings`.
+as `GET /users/{id}/role-mappings`. Measured over two clients on the reference
+container: `gloak-probe-sm-client` came back before `master-realm`. No golden
+here holds more than one key, so that pair is a vector this cut recorded and did
+not assert.
 
 ### 1.9 The `Duplicate resource error` 409 is headerless on one family and not on another
 
@@ -592,13 +595,29 @@ F61 should name which one it means, which is what cut B already asked for.
 
 `CGO_ENABLED=0 go test ./internal/conformance/ -run '^TestCoverage$' -count=1`
 
-The branch's merge base is `a308eb0`, which is `main` unchanged, so the number is
-reported once. **`main` was not merged mid-flight**, so no finding in this
-document needs re-checking against a commit this branch already carries.
+The branch's merge base is `a308eb0`. **`main` was not merged mid-flight**, so no
+finding in this document needs re-checking against a commit this branch already
+carries.
 
 | | before | after | delta |
 |---|---|---|---|
-| total | **205 of 499** | **238 of 499** | **+33** |
+| total, measured locally at `a308eb0` | **205 of 499** | **238 of 499** | **+33** |
+| total, CI against `main` as it stands | **209 of 500** | **242 of 500** | **+33** |
+
+The two rows differ because `main` moved while this branch was open and CI
+measures the merge, not the branch: P3's `authorization_code` grant and the
+`javamap` sized-`HashMap` fix landed between the branch point and the pull
+request. **The increment is the same both ways**, as it was for cut A.
+
+One of those two is worth a note rather than a re-check. The `javamap` fix
+changes `KeyOrder`'s model, and the combined scope-mapping view orders its
+`clientMappings` keys through it. Nothing here depends on the part that changed:
+every golden in this cut holds **at most one** `clientMappings` key, so no
+ordering decision is exercised, and CI is green on the merge commit. The two
+`clientMappings` keys measured on the reference container -
+`gloak-probe-sm-client` before `master-realm` - are recorded in §1.8 and are
+under no golden, which is a case somebody could add now that the model is
+right.
 
 ```
 chapter                         before  after  delta
