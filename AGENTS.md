@@ -56,7 +56,12 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   find matching target resource method"}`, a wrong method on a known path
   answers `{"error":"HTTP 404 Not Found"}`. That is why `withKeycloakFallbacks`
   still tells the two cases apart even though both return the same status.
-- **That rule is measured too broad, six times now.** On the role-mapping
+- **That rule is measured too broad, seven times now, and the Admin API alone
+  now answers it in three different shapes** - the client scopes answer all four
+  wrong verbs 405, the protocol mappers answer `PATCH` alone 405, and the scope
+  mappings answer `PUT` and `PATCH` 405 and `POST`/`DELETE` 404, which is
+  exactly the role-mapping paths' split. Three sibling families, three answers,
+  one API. On the role-mapping
   paths `PUT` and `PATCH` answer a real 405 while `POST` and `DELETE` answer the
   404 above - same path, four verbs, two statuses. `/admin/realms` answers
   `DELETE` with a 405, refuting "the verb decides". And on
@@ -173,7 +178,9 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   body's `aud`. The ID token's `aud` is a string always, and it names the
   issuing client - the one place the two tokens disagree.
 - **Keycloak's JSON key order for a Java `Map` is `HashMap` bucket order**, not
-  sorted and not insertion order. `internal/javamap` reproduces it and is
+  sorted and not insertion order. **There are two constructors and
+  `internal/javamap` models them separately.** `javamap.KeyOrder` is the
+  no-argument one - 16 buckets, doubling at the 0.75 load factor - and is
   confirmed against six measured key sets - four in its own tests; the
   `clientMappings` of a combined role-mapping view, where six clients created
   and assigned `cx1..cx6` came back `cx6, cx5, cx2, cx1, cx4, cx3` and
@@ -294,8 +301,21 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   admin role** - itself, or one measured to subsume it. Conferral is a measured
   implication table, not composition, and which roles count as admin roles is
   decided by the role's **container**, not its name. One predicate governs four
-  operations: both `available` reads, both role-mapping write pairs, and
-  `POST .../composites`. The reads are what surprises: they answer **200 with a
+  operations **on the user and group role-mapping families**: both `available`
+  reads, both role-mapping write pairs, and `POST .../composites`.
+  **It does not govern the scope mappings**, which look like the same shape and
+  are not. Their four writes and two `available` reads run the *composite-write*
+  rule - the manage role of the role's own container - and the two disagree in
+  **both** directions on measured inputs: the scope-mapping family refuses
+  `manage-clients` an ordinary non-admin realm role that this rule allows, and
+  allows a `manage-clients` caller `master-realm`'s `manage-realm` that this
+  rule refuses. It differs from the composite-write rule too, running on both
+  verbs where that runs on the add path alone. Reusing one predicate for the
+  other family is the obvious saving and it is wrong in both directions at once.
+  It is not an escalation surface either way: a scope mapping grants nothing, it
+  decides which of a subject's existing roles survive into a token, which is why
+  the caller-relative rule exists on the family that really does hand out a
+  right and not on this one. The reads are what surprises: they answer **200 with a
   shorter list** to a weaker caller rather than refusing it, so an `available`
   that looks like it lost roles is usually right. `DELETE .../composites` is
   **not** filtered where its `POST` is, and the role-mapping `DELETE` **is** -
@@ -698,6 +718,48 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   ```
 
   Three endpoints that look like one endpoint three times.
+- **The two scope-mapping write pairs read different keys off the same JSON.**
+  `POST`/`DELETE .../scope-mappings/realm` resolves each entry by **`id`**,
+  realm-wide, and never looks at `name`: an entry with a real id and a wrong
+  name is 204, one with a real name and no id is a **500**, and **a client role
+  is accepted** and lands under `clientMappings`, readable and removable through
+  the `realm` path that took it. `POST`/`DELETE .../scope-mappings/clients/{c}`
+  does the opposite - it resolves by **`name`** within that client and ignores
+  the id. Four operations, two lookup keys, each ignoring the other's. A decoder
+  accepting an entry when *either* key matches passes every happy path and gets
+  four measured rejections wrong, and adding a `role.ClientID == ""` check to
+  make the realm write agree with its own path breaks the one thing that write
+  does.
+- **`composite` has a third input that `available` and the combined read do not:
+  `fullScopeAllowed`.** A client with the flag set answers **every realm role in
+  the realm** from `.../scope-mappings/realm/composite` while
+  `.../scope-mappings/realm` answers `[]` and `.../scope-mappings` answers `{}`.
+  Turn the flag off and the composite answers `[]`. A client scope has no such
+  flag. Two of the six bootstrapped clients carry it, so it is not a corner, and
+  composing the combined read out of the composite predicate is the tidy-up that
+  makes three reads agree where Keycloak measurably disagrees with itself.
+- **A client's own roles are in its own scope without ever being mapped.**
+  `GET /clients/{c}/scope-mappings/clients/{that same c}/available` is `[]` on a
+  client that owns roles, has `fullScopeAllowed` off and has mapped nothing, and
+  the `composite` beside it answers those roles. So `available` subtracts a set
+  with two clauses on a client and one on a client scope.
+- **`available` is the complement of the direct list and `composite` is not its
+  complement**, here as on the user family: with one composite role mapped, its
+  child is in the composite expansion **and** in the available list, on both
+  triples. Confirmed on this family rather than inherited from that one.
+- **`briefRepresentation` is honoured by `.../composite` alone on the scope
+  mappings too**, and six other reads on the family ignore it. That is the first
+  time one of this API's parameter rules has generalised from one family to
+  another rather than inverting - and it was still measured rather than assumed.
+- **No response on the Scope Mappings tag carries a `Location`, which is why the
+  `client-templates` alias has no exception here.** The two previous families
+  each had exactly one difference between the two spellings and both were `POST`
+  echoing its own path into `Location`; the writes here are 204 with an empty
+  body, so all eleven operations are byte-identical, headers included. **The
+  alias is distinguishable only through a `Location`.**
+- **A 415 exists on this API**, and the scope mappings are where it is
+  reachable, because they are the first routes whose `DELETE` carries a body.
+
 - **`session_state` is minted by the login page, not by the login.** The
   authentication session's root id is created at `GET /auth`, goes out inside
   `AUTH_SESSION_ID`, and is then the redirect's `session_state`, the
@@ -761,12 +823,30 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `protocol` and `consentRequired` are read off the wire and discarded. Writing
   the whole representation back is the obvious implementation and it is wrong on
   three fields. Both are Keycloak's own defects, reproduced.
-- **A protocol mapper's `config` key order is a Java `HashMap` sized to its
-  entry count**, which is a different table size from the one `internal/javamap`
-  models - `javamap.KeyOrder` gets six of fourteen measured vectors wrong. The
-  cases avoid the problem by using config key sets measured to be order-stable,
-  so the goldens assert real config bytes with **no** `UnorderedKeys` retreat.
-  Not every Java map in this API needs one.
+- **A protocol mapper's `config` key order is two Java `HashMap`s, not one**,
+  and `internal/javamap` models it as `SizedKeyOrder`: a table asked for `7n/4`
+  buckets, then one asked for `n`, with collisions in the second chaining in
+  **insertion order** rather than alphabetically. One table cannot fit the
+  measurements - `{claim.name, jsonType.label, user.attribute}` comes back in
+  one order from all six of its insertion orders while `{zz, aa, mm}` comes back
+  in whichever order it went in, also from all six. Read off the server at every
+  entry count from 1 to 50; the `7n/4` is measured rather than derived, pinned
+  by four boundaries where the answer flips (n=5/6, 9/10, 18/19, 37/38), and no
+  plain multiple of `n` fits all four.
+  **A create that appends a key of its own appends it after the first table**,
+  so a config the create grew was built for the request's key count and
+  serialised at a larger one; `SizedKeyOrder` takes that count as its first
+  argument.
+  `javamap.KeyOrder` gets **seven** of the fourteen measured configs wrong - the
+  follow-up said six, from a vector set nobody had written down - and
+  `TestKeyOrderIsWrongOnHalfTheMapperConfigs` pins that count so the package
+  cannot quietly start claiming both again. The conformance cases sidestep all
+  of it by using config key sets measured to be order-stable, so the goldens
+  assert real config bytes with **no** `UnorderedKeys` retreat.
+  **The fourteen vectors do not pin the rounding rule.** Changing
+  `tableSizeFor`'s `<` to `<=` passes all fourteen and fails only the boundary
+  probes, so a cut that added the vectors and stopped would have shipped an
+  unpinned rule that looked measured.
 - **One mapper serialises two ways.** `account-console`'s `audience resolve` is
   `"config":{}` from `GET /clients` and populated from the dedicated mapper
   route, on one container minutes apart, while a client *scope*'s copy is
@@ -950,6 +1030,14 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
   **The way to ask for a Pending golden back is to promote the case to
   `Recorded`**, which is what `Recorded` already means and which a reviewer sees
   in the diff; there is no flag.
+  **Seven Pending goldens are parked, not four.** The four login-theme pages are
+  the ones that churned; the device, CIBA and dynamic-registration refusals are
+  three more that had been parked without anybody counting them. All seven are
+  declared in `parkedGoldens` with the reason each is kept, and
+  `TestEveryParkedGoldenIsDeclared` refuses an eighth arriving without one, a
+  declaration whose file has gone, and one whose case is no longer `Pending`. A
+  parked golden is a **measurement, not a contract**: read it for what Keycloak
+  answered, never for what Gloak must serve. See F72.
 - **Every object a fixture or a case creates is named `gloak-probe-*`, and
   `TestEveryCreatedObjectCarriesTheProbePrefix` is what says so.** Six goldens'
   windows rest on that convention and nothing enforced it:

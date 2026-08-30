@@ -97,6 +97,25 @@ both corrections with the reason. That a correction can land in one of two
 documents and sit unnoticed for a day is worth more attention than either
 sentence.
 
+**Status, 2026-08-30 (third fold).** Three more cuts closed **F72, F76 and
+F80** and opened **F84 through F91**, taking parity to 242 of 500. **Gloak can
+complete a browser OAuth flow for the first time.**
+
+Two entries in this very list were **wrong when the cut arrived to close them**,
+which is worth more than either fix. **F80** named a model that fits 13 of 14
+vectors; the fourteenth proves one table cannot be right, and the answer is two.
+**F78** was wrong three ways at once - server-wide rather than realm-wide, five
+routes rather than three, and a message rule that was an artefact of the probes.
+Both were written by cuts that had measured carefully and generalised one step
+past their evidence.
+
+The sharpest finding is about tests rather than about Keycloak. F80's fourteen
+vectors **do not pin the rounding rule**: the mutation that breaks it passes all
+fourteen and fails only the boundary probes. A cut that added the vectors and
+stopped would have shipped an unpinned rule that looked measured. It was found
+by asking what the vectors did *not* pin, which is not a question a passing
+suite ever prompts.
+
 One thing that is deliberately **not** filed. P4's handover proposes an entry
 for "a golden that enumerates a realm-wide set without `PristineRealm`", naming
 `admin/role-mapper/group-realm-available`. That case gained the flag in
@@ -2821,7 +2840,27 @@ have seen it: each guard and each fixture was correct against the tree its
 author had. It is the second finding this week that only existed in the
 combination.
 
-## F72: should a `Pending` case carry a golden at all?
+## F72: should a `Pending` case carry a golden at all? (closed - they stay, declared)
+
+**Decided 2026-08-30: they stay, and each says why.** There are **seven**, not
+the four this entry counted - the device, CIBA and dynamic-registration refusals
+had been parked without anybody counting them, which is itself the argument for
+declaring rather than tolerating.
+
+`parkedGoldens` names all seven with the reason each is kept, and says what a
+reader is to do with such a file: **read it as a measurement and never as a
+contract.** `TestEveryParkedGoldenIsDeclared` refuses an eighth arriving without
+one, a declaration whose file has gone, one whose case is no longer `Pending`,
+and one naming nothing in the catalogue.
+
+The grounds for keeping rather than deleting: a declared exception carrying its
+reason is the shape this project already uses three times over -
+`UnorderedKeys`, `VolatileHeaders`, `namedOutsideTheConvention`. And deletion
+was only defensible for four of the seven, so it would have produced a rule with
+three exemptions instead of an exemption list with seven entries.
+
+What the question was:
+
 
 F69 stopped the recorder rewriting them, which was the cost. The question it
 leaves is whether the file should be there.
@@ -2864,7 +2903,20 @@ That matters here in a way it does not for Keycloak, because realm signing keys
 were deliberately persisted so that two replicas agree. The design to use is
 written in the P13 handover; the trigger is whoever first runs two replicas.
 
-## F76: the `authorization_code` grant is not served at the token endpoint
+## F76: the `authorization_code` grant is not served at the token endpoint (closed)
+
+**Closed 2026-08-30. Gloak can complete a browser OAuth flow**: `GET /auth` to
+login form to code to token, for a public client and a confidential one. PKCE is
+carried onto the code, `oidc/token`'s `recorded` column is zero, and between it
+and `oidc/authorization` the browser flow holds no case waiting on an
+unimplemented endpoint.
+
+The measured contract turned out to be right and **incomplete**: the observed
+document's table said "Every rejection" over eight rows and there are twelve.
+See F77 for the one thing the flow still does not do.
+
+What the finding said, kept for the record:
+
 
 The code is minted, stored, and spent on the first attempt. Redeeming it is
 eight measured rejections and its own cut, and PKCE is carried nowhere yet:
@@ -2873,7 +2925,16 @@ attached to the code.
 
 Until it lands, a browser login produces a code nothing can exchange.
 
-## F77: SSO is not recognised
+## F77: SSO is not recognised (still open, and now measured)
+
+Deliberately scoped out of the code-grant cut, and **measured anyway so the next
+one does not repeat it**: five cookies, the *original* user session id carried
+into a fresh `AUTH_SESSION_ID`, the original `auth_time`, the first session
+still refreshable, and `prompt=none` clearing `KC_RESTART`.
+
+**F65 closes with it** - the logout confirmation page's branch is unreachable
+until a browser can be recognised as already signed in.
+
 
 Gloak sets `KEYCLOAK_IDENTITY` and never reads it, so a second `GET /auth` from
 a browser that has already logged in serves the form again rather than
@@ -2882,7 +2943,21 @@ redirecting straight through.
 That is also what makes F65's confirmation-page branch unreachable today, so
 the two close together or not at all.
 
-## F78: a protocol mapper id is not realm-unique in Gloak
+## F78: a protocol mapper id is not realm-unique in Gloak (still open, and this entry was wrong three ways)
+
+Corrected 2026-08-30 by the cut that went to close it, and handed back rather
+than closed: it needs a **server-wide** index, which is a second migration in a
+branch that had already spent its number.
+
+Three corrections. The id is unique across the **server**, not the realm - a
+client scope created in a *different* realm carrying a mapper id already in use
+in master is a 409. It is enforced on **five** routes, not three: `POST
+/clients`, `POST /client-scopes`, `PUT /clients/{uuid}`,
+`POST .../protocol-mappers/models` and `POST .../protocol-mappers/add-models`.
+And which of the two 409 messages you get is decided by **where** the colliding
+mapper is - same container or another - not by which route asked, which was an
+artefact of the probes.
+
 
 Keycloak's are. This bit the cut that found it: three fixtures shared an id and
 three client scopes were silently never created, which is the failure mode of a
@@ -2893,7 +2968,44 @@ constraint that exists upstream and not here.
 Measured, and Gloak stores what it is given. A create naming one of the two
 comes back from Keycloak with keys the request did not send.
 
-## F80: `internal/javamap` models the wrong constructor for a sized map
+## F80: `internal/javamap` models the wrong constructor for a sized map (closed, and this entry's model was wrong)
+
+**Closed 2026-08-30, and the model below was falsified on re-measurement.** It
+fits 13 of the 14 vectors, and the fourteenth says one table cannot be right:
+`{claim.name, jsonType.label, user.attribute}` comes back in **one** order from
+all six of its insertion orders, so something ahead of the final table already
+put those three in hash order - while `{zz, aa, mm}` comes back in whichever
+order it went in, also from all six, so that something does not separate
+*those*.
+
+The model that fits is **two** tables: one asked for `7n/4` buckets, then one
+asked for `n`, with collisions in the second chaining in insertion order. The
+`7n/4` was read off the server at **every entry count from 1 to 50** and is
+pinned by four boundaries where the answer flips - n=5/6, 9/10, 18/19, 37/38 -
+and no plain multiple of `n` fits all four.
+
+**Both shapes the follow-up offered were needed, not one.** `SizedKeyOrder`
+models the sized constructor and `KeyOrder` keeps the no-argument one, as two
+exported functions rather than one with a heuristic, because which constructor
+built a Java map is a fact about the Java and not something a Go function can
+read off the keys. `SizedKeyOrder` also takes the count the map was **built
+for**, because a create that mirrors a config key appends the mirror after the
+first table pass.
+
+14 of 14 pass, and so do 495 of 495 across every sweep taken. `KeyOrder` gets
+**seven** of the fourteen wrong, not six - this entry counted a vector set
+nobody had written down - and `TestKeyOrderIsWrongOnHalfTheMapperConfigs` pins
+that count.
+
+**The most useful thing this produced is about tests, not about Java.** The
+fourteen vectors do **not** pin the rounding rule: mutating `tableSizeFor`'s `<`
+to `<=` passes all fourteen and fails only the boundary probes. A cut that added
+the vectors and stopped would have shipped an unpinned rule that looked
+measured. The boundary probes exist because somebody asked what the vectors did
+*not* pin.
+
+What the finding said, kept for the record:
+
 
 A protocol mapper's `config` is a Java `HashMap` **sized to its entry count**,
 which is a different table size from the one `javamap` models. Fourteen vectors
@@ -2903,3 +3015,75 @@ Nothing is broken by this today: the conformance cases use config key sets
 measured to be order-stable, so their goldens assert real bytes with no
 `UnorderedKeys` mask. What is wrong is the package's own claim about what it
 reproduces. The vectors are in the P5 handover.
+
+## F84: `POST /users` ignores an inline `credentials` array
+
+Keycloak honours it: a user created with `{"username":"x","credentials":[{"type":"password","value":"..."}]}`
+can use the password grant immediately. Gloak accepts the body, answers 201, and
+stores no credential.
+
+**Found by accident**, which is the part worth keeping: a fixture written the
+short way recorded green against the reference container and then failed the
+verifier at the password grant. The create is not what caught it; the grant two
+steps later was. A defect in `POST /users` that no case for `POST /users` would
+have found.
+
+## F85: refresh loses `auth_time`
+
+`auth_time` is a property of the **user session**, survives a refresh, and is
+the login time rather than the issuance time - measured `iat - auth_time == 6`
+on a token minted six seconds after the login.
+
+Gloak cannot reproduce the refresh row without a column in `internal/store`,
+which the cut that measured it did not own.
+
+## F86: the access token's `jti` carries a grant prefix
+
+`onrtac:`, `onrtro:`, `onrtrt:`, `onltac:` - measured on all four grants, so
+this is pre-existing rather than something the code grant introduced. Gloak
+mints a bare UUID.
+
+## F87: a lightweight client's refresh token omits `sub` and `aud_x`
+
+Live on `admin-cli`, so it is reachable from the default bootstrap rather than
+from a client somebody has to configure.
+
+## F88: whether introspection carries `auth_time` is unmeasured
+
+It could not be measured from the outside: a client cannot introspect a token
+whose `aud` excludes it, which is the rule AGENTS.md already records as the
+reason introspecting your own access token is refused. Filed so the gap is on
+the record rather than looking like an answer nobody wrote down.
+
+## F89: `SizedKeyOrder`'s caller discards the count it needs
+
+`mapperConfig` in `internal/admin/protocolmappers.go` appends the mirrored
+config keys and, in doing so, loses the number of keys the request carried -
+which is `SizedKeyOrder`'s first argument. Nothing is wrong today because the
+conformance cases use order-stable key sets, but the function cannot be used
+correctly from there until the count survives.
+
+Reported rather than changed by the cut that found it: `internal/admin` was not
+its file.
+
+## F90: `internal/conformance`'s `attributes` retreat has never been re-examined
+
+`Case.UnorderedKeys` exists because a client's `attributes` is a Java map whose
+order the suite gave up on. That was before `javamap` modelled either
+constructor. Whether the retreat is still necessary is now an answerable
+question and nobody has asked it.
+
+Declined by the cut that raised it - it is a sweep of existing goldens rather
+than a fix to a measured divergence - and filed so the question is on the record.
+
+## F91: nothing explains `7n/4`
+
+`SizedKeyOrder`'s first table is asked for `7n/4` buckets. That number is read
+off the server at every entry count from 1 to 50 and pinned by four boundaries,
+and **no reading of Keycloak or of the JDK has been offered for why it is that
+number**.
+
+A measured constant with no mechanism behind it is a fact, not an understanding.
+It will hold until something upstream changes it, and nothing here will predict
+that. Filed so the next person knows the reason is missing rather than assuming
+it was obvious.
