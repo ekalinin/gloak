@@ -7308,6 +7308,30 @@ var adminCases = []Case{
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
+		// **The combined view is the direct list, not the composite one.** The
+		// same client whose `.../realm/composite` answers every realm role in
+		// the realm answers `{}` here, because it has mapped nothing.
+		//
+		// Composing this read out of hasScope is the tidy-up that would make
+		// the two agree, and it passes every other case in this cut: on every
+		// other container the two coincide.
+		ID: "admin/scope-mappings/full-scope-all",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: the combined view of a fullScopeAllowed client",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "scope-mappings-full-scope",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000026" +
+				"/scope-mappings",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
 		// **A client's own roles are in its own scope**, without ever being
 		// mapped. The fixture's client has `fullScopeAllowed` off and maps
 		// nothing of its own, and this read - its own roles against its own
