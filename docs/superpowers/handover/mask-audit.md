@@ -8,7 +8,8 @@ confirmed, one corrected.
 Every observable value below came from a live
 `quay.io/keycloak/keycloak:26.7.1 start-dev` on port 8113, started twice and
 removed by this branch alone. `kc-auth` and `kc-browser` were not touched. The
-goldens came from a whole `make record` after each change, three runs in all.
+goldens came from a whole `make record` before the first change and after each
+one, four runs in all.
 
 This branch does not touch `AGENTS.md`, `README.md`, the parity roadmap, the
 observed spec or the follow-ups list, so what is owed to them is written out
@@ -20,10 +21,10 @@ here.
 
 ### 1.1 The catalogue holds 409 masks, not 235
 
-The count in the brief is a stale snapshot. Measured by parsing the three
-catalogue files:
+The 235 in the brief is not stale. It is the number of *fields*, and 409 is the
+number of *paths*. Both counted off `main` at `0d6d993`:
 
-| mask | brief | measured before | after this branch |
+| mask | declarations (the brief's count) | paths | paths after this branch |
 |---|---|---|---|
 | `Volatile` | 132 | 295 | 219 |
 | `Unordered` | 76 | 84 | 44 |
@@ -33,12 +34,21 @@ catalogue files:
 | `VolatileTailHeaders` | 4 | 4 | 4 |
 | **total** | **235** | **409** | **293** |
 
-`UnorderedKeys` is 7 rather than the brief's 8 because F90 had already removed
-the eighth. The rest of the gap is growth: a `Volatile` declaration carries
-several paths, and counting declarations rather than paths gives 132 - which is
-almost certainly where 235 came from. **A mask is a path, not a field**, because
-a path is the unit that can be inert on its own, and half of this sweep's
-findings are one path inside a two-path declaration.
+**A mask is a path, not a field**, because a path is the unit that can be inert
+on its own. Half of this sweep's findings are one path inside a two-path
+declaration: `Volatile: []string{"*/id", "*/parentId"}` where only the second is
+still earning its place. Counting fields would have found 54 cases where there
+are 116 masks, and would have made every mixed declaration look like a decision
+somebody made once.
+
+`UnorderedKeys` is the one row where the field count is higher than the path
+count, and the reason is worth a sentence: one of the eight `UnorderedKeys:`
+lines on `main` is inside a comment - `admin/role-mapper/composite-realm-full`'s
+"No UnorderedKeys: the attributes map has one key here, so there is no key order
+to give up". That is exactly this sweep's finding, written by hand, in a
+comment, on one case; `admin/roles/list-realm-full` carries a second one. Two
+cases had the reasoning and 116 masks did not, which is the argument for
+mechanising it rather than repeating it.
 
 ### 1.2 116 of the 409 were doing less than they claimed
 
@@ -69,6 +79,7 @@ Three whole `make record` runs, each 433 goldens rewritten:
 | clean checkout of `main` | 433 | **0** |
 | after 50 inert masks removed | 433 | **0** |
 | after 66 over-wide masks narrowed | 433 | **54** |
+| the finished branch | 433 | **0** |
 
 The second row is the measurement, not a formality. `sortArray` re-emits the
 array it sorted, so "sorting is the identity" had to be true of the *bytes* and
@@ -164,7 +175,32 @@ That is one mutation of one field. The same shape covered eleven `containerId`s,
 every role-mapping listing, every group read and every scope-mapping listing, so
 the mutation that survived is a family rather than an instance.
 
-### 1.9 `admin/groups/count` is not masked any more, and two comments say it is
+### 1.9 Six `VolatileHeaders` name a header the case never asserts, and they are right to
+
+`diff` compares only the headers in `AssertHeaders`, so a `VolatileHeaders`
+entry on a header that is not asserted masks nothing *in the comparison*. Six do:
+
+`oidc/authorization/prompt-none-no-session`, `response-mode-form-post`, and the
+four `oidc/logout/*` cases, all on `Set-Cookie`.
+
+They are not inert, and the reason is a fact about the field rather than about
+those cases. **`VolatileHeaders` has two effects and only one of them needs the
+header to be asserted.** The other is on the recorder: `recordedHeaders` writes
+`{{volatile}}` into the golden, which is what stops a live per-request
+`AUTH_SESSION_ID` from being committed and churning on every `make record`. So
+the mask earns its place on the writing side while doing nothing on the reading
+side.
+
+This is worth writing down because the obvious guard here - "a mask on a header
+nobody asserts is inert" - would be **wrong on all six**, and it is the guard a
+reader of `diff` alone would write. It is also why `TestCatalogIsWellFormed`
+requires `VolatileTailHeaders` to be asserted and deliberately does not require
+it of `VolatileHeaders`; that asymmetry now has a reason on the record.
+
+All four `Location` masks (F39's) *are* asserted, so those four really do assert
+presence and non-emptiness and nothing else.
+
+### 1.10 `admin/groups/count` is not masked any more, and two comments say it is
 
 `Case.PristineRealm`'s doc comment and AGENTS.md's `make record` bullet both say
 "that case's number is masked to this day". F47 took the mask off; the golden
@@ -319,6 +355,37 @@ value**: a value whose recordings share a prefix is a mask that could be
 narrower. That is one more `make record` per audit, and it is a real design, not
 a shrug - it is left undone because it needs a second recording regime and this
 cut had three record runs in it already.
+
+**A guard's own assertion can be wrong in exactly the direction it was written
+for, and a green suite never says so.** `TestInertMaskGuardSeesEveryKind` ended
+with `if len(bodyMasks) != 4`, under a comment claiming it caught a fifth mask
+added to `Case` and not wired into the guard. It cannot: adding a field leaves
+the count at four and the test green. What it caught was somebody *deleting* an
+entry, which the four branches above it already catch, so the one assertion
+written for a specific failure was the one assertion blind to it. It is now
+`reflect` over `Case`'s `[]string` fields, with every field either watched or
+declared not to be a body mask, and both branches were shown failing. The
+lesson generalises past this file: an assertion whose comment names the failure
+it prevents should be mutated against *that* failure, not against a
+neighbouring one.
+
+**The capture guard reads Gloak, not Keycloak.** It asks whether a value was
+already `{{captured}}` when `Normalize` reached it, on the served body. That is
+the right oracle for a question about the harness's own `ReplaceCaptured` pass,
+and `TestConformance` has already pinned that the served body matches the
+reference. But a case Gloak serves wrongly in a way `TestConformance` tolerates
+- there is no such case today - would move the guard's answer. If one ever does,
+the failure is loud: the narrowed golden stops reproducing and `make record`
+starts churning.
+
+**`git checkout <file>` destroyed uncommitted work on this branch twice**, both
+times a fix written minutes earlier, both times while reverting a mutation with
+`git checkout HEAD -- <the file the mutation was in>` when the same file also
+held an unrelated uncommitted change. AGENTS.md's rule - commit before you
+mutate anything - is not folklore, and "the mutation is in a different file"
+is not an exemption, because a mutation-and-revert cycle is exactly when a file
+is most likely to hold two changes at once. The recovery was cheap both times
+because the change was small and recent; that is luck, not a mitigation.
 
 **Nothing checks that a mask is declared at the narrowest path that works.**
 `Volatile: ["a"]` and `Volatile: ["a/b"]` are both legal when only `a/b` varies,
