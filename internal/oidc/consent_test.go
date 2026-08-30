@@ -385,10 +385,30 @@ func TestTheConsentEndpointNeedsItsCookies(t *testing.T) {
 // page, with Cache-Control present - so it is this endpoint's own page family
 // rather than the restart branch, and the execution is checked before the
 // cookies.
+//
+// **It is driven on a browser that is mid-flow**, and that is the correction
+// mutation testing forced. The first version sent the request with no cookies
+// and asserted a 400; deleting the execution check entirely still answered a
+// 400, because a request with no authentication session lands on the identical
+// page by the other route. Only a browser that *would* have been served the
+// consent page can tell the two apart.
 func TestRequiredActionRefusesAnUnknownExecution(t *testing.T) {
 	b := newBrowser(t)
-	w := b.do(http.MethodGet,
-		"/realms/master/login-actions/required-action?execution=BOGUS&client_id=probe&tab_id=zz&client_data=e30", nil)
+	action, _, _ := deviceLogin(t, b)
+	// deviceLogin leaves the browser on the consent page, so the same query with
+	// the right execution is a 200. Take the tab id out of the form's action.
+	u, err := url.Parse(action)
+	if err != nil {
+		t.Fatalf("parse the consent action: %v", err)
+	}
+	q := u.Query()
+	base := "/realms/master/login-actions/required-action?client_id=" + q.Get("client_id") +
+		"&tab_id=" + q.Get("tab_id") + "&client_data=" + q.Get("client_data")
+
+	if w := b.do(http.MethodGet, base+"&execution=OAUTH_GRANT", nil); w.Code != http.StatusOK {
+		t.Fatalf("the control: OAUTH_GRANT should serve the consent page, got %d", w.Code)
+	}
+	w := b.do(http.MethodGet, base+"&execution=BOGUS", nil)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d", w.Code)
 	}

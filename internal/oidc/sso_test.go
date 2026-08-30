@@ -273,6 +273,15 @@ func TestMaxAgeOnASignedInBrowser(t *testing.T) {
 // is why it cannot be folded into either: it loses to an unknown client_id and
 // to a bearer-only client, and beats the redirect URI and everything after it.
 // Six pairs, each driving two faults at once.
+//
+// **Two of the six rows are not observable on Gloak and are asserted from the
+// Keycloak measurement alone**, which mutation testing is what found: moving
+// the check to sit *after* the redirect URI leaves this test green, because
+// Gloak answers both rejections with the same placeholder page. Keycloak tells
+// them apart in the page's prose - `Invalid Request` against `Invalid
+// parameter: redirect_uri` - and that prose is F67's work. The rows that do
+// bite are the ones where the other fault would have been a 302: a missing
+// response_type, a bad scope and prompt=none.
 func TestMaxAgeIsRefusedBeforeTheRedirectURI(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -399,6 +408,12 @@ func TestAPresentedRestartCookieIsClearedOnTheWayOut(t *testing.T) {
 		{"the login page does not", false, nil, []string{
 			"AUTH_SESSION_ID", "KC_AUTH_SESSION_HASH", "KC_RESTART"}},
 		{"max_age's page sets nothing", false, map[string]string{"max_age": "abc"}, nil},
+		// The row that pins the **conditionality**, and it was missing: without
+		// it, making the clear unconditional survives, because every other row
+		// presents the cookie. Found by mutation, not by reading.
+		{"nothing to clear when none was sent", true, nil, []string{
+			"AUTH_SESSION_ID", "KC_AUTH_SESSION_HASH", "KC_RESTART",
+			"KEYCLOAK_IDENTITY", "KEYCLOAK_SESSION"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := newBrowser(t)
@@ -406,8 +421,12 @@ func TestAPresentedRestartCookieIsClearedOnTheWayOut(t *testing.T) {
 				b = signIn(t)
 			}
 			// The cookie is put in by hand so that every row starts from the
-			// same request, whatever the jar happened to hold.
+			// same request, whatever the jar happened to hold - except the last
+			// row, which is the one about not sending one.
 			b.jar["KC_RESTART"] = "junk"
+			if tc.name == "nothing to clear when none was sent" {
+				delete(b.jar, "KC_RESTART")
+			}
 			b.raw = nil
 			b.do(http.MethodGet, "/realms/master/protocol/openid-connect/auth?"+
 				baseQuery(tc.overrides), nil)
