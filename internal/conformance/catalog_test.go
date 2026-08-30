@@ -124,6 +124,15 @@ func TestRecordedCaseRules(t *testing.T) {
 // pair rather than the bare value is what keeps "gloak-probe-group" from
 // matching the "gloak-probe-group-mapped" a sibling fixture creates, and what
 // keeps a name from matching inside a description.
+//
+// **The order is the precedence, not decoration.** A creation body names its
+// object once, and `name` is last because it is the fallback for the three
+// families that have no key of their own - roles, groups and client scopes.
+// A body carrying one of the first three carries `name` in some other sense:
+// `{"clientId":"gloak-probe-described","name":"A name",...}` creates a client
+// whose display name is "A name", and reading that as a role called "A name"
+// is a phantom object in a guard that exists to name real ones. See
+// createdObjects.
 var createdKeys = []string{"clientId", "username", "realm", "name"}
 
 // createdObject is one object the recording creates: the key its creation body
@@ -323,6 +332,116 @@ func TestPollutionGuardReadsTheCataloguesOwnCreates(t *testing.T) {
 		"createdObjects has stopped reading the catalogue and only fixtures are watched")
 }
 
+// probePrefix is what every object a fixture or a case creates is supposed to
+// be called, and what six goldens' windows rest on without anything having
+// checked it until now.
+const probePrefix = "gloak-probe-"
+
+// namedOutsideTheConvention is every created object that does not carry
+// probePrefix, keyed "<key> <name>", with the reason it does not.
+//
+// It is a ratchet and not an amnesty. Each entry was read off the fixture that
+// makes it, and two of the three groups are the kind of name F58 warns about -
+// `aa-gloak-srch-kid` sorts before every bootstrapped name in the realm - so
+// the list is also the answer to "which of these could take a golden's window",
+// which is a question a reviewer can now ask of seven lines rather than of
+// fixture.go.
+//
+// Nothing here was renamed. Every one of them is load-bearing where it stands,
+// and renaming an object a golden was recorded against means re-recording the
+// golden; the entries say which.
+var namedOutsideTheConvention = map[string]string{
+	// P1's confidential-client fixtures, which predate the convention. Safe
+	// where they are: no golden pages or filters a client listing, and
+	// admin/clients/list is PristineRealm, so it is recorded against a realm
+	// these never reach.
+	"clientId gloak-confidential":          "confidential-user-token, named before the convention existed",
+	"clientId gloak-confidential-expiring": "confidential-expired-token, named before the convention existed",
+	"clientId gloak-confidential-sa":       "confidential-service-account, named before the convention existed",
+
+	// The group-search fixture's three names *are* its measurement.
+	// admin/groups/search-pages-the-matches sends search=gloak-srch&max=1 and
+	// the answer turns on aa-gloak-srch-kid sorting first of the three; a
+	// shared gloak-probe- prefix would sort them together and change which
+	// group the page returns. They are groups, and no golden pages a group
+	// listing by first/max without a search, so they cannot reach the windows
+	// F58 is about - but aa- sorting before everything is exactly the shape
+	// that would, one resource family over.
+	"name aa-gloak-srch-kid": "admin-token-group-search: sorts first on purpose, which is what max=1 measures",
+	"name gloak-srch-one":    "admin-token-group-search: matched by search=gloak-srch, which a probe prefix would not be",
+	"name zz-gloak-srch":     "admin-token-group-search: sorts last on purpose, for the same measurement",
+
+	// The impostor's whole point is a role on a client of its own carrying a
+	// real admin role's name, so that the caller holding it is refused. Renaming
+	// it to gloak-probe-manage-realm builds a different fixture. See
+	// callerFixture: "the roles come from master-realm by container, not by
+	// name".
+	"name manage-realm": "narrow-caller-impostor: a client role deliberately named after an admin role",
+}
+
+// TestEveryCreatedObjectCarriesTheProbePrefix turns six written arguments into
+// one checked one. F58.
+//
+// admin/roles/list-realm-page-no-search sends first=1&max=2 with no search and
+// its golden holds create-realm and default-roles-master. The case's comment
+// argues, correctly, that every realm role a fixture creates is named
+// gloak-probe-..., sorts after default-roles-master and cannot enter the window.
+// Six user listings rest on the same kind of argument: ?username=admin is a
+// substring filter no gloak-probe-* username matches.
+//
+// Every one of those arguments is about names, and nothing enforced the
+// convention they rest on. A fixture creating a realm role called a-probe-role,
+// or a user called admin-probe, breaks several goldens at once - loudly, which
+// is the good case, but in cases whose comments then read as though they had
+// been checked.
+//
+// The exceptions are declared rather than tolerated, and a stale one fails:
+// an entry naming an object nothing creates any more is a reason nobody has
+// re-read, and the whole value of the list is that each line was checked once.
+func TestEveryCreatedObjectCarriesTheProbePrefix(t *testing.T) {
+	created := createdObjects()
+	// A convention asserted over an empty set asserts nothing, the way the
+	// pollution guard fails when a family stops being created at all.
+	byKey := map[string]int{}
+	for _, o := range created {
+		byKey[o.key]++
+	}
+	for _, key := range createdKeys {
+		if byKey[key] == 0 {
+			t.Fatalf("nothing in the recording creates an object named by %q; "+
+				"this test has stopped checking that family", key)
+		}
+	}
+
+	matched := map[string]bool{}
+	for _, o := range created {
+		entry := o.key + " " + o.name
+		if _, listed := namedOutsideTheConvention[entry]; listed {
+			matched[entry] = true
+			continue
+		}
+		if !strings.HasPrefix(o.name, probePrefix) {
+			t.Errorf("%q creates %s %q, which does not start with %q - "+
+				"six goldens hold a page or a filtered listing that only excludes "+
+				"what a fixture makes because of that prefix, so either rename it or "+
+				"add it to namedOutsideTheConvention with the reason",
+				o.creator, o.key, o.name, probePrefix)
+		}
+	}
+
+	stale := make([]string, 0, len(namedOutsideTheConvention))
+	for entry := range namedOutsideTheConvention {
+		if !matched[entry] {
+			stale = append(stale, entry)
+		}
+	}
+	sort.Strings(stale)
+	for _, entry := range stale {
+		t.Errorf("namedOutsideTheConvention excuses %q and nothing creates it any more; "+
+			"drop the entry rather than leaving a reason nobody has re-read", entry)
+	}
+}
+
 // createdObjects is every object a recording creates, read out of the creation
 // bodies themselves so that a new fixture is covered without anyone
 // remembering to list it here.
@@ -342,8 +461,18 @@ func TestPollutionGuardReadsTheCataloguesOwnCreates(t *testing.T) {
 // that already exist - `[{"id":"...","name":"manage-users"}]`. Reading those as
 // creations would put six bootstrapped admin role names into the set and make
 // this test fail on any golden that legitimately lists one.
+//
+// One body names one object, so only the **first** key in createdKeys that the
+// body carries is read. Taking all four invented an object: the client created
+// with `{"clientId":"gloak-probe-described","name":"A name",...}` was reported
+// as a role called "A name", which is `ClientRepresentation.name` - a display
+// name, not the key anything is addressed by. Found by F58's first run, before
+// the convention it checks was written.
 func createdObjects() []createdObject {
-	pattern := regexp.MustCompile(`"(` + strings.Join(createdKeys, "|") + `)":"([^"]+)"`)
+	patterns := make([]*regexp.Regexp, len(createdKeys))
+	for i, key := range createdKeys {
+		patterns[i] = regexp.MustCompile(`"` + key + `":"([^"]+)"`)
+	}
 	seen := map[createdObject]bool{}
 	var out []createdObject
 	collect := func(r Request, creator string) {
@@ -351,13 +480,20 @@ func createdObjects() []createdObject {
 		if r.Method != http.MethodPost || len(body) == 0 || body[0] != '{' {
 			return
 		}
-		for _, m := range pattern.FindAllSubmatch(body, -1) {
-			o := createdObject{key: string(m[1]), name: string(m[2]), creator: creator}
-			if strings.Contains(o.name, "{{") || seen[o] {
+		for i, pattern := range patterns {
+			ms := pattern.FindAllSubmatch(body, -1)
+			if len(ms) == 0 {
 				continue
 			}
-			seen[o] = true
-			out = append(out, o)
+			for _, m := range ms {
+				o := createdObject{key: createdKeys[i], name: string(m[1]), creator: creator}
+				if strings.Contains(o.name, "{{") || seen[o] {
+					continue
+				}
+				seen[o] = true
+				out = append(out, o)
+			}
+			return
 		}
 	}
 	for name, f := range Fixtures {

@@ -85,20 +85,11 @@ func ReplaceIssuer(raw []byte, base string) []byte {
 // pass-through: masking nothing while claiming to have checked is worse
 // than failing loud.
 func Normalize(raw []byte, paths []string) ([]byte, error) {
-	if len(paths) == 0 || len(bytes.TrimSpace(raw)) == 0 {
-		return raw, nil
-	}
-	patterns := compilePaths(paths)
-
-	e := &editor{dec: json.NewDecoder(bytes.NewReader(raw)), patterns: patterns}
-	e.onMatch = e.replace
-	if err := e.value(nil); err != nil {
-		if err == io.EOF {
-			return raw, nil
-		}
+	out, err := editPaths(raw, paths, (*editor).replace)
+	if err != nil {
 		return nil, fmt.Errorf("conformance: normalize: %w", err)
 	}
-	return applyEdits(raw, e.edits), nil
+	return out, nil
 }
 
 // SortUnordered reorders the elements of the JSON arrays at the given paths,
@@ -112,21 +103,17 @@ func Normalize(raw []byte, paths []string) ([]byte, error) {
 // error rather than a silent no-op: Unordered exists to keep asserting
 // membership while giving up order, and a scalar or object at that path
 // means the wrong path was named.
+//
+// A path inside another path is sorted too, innermost first, which is what
+// editPaths' depth passes are for. `{".", "*/protocolMappers"}` sorts every
+// scope's mappers and then sorts the scopes, and both orders are asserted.
+// It silently sorted only the root until 2026-08-30 - see F59 and editPaths.
 func SortUnordered(raw []byte, paths []string) ([]byte, error) {
-	if len(paths) == 0 || len(bytes.TrimSpace(raw)) == 0 {
-		return raw, nil
-	}
-	patterns := compilePaths(paths)
-
-	e := &editor{dec: json.NewDecoder(bytes.NewReader(raw)), patterns: patterns}
-	e.onMatch = e.sortArray
-	if err := e.value(nil); err != nil {
-		if err == io.EOF {
-			return raw, nil
-		}
+	out, err := editPaths(raw, paths, (*editor).sortArray)
+	if err != nil {
 		return nil, fmt.Errorf("conformance: sort unordered: %w", err)
 	}
-	return applyEdits(raw, e.edits), nil
+	return out, nil
 }
 
 // SortUnorderedKeys rewrites the objects at the given paths with their keys
@@ -136,20 +123,11 @@ func SortUnordered(raw []byte, paths []string) ([]byte, error) {
 // It is the deliberate exception to this suite's rule that key order is
 // contract. See editor.sortKeys for why.
 func SortUnorderedKeys(raw []byte, paths []string) ([]byte, error) {
-	if len(paths) == 0 || len(bytes.TrimSpace(raw)) == 0 {
-		return raw, nil
-	}
-	patterns := compilePaths(paths)
-
-	e := &editor{dec: json.NewDecoder(bytes.NewReader(raw)), patterns: patterns}
-	e.onMatch = e.sortKeys
-	if err := e.value(nil); err != nil {
-		if err == io.EOF {
-			return raw, nil
-		}
+	out, err := editPaths(raw, paths, (*editor).sortKeys)
+	if err != nil {
 		return nil, fmt.Errorf("conformance: sort unordered keys: %w", err)
 	}
-	return applyEdits(raw, e.edits), nil
+	return out, nil
 }
 
 // SortUnorderedWords sorts the space-separated words inside the string values
@@ -166,20 +144,76 @@ func SortUnorderedKeys(raw []byte, paths []string) ([]byte, error) {
 // wrong path was named, and a mask that masks nothing while claiming to have
 // checked is worse than a loud failure.
 func SortUnorderedWords(raw []byte, paths []string) ([]byte, error) {
+	out, err := editPaths(raw, paths, (*editor).sortWords)
+	if err != nil {
+		return nil, fmt.Errorf("conformance: sort unordered words: %w", err)
+	}
+	return out, nil
+}
+
+// editPaths walks raw once per distinct path depth, deepest first, splicing the
+// edits of each walk before the next one starts, and calls onMatch at every
+// value a path addresses.
+//
+// **The depth passes are the fix for F59, and one walk cannot do the job.**
+// editor.value asks "does a pattern match this path?" before "is this path
+// inside one?", and onMatch decodes the whole value it matched. So a pattern
+// matching an outer value consumed everything under it and the patterns
+// pointing inside were never visited: `Unordered: {".", "*/protocolMappers"}`
+// sorted the root and ignored the nested path **with no error at all**. The
+// case looked as though it asserted the nested set and did not, which is the
+// disease F39 was corrected for - masking nothing while appearing to have
+// checked - and admin/client-scopes/list gave up on thirty-five bootstrapped
+// protocol mappers because of it.
+//
+// Erroring on the combination was the other candidate and would have been
+// honest. Handling it is cheaper than it looks and asserts more: inside one
+// depth no path can be a prefix of another - being a prefix means being
+// shorter - so each walk is the old walk with the ambiguity arithmetically
+// impossible, and the only new machinery is the grouping and the splice
+// between passes. Sorting the inner arrays first also makes the outer sort
+// deterministic, since an element's bytes are settled before anything compares
+// them.
+//
+// A body with no paths declared, or one that is empty or whitespace, is
+// returned unchanged without being looked at. Everything else has to parse.
+func editPaths(raw []byte, paths []string, onMatch func(*editor) error) ([]byte, error) {
 	if len(paths) == 0 || len(bytes.TrimSpace(raw)) == 0 {
 		return raw, nil
 	}
-	patterns := compilePaths(paths)
-
-	e := &editor{dec: json.NewDecoder(bytes.NewReader(raw)), patterns: patterns}
-	e.onMatch = e.sortWords
-	if err := e.value(nil); err != nil {
-		if err == io.EOF {
-			return raw, nil
+	for _, group := range byDepth(compilePaths(paths)) {
+		e := &editor{dec: json.NewDecoder(bytes.NewReader(raw)), patterns: group}
+		e.onMatch = func() error { return onMatch(e) }
+		if err := e.value(nil); err != nil {
+			if err == io.EOF {
+				// Nothing was decoded, so nothing was edited either.
+				return raw, nil
+			}
+			return nil, err
 		}
-		return nil, fmt.Errorf("conformance: sort unordered words: %w", err)
+		raw = applyEdits(raw, e.edits)
 	}
-	return applyEdits(raw, e.edits), nil
+	return raw, nil
+}
+
+// byDepth groups patterns by how many segments they have, deepest group first.
+// The root pattern - compilePaths' empty slice - is depth zero and therefore
+// last, which is what lets it be sorted after everything nested inside it.
+func byDepth(patterns [][]string) [][][]string {
+	groups := map[int][][]string{}
+	depths := make([]int, 0, len(patterns))
+	for _, p := range patterns {
+		if _, seen := groups[len(p)]; !seen {
+			depths = append(depths, len(p))
+		}
+		groups[len(p)] = append(groups[len(p)], p)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(depths)))
+	out := make([][][]string, 0, len(depths))
+	for _, d := range depths {
+		out = append(out, groups[d])
+	}
+	return out
 }
 
 type edit struct {
