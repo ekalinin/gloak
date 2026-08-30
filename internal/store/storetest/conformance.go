@@ -1827,6 +1827,77 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 			t.Errorf("a scope's mapping outlived the role that carried it: %v", names(got))
 		}
 	})
+
+	// ProtocolMapperOwner takes no realm, and that absence is the measurement:
+	// a protocol mapper id is unique across the **server**, so a client scope
+	// created in one realm carrying an id already in use in another is a 409.
+	// A driver that added a realm filter would pass every other case in this
+	// suite and every conformance case that stays inside one realm.
+	t.Run("a protocol mapper id is found across realms and across containers", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		home := newRealm(t, s)
+		away := &model.Realm{ID: model.NewID(), Name: "away", Enabled: true}
+		if err := s.Realms().Create(ctx, away); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+
+		scopeMapperID, clientMapperID := model.NewID(), model.NewID()
+		scope := &model.ClientScope{
+			ID: model.NewID(), RealmID: away.ID, Name: "probe-scope", Protocol: "openid-connect",
+			ProtocolMappers: []model.ProtocolMapper{{
+				ID: scopeMapperID, Name: "probe-scope-mapper", Protocol: "openid-connect",
+				ProtocolMapper: "oidc-usermodel-attribute-mapper",
+			}},
+		}
+		if err := s.ClientScopes().Create(ctx, scope); err != nil {
+			t.Fatalf("ClientScopes().Create: %v", err)
+		}
+		client := &model.Client{
+			ID: model.NewID(), RealmID: away.ID, ClientID: "probe-client", Enabled: true,
+			ProtocolMappers: []model.ProtocolMapper{{
+				ID: clientMapperID, Name: "probe-client-mapper", Protocol: "openid-connect",
+				ProtocolMapper: "oidc-usermodel-attribute-mapper",
+			}},
+		}
+		if err := s.Clients().Create(ctx, client); err != nil {
+			t.Fatalf("Clients().Create: %v", err)
+		}
+
+		// Both lookups are made from a session that knows only about `home`,
+		// which is what a create in another realm would be doing.
+		_ = home
+		if got, err := s.ClientScopes().ProtocolMapperOwner(ctx, scopeMapperID); err != nil || got != scope.ID {
+			t.Errorf("ClientScopes().ProtocolMapperOwner = %q, %v; want %q", got, err, scope.ID)
+		}
+		if got, err := s.Clients().ProtocolMapperOwner(ctx, clientMapperID); err != nil || got != client.ID {
+			t.Errorf("Clients().ProtocolMapperOwner = %q, %v; want %q", got, err, client.ID)
+		}
+
+		// The two containers do not see each other's ids, which is why a caller
+		// asking whether an id is free has to ask both.
+		if _, err := s.Clients().ProtocolMapperOwner(ctx, scopeMapperID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("Clients() found a client scope's mapper: %v", err)
+		}
+		if _, err := s.ClientScopes().ProtocolMapperOwner(ctx, clientMapperID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("ClientScopes() found a client's mapper: %v", err)
+		}
+		if _, err := s.ClientScopes().ProtocolMapperOwner(ctx, model.NewID()); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("an id nothing holds: want ErrNotFound, got %v", err)
+		}
+
+		// A container with no mappers at all is an empty JSON array rather than
+		// a NULL, and the scan has to survive it.
+		bare := &model.ClientScope{
+			ID: model.NewID(), RealmID: home.ID, Name: "probe-bare", Protocol: "openid-connect",
+		}
+		if err := s.ClientScopes().Create(ctx, bare); err != nil {
+			t.Fatalf("ClientScopes().Create bare: %v", err)
+		}
+		if got, err := s.ClientScopes().ProtocolMapperOwner(ctx, scopeMapperID); err != nil || got != scope.ID {
+			t.Errorf("after a mapper-less scope: got %q, %v; want %q", got, err, scope.ID)
+		}
+	})
 }
 
 // newRealm creates one realm for a subtest that only needs somewhere to hang
