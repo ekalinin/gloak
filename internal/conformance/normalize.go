@@ -151,6 +151,34 @@ func SortUnorderedWords(raw []byte, paths []string) ([]byte, error) {
 	return out, nil
 }
 
+// MaskedValues returns the raw JSON of every value the given paths address, in
+// the order the walk meets them, without changing a byte.
+//
+// It exists so that a guard can ask what a mask actually covers. The obvious
+// way to write one is a second little path resolver in the test file, and that
+// is the way it must not be written: two resolvers drift, and the one that
+// drifts is the one nobody runs against a real golden. This is the same
+// editPaths walk with an onMatch that reads instead of splices, so a mask the
+// guard says covers nothing is a mask the masker also covers nothing with.
+//
+// An empty result is therefore a fact about the mask, not about this function:
+// the paths addressed no value in the body at all.
+func MaskedValues(raw []byte, paths []string) ([][]byte, error) {
+	var out [][]byte
+	_, err := editPaths(raw, paths, func(e *editor) error {
+		var v json.RawMessage
+		if err := e.dec.Decode(&v); err != nil {
+			return err
+		}
+		out = append(out, v)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("conformance: masked values: %w", err)
+	}
+	return out, nil
+}
+
 // editPaths walks raw once per distinct path depth, deepest first, splicing the
 // edits of each walk before the next one starts, and calls onMatch at every
 // value a path addresses.

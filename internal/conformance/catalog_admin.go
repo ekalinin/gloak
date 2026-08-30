@@ -1482,8 +1482,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
-		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
 		ID: "admin/roles/list-realm-page-past-end",
@@ -1501,8 +1499,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
-		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
 		// Recordable because Task 2 measured this exact page -
@@ -1518,6 +1514,12 @@ var adminCases = []Case{
 		// discriminating - only a page that is not symmetric about the middle
 		// would be. admin/roles/list-realm-page-no-search below is the case
 		// that actually pins the sort.
+		//
+		// **No Unordered**, and it carried one until the mask sweep. A window of
+		// one row has no order to give up, so the mask changed no byte while
+		// saying the paged path's order is unstable - which contradicts the case
+		// below, where it is measured sorted and asserted. Two of the three other
+		// paged cases said the same thing over an empty array.
 		ID: "admin/roles/list-realm-page-first",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -1533,7 +1535,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -1602,7 +1603,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -1621,7 +1621,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 		// **No UnorderedKeys.** It carried one until F90 measured what it was
 		// masking: the fixture gives this role a single attribute, and a
@@ -1647,7 +1646,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -2816,7 +2814,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id"},
 	},
 	{
@@ -2835,7 +2832,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id"},
 	},
 	{
@@ -2858,7 +2854,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id"},
 	},
 	{
@@ -2882,7 +2877,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id"},
 	},
 	{
@@ -3028,7 +3022,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id"},
 	},
 	{
@@ -3494,7 +3487,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -3513,7 +3505,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -3556,7 +3547,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -3575,7 +3565,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -3594,8 +3583,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
-		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
 		ID: "admin/role-mapper/group-realm-assign",
@@ -3709,7 +3696,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/defaultRole/id", "*/defaultRole/containerId"},
 		// The realm's attributes are a Java map in hash order and javamap
 		// cannot place them, which is a different reason from the one a
@@ -5250,7 +5236,6 @@ var adminCases = []Case{
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 		Volatile:      []string{"*/id"},
-		Unordered:     []string{"."},
 	},
 	{
 		// **The PUT merged.** The fixture created this scope with a description
@@ -5425,7 +5410,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 	},
 	{
 		ID: "admin/protocol-mappers/by-protocol-template",
@@ -5444,7 +5428,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 	},
 	{
 		ID: "admin/protocol-mappers/by-protocol-client",
@@ -5463,7 +5446,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 	},
 	{
 		// **An unknown protocol is 200 and `[]`, not a 400.** The segment is
@@ -6099,7 +6081,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 	},
 	{
 		// **`query-clients` is refused here and served one level up.** On
@@ -6216,7 +6197,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -6255,7 +6235,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -6324,7 +6303,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -6343,7 +6321,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -6362,7 +6339,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -6456,7 +6432,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -6495,7 +6470,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -6564,7 +6538,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -6583,7 +6556,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -6602,7 +6574,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -6696,7 +6667,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -6735,7 +6705,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -6804,7 +6773,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -6823,7 +6791,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -6842,7 +6809,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -6974,7 +6940,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
@@ -7212,8 +7177,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{caller_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
-		Volatile:      []string{"*/id", "*/containerId"},
 	},
 	{
 		// **What the 403 cannot show.** The fixture's batch named a client role
@@ -7403,8 +7366,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
-		Volatile:      []string{"*/id", "*/containerId"},
 	},
 
 	// --- F84: the credentials array POST /users and PUT /users/{id} carry ---
