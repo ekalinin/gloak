@@ -551,6 +551,25 @@ var grownVectors = []vector{
 		in:       "claim.name user.attribute",
 		want:     "claim.name user.attribute",
 	},
+	// This one is here because the twelve above cannot tell whether the
+	// appended key goes through the first table with the rest or arrives after
+	// it, and every realistic config is too small to say: the two spellings
+	// differ only when introspection.token.claim shares the final table's
+	// bucket with a key that outranks it in the intermediate one, which needs
+	// a request of 19 to 23 keys or of 38 to 47. Measured at 19: the appended
+	// key stays behind z00014, so it arrives after the first table.
+	{
+		name:     "request of nineteen grown to twenty",
+		builtFor: 19,
+		in: "z00014 z00000 z00001 z00002 z00003 z00004 z00005 z00006 " +
+			"z00007 z00008 z00009 z00010 z00011 z00012 z00013 z00015 " +
+			"z00016 z00017 access.token.claim " +
+			"introspection.token.claim",
+		want: "access.token.claim z00004 z00015 z00005 z00016 z00002 " +
+			"z00013 z00003 z00014 introspection.token.claim z00008 " +
+			"z00009 z00006 z00017 z00007 z00000 z00011 z00001 z00012 " +
+			"z00010",
+	},
 }
 
 func TestSizedKeyOrderModelsAMapThatGrewAfterItWasBuilt(t *testing.T) {
