@@ -459,9 +459,9 @@ have been red. Nothing else in that file is touched.
 
 ## 6. Mutation testing
 
-Fifteen mutations, one per claim, each run against the single named test and
-reverted from a copy rather than with `git checkout`. Fourteen were killed on
-the first run.
+Twenty mutations, one per claim, each run against the single named test and
+reverted from a copy rather than with `git checkout` - the whole set re-run
+after merging `main`. Nineteen were killed on the first run.
 
 **One survived, and it is a finding about the test.**
 `TestAnExpiredCodeStopsBeingFound` passed with `deviceCodeGrace` removed
