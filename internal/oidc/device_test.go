@@ -533,26 +533,48 @@ func TestExpiryBeatsTheInterval(t *testing.T) {
 // inside all three brackets. The two obvious implementations get one end each:
 // sweeping at expiry loses the expired_token answer the catalogue records, and
 // never sweeping answers expired_token for ever.
+//
+// **The first version of this test survived the mutation it existed to catch.**
+// It expired a code, asserted expired_token, then pushed the expiry past the
+// grace window, swept and asserted "not valid" - and it passed with
+// deviceCodeGrace removed entirely, because a poll is a read and reads never
+// sweep. Both halves held for a reason that had nothing to do with the window.
+// Pinning it needs a sweep run **inside** the window, which is what the middle
+// section below is, and that is why the sweep is driven three times rather than
+// once. The green suite never asked the question; the mutation did.
 func TestAnExpiredCodeStopsBeingFound(t *testing.T) {
 	router, h, _, _ := deviceServer(t)
 	dc := mintDeviceCode(t, router, "dev-on")
 	stored, _ := h.device.deviceCodeByCode("master", dc.DeviceCode)
+
+	sweep := func() {
+		h.device.mu.Lock()
+		defer h.device.mu.Unlock()
+		h.device.sweepLocked()
+	}
+	poll := func() *httptest.ResponseRecorder {
+		return postForm(t, router, "/realms/master/protocol/openid-connect/token",
+			pollForm("dev-on", dc.DeviceCode))
+	}
+
+	// Just expired, and a sweep has run. The code has to still be there.
 	stored.ExpiresAt = time.Now().Add(-time.Second)
+	sweep()
+	wantOAuthError(t, poll(), http.StatusBadRequest, deviceErrExpiredToken, descDeviceCodeExpired)
 
-	wantOAuthError(t, postForm(t, router, "/realms/master/protocol/openid-connect/token",
-		pollForm("dev-on", dc.DeviceCode)),
-		http.StatusBadRequest, deviceErrExpiredToken, descDeviceCodeExpired)
+	// Still inside the window, one second short of its far edge, and a sweep
+	// has run again. This is the assertion the grace window is: with it
+	// removed, the code is gone here and the answer is "not valid".
+	stored.ExpiresAt = time.Now().Add(-deviceCodeGrace + time.Second)
+	sweep()
+	wantOAuthError(t, poll(), http.StatusBadRequest, deviceErrExpiredToken, descDeviceCodeExpired)
 
-	// Past the grace window the entry is gone, and the answer collapses onto
-	// the one a code that never existed gets.
+	// Past it, and the answer collapses onto the one a code that never existed
+	// gets - which is what makes a long-dead code indistinguishable from a
+	// forgery, and is measured.
 	stored.ExpiresAt = time.Now().Add(-deviceCodeGrace - time.Second)
-	h.device.mu.Lock()
-	h.device.sweepLocked()
-	h.device.mu.Unlock()
-
-	wantOAuthError(t, postForm(t, router, "/realms/master/protocol/openid-connect/token",
-		pollForm("dev-on", dc.DeviceCode)),
-		http.StatusBadRequest, "invalid_grant", descDeviceCodeNotValid)
+	sweep()
+	wantOAuthError(t, poll(), http.StatusBadRequest, "invalid_grant", descDeviceCodeNotValid)
 }
 
 // TestADeniedCodeIsNotConsumed is the state a denial leaves behind: measured,
@@ -625,6 +647,26 @@ func TestAnApprovedCodeIssuesTokensAndIsSpent(t *testing.T) {
 		http.StatusBadRequest, "invalid_grant", descDeviceCodeNotValid)
 }
 
+// TestADeviceCodeIsScopedToItsRealm is a security property nothing else
+// reaches: a device code is looked up by a realm-qualified key, so a code
+// minted in one realm cannot be redeemed in another even by the client that
+// minted it.
+//
+// The catalogue cannot pin it - every case in it runs against master, and an
+// unknown realm answers "Realm does not exist" before the grant is reached, so
+// no request over HTTP distinguishes a realm-scoped store from an unscoped one.
+func TestADeviceCodeIsScopedToItsRealm(t *testing.T) {
+	router, h, _, _ := deviceServer(t)
+	dc := mintDeviceCode(t, router, "dev-on")
+
+	if _, ok := h.device.deviceCodeByCode("master", dc.DeviceCode); !ok {
+		t.Fatal("the code is not findable in the realm that minted it")
+	}
+	if _, ok := h.device.deviceCodeByCode("another-realm", dc.DeviceCode); ok {
+		t.Fatal("a device code minted in master was found under another realm's name")
+	}
+}
+
 // TestCIBAsTwoEndpointsShareOneStringAndNotOneStatus is CIBA's mirror-image
 // finding: where the device grant's two endpoints agree on nothing, CIBA's
 // agree on the sentence and the code and differ on the status.
@@ -661,24 +703,111 @@ func TestCIBAsAuthenticationChannelIsUnconfigured(t *testing.T) {
 	wantOAuthError(t, postForm(t, router, cibaPath, valid),
 		http.StatusServiceUnavailable, cibaErrServerError, descCIBAChannelFailed)
 
-	// The two parameter checks in front of it, whose descriptions carry a space
-	// on both sides of the colon and are lower case - unlike every other
-	// missing-parameter description on the protocol side, including the one the
-	// CIBA grant itself uses one endpoint away.
-	noScope := url.Values{"client_id": {"ciba-on"}, "client_secret": {"s3cret"}, "login_hint": {"admin"}}
-	wantOAuthError(t, postForm(t, router, cibaPath, noScope),
-		http.StatusBadRequest, authErrInvalidRequest, descCIBAMissingScope)
-
-	noHint := url.Values{"client_id": {"ciba-on"}, "client_secret": {"s3cret"}, "scope": {"openid"}}
-	wantOAuthError(t, postForm(t, router, cibaPath, noHint),
-		http.StatusBadRequest, authErrInvalidRequest, descCIBAMissingHint)
-
 	wantOAuthError(t, postForm(t, router, "/realms/master/protocol/openid-connect/token",
 		url.Values{"grant_type": {grantCIBA}, "client_id": {"ciba-on"}, "client_secret": {"s3cret"}}),
 		http.StatusBadRequest, authErrInvalidRequest, descMissingAuthReqID)
+
+	// Presence, not value: an empty auth_req_id= reaches the lookup, which is
+	// the same split the device grant's device_code makes.
+	wantOAuthError(t, postForm(t, router, "/realms/master/protocol/openid-connect/token",
+		url.Values{"grant_type": {grantCIBA}, "client_id": {"ciba-on"},
+			"client_secret": {"s3cret"}, "auth_req_id": {""}}),
+		http.StatusBadRequest, "invalid_grant", descInvalidAuthReqID)
 
 	wantOAuthError(t, postForm(t, router, "/realms/master/protocol/openid-connect/token",
 		url.Values{"grant_type": {grantCIBA}, "client_id": {"ciba-on"},
 			"client_secret": {"s3cret"}, "auth_req_id": {"nope"}}),
 		http.StatusBadRequest, "invalid_grant", descInvalidAuthReqID)
+}
+
+// TestCIBAChecksLoginHintBeforeScope is the adjacency, and it is the one this
+// file got wrong on the first attempt.
+//
+// The implementation was written checking scope first, because that is the
+// order the parameters are listed in, and it passed every case in the catalogue
+// - each of which breaks one parameter. Only a request missing **both** says
+// which wins, and it says login_hint.
+func TestCIBAChecksLoginHintBeforeScope(t *testing.T) {
+	router, _, _, _ := deviceServer(t)
+	cibaPath := "/realms/master/protocol/openid-connect/ext/ciba/auth"
+	base := func() url.Values {
+		return url.Values{"client_id": {"ciba-on"}, "client_secret": {"s3cret"}}
+	}
+
+	both := base()
+	wantOAuthError(t, postForm(t, router, cibaPath, both),
+		http.StatusBadRequest, authErrInvalidRequest, descCIBAMissingHint)
+
+	noScope := base()
+	noScope.Set("login_hint", "admin")
+	wantOAuthError(t, postForm(t, router, cibaPath, noScope),
+		http.StatusBadRequest, authErrInvalidRequest, descCIBAMissingScope)
+
+	noHint := base()
+	noHint.Set("scope", "openid")
+	wantOAuthError(t, postForm(t, router, cibaPath, noHint),
+		http.StatusBadRequest, authErrInvalidRequest, descCIBAMissingHint)
+}
+
+// TestCIBAPresenceAndValueAreFourAnswersNotTwo is the other thing the first
+// implementation collapsed.
+//
+// An empty parameter is not a missing one on this endpoint, and the two
+// value checks are not adjacent to their own presence checks: the login_hint's
+// lookup runs **between** the scope's presence check and the scope's validity
+// check, so an empty scope with an unresolvable hint answers about the hint.
+func TestCIBAPresenceAndValueAreFourAnswersNotTwo(t *testing.T) {
+	router, _, _, _ := deviceServer(t)
+	cibaPath := "/realms/master/protocol/openid-connect/ext/ciba/auth"
+	post := func(scope, hint string) *httptest.ResponseRecorder {
+		return postForm(t, router, cibaPath, url.Values{
+			"client_id": {"ciba-on"}, "client_secret": {"s3cret"},
+			"scope": {scope}, "login_hint": {hint},
+		})
+	}
+
+	// An empty scope= is present and invalid, and the description echoes the
+	// raw parameter - so it ends in a space.
+	wantOAuthError(t, post("", "admin"), http.StatusBadRequest,
+		authErrInvalidScope, "Invalid scopes: ")
+	wantOAuthError(t, post("gloak-probe-bogus", "admin"), http.StatusBadRequest,
+		authErrInvalidScope, "Invalid scopes: gloak-probe-bogus")
+
+	// An empty login_hint= and one naming nobody are one answer, which is what
+	// says the check is the lookup rather than the value.
+	wantOAuthError(t, post("openid", ""), http.StatusBadRequest,
+		authErrInvalidRequest, descCIBAInvalidUser)
+	wantOAuthError(t, post("openid", "gloak-probe-no-such-user"), http.StatusBadRequest,
+		authErrInvalidRequest, descCIBAInvalidUser)
+
+	// Both wrong: the hint wins, so the lookup is in front of the scope's
+	// validity check even though the scope's *presence* check is in front of
+	// the lookup.
+	wantOAuthError(t, post("", ""), http.StatusBadRequest,
+		authErrInvalidRequest, descCIBAInvalidUser)
+	wantOAuthError(t, post("gloak-probe-bogus", "gloak-probe-no-such-user"),
+		http.StatusBadRequest, authErrInvalidRequest, descCIBAInvalidUser)
+}
+
+// TestCIBAHasNoDuplicatedParameterCheck is a negative, and it is the reason
+// hasDuplicate is not called in backchannelAuthentication.
+//
+// Measured: zz twice and login_hint twice both reach the 503 on a request that
+// is otherwise valid, where /auth/device answers invalid_grant and the token
+// endpoint answers invalid_request for the same shape. Three endpoints in one
+// protocol, two checking and one not, and "add it here for consistency" is the
+// tidy-up this refuses.
+func TestCIBAHasNoDuplicatedParameterCheck(t *testing.T) {
+	router, _, _, _ := deviceServer(t)
+	cibaPath := "/realms/master/protocol/openid-connect/ext/ciba/auth"
+
+	wantOAuthError(t, postForm(t, router, cibaPath, url.Values{
+		"client_id": {"ciba-on"}, "client_secret": {"s3cret"},
+		"scope": {"openid"}, "login_hint": {"admin"}, "zz": {"1", "2"},
+	}), http.StatusServiceUnavailable, cibaErrServerError, descCIBAChannelFailed)
+
+	wantOAuthError(t, postForm(t, router, cibaPath, url.Values{
+		"client_id": {"ciba-on"}, "client_secret": {"s3cret"},
+		"scope": {"openid"}, "login_hint": {"admin", "admin"},
+	}), http.StatusServiceUnavailable, cibaErrServerError, descCIBAChannelFailed)
 }

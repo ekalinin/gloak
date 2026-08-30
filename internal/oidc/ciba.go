@@ -59,6 +59,7 @@ const (
 	descCIBAGrantOff       = "Client not allowed OIDC CIBA Grant"
 	descCIBAMissingScope   = "missing parameter : scope"
 	descCIBAMissingHint    = "missing parameter : login_hint"
+	descCIBAInvalidUser    = "invalid_user"
 	descCIBAChannelFailed  = "Failed to send authentication request"
 	descMissingAuthReqID   = "Missing parameter: auth_req_id"
 	descInvalidAuthReqID   = "Invalid Auth Req ID"
@@ -69,9 +70,36 @@ const (
 // backchannelAuthentication serves
 // POST /realms/{realm}/protocol/openid-connect/ext/ciba/auth.
 //
-// The order is measured: the realm, then client authentication, then the grant
-// flag, then scope, then login_hint, then the channel. Like the device
-// endpoint, no response here carries Cache-Control or Pragma at all.
+// The order is measured, one pair of faults per adjacency, and **three of the
+// six steps are not where a reader would put them**:
+//
+//	1. the realm                  404 Realm does not exist
+//	2. client authentication      401
+//	3. the CIBA grant flag        401 invalid_grant  Client not allowed OIDC CIBA Grant
+//	4. login_hint **present**     400 invalid_request  missing parameter : login_hint
+//	5. scope **present**          400 invalid_request  missing parameter : scope
+//	6. login_hint **resolves**    400 invalid_request  invalid_user
+//	7. scope **valid**            400 invalid_scope    Invalid scopes: <raw>
+//	8. the authentication channel 503 server_error     Failed to send authentication request
+//
+//   - **login_hint is checked before scope**, so a request missing both is told
+//     about the hint. The obvious order is the one the parameters are listed in
+//     and it is the wrong one.
+//   - **Presence and value are two different steps with two different answers,
+//     and they interleave.** An empty `scope=` is not "missing parameter" - it
+//     passes step 5 and fails step 7 with `Invalid scopes: ` and its trailing
+//     space. An empty `login_hint=` passes step 4 and fails step 6. So a single
+//     `Get(...) == ""` check per parameter, which is what this function did when
+//     it was first written, gets both of them wrong.
+//   - **Step 6 is between them**, so an empty scope with an unresolvable hint
+//     answers about the hint. Measured on both halves of that pair.
+//
+// **There is no duplicated-parameter check on this endpoint at all**: `zz`
+// twice and `login_hint` twice both reach the 503, where `/auth/device` and the
+// token endpoint each answer `duplicated parameter`. Three endpoints in one
+// protocol, two of them checking and one not.
+//
+// Like the device endpoint, no response here carries Cache-Control or Pragma.
 func (h *handler) backchannelAuthentication(w http.ResponseWriter, r *http.Request) {
 	realm := h.resolveRealm(w, r)
 	if realm == nil {
@@ -92,12 +120,31 @@ func (h *handler) backchannelAuthentication(w http.ResponseWriter, r *http.Reque
 		httpx.WriteOAuthError(w, http.StatusUnauthorized, cibaErrInvalidGrantStr, descCIBAGrantOff)
 		return
 	}
-	if r.PostForm.Get("scope") == "" {
+	hint, hintPresent := r.PostForm["login_hint"]
+	if !hintPresent {
+		httpx.WriteOAuthError(w, http.StatusBadRequest, authErrInvalidRequest, descCIBAMissingHint)
+		return
+	}
+	scope, scopePresent := r.PostForm["scope"]
+	if !scopePresent {
 		httpx.WriteOAuthError(w, http.StatusBadRequest, authErrInvalidRequest, descCIBAMissingScope)
 		return
 	}
-	if r.PostForm.Get("login_hint") == "" {
-		httpx.WriteOAuthError(w, http.StatusBadRequest, authErrInvalidRequest, descCIBAMissingHint)
+	// invalid_user covers both an empty hint and one naming nobody - measured
+	// on both, which is what says the check is the lookup rather than the
+	// value. It is invalid_request rather than invalid_grant, and the
+	// description is lower case with an underscore, like /auth's
+	// authentication_expired and unlike everything else on this endpoint.
+	if _, err := h.store.Users().ByUsername(r.Context(), realm.ID, hint[0]); err != nil {
+		httpx.WriteOAuthError(w, http.StatusBadRequest, authErrInvalidRequest, descCIBAInvalidUser)
+		return
+	}
+	// The raw parameter is echoed, doubled spaces and all, which is why
+	// scopesAllowed takes the string rather than the parsed words. It is the
+	// authorization endpoint's own predicate: an empty scope= is refused, and
+	// openid is allowed on top of the client's two lists.
+	if !scopesAllowed(client, scope[0]) {
+		httpx.WriteOAuthError(w, http.StatusBadRequest, authErrInvalidScope, "Invalid scopes: "+scope[0])
 		return
 	}
 	// Everything a default deployment can answer has now been answered. The

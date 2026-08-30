@@ -2081,6 +2081,10 @@ var oidcPending = []Case{
 		AssertHeaders: []string{"Content-Type"},
 	},
 	{
+		// **login_hint is checked before scope**, which a request missing one
+		// of them cannot say. This case and missing-scope above send the other
+		// parameter; oidc/ciba/missing-both sends neither and is what decides
+		// the adjacency.
 		ID: "oidc/ciba/missing-login-hint",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
@@ -2095,6 +2099,70 @@ var oidcPending = []Case{
 			Form: map[string]string{
 				"client_id": "gloak-probe-ciba",
 				"scope":     "openid",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "oidc/ciba/missing-both-parameters",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Backchannel authentication endpoint",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "ciba-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/ext/ciba/auth",
+			Form:   map[string]string{"client_id": "gloak-probe-ciba"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// A present-but-empty login_hint and one naming nobody are one answer,
+		// so this is the value check rather than the presence check above it.
+		// invalid_request with a lower-case underscored description, unlike
+		// everything else on this endpoint.
+		ID: "oidc/ciba/invalid-user",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Backchannel authentication endpoint",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "ciba-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/ext/ciba/auth",
+			Form: map[string]string{
+				"client_id":  "gloak-probe-ciba",
+				"scope":      "openid",
+				"login_hint": "gloak-probe-no-such-user",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The description echoes the raw scope parameter, the way /auth's does.
+		// It is the last check before the channel, and it runs **after** the
+		// login_hint's lookup, which is what oidc/ciba/invalid-user's sibling
+		// probe in internal/oidc's own tests pins.
+		ID: "oidc/ciba/invalid-scope",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Backchannel authentication endpoint",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "ciba-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/ext/ciba/auth",
+			Form: map[string]string{
+				"client_id":  "gloak-probe-ciba",
+				"scope":      "gloak-probe-bogus-scope",
+				"login_hint": "admin",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
