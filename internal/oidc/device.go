@@ -117,10 +117,10 @@ type deviceAuthorizationResponse struct {
 //
 // The order is measured, one pair of faults per adjacency:
 //
-//	1. the realm             404 Realm does not exist   - beats an unknown client
-//	2. client authentication 401                        - beats the duplicate check
-//	3. a duplicated form key 400 invalid_grant          - beats the grant flag
-//	4. the grant flag        400 unauthorized_client
+//  1. the realm             404 Realm does not exist   - beats an unknown client
+//  2. client authentication 401                        - beats the duplicate check
+//  3. a duplicated form key 400 invalid_grant          - beats the grant flag
+//  4. the grant flag        400 unauthorized_client
 //
 // **The scope is not checked at all.** scope=bogus-scope and an empty scope=
 // both answer 200 here, where GET /auth refuses both. And the duplicate check

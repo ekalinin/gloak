@@ -73,25 +73,32 @@ const (
 // The order is measured, one pair of faults per adjacency, and **three of the
 // six steps are not where a reader would put them**:
 //
-//	1. the realm                  404 Realm does not exist
-//	2. client authentication      401
-//	3. the CIBA grant flag        401 invalid_grant  Client not allowed OIDC CIBA Grant
-//	4. login_hint **present**     400 invalid_request  missing parameter : login_hint
-//	5. scope **present**          400 invalid_request  missing parameter : scope
-//	6. login_hint **resolves**    400 invalid_request  invalid_user
-//	7. scope **valid**            400 invalid_scope    Invalid scopes: <raw>
-//	8. the authentication channel 503 server_error     Failed to send authentication request
+//  1. the realm                  404 Realm does not exist
 //
-//   - **login_hint is checked before scope**, so a request missing both is told
+//  2. client authentication      401
+//
+//  3. the CIBA grant flag        401 invalid_grant  Client not allowed OIDC CIBA Grant
+//
+//  4. login_hint **present**     400 invalid_request  missing parameter : login_hint
+//
+//  5. scope **present**          400 invalid_request  missing parameter : scope
+//
+//  6. login_hint **resolves**    400 invalid_request  invalid_user
+//
+//  7. scope **valid**            400 invalid_scope    Invalid scopes: <raw>
+//
+//  8. the authentication channel 503 server_error     Failed to send authentication request
+//
+//     - **login_hint is checked before scope**, so a request missing both is told
 //     about the hint. The obvious order is the one the parameters are listed in
 //     and it is the wrong one.
-//   - **Presence and value are two different steps with two different answers,
+//     - **Presence and value are two different steps with two different answers,
 //     and they interleave.** An empty `scope=` is not "missing parameter" - it
 //     passes step 5 and fails step 7 with `Invalid scopes: ` and its trailing
 //     space. An empty `login_hint=` passes step 4 and fails step 6. So a single
 //     `Get(...) == ""` check per parameter, which is what this function did when
 //     it was first written, gets both of them wrong.
-//   - **Step 6 is between them**, so an empty scope with an unresolvable hint
+//     - **Step 6 is between them**, so an empty scope with an unresolvable hint
 //     answers about the hint. Measured on both halves of that pair.
 //
 // **There is no duplicated-parameter check on this endpoint at all**: `zz`

@@ -6,12 +6,23 @@ test:
 build:
 	CGO_ENABLED=0 go build -o gloak ./cmd/gloak
 
-# Both invocations, because CI runs both and a target weaker than the gate is
+# Both vet invocations, because CI runs both and a target weaker than the gate is
 # worse than no target: a contributor runs it, gets silence, and is broken by
 # CI anyway. Without a tag the docker-tagged files are not compiled at all, so
 # make record, make oracle and the Postgres driver suite can stop building
 # while this stays quiet. Neither invocation covers the other.
+#
+# gofmt is checked because nothing else here checks it. vet is a correctness
+# tool and says nothing about layout, so three files reached main unformatted
+# on 2026-08-30 and were found by an agent reading a diff rather than by the
+# gate. -l prints what differs and exits 0 either way, so the file list is
+# turned into a failure explicitly.
 lint:
+	@out="$$(gofmt -l ./cmd ./internal)"; \
+	if [ -n "$$out" ]; then \
+		echo "gofmt: these files are not formatted:"; echo "$$out"; \
+		echo "run: gofmt -w ./cmd ./internal"; exit 1; \
+	fi
 	go vet ./...
 	go vet -tags docker ./...
 
