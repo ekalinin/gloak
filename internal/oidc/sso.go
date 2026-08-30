@@ -205,9 +205,11 @@ func (h *handler) resolveSSO(w http.ResponseWriter, r *http.Request, realm *mode
 		switch {
 		case !fresh || prompt[promptLogin]:
 			h.openSilentSession(w, r, realm, client, k, req)
+			h.clearPresentedRestart(w, r, realm)
 			reject(authErrLoginRequired, "")
 		case h.consentNeeded(realm, client, sess.User, prompt):
 			h.openSilentSession(w, r, realm, client, k, req)
+			h.clearPresentedRestart(w, r, realm)
 			reject(authErrInteractionRequired, "")
 		default:
 			h.completeSSO(w, r, realm, client, k, sess, req)
@@ -273,6 +275,38 @@ func (h *handler) beginConsentFromSSO(w http.ResponseWriter, r *http.Request, re
 func (h *handler) openSilentSession(w http.ResponseWriter, r *http.Request, realm *model.Realm,
 	client *model.Client, k *keys.RealmKeys, req *authRequest) {
 	_, _ = h.beginAuthSession(w, r, realm, k, req.tab(client), nil)
+}
+
+// clearPresentedRestart adds a Max-Age=0 KC_RESTART when the request carried
+// one, and this is the strangest measured thing in the cut.
+//
+// **A response can set KC_RESTART twice, in opposite directions.** The SSO
+// success sets a fresh one and then clears it, six Set-Cookie headers with one
+// name twice - so a browser that arrived holding a KC_RESTART leaves without
+// one, because the clear is last and the last wins, while a browser that
+// arrived without one leaves holding a fresh one. Measured across a jar sending
+// an empty KC_RESTART, a live one and the literal `junk`; all three produce it,
+// and a jar sending none produces five cookies rather than six.
+//
+// It is not a property of the endpoint. Measured on six branches with the same
+// junk cookie present:
+//
+//	SSO code                   sets one and clears it
+//	SSO code under prompt=none clears it, and sets none
+//	login_required             clears it, and sets none
+//	prompt=create's 400 page   **does not clear it**
+//	the login page             sets a fresh one and does not clear it
+//	max_age's 400 page         no cookies at all
+//
+// So the clear happens exactly when the authorization request is **finished** -
+// with a code or with login_required - and not when it is refused or continued.
+// Writing it in the cookie writer, or making it unconditional, gets three of
+// those six rows wrong.
+func (h *handler) clearPresentedRestart(w http.ResponseWriter, r *http.Request, realm *model.Realm) {
+	if _, err := r.Cookie(restartCookie); err != nil {
+		return
+	}
+	clearRestartCookie(w, realm)
 }
 
 // consentNeeded reports whether this request has to show the consent page.
@@ -350,6 +384,7 @@ func (h *handler) writeSSOCode(w http.ResponseWriter, r *http.Request, realm *mo
 	if _, err := h.resumeAuthSession(w, r, realm, k, sess.Session.ID, tab, restart); err != nil {
 		return err
 	}
+	h.clearPresentedRestart(w, r, realm)
 	scope := grantedScope(tab.Scope)
 	// A second client on one browser session needs its own client session, or
 	// the refresh token it is about to be given would have nothing to refresh

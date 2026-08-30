@@ -333,8 +333,14 @@ func TestTheTwoNewPagesDisagreeAboutCacheControl(t *testing.T) {
 //
 // Measured on a jar holding all four cookies, on one holding KEYCLOAK_IDENTITY
 // alone and on three consecutive requests: the SSO success always sets all five.
-// **prompt=none sets no KC_RESTART**, and never sets it rather than clearing it
-// - there is no Max-Age=0 KC_RESTART on any prompt=none response.
+// **prompt=none sets no KC_RESTART** of its own.
+//
+// **The jar must not present a KC_RESTART**, and saying so is the correction
+// this test needed. A browser that has one gets a sixth Set-Cookie clearing it -
+// see TestAPresentedRestartCookieIsClearedOnTheWayOut - and this test passed
+// while that was unimplemented because the harness keeps a cleared cookie as an
+// empty value, so the jar a login leaves behind still presents one. It was
+// measuring a condition it had not stated.
 func TestTheSSORedirectSetsFiveCookies(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -350,6 +356,7 @@ func TestTheSSORedirectSetsFiveCookies(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := signIn(t)
+			delete(b.jar, "KC_RESTART")
 			b.raw = nil
 			w := b.do(http.MethodGet, "/realms/master/protocol/openid-connect/auth?"+
 				baseQuery(map[string]string{"prompt": tc.prompt}), nil)
@@ -359,10 +366,72 @@ func TestTheSSORedirectSetsFiveCookies(t *testing.T) {
 			if got := cookieNames(b.raw); strings.Join(got, ",") != strings.Join(tc.want, ",") {
 				t.Errorf("cookies: want %v, got %v", tc.want, got)
 			}
+		})
+	}
+}
+
+// TestAPresentedRestartCookieIsClearedOnTheWayOut is the strangest measured
+// thing in the cut, and it is invisible to a golden: Set-Cookie is masked whole
+// on every case in this family, and a masked header is asserted on presence
+// alone, so the **count** is never compared.
+//
+// A response can set KC_RESTART twice, in opposite directions. The clear is
+// last, so a browser that arrives holding one leaves without it and a browser
+// that arrives without one leaves holding a fresh one. Six branches were
+// measured with the same cookie present and three of them clear it.
+func TestAPresentedRestartCookieIsClearedOnTheWayOut(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		signedIn  bool
+		overrides map[string]string
+		want      []string
+	}{
+		{"the SSO code sets one and clears it", true, nil, []string{
+			"AUTH_SESSION_ID", "KC_AUTH_SESSION_HASH", "KC_RESTART", "KC_RESTART",
+			"KEYCLOAK_IDENTITY", "KEYCLOAK_SESSION"}},
+		{"prompt=none clears it and sets none", true, map[string]string{"prompt": "none"}, []string{
+			"AUTH_SESSION_ID", "KC_AUTH_SESSION_HASH", "KC_RESTART",
+			"KEYCLOAK_IDENTITY", "KEYCLOAK_SESSION"}},
+		{"login_required clears it", false, map[string]string{"prompt": "none"}, []string{
+			"AUTH_SESSION_ID", "KC_AUTH_SESSION_HASH", "KC_RESTART"}},
+		{"prompt=create does not", false, map[string]string{"prompt": "create"}, []string{
+			"AUTH_SESSION_ID", "KC_AUTH_SESSION_HASH"}},
+		{"the login page does not", false, nil, []string{
+			"AUTH_SESSION_ID", "KC_AUTH_SESSION_HASH", "KC_RESTART"}},
+		{"max_age's page sets nothing", false, map[string]string{"max_age": "abc"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newBrowser(t)
+			if tc.signedIn {
+				b = signIn(t)
+			}
+			// The cookie is put in by hand so that every row starts from the
+			// same request, whatever the jar happened to hold.
+			b.jar["KC_RESTART"] = "junk"
+			b.raw = nil
+			b.do(http.MethodGet, "/realms/master/protocol/openid-connect/auth?"+
+				baseQuery(tc.overrides), nil)
+			if got := cookieNames(b.raw); strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Fatalf("cookies: want %v, got %v", tc.want, got)
+			}
+			// The clear has to be the **last** KC_RESTART, or a browser would
+			// end up holding the fresh one where Keycloak leaves it with none.
+			cleared := 0
+			last := ""
 			for _, raw := range b.raw {
-				if strings.HasPrefix(raw, "KC_RESTART=") && strings.Contains(raw, "Max-Age=0") {
-					t.Errorf("prompt=%q cleared KC_RESTART; measured, it is never set: %s", tc.prompt, raw)
+				if strings.HasPrefix(raw, "KC_RESTART=") {
+					last = raw
+					if strings.Contains(raw, "Max-Age=0") {
+						cleared++
+					}
 				}
+			}
+			wantCleared := strings.Contains(tc.name, "clears it")
+			if (cleared == 1) != wantCleared {
+				t.Errorf("cleared KC_RESTART %d times, want %v", cleared, wantCleared)
+			}
+			if wantCleared && !strings.Contains(last, "Max-Age=0") {
+				t.Errorf("the clear is not the last KC_RESTART: %s", last)
 			}
 		})
 	}
@@ -372,9 +441,14 @@ func TestTheSSORedirectSetsFiveCookies(t *testing.T) {
 // step 10 that a reader would leave out.
 //
 // **login_required and prompt=create's page both set AUTH_SESSION_ID and
-// KC_AUTH_SESSION_HASH**, and no KC_RESTART. Four rows, each on its own fresh
-// login. max_age's rejection at step 2c is the only one that sends none at all,
-// which is what says the two checks are in different places.
+// KC_AUTH_SESSION_HASH**, and no KC_RESTART of their own. Four rows, each on its
+// own fresh login. max_age's rejection at step 2c is the only one that sends
+// none at all, which is what says the two checks are in different places.
+//
+// The jar is emptied of KC_RESTART for the reason
+// TestTheSSORedirectSetsFiveCookies gives: login_required clears a presented
+// one, so a jar that still holds the login's emptied cookie would see a third
+// Set-Cookie here that this test is not about.
 func TestTheSilentRejectionsStillOpenASession(t *testing.T) {
 	pair := []string{"AUTH_SESSION_ID", "KC_AUTH_SESSION_HASH"}
 	for _, tc := range []struct {
@@ -395,6 +469,7 @@ func TestTheSilentRejectionsStillOpenASession(t *testing.T) {
 			if tc.signedIn {
 				b = signIn(t)
 			}
+			delete(b.jar, "KC_RESTART")
 			b.raw = nil
 			b.do(http.MethodGet, "/realms/master/protocol/openid-connect/auth?"+
 				baseQuery(tc.overrides), nil)
