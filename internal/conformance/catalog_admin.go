@@ -4447,25 +4447,28 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		// protocolMappers is masked whole rather than sorted, and that is a
-		// limitation of Case.Unordered rather than a decision. Its sortArray
-		// decodes the array it matched in one go, so a path matching the root
-		// consumes the document and the nested paths are never visited: `.`
-		// and `*/protocolMappers` in one case silently sorts only the first.
-		// The mapper order inside a scope is a Java set's and **is** unstable -
-		// six of the fifteen scopes came back with a different mapper order on
-		// two container starts - so it has to be one or the other, and the
-		// root has to be sorted because the scope order is unstable too.
+		// protocolMappers was masked whole until F59 was fixed, and that was a
+		// limitation of Case.Unordered rather than a decision: sortArray decoded
+		// the array it matched in one go, so a path matching the root consumed
+		// the document and `*/protocolMappers` was never visited - silently. The
+		// walk now runs deepest path first, so both are sorted and both are
+		// asserted.
 		//
-		// What survives: the fifteen scopes, their descriptions, protocols and
-		// attributes, and **whether each has a protocolMappers key at all** -
-		// which is what offline_access's five-key body turns on. What is lost
-		// is the mapper contents. See the follow-up in
-		// docs/superpowers/handover/p5-client-scopes.md, and
-		// TestBootstrappedClientScopeMappers in internal/admin, which asserts
-		// one scope's mappers directly.
-		Volatile:  []string{"*/id", "*/protocolMappers"},
-		Unordered: []string{"."},
+		// Both orders need sorting and neither is contract. The scope order is a
+		// Java set's, and the mapper order inside a scope is too - six of the
+		// fifteen scopes came back with a different mapper order on two container
+		// starts. Only the ids are masked: the scope's own, and each mapper's,
+		// both per-container UUIDs. The sort has to run on masked bytes to be
+		// stable, which it does - Normalize before SortUnordered.
+		//
+		// So the thirty-five bootstrapped protocol mappers are now under a
+		// golden: their names, their protocolMapper types, their consentRequired
+		// flags and every key of their config, in Keycloak's key order.
+		// TestBootstrappedClientScopeMappers in internal/admin asserts one
+		// scope's fourteen directly and keeps doing so; this is the other
+		// thirty-four.
+		Volatile:  []string{"*/id", "*/protocolMappers/*/id"},
+		Unordered: []string{".", "*/protocolMappers"},
 	},
 	{
 		// The alias serves the identical body. Measured, not assumed: this is
@@ -4487,25 +4490,28 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		// protocolMappers is masked whole rather than sorted, and that is a
-		// limitation of Case.Unordered rather than a decision. Its sortArray
-		// decodes the array it matched in one go, so a path matching the root
-		// consumes the document and the nested paths are never visited: `.`
-		// and `*/protocolMappers` in one case silently sorts only the first.
-		// The mapper order inside a scope is a Java set's and **is** unstable -
-		// six of the fifteen scopes came back with a different mapper order on
-		// two container starts - so it has to be one or the other, and the
-		// root has to be sorted because the scope order is unstable too.
+		// protocolMappers was masked whole until F59 was fixed, and that was a
+		// limitation of Case.Unordered rather than a decision: sortArray decoded
+		// the array it matched in one go, so a path matching the root consumed
+		// the document and `*/protocolMappers` was never visited - silently. The
+		// walk now runs deepest path first, so both are sorted and both are
+		// asserted.
 		//
-		// What survives: the fifteen scopes, their descriptions, protocols and
-		// attributes, and **whether each has a protocolMappers key at all** -
-		// which is what offline_access's five-key body turns on. What is lost
-		// is the mapper contents. See the follow-up in
-		// docs/superpowers/handover/p5-client-scopes.md, and
-		// TestBootstrappedClientScopeMappers in internal/admin, which asserts
-		// one scope's mappers directly.
-		Volatile:  []string{"*/id", "*/protocolMappers"},
-		Unordered: []string{"."},
+		// Both orders need sorting and neither is contract. The scope order is a
+		// Java set's, and the mapper order inside a scope is too - six of the
+		// fifteen scopes came back with a different mapper order on two container
+		// starts. Only the ids are masked: the scope's own, and each mapper's,
+		// both per-container UUIDs. The sort has to run on masked bytes to be
+		// stable, which it does - Normalize before SortUnordered.
+		//
+		// So the thirty-five bootstrapped protocol mappers are now under a
+		// golden: their names, their protocolMapper types, their consentRequired
+		// flags and every key of their config, in Keycloak's key order.
+		// TestBootstrappedClientScopeMappers in internal/admin asserts one
+		// scope's fourteen directly and keeps doing so; this is the other
+		// thirty-four.
+		Volatile:  []string{"*/id", "*/protocolMappers/*/id"},
+		Unordered: []string{".", "*/protocolMappers"},
 	},
 	{
 		// A created scope: five keys, no description and no protocolMappers,
@@ -5222,5 +5228,893 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	// -----------------------------------------------------------------------
+	// P5 cut B: protocol mappers. Twenty-one operations - three families of
+	// seven over two containers - plus the behaviours their status codes
+	// cannot show.
+	//
+	// Appended at the end of adminCases and nowhere else: another stream is
+	// editing cases in the middle of this file, and the end is the one place
+	// two branches cannot both edit.
+	//
+	// The `client-templates` spelling is measured **byte-identical** to
+	// `client-scopes` on all seven, headers included, with the one exception
+	// its parent family has: POST echoes the path it was called on into
+	// Location. So the seven template cases exist to pin the aliasing, and the
+	// only one of them that could ever differ is the create.
+	// -----------------------------------------------------------------------
+	{
+		// Two mappers, one per protocol, and the array comes back in **no
+		// reproducible order** - Keycloak's own order inside a container moved
+		// between two container starts on six of the fifteen bootstrapped
+		// scopes. Unordered names the root, which is where the array is.
+		ID: "admin/protocol-mappers/list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a client scope's mappers",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-scopes/{client-scope-id}/protocol-mappers/models",
+		Fixture:   "admin-token-mapper-scope",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000011/protocol-mappers/models",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+	},
+	{
+		ID: "admin/protocol-mappers/list-template",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a client scope's mappers (client-templates)",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-templates/{client-scope-id}/protocol-mappers/models",
+		Fixture:   "admin-token-mapper-scope",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000011/protocol-mappers/models",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+	},
+	{
+		ID: "admin/protocol-mappers/list-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a client's own mappers",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/protocol-mappers/models",
+		Fixture:   "admin-token-mapper-client",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000011/protocol-mappers/models",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+	},
+	{
+		// Six keys in a fixed order, nothing omitempty, `config` present and
+		// `consentRequired` always false.
+		ID: "admin/protocol-mappers/read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: one mapper of a client scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-scopes/{client-scope-id}/protocol-mappers/models/{id}",
+		Fixture:   "admin-token-mapper-scope",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000011" +
+				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000001",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/protocol-mappers/read-template",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: one mapper of a client scope (client-templates)",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-templates/{client-scope-id}/protocol-mappers/models/{id}",
+		Fixture:   "admin-token-mapper-scope",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000011" +
+				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000001",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/protocol-mappers/read-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: one mapper of a client",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/protocol-mappers/models/{id}",
+		Fixture:   "admin-token-mapper-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000011" +
+				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000004",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **The filter is on the mapper's own `protocol`, not the container's.**
+		// This scope is `openid-connect` and holds one `saml` mapper, so asking
+		// for `saml` answers the one and asking for `openid-connect` answers
+		// the other. A filter reading the scope's protocol would answer both
+		// for one value and neither for the other, and this case is the pair
+		// that says so - see by-protocol-empty below for the other half.
+		ID: "admin/protocol-mappers/by-protocol",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a client scope's mappers of one protocol",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-scopes/{client-scope-id}/protocol-mappers/protocol/{protocol}",
+		Fixture:   "admin-token-mapper-scope",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000011" +
+				"/protocol-mappers/protocol/saml",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+	},
+	{
+		ID: "admin/protocol-mappers/by-protocol-template",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a client scope's mappers of one protocol (client-templates)",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-templates/{client-scope-id}/protocol-mappers/protocol/{protocol}",
+		Fixture:   "admin-token-mapper-scope",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000011" +
+				"/protocol-mappers/protocol/saml",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+	},
+	{
+		ID: "admin/protocol-mappers/by-protocol-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a client's mappers of one protocol",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/protocol-mappers/protocol/{protocol}",
+		Fixture:   "admin-token-mapper-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000011" +
+				"/protocol-mappers/protocol/openid-connect",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+	},
+	{
+		// **An unknown protocol is 200 and `[]`, not a 400.** The segment is
+		// never validated against anything; it is compared to what each mapper
+		// stored, and a mapper's own `protocol` is not validated either - a
+		// create with `"protocol":"bogus"` is a 201.
+		ID: "admin/protocol-mappers/by-protocol-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: an unknown protocol answers an empty array",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-mapper-scope",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000011" +
+				"/protocol-mappers/protocol/gloak-no-such-protocol",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// 201, `Cache-Control: no-cache`, an absolute Location ending in the
+		// id **the body asked for**, and **no Content-Type at all**.
+		ID: "admin/protocol-mappers/create",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: add a mapper to a client scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/client-scopes/{client-scope-id}/protocol-mappers/models",
+		Fixture:   "admin-token-mapper-scope-create",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000012" +
+				"/protocol-mappers/models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"9a99e400-0000-4000-8000-0000000000f1",` +
+				`"name":"gloak-probe-mapper-new","protocol":"openid-connect",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper",` +
+				`"config":{"claim.name":"gloak-new"}}`),
+		},
+		AssertHeaders:       []string{"Cache-Control", "Location"},
+		AssertAbsentHeaders: []string{"Content-Type"},
+	},
+	{
+		// **The alias echoes its own path.** This is the one operation of the
+		// seven where the two spellings are distinguishable in a response:
+		// Location comes back under /client-templates. Building it from a
+		// constant rather than from r.URL.Path sends a caller of the
+		// deprecated path to the other one, and only this case can tell.
+		ID: "admin/protocol-mappers/create-template",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: add a mapper to a client scope (client-templates)",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/client-templates/{client-scope-id}/protocol-mappers/models",
+		Fixture:   "admin-token-mapper-template-create",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000013" +
+				"/protocol-mappers/models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"9a99e400-0000-4000-8000-0000000000f2",` +
+				`"name":"gloak-probe-mapper-tmpl","protocol":"openid-connect",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper",` +
+				`"config":{"claim.name":"gloak-tmpl"}}`),
+		},
+		AssertHeaders:       []string{"Cache-Control", "Location"},
+		AssertAbsentHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/protocol-mappers/create-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: add a mapper to a client",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/clients/{client-uuid}/protocol-mappers/models",
+		Fixture:   "admin-token-mapper-client-create",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000012" +
+				"/protocol-mappers/models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"9a99e400-0000-4000-8000-0000000000f3",` +
+				`"name":"gloak-probe-mapper-cl","protocol":"openid-connect",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper",` +
+				`"config":{"claim.name":"gloak-cl"}}`),
+		},
+		AssertHeaders:       []string{"Cache-Control", "Location"},
+		AssertAbsentHeaders: []string{"Content-Type"},
+	},
+	{
+		// 204 **with** Cache-Control, unlike PUT /client-scopes/{id} next door,
+		// which carries none. Pinned per endpoint, as every Cache-Control on
+		// this API is.
+		ID: "admin/protocol-mappers/update",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: update a client scope's mapper",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/client-scopes/{client-scope-id}/protocol-mappers/models/{id}",
+		Fixture:   "admin-token-mapper-scope-update",
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000014" +
+				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000005",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"9a99e400-0000-4000-8000-000000000005",` +
+				`"name":"gloak-probe-mapper-update","protocol":"openid-connect",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper",` +
+				`"config":{"claim.name":"gloak-after"}}`),
+		},
+		AssertHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "admin/protocol-mappers/update-template",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: update a client scope's mapper (client-templates)",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/client-templates/{client-scope-id}/protocol-mappers/models/{id}",
+		Fixture:   "admin-token-mapper-template-update",
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000015" +
+				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000006",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"9a99e400-0000-4000-8000-000000000006",` +
+				`"name":"gloak-probe-mapper-update","protocol":"openid-connect",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper",` +
+				`"config":{"claim.name":"gloak-after"}}`),
+		},
+		AssertHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "admin/protocol-mappers/update-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: update a client's mapper",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/clients/{client-uuid}/protocol-mappers/models/{id}",
+		Fixture:   "admin-token-mapper-client-update",
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000013" +
+				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000007",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"9a99e400-0000-4000-8000-000000000007",` +
+				`"name":"gloak-probe-mapper-update","protocol":"openid-connect",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper",` +
+				`"config":{"claim.name":"gloak-after"}}`),
+		},
+		AssertHeaders: []string{"Cache-Control"},
+	},
+	{
+		// 204 with Cache-Control and **no X-Frame-Options**: the delete sends
+		// no Content-Type, and that is what decides the header - the rule
+		// httpx.WriteNoContent carries.
+		ID: "admin/protocol-mappers/delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: delete a client scope's mapper",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/client-scopes/{client-scope-id}/protocol-mappers/models/{id}",
+		Fixture:   "admin-token-mapper-scope-delete",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000016" +
+				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000008",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "admin/protocol-mappers/delete-template",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: delete a client scope's mapper (client-templates)",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/client-templates/{client-scope-id}/protocol-mappers/models/{id}",
+		Fixture:   "admin-token-mapper-template-delete",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path: "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000017" +
+				"/protocol-mappers/models/9a99e400-0000-4000-8000-000000000009",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "admin/protocol-mappers/delete-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: delete a client's mapper",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/clients/{client-uuid}/protocol-mappers/models/{id}",
+		Fixture:   "admin-token-mapper-client-delete",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path: "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000014" +
+				"/protocol-mappers/models/9a99e400-0000-4000-8000-00000000000a",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		// **204, not 201, and no Location** - where the single create beside it
+		// is 201 with one. Same resource, same verb, one path segment apart.
+		ID: "admin/protocol-mappers/add-models",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: add several mappers to a client scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/client-scopes/{client-scope-id}/protocol-mappers/add-models",
+		Fixture:   "admin-token-mapper-scope-add",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000018" +
+				"/protocol-mappers/add-models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"9a99e400-0000-4000-8000-0000000000f4",` +
+				`"name":"gloak-probe-mapper-batch-a","protocol":"openid-connect",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper","config":{"claim.name":"a"}},` +
+				`{"id":"9a99e400-0000-4000-8000-0000000000f5",` +
+				`"name":"gloak-probe-mapper-batch-b","protocol":"openid-connect",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper","config":{"claim.name":"b"}}]`),
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Location"},
+	},
+	{
+		ID: "admin/protocol-mappers/add-models-template",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: add several mappers to a client scope (client-templates)",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/client-templates/{client-scope-id}/protocol-mappers/add-models",
+		Fixture:   "admin-token-mapper-template-add",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000019" +
+				"/protocol-mappers/add-models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"9a99e400-0000-4000-8000-0000000000f6",` +
+				`"name":"gloak-probe-mapper-batch-c","protocol":"openid-connect",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper","config":{"claim.name":"c"}}]`),
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Location"},
+	},
+	{
+		ID: "admin/protocol-mappers/add-models-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: add several mappers to a client",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/clients/{client-uuid}/protocol-mappers/add-models",
+		Fixture:   "admin-token-mapper-client-add",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000015" +
+				"/protocol-mappers/add-models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"9a99e400-0000-4000-8000-0000000000f7",` +
+				`"name":"gloak-probe-mapper-batch-d","protocol":"openid-connect",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper","config":{"claim.name":"d"}}]`),
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Location"},
+	},
+	{
+		// **A fifteenth spelling of not-found.** `Model not found` names
+		// neither the resource nor the key it was looked up by, and it is the
+		// answer for a path segment that is not a UUID as well as for one that
+		// is and is unknown.
+		ID: "admin/protocol-mappers/read-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a mapper id that does not exist",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-mapper-scope",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000011" +
+				"/protocol-mappers/models/9a99e400-0000-4000-8000-0000000000ff",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The container's own 404, which is the parent family's string and not
+		// this one's: `Could not find client scope`.
+		ID: "admin/protocol-mappers/read-unknown-scope",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a client scope that does not exist",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-0000000000fe" +
+				"/protocol-mappers/models",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// And the client family's, which is a third string again for the same
+		// missing container: `Could not find client`.
+		ID: "admin/protocol-mappers/read-unknown-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a client that does not exist",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/c11e0000-0000-4000-8000-0000000000fe" +
+				"/protocol-mappers/models",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **A 404 on a create.** The `protocolMapper` is looked up in the
+		// server's provider registry and the answer is about the lookup, not
+		// about the request - and it is checked **first**, before the name and
+		// before the protocol, which is why an empty body answers this rather
+		// than answering about the name.
+		ID: "admin/protocol-mappers/create-unknown-provider",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a protocolMapper no provider is registered for",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-mapper-scope",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000011" +
+				"/protocol-mappers/models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-mapper-bad","protocol":"openid-connect",` +
+				`"protocolMapper":"gloak-no-such-provider"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The same 404 for an **empty body object**, which is what says the
+		// provider check runs before everything else. `{}` answers about the
+		// provider where `POST /client-scopes` answers about the name.
+		ID: "admin/protocol-mappers/create-empty-object",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: an empty object answers about the provider",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-mapper-scope",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000011" +
+				"/protocol-mappers/models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The one response on this family that carries none of the five
+		// security headers.** A body with a valid provider and no `name` is a
+		// 409 about a duplicate that does not exist, and it never reaches
+		// Keycloak's filter chain - where the other 409 on the same route
+		// carries all five. AssertAbsentHeaders is the whole point of the case;
+		// the body alone would pass with the headers wrongly present.
+		ID: "admin/protocol-mappers/create-without-name",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a body with no name",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-mapper-scope",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000011" +
+				"/protocol-mappers/models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"protocol":"openid-connect",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+		AssertAbsentHeaders: []string{
+			"Cache-Control", "Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
+		},
+	},
+	{
+		// An absent **protocol** is the same 409 as an absent name, and the
+		// same missing headers. Two required fields, one message about neither
+		// of them.
+		ID: "admin/protocol-mappers/create-without-protocol",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a body with no protocol",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-mapper-scope",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000011" +
+				"/protocol-mappers/models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-mapper-noproto",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+		AssertAbsentHeaders: []string{
+			"Cache-Control", "Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
+		},
+	},
+	{
+		// The **other** 409, in the errorMessage shape and with all five
+		// security headers. Two conflicts on one route, two shapes, two header
+		// sets.
+		ID: "admin/protocol-mappers/create-duplicate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a name the container already holds",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-mapper-scope-dup",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-00000000001a" +
+				"/protocol-mappers/models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-mapper-dup","protocol":"openid-connect",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper","config":{}}`),
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// A **third** conflict spelling, on the batch route:
+		// `Protocol mapper name must be unique per protocol`, in the OAuth
+		// shape where the single create's is the errorMessage one.
+		ID: "admin/protocol-mappers/add-models-duplicate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a batch naming a name already held",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-mapper-scope-dup",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-00000000001a" +
+				"/protocol-mappers/add-models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"name":"gloak-probe-mapper-dup","protocol":"openid-connect",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper","config":{}}]`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **What the 201 cannot show.** The fixture created one mapper asking
+		// for `id.token.claim` and `access.token.claim` and a key whose value
+		// was `""`, with `consentRequired: true`; and a second, through
+		// add-models, on a provider that mirrors only one of the two.
+		//
+		// So this body carries four assertions no status code does: the empty
+		// key is gone, both mirrors were appended to the first, **only
+		// `introspection.token.claim`** was appended to the second, and
+		// `consentRequired` is false on both.
+		//
+		// A mirroring rule written as one flag, or as "every oidc-* provider",
+		// passes every other case in this cut and fails here. **It did not,
+		// until the fixture's second mapper was given `id.token.claim` as
+		// well**: with no source key to mirror, both mutations produce exactly
+		// the right bytes, and both survived. Two survivors, one fixture line.
+		ID: "admin/protocol-mappers/read-created",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a created mapper's config after the server filled it in",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-mapper-created",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-00000000001b" +
+				"/protocol-mappers/models",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+	},
+	{
+		// **What the 204 cannot show.** The fixture's PUT renamed the mapper,
+		// moved it to `saml` and set `consentRequired: true`; this body says
+		// the name, the protocol and the flag are all unchanged and only
+		// `protocolMapper` and `config` moved - and that the config was
+		// **replaced**, since `user.attribute` is gone rather than merged
+		// through.
+		//
+		// Writing the whole representation back is the obvious implementation.
+		// It passes the update case's own 204 and fails here.
+		ID: "admin/protocol-mappers/read-updated",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a mapper after a PUT",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-mapper-updated",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-00000000001c" +
+				"/protocol-mappers/models/9a99e400-0000-4000-8000-00000000000e",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **What the 409 cannot show.** The fixture's add-models array named a
+		// fresh mapper first and a duplicate second. This listing holds the
+		// one mapper the scope started with and **not** the fresh one, which is
+		// what says the batch validates before it applies.
+		//
+		// An implementation that writes as it goes answers the same 409 and
+		// leaves an extra row. Only this case sees it.
+		ID: "admin/protocol-mappers/list-after-batch-conflict",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a rejected batch writes nothing",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-mapper-batch-conflict",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-00000000001d" +
+				"/protocol-mappers/models",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+	},
+	{
+		// **`query-clients` is refused here and served one level up.** On
+		// `GET /client-scopes` it is admitted and answered `200 []` - the
+		// client listing's shape, and one of the three places this API answers
+		// a weaker caller with a shorter list. On every protocol-mapper route
+		// it is a flat 403. So the coarse gate on this family is two roles,
+		// not the parent's three, and widening it to clientsReadRoles for
+		// symmetry is the tidy-up that breaks it.
+		//
+		// The scope id names nothing on purpose: the gate runs **before** the
+		// container is resolved, so this caller gets 403 rather than the 404 a
+		// view-clients caller gets for the same path. That is the second thing
+		// the case pins, and it is why it needs no scope fixture.
+		//
+		// Added after a mutation survived: swapping clientScopeMapperReadRoles
+		// for clientsReadRoles passed every other case in this cut.
+		ID: "admin/protocol-mappers/list-to-a-query-clients-caller",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a caller holding query-clients",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "narrow-caller-query-clients",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-0000000000fd" +
+				"/protocol-mappers/models",
+			Headers: map[string]string{"Authorization": "Bearer {{caller_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The batch route checks the provider too, and answers the same 404 the
+		// single create does. Added after a mutation survived: deleting the
+		// provider check from addProtocolMappers passed every other case in
+		// this cut, because every other batch body names a registered one.
+		ID: "admin/protocol-mappers/add-models-unknown-provider",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: a batch naming a provider that is not registered",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-mapper-scope",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000011" +
+				"/protocol-mappers/add-models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"name":"gloak-probe-mapper-batch-bad","protocol":"openid-connect",` +
+				`"protocolMapper":"gloak-no-such-provider"}]`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 }

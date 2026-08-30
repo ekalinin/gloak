@@ -167,6 +167,12 @@ type Client struct {
 	DefaultClientScopes       []string
 	OptionalClientScopes      []string
 	Attributes                map[string]string
+	// ProtocolMappers are the client's own, distinct from the ones it reaches
+	// through its client scopes. Two of the six bootstrapped clients carry one:
+	// account-console's `audience resolve` and security-admin-console's
+	// `locale`. Like a client scope's, they are **omitted** from the
+	// representation when empty rather than serialised as `[]`.
+	ProtocolMappers []ProtocolMapper
 }
 
 // User is an account within a realm.

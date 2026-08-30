@@ -314,6 +314,36 @@ func (h *handler) register(mux *http.ServeMux) {
 			h.guardClientScope(h.deleteClientScope))
 	}
 
+	// Protocol mappers, twenty-one operations over two containers and three
+	// path spellings. Measured 2026-08-30: the `client-templates` alias serves
+	// what its `client-scopes` sibling serves byte for byte on all seven,
+	// headers included, and `POST` echoes the path it was called on into
+	// Location - the same single exception the parent family has.
+	//
+	// The coarse gate is **two** roles here and three one level up:
+	// query-clients reads GET /client-scopes as `200 []` and is 403 on every
+	// one of these. See clientScopeMapperReadRoles.
+	for _, base := range []string{"client-scopes", "client-templates"} {
+		prefix := "/admin/realms/{realm}/" + base + "/{clientScopeID}/protocol-mappers"
+		mux.HandleFunc("GET "+prefix+"/models", h.guardScopeMappers(false, h.listProtocolMappers))
+		mux.HandleFunc("POST "+prefix+"/models", h.guardScopeMappers(true, h.createProtocolMapper))
+		mux.HandleFunc("GET "+prefix+"/models/{mapperID}", h.guardScopeMappers(false, h.readProtocolMapper))
+		mux.HandleFunc("PUT "+prefix+"/models/{mapperID}", h.guardScopeMappers(true, h.updateProtocolMapper))
+		mux.HandleFunc("DELETE "+prefix+"/models/{mapperID}", h.guardScopeMappers(true, h.deleteProtocolMapper))
+		mux.HandleFunc("GET "+prefix+"/protocol/{protocol}", h.guardScopeMappers(false, h.listProtocolMappersByProtocol))
+		mux.HandleFunc("POST "+prefix+"/add-models", h.guardScopeMappers(true, h.addProtocolMappers))
+	}
+	{
+		prefix := "/admin/realms/{realm}/clients/{clientUUID}/protocol-mappers"
+		mux.HandleFunc("GET "+prefix+"/models", h.guardClientMappers(false, h.listProtocolMappers))
+		mux.HandleFunc("POST "+prefix+"/models", h.guardClientMappers(true, h.createProtocolMapper))
+		mux.HandleFunc("GET "+prefix+"/models/{mapperID}", h.guardClientMappers(false, h.readProtocolMapper))
+		mux.HandleFunc("PUT "+prefix+"/models/{mapperID}", h.guardClientMappers(true, h.updateProtocolMapper))
+		mux.HandleFunc("DELETE "+prefix+"/models/{mapperID}", h.guardClientMappers(true, h.deleteProtocolMapper))
+		mux.HandleFunc("GET "+prefix+"/protocol/{protocol}", h.guardClientMappers(false, h.listProtocolMappersByProtocol))
+		mux.HandleFunc("POST "+prefix+"/add-models", h.guardClientMappers(true, h.addProtocolMappers))
+	}
+
 	// The realm's own two default sets. Tagged `Realms Admin` and guarded like
 	// a client: manage-clients writes them and view-realm cannot read them.
 	//

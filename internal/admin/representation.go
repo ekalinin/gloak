@@ -20,9 +20,10 @@ import (
 // the empty arrays - so redirectUris and webOrigins must marshal as [] rather
 // than null, which is why the store keeps them non-nil.
 //
-// Not represented: protocolMappers, which two bootstrapped clients carry and
-// whose model is P5. A client with mappers cannot be reproduced yet, which is
-// why the recorded list case filters down to one that has none.
+// protocolMappers is the one key that is absent rather than empty. Four of the
+// six bootstrapped clients have no such key and account-console and
+// security-admin-console have one mapper each, so nonNil would be wrong here
+// where it is right for redirectUris and webOrigins two fields up.
 type clientRepresentation struct {
 	ID       string `json:"id"`
 	ClientID string `json:"clientId"`
@@ -62,9 +63,17 @@ type clientRepresentation struct {
 	AuthenticationFlowBindingOverrides map[string]string `json:"authenticationFlowBindingOverrides"`
 	FullScopeAllowed                   bool              `json:"fullScopeAllowed"`
 	NodeReRegistrationTimeout          int               `json:"nodeReRegistrationTimeout"`
-	DefaultClientScopes                []string          `json:"defaultClientScopes"`
-	OptionalClientScopes               []string          `json:"optionalClientScopes"`
-	Access                             accessClaim       `json:"access"`
+	// ProtocolMappers is the client's own mappers, and it is **absent** when
+	// there are none rather than `[]` - the same rule a client scope's follows,
+	// measured on the same day: four of the six bootstrapped clients have no
+	// `protocolMappers` key at all, and account-console and
+	// security-admin-console have one each. It sits between
+	// nodeReRegistrationTimeout and defaultClientScopes, which is where the
+	// recording puts it.
+	ProtocolMappers      []protocolMapperRepresentation `json:"protocolMappers,omitempty"`
+	DefaultClientScopes  []string                       `json:"defaultClientScopes"`
+	OptionalClientScopes []string                       `json:"optionalClientScopes"`
+	Access               accessClaim                    `json:"access"`
 }
 
 // accessClaim is the computed permissions block Keycloak appends to a
@@ -151,6 +160,7 @@ func clientRepresentationOf(m *model.Client, c *caller, realmName string) client
 		AuthenticationFlowBindingOverrides: map[string]string{},
 		FullScopeAllowed:                   m.FullScopeAllowed,
 		NodeReRegistrationTimeout:          m.NodeReRegistrationTimeout,
+		ProtocolMappers:                    protocolMapperListOf(m.ProtocolMappers),
 		DefaultClientScopes:                nonNil(m.DefaultClientScopes),
 		OptionalClientScopes:               nonNil(m.OptionalClientScopes),
 		Access:                             clientAccessFor(c, m, realmName),

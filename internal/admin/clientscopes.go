@@ -33,9 +33,14 @@ type clientScopeRepresentation struct {
 	ProtocolMappers []protocolMapperRepresentation `json:"protocolMappers,omitempty"`
 }
 
-// protocolMapperRepresentation is one entry of the array above. Nothing writes
-// one yet - the Protocol Mappers tag is P5's next cut - so this exists to serve
-// what bootstrap stored rather than to be decoded from a request.
+// protocolMapperRepresentation is one entry of the array above, and the whole
+// body the Protocol Mappers tag's own routes serve. Those routes are in
+// protocolmappers.go; this type is here because a client scope carried it
+// first.
+//
+// Nothing on it is omitempty. `config` is present and `{}` when empty, and
+// `consentRequired` is always `false` - a create sending `true` reads back
+// `false`, so the field is dead surface rather than state.
 type protocolMapperRepresentation struct {
 	ID              string          `json:"id"`
 	Name            string          `json:"name"`
@@ -73,14 +78,7 @@ func clientScopeRepresentationOf(m *model.ClientScope) clientScopeRepresentation
 		Attributes:  m.Attributes,
 	}
 	for _, pm := range m.ProtocolMappers {
-		rep.ProtocolMappers = append(rep.ProtocolMappers, protocolMapperRepresentation{
-			ID:              pm.ID,
-			Name:            pm.Name,
-			Protocol:        pm.Protocol,
-			ProtocolMapper:  pm.ProtocolMapper,
-			ConsentRequired: pm.ConsentRequired,
-			Config:          pm.Config,
-		})
+		rep.ProtocolMappers = append(rep.ProtocolMappers, protocolMapperRepresentationOf(pm))
 	}
 	return rep
 }
@@ -162,12 +160,13 @@ func (h *handler) createClientScope(w http.ResponseWriter, r *http.Request, rc *
 	}
 
 	m := &model.ClientScope{
-		ID:          rep.ID,
-		RealmID:     rc.realm.ID,
-		Name:        *rep.Name,
-		Description: rep.Description,
-		Protocol:    rep.Protocol,
-		Attributes:  rep.Attributes,
+		ID:              rep.ID,
+		RealmID:         rc.realm.ID,
+		Name:            *rep.Name,
+		Description:     rep.Description,
+		Protocol:        rep.Protocol,
+		Attributes:      rep.Attributes,
+		ProtocolMappers: protocolMappersFromRepresentation(rep.ProtocolMappers),
 	}
 	// The body's id wins when it carries one. Measured: a POST naming
 	// "11111111-1111-1111-1111-111111111111" created a scope with exactly that
@@ -280,6 +279,13 @@ type clientScopeRequest struct {
 	Description string          `json:"description"`
 	Protocol    string          `json:"protocol"`
 	Attributes  model.StringMap `json:"attributes"`
+	// ProtocolMappers is honoured by the **create** and ignored by the update.
+	// Measured in both directions: a POST naming mappers - ids and all, since
+	// the body's mapper id wins the way the body's scope id does - reads back
+	// with exactly those, and a PUT naming a different set answers 204 and
+	// changes nothing. `PUT /clients/{uuid}` next door replaces them, so the
+	// two updates on one API disagree about the same key.
+	ProtocolMappers []protocolMapperRepresentation `json:"protocolMappers"`
 }
 
 func decodeClientScope(w http.ResponseWriter, r *http.Request) (clientScopeRequest, bool) {
