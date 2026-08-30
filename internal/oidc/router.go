@@ -27,6 +27,11 @@ type handler struct {
 	// device holds the device authorization grant's codes, in memory for the
 	// same reason and at the same cost. See internal/oidc/devicestore.go.
 	device *deviceStore
+	// consents holds which clients a user has approved, in memory for a reason
+	// that is **not** the other two's: Keycloak persists a consent and a user can
+	// revoke it through the Admin API, so this one is a divergence rather than
+	// the faithful model. See internal/oidc/authsession.go.
+	consents *consentStore
 }
 
 // realmBase is the URL every realm-scoped path hangs off, which the login
@@ -58,7 +63,8 @@ func NewRouter(s store.Store, k *keys.Manager, issuerBase string) http.Handler {
 // its own 404 for a path the first one owns. There are two measured fallback
 // bodies and adding a third would be a divergence.
 func Register(mux *http.ServeMux, s store.Store, k *keys.Manager, issuerBase string) {
-	h := &handler{store: s, keys: k, issuerBase: issuerBase, auth: newAuthStore(), device: newDeviceStore()}
+	h := &handler{store: s, keys: k, issuerBase: issuerBase,
+		auth: newAuthStore(), device: newDeviceStore(), consents: newConsentStore()}
 	h.register(mux)
 }
 
@@ -105,17 +111,30 @@ func (h *handler) register(mux *http.ServeMux) {
 	// its 404 to all of them.
 	mux.HandleFunc("GET /realms/{realm}/login-actions/authenticate", h.loginActions)
 	mux.HandleFunc("POST /realms/{realm}/login-actions/authenticate", h.loginActions)
-	// POST only. **GET on this path is not a wrong method** - Keycloak serves
-	// the device verification page there, the one that asks for a user_code,
-	// and HEAD answers that page's headers with a 200. Gloak does not build
-	// either yet, so both fall through WithKeycloakFallbacks to a 404; the page
-	// is cut B's, with the OAUTH_GRANT consent page and /device/status.
+	// The OAUTH_GRANT consent page and the two buttons on it. **GET on
+	// /login-actions/consent is a 404**, measured
+	// `{"error":"HTTP 404 Not Found"}`, which is what WithKeycloakFallbacks
+	// already answers for a known path hit with the wrong method - so
+	// registering POST alone is the measured behaviour rather than an omission.
+	mux.HandleFunc("GET /realms/{realm}/login-actions/required-action", h.requiredAction)
+	mux.HandleFunc("POST /realms/{realm}/login-actions/consent", h.consent)
+	// **These two paths are one endpoint mounted twice**, measured in both
+	// directions and on both verbs: POST on either mints a device code, GET on
+	// either serves the verification page. Four probes per path, identical
+	// answers. Registering the same two handlers on both is what reproduces it -
+	// and it is also why the theme's own verification form cannot work, since it
+	// posts `device_user_code` with no client_id and reaches the authorization
+	// request. See httpx.WriteThemeDeviceCodePage.
 	//
 	// PUT, DELETE and PATCH answer a real 405 here, and OPTIONS answers 200
 	// with **no Allow header** - which is /logout's answer and not /auth's.
 	// That is another data point for follow-up F31 and nothing is changed on
 	// the strength of it.
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/auth/device", h.deviceAuthorization)
+	mux.HandleFunc("GET /realms/{realm}/protocol/openid-connect/auth/device", h.deviceVerification)
+	mux.HandleFunc("POST /realms/{realm}/device", h.deviceAuthorization)
+	mux.HandleFunc("GET /realms/{realm}/device", h.deviceVerification)
+	mux.HandleFunc("GET /realms/{realm}/device/status", h.deviceStatus)
 	// CIBA's backchannel endpoint. Every answer it can give on a default
 	// 26.7.1 is a refusal, including the 503 a fully valid request gets,
 	// because the authentication channel a default deployment ships is not

@@ -212,8 +212,13 @@ func (h *handler) writeRestartRedirect(w http.ResponseWriter, r *http.Request, r
 		Nonce:               rec.Nonce,
 		CodeChallenge:       rec.CodeChallenge,
 		CodeChallengeMethod: rec.CodeChallengeMethod,
+		DeviceUserCode:      rec.DeviceUserCode,
 	}
-	sess, err := h.beginAuthSession(w, r, realm, tab, nil)
+	k := h.realmKeys(w, r, realm)
+	if k == nil {
+		return
+	}
+	sess, err := h.beginAuthSession(w, r, realm, k, tab, nil)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
@@ -303,11 +308,20 @@ func (h *handler) attemptLogin(w http.ResponseWriter, r *http.Request, realm *mo
 		return
 	}
 
+	// The user goes on the tab before anything is established, because the
+	// consent page is a second request and the session does not exist until it
+	// comes back. Measured: the 302 to the consent page sets no cookies at all.
+	tab.UserID = user.ID
+	if h.tabConsentNeeded(realm, client, user, tab) {
+		h.writeRequiredActionRedirect(w, realm, client, tab)
+		return
+	}
+
 	k := h.realmKeys(w, r, realm)
 	if k == nil {
 		return
 	}
-	if err := h.completeLogin(w, r, realm, client, sess, tab, user, k); err != nil {
+	if err := h.finishFlow(w, r, realm, client, sess, tab, user, k); err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 	}
 }
@@ -387,32 +401,49 @@ func (h *handler) completeLogin(w http.ResponseWriter, r *http.Request, realm *m
 	// replay it against.
 	h.auth.endSession(sess.RootID)
 
-	if err := h.setLoginCookies(w, realm, sess, user, k); err != nil {
+	clearRestartCookie(w, realm)
+	if err := h.setLoginCookies(w, realm, k, session.ID, user); err != nil {
 		return err
 	}
 	httpx.WriteLoginActionRedirect(w, h.authorizationCodeLocation(realm.Name, tab, session.ID, code))
 	return nil
 }
 
-// setLoginCookies writes the three Set-Cookie headers a successful login sends,
-// in the measured order: KC_RESTART cleared, then KEYCLOAK_IDENTITY, then
-// KEYCLOAK_SESSION.
+// clearRestartCookie is the Max-Age=0 KC_RESTART an **interactive** login ends
+// with, and it is separate from setLoginCookies because the SSO redirect does
+// not send it.
 //
-// KC_RESTART's clear carries neither Secure nor HttpOnly where the cookie it
-// clears carries both - measured, and the sort of asymmetry that looks like an
+// Measured on three endings side by side. The credential POST and the consent
+// accept both send KC_RESTART cleared, KEYCLOAK_IDENTITY, KEYCLOAK_SESSION; the
+// SSO redirect sends KC_RESTART with a **real value** and the same two after it.
+// Folding the clear into setLoginCookies is the saving that makes the SSO
+// redirect set KC_RESTART twice, once each way.
+//
+// The clear carries neither Secure nor HttpOnly where the cookie it clears
+// carries both - measured, and the sort of asymmetry that looks like an
 // oversight and is the contract.
-func (h *handler) setLoginCookies(w http.ResponseWriter, realm *model.Realm, sess *authSession,
-	user *model.User, k *keys.RealmKeys) error {
-	path := realmCookiePath(realm.Name)
+func clearRestartCookie(w http.ResponseWriter, realm *model.Realm) {
 	httpx.SetKeycloakCookie(w, httpx.Cookie{
-		Name: restartCookie, Path: path, MaxAge: 0, SetMaxAge: true,
+		Name: restartCookie, Path: realmCookiePath(realm.Name), MaxAge: 0, SetMaxAge: true,
 	})
+}
+
+// setLoginCookies writes KEYCLOAK_IDENTITY and then KEYCLOAK_SESSION, the pair
+// that makes a browser recognisable afterwards.
+//
+// It takes the **session id** rather than the authentication session, because
+// three callers write this pair and only one of them has an authentication
+// session to hand: the credential POST, the consent accept and the SSO
+// redirect. All three were measured writing the identical two.
+func (h *handler) setLoginCookies(w http.ResponseWriter, realm *model.Realm, k *keys.RealmKeys,
+	sessionID string, user *model.User) error {
+	path := realmCookiePath(realm.Name)
 	stateChecker, err := randomBase64URL(rootIDBytes)
 	if err != nil {
 		return err
 	}
 	identity, err := token.IssueIdentityCookie(k, h.realmIssuer(realm.Name), user.ID,
-		sess.RootID, model.NewID(), stateChecker, time.Now())
+		sessionID, model.NewID(), stateChecker, time.Now())
 	if err != nil {
 		return err
 	}
@@ -421,9 +452,11 @@ func (h *handler) setLoginCookies(w http.ResponseWriter, realm *model.Realm, ses
 		Secure: true, HTTPOnly: true, SameSite: "None",
 	})
 	// KEYCLOAK_SESSION is KC_AUTH_SESSION_HASH's value in the other base64
-	// alphabet, measured byte for byte on the pair of responses carrying both.
+	// alphabet, measured byte for byte on the pair of responses carrying both -
+	// and it is derived from the session id rather than remembered, which is what
+	// makes an SSO redirect re-emit the value the original login set.
 	httpx.SetKeycloakCookie(w, httpx.Cookie{
-		Name: sessionCookie, Value: keycloakSessionValue(sess.Hash), Path: path,
+		Name: sessionCookie, Value: keycloakSessionValue(sessionHash(k, sessionID)), Path: path,
 		MaxAge: int(keycloakSessionMaxAge.Seconds()), SetMaxAge: true,
 		Secure: true, SameSite: "None",
 	})
@@ -481,7 +514,7 @@ func (h *handler) serveLoginPage(w http.ResponseWriter, realm *model.Realm, sess
 // loginActionURL is the form's action, and its five parameters are in the
 // measured order: session_code, execution, client_id, tab_id, client_data.
 func (h *handler) loginActionURL(realm *model.Realm, tab *authTab, sessionCode string) (string, error) {
-	data, err := encodeClientData(tab.RedirectURI, responseTypeCode, tab.ResponseMode, tab.State, tab.HasState)
+	data, err := tab.clientData()
 	if err != nil {
 		return "", err
 	}
@@ -510,8 +543,19 @@ func (h *handler) writeLoginActionErrorPage(w http.ResponseWriter) {
 // startSessionWithID is startSession with the session id supplied rather than
 // minted, which the browser login needs because its id was decided at GET /auth
 // and is already in the browser's AUTH_SESSION_ID cookie.
+//
+// **A session that already exists is reused rather than replaced**, and that is
+// measured: a signed-in browser sent through the consent page by prompt=consent
+// comes back with the session_state its first login had, not a new one. The id
+// this is called with is the authentication session's root, and on the
+// consent-from-SSO path that root **is** a live user session - so creating one
+// would either collide or quietly start a second session for a browser that
+// never logged in twice.
 func (h *handler) startSessionWithID(ctx context.Context, id string, realm *model.Realm,
 	client *model.Client, user *model.User, scope string) (*model.UserSession, error) {
+	if existing, err := h.store.Sessions().UserSessionByID(ctx, realm.ID, id); err == nil {
+		return existing, h.attachClientSessionTo(ctx, existing, client, scope)
+	}
 	now := time.Now().UnixMilli()
 	session := &model.UserSession{
 		ID:          id,

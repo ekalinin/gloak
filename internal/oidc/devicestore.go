@@ -150,6 +150,24 @@ func (s *deviceStore) deviceCodeByCode(realm, code string) (*deviceCode, bool) {
 	return dc, true
 }
 
+// deviceCodeByUserCode resolves a code by the nine characters a person typed or
+// followed, which is the only identifier the browser half ever sees.
+//
+// An expired code reports false here where deviceCodeByCode still finds one, and
+// the difference is measured on the two sides: the poll answers expired_token
+// for about fifteen seconds past the expiry, and the verification page answers
+// "Invalid code, please try again." - the same thing an unknown code gets. So
+// the grace window is the poll's and not the page's.
+func (s *deviceStore) deviceCodeByUserCode(realm, userCode string) (*deviceCode, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dc, ok := s.userCodes[userCode]
+	if !ok || dc.Realm != realm || s.now().After(dc.ExpiresAt) {
+		return nil, false
+	}
+	return dc, true
+}
+
 // approveDeviceCode and denyDeviceCode are the two ways a device authorization
 // leaves the pending state. Both are keyed by the **user_code**, because that is
 // what the person at the browser typed in and the only identifier the

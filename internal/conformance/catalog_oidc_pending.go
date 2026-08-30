@@ -201,6 +201,224 @@ var oidcPending = []Case{
 		},
 		AssertAbsentHeaders: []string{"Set-Cookie"},
 	},
+	// --- Single sign-on: a browser that is already logged in ---
+	//
+	// Measured 2026-08-30 against a live 26.7.1, container kc-browser on 8112.
+	// The three cases below are the ones whose bodies are **empty**, which is
+	// what lets them be Implemented at all: everything else this cut serves is a
+	// keycloak.v2 Freemarker page and is Recorded instead.
+	{
+		ID: "oidc/authorization/sso-redirect",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authorization endpoint: an already-authenticated browser",
+			Retrieved: "2026-08-30",
+		},
+		Status: Implemented,
+		// browser-code runs a whole login and leaves the jar signed in, so the
+		// case's own request is the **second** authorization request. It does
+		// not redeem the code the fixture minted, which is why it can share a
+		// fixture with the cases that do: the rule that a redemption needs its
+		// own login is about the code being spent, and nothing here spends one.
+		Fixture: "browser-code",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/auth",
+			Query: map[string]string{
+				"response_type": "code",
+				"client_id":     "gloak-probe-browser",
+				"redirect_uri":  "http://localhost:9999/callback",
+				"scope":         "openid",
+				"state":         "xyz123",
+			},
+		},
+		// The two absences are the assertion. This 302 omits X-Frame-Options
+		// and Content-Security-Policy where POST /login-actions/authenticate's
+		// 302, to the same URI with the same status, carries both - so the pair
+		// is asserted absent here and present there, and a change that made
+		// either endpoint agree with the other breaks one of the two.
+		AssertHeaders: []string{
+			"Location", "Cache-Control", "Referrer-Policy",
+			"Strict-Transport-Security", "X-Content-Type-Options", "X-Robots-Tag",
+			"Set-Cookie",
+		},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
+		// Location carries a code and the session_state; Set-Cookie carries five
+		// cookies, four of them per-request. Both are masked whole and so are
+		// asserted on presence - which is the same retreat every case in this
+		// family makes, and the reason internal/oidc's own tests are what pin
+		// the session being **reused** rather than minted.
+		VolatileHeaders: []string{"Location", "Set-Cookie"},
+	},
+	{
+		ID: "oidc/authorization/prompt-none-login-required",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authorization endpoint: prompt=none with no session",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "browser-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/auth",
+			Query: map[string]string{
+				"response_type": "code",
+				"client_id":     "gloak-probe-browser",
+				"redirect_uri":  "http://localhost:9999/callback",
+				"scope":         "openid",
+				"state":         "xyz123",
+				"prompt":        "none",
+			},
+		},
+		// Location is asserted **by value**: with nobody signed in there is no
+		// code and no session_state in it, so error, state and iss and their
+		// order are all pinned. Set-Cookie is not: measured, this branch sets
+		// AUTH_SESSION_ID and KC_AUTH_SESSION_HASH and **no KC_RESTART**, and
+		// the two it does set are per-request.
+		AssertHeaders: []string{
+			"Location", "Cache-Control", "Referrer-Policy",
+			"Strict-Transport-Security", "X-Content-Type-Options", "X-Robots-Tag",
+			"Set-Cookie",
+		},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
+		VolatileHeaders:     []string{"Set-Cookie"},
+	},
+	{
+		ID: "oidc/device/verification-redirect",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Device authorization grant: the verification URI",
+			Retrieved: "2026-08-30",
+		},
+		Status: Implemented,
+		// device-pending mints a code and captures its user_code, which is the
+		// only identifier this side of the flow sees.
+		Fixture: "device-pending",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/device",
+			Query:  map[string]string{"user_code": "{{user_code}}"},
+		},
+		// The 302 to /login-actions/authenticate, carrying a freshly minted
+		// tab_id - so Location is masked - and the same header set /auth's own
+		// redirect carries, X-Frame-Options and Content-Security-Policy absent.
+		AssertHeaders: []string{
+			"Location", "Cache-Control", "Referrer-Policy",
+			"Strict-Transport-Security", "X-Content-Type-Options", "X-Robots-Tag",
+			"Set-Cookie",
+		},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
+		VolatileHeaders:     []string{"Location", "Set-Cookie"},
+	},
+
+	// --- The pages this cut serves as envelopes ---
+	//
+	// All four are Recorded rather than Implemented, and the reason is the same
+	// one the four parked login-theme goldens have: Keycloak serves keycloak.v2
+	// Freemarker here, carrying a /resources/<hash>/ segment minted per
+	// container start, and Gloak serves the measured envelope with a placeholder
+	// body. Recorded is the honest status - measured, committed, and the
+	// verifier requires it **not** to match - where Pending would say nobody had
+	// looked. What each of them pins is in its own comment.
+	{
+		ID: "oidc/device/verification-page",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Device authorization grant: the verification page",
+			Retrieved: "2026-08-30",
+		},
+		Status: Recorded,
+		Reason: "the keycloak.v2 device verification page; Gloak serves the measured " +
+			"envelope with a placeholder body, so the bytes cannot match",
+		Fixture: "bootstrap",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/device",
+		},
+		// **GET here is not a wrong method**, which is what this case exists to
+		// record: Gloak answered it 404 until this cut.
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "Content-Language"},
+	},
+	{
+		ID: "oidc/device/status-page",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Device authorization grant: the status page",
+			Retrieved: "2026-08-30",
+		},
+		Status: Recorded,
+		Reason: "the keycloak.v2 login-info page; Gloak serves the measured envelope " +
+			"with a placeholder body, so the bytes cannot match",
+		Fixture: "bootstrap",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/device/status",
+		},
+		// It carries **no Cache-Control at all**, which is the one thing on this
+		// page worth pinning and the only page in the flow that does not.
+		AssertHeaders:       []string{"Content-Type", "Content-Language"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "oidc/authorization/prompt-create",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authorization endpoint: prompt=create on a realm with registration off",
+			Retrieved: "2026-08-30",
+		},
+		Status: Recorded,
+		Reason: "the keycloak.v2 error page; Gloak serves the measured envelope with a " +
+			"placeholder body, so the bytes cannot match",
+		Fixture: "browser-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/auth",
+			Query: map[string]string{
+				"response_type": "code",
+				"client_id":     "gloak-probe-browser",
+				"redirect_uri":  "http://localhost:9999/callback",
+				"scope":         "openid",
+				"state":         "xyz123",
+				"prompt":        "create",
+			},
+		},
+		// **This page carries a Cache-Control and max-age-invalid's does not**,
+		// which is the pair that refutes AGENTS.md's "GET /auth's page family
+		// sends none at all". The two are recorded side by side so that the
+		// difference is a diff away rather than a memory.
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "Content-Language"},
+	},
+	{
+		ID: "oidc/authorization/max-age-invalid",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authorization endpoint: a non-numeric max_age",
+			Retrieved: "2026-08-30",
+		},
+		Status: Recorded,
+		Reason: "the keycloak.v2 error page; Gloak serves the measured envelope with a " +
+			"placeholder body, so the bytes cannot match",
+		Fixture: "browser-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/auth",
+			Query: map[string]string{
+				"response_type": "code",
+				"client_id":     "gloak-probe-browser",
+				"redirect_uri":  "http://localhost:9999/callback",
+				"scope":         "openid",
+				"state":         "xyz123",
+				"max_age":       "abc",
+			},
+		},
+		// The other half of that pair: **no Cache-Control at all**, and no
+		// cookies either, where prompt=create's page sets two. Both absences are
+		// asserted rather than left to a golden nobody compares.
+		AssertHeaders:       []string{"Content-Type", "Content-Language"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Set-Cookie"},
+	},
+
 	{
 		ID: "oidc/authorization/implicit-flow",
 		Doc: Doc{
@@ -1975,21 +2193,23 @@ var oidcPending = []Case{
 			Section:   "Grant types: device authorization grant",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
-		// The reason is the browser half, not the grant. Reaching a denied
-		// device code means the verification page at /realms/{realm}/device,
-		// the OAUTH_GRANT consent page and POST /login-actions/consent, none
-		// of which Gloak serves - they are keycloak.v2 Freemarker pages, the
-		// same family as the four parked login-theme goldens.
-		Reason:  "a denied device code needs the device verification and consent pages, which are not implemented",
-		Fixture: "", // needs a device code a user denied through the browser
+		// **Promoted from Pending on 2026-08-30.** Its reason was the browser
+		// half - the verification page, the OAUTH_GRANT consent page and
+		// POST /login-actions/consent - and all three are now served, so a
+		// fixture can reach a denied device code by cancelling one. See
+		// deviceDeniedFixture, which is the only fixture in the file that walks
+		// two endpoints' worth of pages.
+		//
+		// It never carried a golden, so nothing had to leave parkedGoldens.
+		Status:  Implemented,
+		Fixture: "device-denied",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
 			Form: map[string]string{
 				"grant_type":  "urn:ietf:params:oauth:grant-type:device_code",
-				"client_id":   "gloak-probe-device",
-				"device_code": "REPLACE-WITH-A-REAL-DENIED-DEVICE-CODE",
+				"client_id":   "gloak-probe-device-denied",
+				"device_code": "{{device_code}}",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
