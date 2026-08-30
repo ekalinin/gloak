@@ -24,6 +24,21 @@ jobs:
       - name: Build
         run: CGO_ENABLED=0 go build ./...
 
+      # gofmt is checked because nothing else in this gate does. vet is a
+      # correctness tool and says nothing about layout, and three files reached
+      # main unformatted on 2026-08-30 - found by somebody reading a diff, not
+      # by CI. -l prints the offenders and exits 0 either way, so the list has
+      # to be turned into a failure by hand.
+      - name: Gofmt
+        run: |
+          out="$(gofmt -l ./cmd ./internal)"
+          if [ -n "$out" ]; then
+            echo "these files are not formatted:"
+            echo "$out"
+            echo "run: gofmt -w ./cmd ./internal"
+            exit 1
+          fi
+
       - name: Vet
         run: go vet ./...
 

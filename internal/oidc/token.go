@@ -32,15 +32,15 @@ const (
 // reached. Measured 2026-08-30 against a live 26.7.1 by driving two faults at
 // once, one pair per adjacency:
 //
-//	1. grant_type absent      Missing form parameter: grant_type   (above)
-//	2. grant_type unknown     Unsupported grant_type               (above)
-//	3. client authentication  401, and it does **not** spend the code
-//	4. a duplicated form key  duplicated parameter
-//	5. code absent            Missing parameter: code
-//	6. code not redeemable    Code not valid
-//	7. redirect_uri           Incorrect redirect_uri
-//	8. the code's own client  Auth error: Found different client_id in clientSession
-//	9. PKCE, four answers
+//  1. grant_type absent      Missing form parameter: grant_type   (above)
+//  2. grant_type unknown     Unsupported grant_type               (above)
+//  3. client authentication  401, and it does **not** spend the code
+//  4. a duplicated form key  duplicated parameter
+//  5. code absent            Missing parameter: code
+//  6. code not redeemable    Code not valid
+//  7. redirect_uri           Incorrect redirect_uri
+//  8. the code's own client  Auth error: Found different client_id in clientSession
+//  9. PKCE, four answers
 //
 // Two of those are not where they look. **The redirect URI is compared before
 // the client is**: another client redeeming a code with a wrong redirect_uri
