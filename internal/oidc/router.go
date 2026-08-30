@@ -20,6 +20,16 @@ type handler struct {
 	store      store.Store
 	keys       *keys.Manager
 	issuerBase string
+	// auth holds the browser flow's authentication sessions and authorization
+	// codes, in memory. See internal/oidc/authsession.go for why that is the
+	// faithful model and what it costs: this cut is single-process.
+	auth *authStore
+}
+
+// realmBase is the URL every realm-scoped path hangs off, which the login
+// form's action and the restart redirect both need to spell absolutely.
+func (h *handler) realmBase(realm string) string {
+	return h.issuerBase + "/realms/" + realm
 }
 
 // NewRouter wires the protocol endpoints served so far onto an
@@ -45,7 +55,7 @@ func NewRouter(s store.Store, k *keys.Manager, issuerBase string) http.Handler {
 // its own 404 for a path the first one owns. There are two measured fallback
 // bodies and adding a third would be a divergence.
 func Register(mux *http.ServeMux, s store.Store, k *keys.Manager, issuerBase string) {
-	h := &handler{store: s, keys: k, issuerBase: issuerBase}
+	h := &handler{store: s, keys: k, issuerBase: issuerBase, auth: newAuthStore()}
 	mux.HandleFunc("GET /realms/{realm}/.well-known/openid-configuration", h.discovery)
 	// Both verbs, and they do not read the same place: GET takes its
 	// parameters from the query and POST from the form body. See
@@ -69,6 +79,21 @@ func Register(mux *http.ServeMux, s store.Store, k *keys.Manager, issuerBase str
 	// and nothing here is changed on the strength of it.
 	mux.HandleFunc("GET /realms/{realm}/protocol/openid-connect/logout", h.logout)
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/logout", h.logout)
+	// Both verbs, and unlike the two endpoints above they read the **same**
+	// place for their five parameters - the query - while the credentials come
+	// from the body alone. So a GET here is not a read: it attempts the login
+	// with empty credentials and re-serves the page with "Invalid username or
+	// password." and a rotated session_code, which is measured and which falls
+	// out of reading the credentials from PostForm.
+	//
+	// Keycloak answers PUT, DELETE and PATCH here with a real 405, OPTIONS with
+	// 200 and "Allow: HEAD, POST, GET, OPTIONS" - and **HEAD with a 404**, where
+	// /auth's HEAD is a 200. Two endpoints in one flow, one container, opposite
+	// answers to one verb. That is a sixth data point for follow-up F31 and
+	// nothing here is changed on the strength of it: WithKeycloakFallbacks sends
+	// its 404 to all of them.
+	mux.HandleFunc("GET /realms/{realm}/login-actions/authenticate", h.loginActions)
+	mux.HandleFunc("POST /realms/{realm}/login-actions/authenticate", h.loginActions)
 	mux.HandleFunc("GET /realms/{realm}/protocol/openid-connect/certs", h.certs)
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/token", h.token)
 	mux.HandleFunc("GET /realms/{realm}/protocol/openid-connect/userinfo", h.userinfo)

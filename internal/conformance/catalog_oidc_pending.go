@@ -48,8 +48,7 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: authorization code grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the authorization endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "browser-login",
 		// The fixture stops at the login page, so the case's own request is
 		// the credential POST and its own response is the redirect carrying
@@ -65,11 +64,22 @@ var oidcPending = []Case{
 				"credentialId": "",
 			},
 		},
-		AssertHeaders: []string{"Location", "Cache-Control"},
+		// The header set is asserted, not only the two values P3 could reach.
+		// X-Frame-Options and Content-Security-Policy are the point: this
+		// endpoint's 302 carries both where GET /auth's 302, to the very same
+		// URI with the very same status, carries neither. That difference is
+		// the one a reader comparing the two endpoints most easily assumes
+		// away, and until now no case asserted it. The goldens already held
+		// these values, so nothing was re-recorded to claim them.
+		AssertHeaders: []string{
+			"Location", "Cache-Control", "Content-Security-Policy",
+			"X-Frame-Options", "Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Robots-Tag", "Set-Cookie",
+		},
 		// Location carries a code and a session_state minted by this request;
 		// Set-Cookie carries KEYCLOAK_IDENTITY and KEYCLOAK_SESSION, equally
 		// per-request. Neither can be captured by a fixture and masked by
-		// name, so both are masked whole.
+		// name, so both are masked whole - so both are asserted on presence.
 		VolatileHeaders: []string{"Location", "Set-Cookie"},
 	},
 	{
@@ -79,8 +89,7 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: PKCE, S256 challenge method",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the authorization endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "browser-login-s256",
 		Request: Request{
 			Method: http.MethodPost,
@@ -91,11 +100,22 @@ var oidcPending = []Case{
 				"credentialId": "",
 			},
 		},
-		AssertHeaders: []string{"Location", "Cache-Control"},
+		// The header set is asserted, not only the two values P3 could reach.
+		// X-Frame-Options and Content-Security-Policy are the point: this
+		// endpoint's 302 carries both where GET /auth's 302, to the very same
+		// URI with the very same status, carries neither. That difference is
+		// the one a reader comparing the two endpoints most easily assumes
+		// away, and until now no case asserted it. The goldens already held
+		// these values, so nothing was re-recorded to claim them.
+		AssertHeaders: []string{
+			"Location", "Cache-Control", "Content-Security-Policy",
+			"X-Frame-Options", "Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Robots-Tag", "Set-Cookie",
+		},
 		// Location carries a code and a session_state minted by this request;
 		// Set-Cookie carries KEYCLOAK_IDENTITY and KEYCLOAK_SESSION, equally
 		// per-request. Neither can be captured by a fixture and masked by
-		// name, so both are masked whole.
+		// name, so both are masked whole - so both are asserted on presence.
 		VolatileHeaders: []string{"Location", "Set-Cookie"},
 	},
 	{
@@ -105,8 +125,7 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: PKCE, plain challenge method",
 			Retrieved: "2026-08-20",
 		},
-		Status: Recorded,
-		Reason: "the authorization endpoint is not implemented",
+		Status: Implemented,
 		// Measured: a client with no pkce.code.challenge.method accepts either
 		// method. This case was impossible against security-admin-console,
 		// which pins S256 and answers "code challenge method is not matching
@@ -122,12 +141,65 @@ var oidcPending = []Case{
 				"credentialId": "",
 			},
 		},
-		AssertHeaders: []string{"Location", "Cache-Control"},
+		// The header set is asserted, not only the two values P3 could reach.
+		// X-Frame-Options and Content-Security-Policy are the point: this
+		// endpoint's 302 carries both where GET /auth's 302, to the very same
+		// URI with the very same status, carries neither. That difference is
+		// the one a reader comparing the two endpoints most easily assumes
+		// away, and until now no case asserted it. The goldens already held
+		// these values, so nothing was re-recorded to claim them.
+		AssertHeaders: []string{
+			"Location", "Cache-Control", "Content-Security-Policy",
+			"X-Frame-Options", "Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Robots-Tag", "Set-Cookie",
+		},
 		// Location carries a code and a session_state minted by this request;
 		// Set-Cookie carries KEYCLOAK_IDENTITY and KEYCLOAK_SESSION, equally
 		// per-request. Neither can be captured by a fixture and masked by
-		// name, so both are masked whole.
+		// name, so both are masked whole - so both are asserted on presence.
 		VolatileHeaders: []string{"Location", "Set-Cookie"},
+	},
+	{
+		// The replay of a credential POST, and the one response in this flow
+		// whose Location can be asserted **by value**.
+		//
+		// Every other case here masks its Location whole, because a success
+		// carries a code and a session_state this request minted. This one
+		// carries `error`, `error_description`, `state` and `iss` and nothing
+		// else, so its key order and both its strings are pinned exactly - and
+		// they are the strings a browser meets whenever it uses its back button
+		// after signing in.
+		//
+		// Measured 2026-08-30 as a grid over the three cookies. Which of three
+		// answers a replay gets depends on the cookies alone: KC_RESTART
+		// present restarts, KEYCLOAK_IDENTITY alone answers this, and neither
+		// answers a 400 page. The fixture reaches this branch because the login
+		// itself clears KC_RESTART.
+		ID: "oidc/authorization/replayed-session-code",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authentication: replaying a spent session code",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "browser-login-expired",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "{{login_action}}",
+			Form: map[string]string{
+				"username":     "admin",
+				"password":     "admin",
+				"credentialId": "",
+			},
+		},
+		// Location is asserted by value, which nothing else in this family can
+		// do. Set-Cookie is not asserted at all: measured, this branch sets
+		// none, and AssertAbsentHeaders says so rather than leaving it to the
+		// golden nobody compares.
+		AssertHeaders: []string{
+			"Location", "Cache-Control", "Content-Security-Policy", "X-Frame-Options",
+		},
+		AssertAbsentHeaders: []string{"Set-Cookie"},
 	},
 	{
 		ID: "oidc/authorization/implicit-flow",
@@ -166,8 +238,7 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: response_mode=fragment",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the authorization endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "browser-login-frag",
 		Request: Request{
 			Method: http.MethodPost,
@@ -178,11 +249,22 @@ var oidcPending = []Case{
 				"credentialId": "",
 			},
 		},
-		AssertHeaders: []string{"Location", "Cache-Control"},
+		// The header set is asserted, not only the two values P3 could reach.
+		// X-Frame-Options and Content-Security-Policy are the point: this
+		// endpoint's 302 carries both where GET /auth's 302, to the very same
+		// URI with the very same status, carries neither. That difference is
+		// the one a reader comparing the two endpoints most easily assumes
+		// away, and until now no case asserted it. The goldens already held
+		// these values, so nothing was re-recorded to claim them.
+		AssertHeaders: []string{
+			"Location", "Cache-Control", "Content-Security-Policy",
+			"X-Frame-Options", "Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Robots-Tag", "Set-Cookie",
+		},
 		// Location carries a code and a session_state minted by this request;
 		// Set-Cookie carries KEYCLOAK_IDENTITY and KEYCLOAK_SESSION, equally
 		// per-request. Neither can be captured by a fixture and masked by
-		// name, so both are masked whole.
+		// name, so both are masked whole - so both are asserted on presence.
 		VolatileHeaders: []string{"Location", "Set-Cookie"},
 	},
 	{
