@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -1107,10 +1108,41 @@ func TestInertMaskGuardSeesEveryKind(t *testing.T) {
 		})
 	}
 
-	// Every mask a Case can declare over its body is watched. A fifth added to
-	// case.go and not to bodyMasks would be unwatched and this test would still
-	// pass, so the count is asserted rather than assumed.
-	if len(bodyMasks) != 4 {
-		t.Errorf("bodyMasks watches %d masks; Case declares four over its body", len(bodyMasks))
+	// Every mask a Case can declare over its body has to be watched, and a count
+	// of four does not say that: a fifth field added to case.go and not to
+	// bodyMasks leaves the count at four and this test green. So the fields are
+	// read off the type, and each one has to be either watched or declared not
+	// to be a body mask.
+	//
+	// This started life as `if len(bodyMasks) != 4`, whose comment claimed it
+	// caught the fifth field. It did not. A count catches somebody deleting an
+	// entry from bodyMasks, which the four branches above already catch, so it
+	// was the wrong assertion for the thing it was written for.
+	notABodyMask := map[string]string{
+		"AssertHeaders":       "asserts headers, and masks nothing",
+		"AssertAbsentHeaders": "asserts headers are absent, and masks nothing",
+		"VolatileHeaders":     "a header mask: the golden holds {{volatile}} and nothing can be asked of it",
+		"VolatileTailHeaders": "a header mask, and MaskURLTail already refuses a tail it cannot mask",
+	}
+	watched := map[string]bool{}
+	for _, m := range bodyMasks {
+		watched[m.name] = true
+	}
+	caseType := reflect.TypeOf(Case{})
+	for i := range caseType.NumField() {
+		f := caseType.Field(i)
+		if f.Type != reflect.TypeOf([]string(nil)) || watched[f.Name] {
+			continue
+		}
+		if _, declared := notABodyMask[f.Name]; declared {
+			continue
+		}
+		t.Errorf("Case.%s is a []string on Case and neither bodyMasks nor "+
+			"notABodyMask names it; if it masks a body, watch it here", f.Name)
+	}
+	for name := range notABodyMask {
+		if _, ok := caseType.FieldByName(name); !ok {
+			t.Errorf("notABodyMask excuses Case.%s, which no longer exists", name)
+		}
 	}
 }
