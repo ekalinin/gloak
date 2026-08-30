@@ -116,6 +116,29 @@ stopped would have shipped an unpinned rule that looked measured. It was found
 by asking what the vectors did *not* pin, which is not a question a passing
 suite ever prompts.
 
+**Status, 2026-08-30 (fourth fold).** Three cuts and a gate fix took parity to
+**263 of 516**, closed **F84, F89 and F90**, corrected **F78** for the second
+time, and opened **F92 through F102**.
+
+Three things are worth reading before the list.
+
+**F84 was filed as one defect and shipped as six**, which is exactly what
+happened to F49 a week earlier. The pattern is now established well enough to
+state: a field the admin API ignores is rarely alone, because whatever review
+missed it missed its neighbours too.
+
+**F78's *corrected* entry was wrong a fourth way.** It had already been rewritten
+once by the cut that found it wrong; the cut that went to close it found that
+"the location decides, not the route" is half right - the location decides on
+one route and decides nothing on the other - and that a fifth route answers 400
+rather than 409 at all.
+
+**Nothing in the gate checked `gofmt`.** Three files reached `main` unformatted
+and were found by somebody reading a diff. `vet` is a correctness tool and says
+nothing about layout, so no step existed that could have caught it. Fixed in
+both the Makefile and the workflow, and verified failing before verified
+passing.
+
 One thing that is deliberately **not** filed. P4's handover proposes an entry
 for "a golden that enumerates a realm-wide set without `PristineRealm`", naming
 `admin/role-mapper/group-realm-available`. That case gained the flag in
@@ -3016,7 +3039,27 @@ measured to be order-stable, so their goldens assert real bytes with no
 `UnorderedKeys` mask. What is wrong is the package's own claim about what it
 reproduces. The vectors are in the P5 handover.
 
-## F84: `POST /users` ignores an inline `credentials` array
+## F84: `POST /users` ignores an inline `credentials` array (closed, and it was six)
+
+**Closed 2026-08-30. Filed as one defect, shipped as six** - the second time
+this has happened, after F49.
+
+The array was the headline. Measuring the whole shape found: `PUT /users/{id}`
+ignores the same field; an entry with no `value` is a **500** on the create and
+a **400** on the update, with the whole request rolling back; `value:""` is a
+201 storing a credential with no `credentialData`, which is Keycloak's own
+defect; an empty body on `PUT` is a 400 where the create's is a 500, and Gloak
+shared one decoder and was wrong on the update; and `invalid_request` is a
+**syntax** failure where `unknown_error` is a **binding** one, a distinction
+that only became reachable once the field was read at all.
+
+**The "same code path as `reset-password`" hypothesis was refuted twice.**
+`userLabel` is never read here where reset-password *clears* it, and
+`temporary` is a **disjunction over the array that only ever adds** where
+reset-password with `false` removes.
+
+What the finding said, kept for the record:
+
 
 Keycloak honours it: a user created with `{"username":"x","credentials":[{"type":"password","value":"..."}]}`
 can use the password grant immediately. Gloak accepts the body, answers 201, and
@@ -3055,7 +3098,17 @@ whose `aud` excludes it, which is the rule AGENTS.md already records as the
 reason introspecting your own access token is refused. Filed so the gap is on
 the record rather than looking like an answer nobody wrote down.
 
-## F89: `SizedKeyOrder`'s caller discards the count it needs
+## F89: `SizedKeyOrder`'s caller discards the count it needs (closed, and it was worse)
+
+**Closed 2026-08-30.** The lost count was real and so was a second thing this
+entry did not know: **`mapperConfig` was not ordering the config at all.** There
+was no call to make the count matter. Every existing case used an order-stable
+key set, so "a protocol mapper's `config` key order is reproduced exactly" was
+an accident rather than a property - and one request separates all three
+candidate implementations.
+
+What the finding said, kept for the record:
+
 
 `mapperConfig` in `internal/admin/protocolmappers.go` appends the mirrored
 config keys and, in doing so, loses the number of keys the request carried -
@@ -3066,7 +3119,32 @@ correctly from there until the count survives.
 Reported rather than changed by the cut that found it: `internal/admin` was not
 its file.
 
-## F90: `internal/conformance`'s `attributes` retreat has never been re-examined
+## F90: `internal/conformance`'s `attributes` retreat has never been re-examined (closed - asked, and the answer is "it depends which map")
+
+**Closed 2026-08-30 with this entry's own third outcome**: reproducible for some
+cases and not others, and the two halves have different reasons.
+
+| case | disposition |
+|---|---|
+| `admin/roles/list-realm-full` | mask **removed** - it covered a one-key object and was inert |
+| the five `admin/clients/*` | mask **kept**, blocked on the *serialiser*, not the model - F95 |
+| the two `admin/realms-admin/*` | mask **kept**, blocked on a bucket collision, which is the documented limit |
+
+**A client's `attributes` is placeable and the old reason has stopped being
+true.** All five key sets a default install has come back in `KeyOrder`'s order,
+sorting is wrong on all five, and the keys occupy buckets 0, 2, 3, 9 and 11 at
+the default 16 - nothing collides, so no insertion order is needed. The blocker
+moved rather than vanished: `internal/admin` marshals a Go `map[string]string`.
+
+**A realm's genuinely cannot be placed**: four of eight keys share bucket 0 and
+chain in an insertion order nothing observable reveals.
+
+Pinned by `TestKeyOrderReproducesAClientsAttributes` and
+`TestKeyOrderCannotPlaceARealmsAttributes`, so the answer cannot rot the way the
+question did.
+
+What the question was:
+
 
 `Case.UnorderedKeys` exists because a client's `attributes` is a Java map whose
 order the suite gave up on. That was before `javamap` modelled either
@@ -3087,3 +3165,108 @@ A measured constant with no mechanism behind it is a fact, not an understanding.
 It will hold until something upstream changes it, and nothing here will predict
 that. Filed so the next person knows the reason is missing rather than assuming
 it was obvious.
+
+## F92: three differences remain in `admin/clients/list-all`
+
+Two are bootstrap: `master-realm` is created with no `name` and with neither
+client-scope list. The third is the `audience resolve` mapper serialising two
+ways, which is measured Keycloak behaviour Gloak does not reproduce.
+
+The case's `Reason` names all three, so this entry is where they are counted
+rather than the only place they are written down.
+
+## F93: five `Reason` strings in `catalog_oidc_pending.go` were stale (closed)
+
+**Closed 2026-08-30 by the stream that owned the file**, hours after the guard
+that found them landed. All five said "the token endpoint is not implemented",
+false since P1, and all five named `admin-cli`, which has both the grants two of
+them claimed to measure **disabled** - so they could never have reached the body
+they described.
+
+**Two did not take the replacement text the hand-off suggested**, because the
+suggestion was itself stale the day it was written: both grants landed that same
+day, and what is actually missing is the consent pages for one and an
+authentication channel for the other. A hand-off's suggested text is a hand-off,
+not a measurement.
+
+## F94: a `Reason` naming a plan phase expires when the phase closes
+
+`oidc/authorization/implicit-flow` says "out of P3's scope". P3 is over and the
+flow is still unbuilt, so the sentence is now true of nothing.
+
+**No mechanical check reaches it.** A `\bP\d+\b` rule fires on six `Reason`
+strings of which two are stale, and a guard that cries wolf four times out of
+six is worse than the convention it replaces. This one is for reviewers, and it
+is written down so that "the test would have caught it" is not assumed.
+
+## F95: a client's `attributes` is serialised from a Go map
+
+`internal/admin` marshals `model.Client.Attributes`, a `map[string]string`, so
+`encoding/json` sorts the keys. Keycloak's order is `javamap.KeyOrder`'s and is
+exactly reproducible - measured on all five key sets a default 26.7.1 has, with
+no bucket collision in any of them.
+
+The fix is the move `model.StringMap` already makes for a client scope's
+`attributes` and a protocol mapper's `config`. When it lands, `UnorderedKeys`
+comes off five cases and their goldens start asserting real bytes. This is the
+whole of what stands between F90's answer and the retreat coming off.
+
+## F96: `POST /users` drops `requiredActions`
+
+Measured. Filed by the cut that closed F84, which found it while measuring the
+shape of a neighbouring field - the same way F84 itself was found.
+
+## F97: `{"username":123}` is a 201
+
+Jackson coerces a JSON number into a string, so a body no client should send is
+accepted and creates a user named `123`. Gloak refuses it.
+
+Filed rather than fixed: reproducing a coercion is a decision about how far the
+copy goes, not a local edit.
+
+## F98: the hashless credential's grant differs in the body
+
+The `value:""` credential from F84 stores no `credentialData`, and what the
+password grant then answers is not what Keycloak answers. Gloak reaches the same
+201; the divergence is one step later.
+
+## F99: the `expired_token` grace window has no mechanism and its value is untested
+
+Fifteen seconds is bracketed by three lifespans and nothing explains it - the
+same shape as F91's `7n/4`.
+
+Two separate gaps. **No mechanism**: it is a measured approximation. **No test
+of the value**: the tests use the constant symbolically, so changing 15s to 60s
+fails nothing. That is honest, since the measurement brackets rather than fixes
+the number, but it means the constant carries a comment's worth of evidence and
+not a test's.
+
+## F100: `Request.Form` cannot express a repeated form key
+
+F48 gave the query a `RawQuery` and left the body alone.
+`oidc/device/duplicated-parameter` works around it with `Body` plus an explicit
+`Content-Type`, which works **only** because `buildRequest` uses `Body` when
+`Form` is empty and sets the form `Content-Type` only when it is not - two
+behaviours that now have to stay coupled or that case breaks silently.
+
+A `RawForm` is the honest fix and it is three lines beside `RawQuery`.
+
+## F101: the device grant's browser half is unbuilt
+
+`GET /realms/{realm}/protocol/openid-connect/auth/device` is a page Gloak
+answers 404. With the `OAUTH_GRANT` consent page,
+`POST /login-actions/consent` and `/realms/{realm}/device/status`, that is the
+whole of what stands between the grant as shipped and `access_denied` plus a
+device login a user can actually complete.
+
+Measured down to the redirect targets in `docs/superpowers/handover/p7-device-grant.md`.
+
+## F102: the `user_code` alphabet's freedom from modulo bias is untested
+
+256 is not a multiple of 26, so a plain modulo would favour the first four
+letters; the draw rejects the biased tail instead.
+
+That is a statistical property no unit test in this repository's style can
+catch, so it is written down rather than tested - which is the point of filing
+it, since an untested property that nobody has named reads exactly like a tested
+one.

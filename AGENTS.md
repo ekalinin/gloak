@@ -81,7 +81,7 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `{"error":"HTTP 405 Method Not Allowed"}`, measured independently on the
   protocol and admin sides on the same day, so the fallback family has five
   bodies rather than four. See F31 before adding a 405 or defending the 404.
-- **The five security headers have three exceptions, not one.** A route match
+- **The five security headers have four exceptions, and the fourth is decided by the verb.** A route match
   and a known path hit with the wrong method both get `Referrer-Policy`,
   `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`
   and `X-Robots-Tag`. A path matching no route at all gets none of them,
@@ -96,6 +96,15 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   header), and `PUT .../userLabel` (`text/plain`, so no header).
   `httpx.WriteNoContent` is the one place that decides. Applying them
   uniformly "for consistency" is the fix that would break all three.
+  **The fourth, added 2026-08-30: an `OPTIONS` 200 sends four of the five,
+  omitting `X-Frame-Options`.** Measured on `/auth/device`, `/auth`, `/logout`
+  and `/token`, all four on one container and all four alike - three of them
+  surface this project has served since P1 and P3. The other three exceptions
+  are about the path, the endpoint and the request's `Content-Type`; this one is
+  about the method, and none of them covers it. Gloak answers `OPTIONS` through
+  `WithKeycloakFallbacks`, so nothing was changed on the strength of it; the
+  same sweep also found that **`/auth` is the only one of the four whose
+  `OPTIONS` carries an `Allow` header**. See F31.
 - **That rule was wrong once already.** P2's Task 11 recorded it as "a
   successful `DELETE`'s 204 omits it", from four deletes that all happened to
   send no `Content-Type`. When a new 204 disagrees with a header rule, measure
@@ -118,14 +127,27 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `CLIENT_SECRET_ROTATION` is a disabled preview feature and `secret-rotation`
   is not a registered executor, so `GET .../client-secret/rotated` is always
   404 and `DELETE` always 204. Those constants are the contract, not stubs.
-- **`attributes` key order is the one thing the conformance suite does not
-  compare.** It is a Java `Map` in hash order and Go sorts map keys; matching it
-  would mean emulating `java.util.HashMap` in Go. `Case.UnorderedKeys` sorts
-  both sides, so membership and values are still asserted. This is the only
-  such retreat - do not add a second without writing down why. Not every Java
-  map in this API needs it: a protocol mapper's `config` is one and its key
-  order is reproduced exactly, asserted by `admin/client-scopes/list` since
-  2026-08-30.
+- **`attributes` key order is masked on seven cases and the reason is different
+  on each half.** `Case.UnorderedKeys` sorts both sides, so membership and
+  values stay asserted. This is the only such retreat - do not add a second
+  without writing down why. Not every Java map in this API needs it: a protocol
+  mapper's `config` is reproduced exactly, asserted by
+  `admin/client-scopes/list`.
+  **The old reason - "matching it would mean emulating `java.util.HashMap` in
+  Go" - stopped being true on 2026-08-30**, because the emulation exists and
+  works. `javamap.KeyOrder` places **a client's** `attributes` exactly: all five
+  key sets a default install has come back in its order, sorting is wrong on all
+  five, and the keys occupy buckets 0, 2, 3, 9 and 11 at the default 16, so
+  nothing collides and no insertion order is needed. The mask stays on those
+  five cases for a different reason - `internal/admin` marshals a Go
+  `map[string]string`, which `encoding/json` sorts - and that is F95, one
+  `model.StringMap` away.
+  **A realm's `attributes` genuinely cannot be placed**: four of its eight keys
+  share bucket 0 and chain in an insertion order nothing observable reveals,
+  which is the documented limit of both functions. Those two masks stay for
+  good.
+  An eighth mask was **inert** and is gone: `admin/roles/list-realm-full` masked
+  a one-key object, where sorting is the identity.
 - **Gloak deletes the `Date` header on every response.** Keycloak sends none;
   Go's `net/http` adds one automatically, so `internal/httpx` suppresses it with
   `w.Header()["Date"] = nil`. The conformance verifier cannot catch its removal:
@@ -718,6 +740,58 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   ```
 
   Three endpoints that look like one endpoint three times.
+- **`expired_token` is a window, not a state.** A device code past its expiry
+  answers `expired_token` for about fifteen seconds and then answers
+  `Device code not valid` - the same answer a code that never existed gets.
+  Bracketed at three lifespans and reproduced across two runs at one-second
+  granularity, and **no mechanism for the number has been found**, so it is a
+  measured approximation rather than an understanding. Both obvious
+  implementations are wrong: sweeping at expiry loses the answer the catalogue
+  records, never sweeping leaks. See F91's shape and F99.
+- **The device grant's poll clock is stamped by some answers and not others.** A
+  wrong-client poll and a `slow_down` leave it alone; pending and denied move
+  it. Polls at t=0, 3 and 6 with an interval of 5 give pending, `slow_down`,
+  pending.
+- **A denied device code is not consumed and a redeemed one is.**
+- **CIBA checks `login_hint` before `scope`**, and checks presence and value in
+  four interleaved steps rather than two. Only a request missing **both** shows
+  the order, which is why a case set that breaks one parameter at a time passes
+  a wrong implementation - it did, on this very endpoint, and was caught by
+  asking rather than by the suite.
+- **CIBA cannot complete on a default 26.7.1 and its 503 is the contract.** A
+  CIBA-enabled client sending a valid request gets **503 `server_error` /
+  "Failed to send authentication request"**, because the default
+  `ciba-http-auth-channel` needs an external endpoint `start-dev` does not
+  configure - the container log says `Authentication Channel Request URI not
+  set properly`. No default container mints an `auth_req_id`, so
+  `oidc/ciba/poll-pending` and `poll-complete` are **unmeasurable in this
+  project's container regime** rather than unimplemented, and their `Reason`
+  says so.
+- **One condition, two endpoints, two families disagreeing in opposite ways.**
+  The device grant's "grant disabled" pair share neither code nor sentence;
+  CIBA's share both and differ on the **status**, 401 against 400.
+
+- **A user create's inline `credentials` array is honoured, and reading it is
+  not the same code path as `reset-password`.** Keycloak stores the password
+  and the user can use the password grant immediately; `PUT /users/{id}` honours
+  the same field. Two things refute reusing the reset-password helper:
+  `userLabel` is **never read** here where reset-password *clears* it, and
+  **`temporary` is a disjunction over the array that only ever adds**
+  `UPDATE_PASSWORD` - both orderings of `{true, false}` leave the action on,
+  where reset-password with `false` removes it. Each entry replaces the one
+  before it, so an array of two passwords leaves one credential holding the
+  second.
+- **A credential entry with no `value` is a 500 on the create and a 400 on the
+  update**, and the whole request rolls back - a third answer to a missing
+  password after `reset-password`'s `No password provided`. `value:""` is a
+  **201** storing a credential with no `credentialData` at all, which is
+  Keycloak's own defect and is reproduced as far as the admin API reaches.
+- **`PUT /clients/{uuid}` matches its protocol mappers by (protocol, name), not
+  by id.** Nothing had written that down, and without it every read-modify-write
+  through that route becomes a 400 `invalid_input` - which is also what that
+  route answers instead of the 409 the other four give, so a mapper id collision
+  has **three** answers across five routes, not two.
+
 - **The two scope-mapping write pairs read different keys off the same JSON.**
   `POST`/`DELETE .../scope-mappings/realm` resolves each entry by **`id`**,
   realm-wide, and never looks at `name`: an entry with a real id and a wrong
@@ -790,11 +864,18 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **`/login-actions/authenticate` reads its parameters from the query and its
   credentials from the body, and `/auth` does the opposite.** Two endpoints in
   one flow with mirror-image rules, and `r.Form` merges the two and hides both.
-- **A repeated parameter is an error at `/auth` and at neither of its
-  neighbours.** `/logout` takes the first value and so does
-  `/login-actions/authenticate` - `zz` twice, `tab_id` twice, even
-  `session_code` twice with the second value garbage all log in. `/auth` is the
-  odd one of the three, not the rule.
+- **A repeated parameter is checked by three of the six endpoints that have been
+  measured for it, with two different codes.** `/auth` answers
+  `invalid_request` / `duplicated parameter` seventh of ten; `/auth/device`
+  answers **`invalid_grant`** with the same description; the token endpoint
+  answers `invalid_request`, body only, fourth and after client authentication.
+  `/logout`, `/login-actions/authenticate` and `ext/ciba/auth` do not check it
+  at all - the first value wins, and `session_code` twice with the second value
+  garbage still logs in.
+  (This bullet read "`/auth` is the odd one of the three" until 2026-08-30. It
+  was a fair summary of the browser trio and stopped being one as soon as three
+  more endpoints were measured. A rule drawn over the endpoints that happened to
+  exist is a rule about the sample.)
 - **`GET /login-actions/authenticate` is not a read.** It attempts the login
   with whatever credentials the body carries - none, for a GET - and answers 200
   with the page re-served, `Invalid username or password.`, and the
@@ -1070,6 +1151,11 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
   `make lint` runs both invocations too, so the local target and the gate are
   the same check. They were not until 2026-08-29, and a contributor who ran
   `make lint` and got silence could still be broken by CI.
+  **Both also check `gofmt`, because nothing else in this gate does.** `vet` is
+  a correctness tool and says nothing about layout, so three files reached
+  `main` unformatted on 2026-08-30 - found by somebody reading a diff, since no
+  step existed that could have caught it. `gofmt -l` exits 0 whatever it prints,
+  so its output is turned into a failure by hand in both places.
   A green run does not mean the two store drivers agree: that evidence still
   comes only from running the
   Postgres suite by hand. The comment is posted with the job's own token, and a

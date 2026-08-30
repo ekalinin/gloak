@@ -67,12 +67,16 @@ Working today:
 - protocol mappers and scope mappings: both tags in full - 54 operations, where
   the scope-mapping guard turned out **not** to be the role-mapping guard, in
   both directions at once
+- the device authorization grant, including that `expired_token` is a
+  fifteen-second window rather than a state - and CIBA's refusals, whose flow
+  **cannot** be measured on a default 26.7.1 because its authentication channel
+  needs an endpoint the container does not configure
 - client secrets, service accounts, user credentials and user logout
 - a documentation-derived conformance suite (`internal/conformance`) that checks
   Gloak's responses byte-for-byte against bytes recorded from a live
   Keycloak 26.7.1
 - a parity meter whose denominator comes from Keycloak's own OpenAPI description
-  rather than from a hand-kept list: **242 of 500 enumerated behaviours served**,
+  rather than from a hand-kept list: **263 of 516 enumerated behaviours served**,
   plus four chapters whose surface has not been counted
 - an external oracle: `make oracle` drives Gloak with `kcadm.sh`, Keycloak's own
   admin CLI, which asks for things no recorded case asks for
@@ -161,9 +165,13 @@ the `master` realm is the `master-realm` client rather than `realm-management`.
 
 ```bash
 make test    # no Docker, no network
-make lint
+make lint    # gofmt, then go vet with and without the docker tag
 make build
 ```
+
+`make lint` is the same check CI runs, deliberately. A local target weaker than
+the gate is worse than no target: a contributor runs it, gets silence, and is
+broken by CI anyway.
 
 `go test ./...` must never require Docker or network access, so tests that need
 either are behind the `docker` build tag:
@@ -195,10 +203,10 @@ and stay out of the total rather than being dropped from it silently, which
 would inflate the percentage by hiding the parts nobody has counted. It reads:
 
 ```
-total: 242 of 500 enumerated behaviours served; 4 chapters not enumerated
+total: 263 of 516 enumerated behaviours served; 4 chapters not enumerated
 ```
 
-The denominator is 500 rather than 413 plus a fixed number because the protocol
+The denominator is 516 rather than 413 plus a fixed number because the protocol
 chapters have no OpenAPI source and are counted case by case, so they grow as
 measurements find behaviours nobody had named. It moved from 485 on 2026-08-29
 for the first time since it was set, and again the next day when the logout
@@ -258,7 +266,7 @@ deliberate - it is how "measured, never remembered" stops being a convention.
 JWKS keys and Gloak generated one; realm keys are now modelled and persisted, so
 that case passes.
 
-**`make record` is silent on a clean checkout.** It rewrites 327 goldens with
+**`make record` is silent on a clean checkout.** It rewrites 380 goldens with
 identical bytes and moves none, so any diff at all is one to read carefully.
 
 That was not always so. Four login-theme pages churned their whole body on every
@@ -266,9 +274,10 @@ run, because the `/resources/<hash>/` segment is regenerated per container start
 and the count went from three to four inside two days. Those four are `Pending`,
 so nothing compared them and the churn bought nothing. The recorder now leaves a
 `Pending` golden exactly as it found it; the way to ask for one back is to
-promote the case to `Recorded`, which is what `Recorded` already means. Seven
+promote the case to `Recorded`, which is what `Recorded` already means. Five
 `Pending` goldens are parked in all, each declared in `parkedGoldens` with the
-reason it is kept - a parked golden is a measurement, never a contract.
+reason it is kept - a parked golden is a measurement, never a contract. It was
+seven until the device grant turned two of them into compared contracts.
 
 A fourth used to churn - `oidc/token/password-grant-admin-cli`'s `scope`, whose
 word order is not stable across container starts. `UnorderedWords` sorts the
