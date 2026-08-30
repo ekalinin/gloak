@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/ekalinin/gloak/internal/httpx"
+	"github.com/ekalinin/gloak/internal/javamap"
 	"github.com/ekalinin/gloak/internal/model"
 	"github.com/ekalinin/gloak/internal/store"
 )
@@ -430,6 +431,23 @@ func protocolMapperFrom(rep protocolMapperRequest) model.ProtocolMapper {
 // the key is not already present - a body sending
 // `{"access.token.claim":"true","introspection.token.claim":"false"}` kept the
 // false.
+//
+// Third, the whole thing is put into the order Keycloak serialises it in, which
+// is a Java map's and not the request's. F89: the count `javamap.SizedKeyOrder`
+// needs is the number of keys the map was **built for** - the request's, before
+// the mirrors were appended - and this used to lose it between the second step
+// and the third.
+//
+// Measured 2026-08-30 with a body carrying
+// `{claim.name, jsonType.label, access.token.claim, id.token.claim}` on
+// `oidc-usermodel-attribute-mapper`, which grows to six keys and comes back
+//
+//	id.token.claim, access.token.claim, introspection.token.claim,
+//	claim.name, jsonType.label, userinfo.token.claim
+//
+// That is `SizedKeyOrder(4, ...)`. `SizedKeyOrder(6, ...)` puts
+// `introspection.token.claim` second and the request's own order puts
+// `claim.name` first, so the one body separates all three.
 func mapperConfig(rep protocolMapperRequest) model.StringMap {
 	out := model.StringMap{}
 	for _, p := range rep.Config {
@@ -437,6 +455,13 @@ func mapperConfig(rep protocolMapperRequest) model.StringMap {
 			out = append(out, p)
 		}
 	}
+	// The count, taken before a mirror can move it. Whether a key dropped for
+	// an empty value still counts towards it is **not measured and appears not
+	// to be measurable**: no subset of a twelve-key pool of realistic config
+	// keys has SizedKeyOrder disagreeing between n and n+1, so no request can
+	// tell the two readings apart. The surviving count is what the removal
+	// happening first implies.
+	builtFor := len(out)
 	provider := protocolMapperProviders[rep.ProtocolMapper]
 	mirror := func(from, to string, enabled bool) {
 		if !enabled {
@@ -453,6 +478,29 @@ func mapperConfig(rep protocolMapperRequest) model.StringMap {
 	}
 	mirror(accessTokenClaim, introspectionTokenClaim, provider.Introspection)
 	mirror(idTokenClaim, userinfoTokenClaim, provider.Userinfo)
+	return orderedMapperConfig(builtFor, out)
+}
+
+// orderedMapperConfig puts a config's entries in the order Keycloak's
+// serialiser writes them.
+//
+// It is a rewrite of the slice rather than a sort of it, because
+// javamap.SizedKeyOrder works on keys: the pairs are rebuilt in the order it
+// gives back. A config of fewer than two entries has one order, and skipping it
+// keeps every one-key mapper out of the model's way.
+func orderedMapperConfig(builtFor int, in model.StringMap) model.StringMap {
+	if len(in) < 2 {
+		return in
+	}
+	keys := make([]string, 0, len(in))
+	for _, p := range in {
+		keys = append(keys, p.Key)
+	}
+	out := make(model.StringMap, 0, len(in))
+	for _, k := range javamap.SizedKeyOrder(builtFor, keys) {
+		v, _ := in.Get(k)
+		out = append(out, model.StringPair{Key: k, Value: v})
+	}
 	return out
 }
 
