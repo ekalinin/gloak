@@ -1795,6 +1795,28 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		if len(got) != 0 {
 			t.Errorf("the deleted role survives on the scope: %v", names(got))
 		}
+
+		// **The cascade itself**, which the two assertions above cannot see: the
+		// listings JOIN keycloak_role, so a mapping row left behind by a deleted
+		// role is invisible to them and dropping the foreign key changes no read.
+		// A mutation removing `ON DELETE CASCADE` survived exactly there.
+		//
+		// Reusing the id is what makes it observable. A role id is a fresh UUID
+		// in every path that mints one, so this can only be reached through the
+		// store - which is the level the constraint lives at. With the cascade
+		// the row went with the old role and the new one starts unmapped;
+		// without it the orphan resurfaces under a role that was never mapped.
+		reborn := &model.Role{ID: cr.ID, RealmID: realm.ID, ClientID: c.ID, Name: "reborn"}
+		if err := s.Roles().Create(ctx, reborn); err != nil {
+			t.Fatalf("Roles().Create reusing the deleted id: %v", err)
+		}
+		got, err = s.Roles().ListClientScopeMappings(ctx, c.ID)
+		if err != nil {
+			t.Fatalf("ListClientScopeMappings after the id was reused: %v", err)
+		}
+		if !reflect.DeepEqual(names(got), []string{"realm-role"}) {
+			t.Errorf("a mapping outlived the role that carried it: %v", names(got))
+		}
 	})
 }
 
