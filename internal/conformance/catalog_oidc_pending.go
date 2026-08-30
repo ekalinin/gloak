@@ -543,16 +543,24 @@ var oidcPending = []Case{
 			Section:   "Grant types: device authorization grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the token endpoint is not implemented",
-		Fixture: "", // needs a device_code from a completed device authorization request
+		Status: Pending,
+		// **This reason said "the token endpoint is not implemented" until
+		// 2026-08-30, and that had been false since P1.** The token endpoint
+		// has served four grants for days and now dispatches this one too;
+		// what is missing is an *approved* device code, which needs the
+		// verification and consent pages. Same reason as
+		// oidc/device/poll-access-denied, and the client_id was admin-cli,
+		// which has the grant disabled and so could never have reached this
+		// body at all.
+		Reason:  "a completed device authorization needs the device verification and consent pages, which are not implemented",
+		Fixture: "", // needs a device_code a user approved through the browser
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
 			Form: map[string]string{
 				"grant_type":  "urn:ietf:params:oauth:grant-type:device_code",
-				"client_id":   "admin-cli",
-				"device_code": "REPLACE-WITH-A-REAL-DEVICE-CODE",
+				"client_id":   "gloak-probe-device",
+				"device_code": "REPLACE-WITH-A-REAL-APPROVED-DEVICE-CODE",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
@@ -567,15 +575,20 @@ var oidcPending = []Case{
 			Section:   "Grant types: client initiated backchannel authentication",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the token endpoint is not implemented",
-		Fixture: "", // needs an auth_req_id from a completed CIBA authentication request
+		Status: Pending,
+		// The same correction: the token endpoint is implemented and dispatches
+		// this grant. What is missing is an auth_req_id, and a default 26.7.1
+		// mints none - see the CIBA block further down. The client_id was
+		// admin-cli, which has the CIBA grant disabled and so could never have
+		// reached this body either.
+		Reason:  "a default 26.7.1 has no CIBA authentication channel, so no auth_req_id can be obtained to redeem",
+		Fixture: "", // needs an auth_req_id, which needs an external authentication channel endpoint
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
 			Form: map[string]string{
 				"grant_type":  "urn:openid:params:grant-type:ciba",
-				"client_id":   "admin-cli",
+				"client_id":   "gloak-probe-ciba",
 				"auth_req_id": "REPLACE-WITH-A-REAL-AUTH-REQ-ID",
 			},
 		},
@@ -592,7 +605,7 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-20",
 		},
 		Status:  Pending,
-		Reason:  "the token endpoint is not implemented",
+		Reason:  "the token-exchange grant is not implemented",
 		Fixture: "", // token exchange needs a previously issued token and is a feature that must be explicitly enabled
 		Request: Request{
 			Method: http.MethodPost,
@@ -614,7 +627,7 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-20",
 		},
 		Status:  Pending,
-		Reason:  "the token endpoint is not implemented",
+		Reason:  "the jwt-bearer grant is not implemented",
 		Fixture: "", // needs a client configured to trust a signed JWT assertion, which no bootstrapped client has
 		Request: Request{
 			Method: http.MethodPost,
@@ -635,7 +648,7 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-20",
 		},
 		Status:  Pending,
-		Reason:  "the token endpoint is not implemented",
+		Reason:  "DPoP is not implemented",
 		Fixture: "", // needs a client configured to require DPoP, which no bootstrapped client has, and a proof JWT bound to the request
 		Request: Request{
 			Method: http.MethodPost,
@@ -1695,6 +1708,17 @@ var oidcPending = []Case{
 	},
 
 	// --- Device authorization endpoint ---
+	//
+	// **Five of these cases named admin-cli on the bootstrap fixture until
+	// 2026-08-30, and so measured a refusal rather than the grant.** The device
+	// grant is off on every client of a default 26.7.1 - all six bootstrapped
+	// ones - which the parked golden for authorization-request said in as many
+	// words. They now create a client carrying
+	// oauth2.device.authorization.grant.enabled, which is what the endpoint
+	// needs and what nothing in the catalogue had.
+	//
+	// The refusal is not lost: it is oidc/device/grant-disabled below, which
+	// inherited the request the five used to share.
 	{
 		ID: "oidc/device/authorization-request",
 		Doc: Doc{
@@ -1702,8 +1726,39 @@ var oidcPending = []Case{
 			Section:   "Device authorization endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the device authorization endpoint is not implemented",
+		Status:  Implemented,
+		Fixture: "device-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/auth/device",
+			Form: map[string]string{
+				"client_id": "gloak-probe-device",
+				"scope":     "openid",
+			},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		// The device endpoint's success is the one response in this chapter
+		// that carries a Cache-Control, and it carries no Pragma. The token
+		// endpoint beside it carries both on every response including its
+		// rejections, so neither absence is a default.
+		AssertAbsentHeaders: []string{"Pragma"},
+		// Three values, not the six this case masked while it was Pending.
+		// verification_uri is {{issuer}}/realms/master/device, and expires_in
+		// and interval are the realm's measured 600 and 5 - configuration
+		// rather than randomness, and asserting them is most of the point of
+		// the case.
+		Volatile: []string{"device_code", "user_code", "verification_uri_complete"},
+	},
+	{
+		// The refusal the five cases above used to measure between them, kept
+		// as a case of its own so that promoting them cost no coverage.
+		ID: "oidc/device/grant-disabled",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Device authorization endpoint",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
@@ -1714,10 +1769,75 @@ var oidcPending = []Case{
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
-		Volatile: []string{
-			"device_code", "user_code", "verification_uri",
-			"verification_uri_complete", "expires_in", "interval",
+		// No rejection on this endpoint carries a Cache-Control, where its own
+		// 200 does. That is the opposite way round from the token endpoint and
+		// is the reason both headers are pinned on both cases.
+		AssertAbsentHeaders: []string{"Cache-Control", "Pragma"},
+	},
+	{
+		// invalid_grant here and invalid_request at the token endpoint, for the
+		// identical description. Two endpoints in one flow, one container.
+		ID: "oidc/device/duplicated-parameter",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Device authorization endpoint",
+			Retrieved: "2026-08-30",
 		},
+		Status:  Implemented,
+		Fixture: "device-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/auth/device",
+			// **Request.Form cannot say "the same key twice"** - it is a
+			// map[string]string, the same limitation F48 solved for the query
+			// with RawQuery and did not solve for the body. Body plus an
+			// explicit Content-Type is the way to express it: buildRequest uses
+			// Body only when Form is empty, and only sets the form Content-Type
+			// when Form is not.
+			Headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded"},
+			Body:    []byte("client_id=gloak-probe-device&zz=1&zz=2"),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// unauthorized_client, one code away from the invalid_client an unknown
+		// client gets for the identical description.
+		ID: "oidc/device/confidential-no-secret",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Device authorization endpoint: client authentication",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "device-confidential",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/auth/device",
+			Form: map[string]string{
+				"client_id": "gloak-probe-device-confidential",
+				"scope":     "openid",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "oidc/device/unknown-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Device authorization endpoint: client authentication",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "bootstrap",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/auth/device",
+			Form: map[string]string{
+				"client_id": "gloak-probe-no-such-client",
+				"scope":     "openid",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
 	},
 	{
 		ID: "oidc/device/poll-authorization-pending",
@@ -1726,58 +1846,124 @@ var oidcPending = []Case{
 			Section:   "Grant types: device authorization grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the device authorization endpoint is not implemented",
-		Fixture: "", // needs a real device_code that has not yet been authorized by a user
+		Status:  Implemented,
+		Fixture: "device-pending",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
 			Form: map[string]string{
 				"grant_type":  "urn:ietf:params:oauth:grant-type:device_code",
-				"client_id":   "admin-cli",
-				"device_code": "REPLACE-WITH-A-REAL-PENDING-DEVICE-CODE",
+				"client_id":   "gloak-probe-device-pending",
+				"device_code": "{{device_code}}",
 			},
 		},
-		AssertHeaders: []string{"Content-Type"},
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "Pragma"},
 	},
 	{
+		// The fixture polls once; this is the second poll, inside the interval.
 		ID: "oidc/device/poll-slow-down",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
 			Section:   "Grant types: device authorization grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the device authorization endpoint is not implemented",
-		Fixture: "", // needs a real device_code polled faster than the returned interval
+		Status:  Implemented,
+		Fixture: "device-polled",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
 			Form: map[string]string{
 				"grant_type":  "urn:ietf:params:oauth:grant-type:device_code",
-				"client_id":   "admin-cli",
-				"device_code": "REPLACE-WITH-A-REAL-DEVICE-CODE-POLLED-TOO-FAST",
+				"client_id":   "gloak-probe-device-polled",
+				"device_code": "{{device_code}}",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},
 	{
+		// oauth2.device.code.lifespan is "1" on this fixture's client and the
+		// fixture waits two seconds, which is how an expiry is reached without
+		// moving the realm's oauth2DeviceCodeLifespan for every case recorded
+		// after it.
 		ID: "oidc/device/poll-expired-token",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
 			Section:   "Grant types: device authorization grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the device authorization endpoint is not implemented",
-		Fixture: "", // needs a real device_code left to expire, which a bootstrap fixture cannot wait out
+		Status:  Implemented,
+		Fixture: "device-expired",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type":  "urn:ietf:params:oauth:grant-type:device_code",
+				"client_id":   "gloak-probe-device-expired",
+				"device_code": "{{device_code}}",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "oidc/device/poll-unknown-device-code",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Grant types: device authorization grant",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "device-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type":  "urn:ietf:params:oauth:grant-type:device_code",
+				"client_id":   "gloak-probe-device",
+				"device_code": "gloak-probe-not-a-device-code",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// invalid_request, where an empty device_code= reaches the lookup and
+		// answers invalid_grant "Device code not valid" instead.
+		ID: "oidc/device/poll-missing-device-code",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Grant types: device authorization grant",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "device-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+				"client_id":  "gloak-probe-device",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The same condition oidc/device/grant-disabled measures at the other
+		// endpoint, with a different code **and** a different description.
+		// Keeping both is what says the two are not one string.
+		ID: "oidc/device/poll-grant-disabled",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Grant types: device authorization grant",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
 			Form: map[string]string{
 				"grant_type":  "urn:ietf:params:oauth:grant-type:device_code",
 				"client_id":   "admin-cli",
-				"device_code": "REPLACE-WITH-A-REAL-EXPIRED-DEVICE-CODE",
+				"device_code": "gloak-probe-not-a-device-code",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
@@ -1789,15 +1975,20 @@ var oidcPending = []Case{
 			Section:   "Grant types: device authorization grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the device authorization endpoint is not implemented",
-		Fixture: "", // needs a real device_code that a second user denied via the browser
+		Status: Pending,
+		// The reason is the browser half, not the grant. Reaching a denied
+		// device code means the verification page at /realms/{realm}/device,
+		// the OAUTH_GRANT consent page and POST /login-actions/consent, none
+		// of which Gloak serves - they are keycloak.v2 Freemarker pages, the
+		// same family as the four parked login-theme goldens.
+		Reason:  "a denied device code needs the device verification and consent pages, which are not implemented",
+		Fixture: "", // needs a device code a user denied through the browser
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
 			Form: map[string]string{
 				"grant_type":  "urn:ietf:params:oauth:grant-type:device_code",
-				"client_id":   "admin-cli",
+				"client_id":   "gloak-probe-device",
 				"device_code": "REPLACE-WITH-A-REAL-DENIED-DEVICE-CODE",
 			},
 		},
@@ -1805,6 +1996,19 @@ var oidcPending = []Case{
 	},
 
 	// --- Backchannel authentication endpoint (CIBA) ---
+	//
+	// **CIBA cannot complete on a default Keycloak 26.7.1, and the two poll
+	// cases below are Pending because of that rather than because Gloak has
+	// not got round to them.** Measured 2026-08-30: a client carrying
+	// oidc.ciba.grant.enabled sending a well-formed authentication request
+	// answers 503 server_error "Failed to send authentication request",
+	// because the default ciba-http-auth-channel provider needs an external
+	// HTTP endpoint that start-dev does not configure. So there is no
+	// auth_req_id a default container could ever hand a fixture.
+	//
+	// That makes the 503 a contract rather than a gap - the same shape as
+	// client-types answering 501 and .../client-secret/rotated answering a
+	// permanent 404 - and it is what oidc/ciba/channel-unavailable records.
 	{
 		ID: "oidc/ciba/authentication-request",
 		Doc: Doc{
@@ -1812,8 +2016,7 @@ var oidcPending = []Case{
 			Section:   "Backchannel authentication endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the backchannel authentication endpoint is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
@@ -1826,7 +2029,205 @@ var oidcPending = []Case{
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
-		Volatile:      []string{"auth_req_id", "expires_in", "interval"},
+		// 401 where the device endpoint beside it answers 400 for the
+		// equivalent refusal, which is what the parked golden was kept for and
+		// is now a contract.
+		AssertAbsentHeaders: []string{"Cache-Control", "Pragma"},
+	},
+	{
+		// The 503 a fully valid request gets. Every check in front of it has to
+		// pass to reach it, so this case is also what pins the order.
+		ID: "oidc/ciba/channel-unavailable",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Backchannel authentication endpoint",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "ciba-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/ext/ciba/auth",
+			Form: map[string]string{
+				"client_id":  "gloak-probe-ciba",
+				"scope":      "openid",
+				"login_hint": "admin",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// "missing parameter : scope" - lower case, with a space on **both**
+		// sides of the colon, where every other missing-parameter description
+		// on the protocol side is "Missing parameter: x". The CIBA grant one
+		// endpoint away uses that ordinary spelling, which is why both are
+		// cases.
+		ID: "oidc/ciba/missing-scope",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Backchannel authentication endpoint",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "ciba-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/ext/ciba/auth",
+			Form: map[string]string{
+				"client_id":  "gloak-probe-ciba",
+				"login_hint": "admin",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **login_hint is checked before scope**, which a request missing one
+		// of them cannot say. This case and missing-scope above send the other
+		// parameter; oidc/ciba/missing-both sends neither and is what decides
+		// the adjacency.
+		ID: "oidc/ciba/missing-login-hint",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Backchannel authentication endpoint",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "ciba-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/ext/ciba/auth",
+			Form: map[string]string{
+				"client_id": "gloak-probe-ciba",
+				"scope":     "openid",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "oidc/ciba/missing-both-parameters",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Backchannel authentication endpoint",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "ciba-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/ext/ciba/auth",
+			Form:   map[string]string{"client_id": "gloak-probe-ciba"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// A present-but-empty login_hint and one naming nobody are one answer,
+		// so this is the value check rather than the presence check above it.
+		// invalid_request with a lower-case underscored description, unlike
+		// everything else on this endpoint.
+		ID: "oidc/ciba/invalid-user",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Backchannel authentication endpoint",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "ciba-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/ext/ciba/auth",
+			Form: map[string]string{
+				"client_id":  "gloak-probe-ciba",
+				"scope":      "openid",
+				"login_hint": "gloak-probe-no-such-user",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The description echoes the raw scope parameter, the way /auth's does.
+		// It is the last check before the channel, and it runs **after** the
+		// login_hint's lookup, which is what oidc/ciba/invalid-user's sibling
+		// probe in internal/oidc's own tests pins.
+		ID: "oidc/ciba/invalid-scope",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Backchannel authentication endpoint",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "ciba-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/ext/ciba/auth",
+			Form: map[string]string{
+				"client_id":  "gloak-probe-ciba",
+				"scope":      "gloak-probe-bogus-scope",
+				"login_hint": "admin",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// 400 for the string the backchannel endpoint answers 401 for. One
+		// description, two statuses - the mirror image of the device grant's
+		// pair, which shares neither.
+		ID: "oidc/ciba/poll-grant-disabled",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Grant types: client initiated backchannel authentication",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "bootstrap",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type":  "urn:openid:params:grant-type:ciba",
+				"client_id":   "admin-cli",
+				"auth_req_id": "gloak-probe-not-an-auth-req-id",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "oidc/ciba/poll-invalid-auth-req-id",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Grant types: client initiated backchannel authentication",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "ciba-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type":  "urn:openid:params:grant-type:ciba",
+				"client_id":   "gloak-probe-ciba",
+				"auth_req_id": "gloak-probe-not-an-auth-req-id",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "oidc/ciba/poll-missing-auth-req-id",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Grant types: client initiated backchannel authentication",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "ciba-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type": "urn:openid:params:grant-type:ciba",
+				"client_id":  "gloak-probe-ciba",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
 	},
 	{
 		ID: "oidc/ciba/poll-pending",
@@ -1835,15 +2236,20 @@ var oidcPending = []Case{
 			Section:   "Grant types: client initiated backchannel authentication",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the backchannel authentication endpoint is not implemented",
-		Fixture: "", // needs a real auth_req_id that a second user has not yet approved
+		Status: Pending,
+		// Not "not implemented". A default 26.7.1 has no configured
+		// authentication channel, so it mints no auth_req_id at all - see the
+		// block comment above oidc/ciba/authentication-request. Nothing in this
+		// project's container regime can record this case, and saying "not
+		// implemented" would read as a to-do somebody could close.
+		Reason:  "a default 26.7.1 has no CIBA authentication channel, so no auth_req_id can be obtained to poll with",
+		Fixture: "", // needs an auth_req_id, which needs an external authentication channel endpoint
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
 			Form: map[string]string{
 				"grant_type":  "urn:openid:params:grant-type:ciba",
-				"client_id":   "admin-cli",
+				"client_id":   "gloak-probe-ciba",
 				"auth_req_id": "REPLACE-WITH-A-REAL-PENDING-AUTH-REQ-ID",
 			},
 		},
@@ -1857,14 +2263,14 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-20",
 		},
 		Status:  Pending,
-		Reason:  "the backchannel authentication endpoint is not implemented",
-		Fixture: "", // needs a real auth_req_id that a second user has approved
+		Reason:  "a default 26.7.1 has no CIBA authentication channel, so no auth_req_id can be obtained to approve",
+		Fixture: "", // needs an auth_req_id a second user approved, which needs that channel
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
 			Form: map[string]string{
 				"grant_type":  "urn:openid:params:grant-type:ciba",
-				"client_id":   "admin-cli",
+				"client_id":   "gloak-probe-ciba",
 				"auth_req_id": "REPLACE-WITH-A-REAL-APPROVED-AUTH-REQ-ID",
 			},
 		},

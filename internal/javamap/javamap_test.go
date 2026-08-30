@@ -63,6 +63,94 @@ func TestKeyOrderReproducesMeasuredKeycloakOrders(t *testing.T) {
 	}
 }
 
+// F90's answer: a client's `attributes` is the **no-argument** constructor's
+// map, and KeyOrder places it exactly.
+//
+// The five vectors are every distinct attribute key set a default 26.7.1 has
+// on this resource, read off a live container on 2026-08-30: the four shapes
+// the six bootstrapped clients come in, and the one a client created through
+// `POST /admin/realms/{realm}/clients` gets. Sorting is measurably not the
+// answer to any of them - `realm_client` sorts last in four of the five and
+// comes back first in all five.
+//
+// SizedKeyOrder is wrong on the four-key one, which is what says the choice of
+// constructor is a real fork here rather than a distinction without a
+// difference. The conformance suite's `attributes` retreat rests on this, so
+// the vectors live where the rule does.
+//
+// **What they do not pin is the tie-break.** Every key here lands in a bucket
+// of its own - 0, 2, 3, 9 and 11 at the default 16 - so no vector in this test
+// exercises a chain, and a build that resolved collisions the other way round
+// would pass all five. That limit is pinned by
+// TestKeyOrderCannotResolveBucketCollisions below and by nothing here. They do
+// pin the table size: at 8, 32 or 64 buckets at least one of the five comes
+// back in a different order.
+func TestKeyOrderReproducesAClientsAttributes(t *testing.T) {
+	cases := []struct {
+		name string
+		want []string
+	}{
+		{"account", []string{"realm_client", "post.logout.redirect.uris"}},
+		{"account-console", []string{
+			"realm_client", "post.logout.redirect.uris", "pkce.code.challenge.method",
+		}},
+		{"admin-cli", []string{
+			"realm_client", "client.use.lightweight.access.token.enabled",
+		}},
+		// broker and master-realm carry realm_client alone, which no order can
+		// get wrong, so they are not vectors.
+		{"security-admin-console", []string{
+			"realm_client", "client.use.lightweight.access.token.enabled",
+			"post.logout.redirect.uris", "pkce.code.challenge.method",
+		}},
+		{"a client created through the Admin API", []string{
+			"realm_client", "client.secret.creation.time",
+		}},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			in := slices.Sorted(slices.Values(c.want))
+			if got := javamap.KeyOrder(in); !slices.Equal(got, c.want) {
+				t.Fatalf("want %v, got %v", c.want, got)
+			}
+		})
+	}
+}
+
+// The other half of F90's answer, and the reason the conformance suite's
+// retreat is not one thing: a **realm's** attributes are the same constructor
+// and KeyOrder still cannot place them, because four of the eight keys share
+// bucket 0 and Keycloak chains a collision in an insertion order nothing
+// observable reveals.
+//
+// Measured 2026-08-30 on a realm created through POST /admin/realms. The
+// assertion is that the first three positions are wrong and the last five are
+// right: the bucket rule holds and only the chain does not, exactly as on the
+// 21 admin role names.
+func TestKeyOrderCannotPlaceARealmsAttributes(t *testing.T) {
+	measured := []string{
+		"cibaBackchannelTokenDeliveryMode", "cibaExpiresIn", "cibaAuthRequestedUserHint",
+		"oauth2DeviceCodeLifespan", "oauth2DevicePollingInterval", "parRequestUriLifespan",
+		"cibaInterval", "realmReusableOtpCode",
+	}
+	got := javamap.KeyOrder(slices.Sorted(slices.Values(measured)))
+
+	if slices.Equal(got, measured) {
+		t.Fatal("KeyOrder now places a realm's attributes; if that is real, " +
+			"internal/conformance's UnorderedKeys mask on them can come off")
+	}
+	var differing []int
+	for i := range measured {
+		if got[i] != measured[i] {
+			differing = append(differing, i)
+		}
+	}
+	if !slices.Equal(differing, []int{0, 1, 2}) {
+		t.Fatalf("want the bucket-0 chain wrong and nothing else, got %v", differing)
+	}
+}
+
 // The measured order that KeyOrder gets wrong, pinned so the limit stays
 // visible. Two pairs collide - view-realm with view-identity-providers, and
 // query-organizations with query-groups - and Keycloak chains a collision in

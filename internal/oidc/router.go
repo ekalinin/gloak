@@ -24,6 +24,9 @@ type handler struct {
 	// codes, in memory. See internal/oidc/authsession.go for why that is the
 	// faithful model and what it costs: this cut is single-process.
 	auth *authStore
+	// device holds the device authorization grant's codes, in memory for the
+	// same reason and at the same cost. See internal/oidc/devicestore.go.
+	device *deviceStore
 }
 
 // realmBase is the URL every realm-scoped path hangs off, which the login
@@ -55,7 +58,15 @@ func NewRouter(s store.Store, k *keys.Manager, issuerBase string) http.Handler {
 // its own 404 for a path the first one owns. There are two measured fallback
 // bodies and adding a third would be a divergence.
 func Register(mux *http.ServeMux, s store.Store, k *keys.Manager, issuerBase string) {
-	h := &handler{store: s, keys: k, issuerBase: issuerBase, auth: newAuthStore()}
+	h := &handler{store: s, keys: k, issuerBase: issuerBase, auth: newAuthStore(), device: newDeviceStore()}
+	h.register(mux)
+}
+
+// register puts the routes on a mux. It is split out of Register so a test can
+// hold the handler and its router at once, which is what the device grant's
+// clock tests need: the poll interval and the expiry grace window are reached
+// by moving a stored code, never by sleeping.
+func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /realms/{realm}/.well-known/openid-configuration", h.discovery)
 	// Both verbs, and they do not read the same place: GET takes its
 	// parameters from the query and POST from the form body. See
@@ -94,6 +105,22 @@ func Register(mux *http.ServeMux, s store.Store, k *keys.Manager, issuerBase str
 	// its 404 to all of them.
 	mux.HandleFunc("GET /realms/{realm}/login-actions/authenticate", h.loginActions)
 	mux.HandleFunc("POST /realms/{realm}/login-actions/authenticate", h.loginActions)
+	// POST only. **GET on this path is not a wrong method** - Keycloak serves
+	// the device verification page there, the one that asks for a user_code,
+	// and HEAD answers that page's headers with a 200. Gloak does not build
+	// either yet, so both fall through WithKeycloakFallbacks to a 404; the page
+	// is cut B's, with the OAUTH_GRANT consent page and /device/status.
+	//
+	// PUT, DELETE and PATCH answer a real 405 here, and OPTIONS answers 200
+	// with **no Allow header** - which is /logout's answer and not /auth's.
+	// That is another data point for follow-up F31 and nothing is changed on
+	// the strength of it.
+	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/auth/device", h.deviceAuthorization)
+	// CIBA's backchannel endpoint. Every answer it can give on a default
+	// 26.7.1 is a refusal, including the 503 a fully valid request gets,
+	// because the authentication channel a default deployment ships is not
+	// configured. See internal/oidc/ciba.go.
+	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/ext/ciba/auth", h.backchannelAuthentication)
 	mux.HandleFunc("GET /realms/{realm}/protocol/openid-connect/certs", h.certs)
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/token", h.token)
 	mux.HandleFunc("GET /realms/{realm}/protocol/openid-connect/userinfo", h.userinfo)

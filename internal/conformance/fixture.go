@@ -385,6 +385,33 @@ var Fixtures = map[string]Fixture{
 	// deterministic rather than a race against the recorder's own latency.
 	"confidential-expired-token": expiredTokenFixture(),
 
+	// The device grant's fixtures. Every one of them creates its own client,
+	// because **the grant is off on every client of a default 26.7.1** - all
+	// six bootstrapped ones - so a case named on the bootstrap fixture can only
+	// ever measure the refusal.
+	//
+	// One client per fixture for the usual reason: the recorder shares one
+	// container and two fixtures creating one clientId would make the second
+	// create a 409.
+	"device-client":  deviceClientFixture("gloak-probe-device", ""),
+	"device-pending": devicePendingFixture("gloak-probe-device-pending", ""),
+	// Polled once already, so the case's own request is the second poll inside
+	// the interval and answers slow_down.
+	"device-polled": devicePolledFixture(),
+	// oauth2.device.code.lifespan is the client-level override for expires_in,
+	// measured by creating a client with it and reading the 200. It is what
+	// makes this case recordable at all: without it, reaching an expired device
+	// code means a PUT on the realm's oauth2DeviceCodeLifespan, which would
+	// move it for every case recorded afterwards in a shared-container run.
+	"device-expired": deviceExpiredFixture(),
+	// A confidential client with the grant on, for the 401 that is about the
+	// secret rather than about the grant.
+	"device-confidential": deviceConfidentialFixture(),
+	// A client with the CIBA grant on, which is what makes the 503 reachable:
+	// every earlier check has to pass before the unconfigured authentication
+	// channel is the thing that fails.
+	"ciba-client": deviceClientFixture("gloak-probe-ciba", cibaGrantAttribute),
+
 	// A realm role created through the API, for the cases that read one back.
 	// Location names it by name rather than by id, so nothing needs capturing:
 	// the case can address it by the name it asked for.
@@ -2359,6 +2386,159 @@ func expiredTokenFixture() Fixture {
 	)
 	f.Delay = 2 * time.Second
 	return f
+}
+
+// deviceGrantAttribute and cibaGrantAttribute are the two client attributes
+// that open the two grants.
+//
+// Both are off on every client of a default 26.7.1, which is what the parked
+// device and CIBA goldens recorded and why the catalogue's device cases
+// measured a refusal until this cut gave them clients that have them.
+const (
+	deviceGrantAttribute = `"oauth2.device.authorization.grant.enabled":"true"`
+	cibaGrantAttribute   = `"oidc.ciba.grant.enabled":"true"`
+)
+
+// deviceClientBody is a public client with the device grant on, plus whatever
+// extra attributes a caller names.
+//
+// The client is public so that the device endpoint's 200 needs no secret, which
+// keeps every device fixture below to one capture-free create. The confidential
+// case is deviceConfidentialFixture's and is the exception rather than the
+// shape.
+func deviceClientBody(clientID, extraAttributes string) string {
+	attributes := deviceGrantAttribute
+	if extraAttributes != "" {
+		attributes += "," + extraAttributes
+	}
+	return `{"clientId":"` + clientID + `","enabled":true,"publicClient":true,` +
+		`"attributes":{` + attributes + `}}`
+}
+
+// deviceClientFixture creates the client and stops there, for a case whose own
+// request is the one to the device endpoint.
+//
+// extraAttributes is spliced into the attributes object as given, so a caller
+// can shorten the code's life or turn the CIBA grant on beside the device one.
+func deviceClientFixture(clientID, extraAttributes string) Fixture {
+	return Fixture{State: "bootstrap", Steps: deviceClientSteps(clientID, extraAttributes)}
+}
+
+func deviceClientSteps(clientID, extraAttributes string) []Step {
+	return []Step{
+		adminTokenStep(),
+		{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(deviceClientBody(clientID, extraAttributes)),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+	}
+}
+
+// deviceAuthorizationStep mints a device code and captures it.
+//
+// The user code is captured too. Nothing polls by it - the device_code is what
+// the token endpoint takes - but a fixture that captured only half of a pair
+// the endpoint issues together would be the harder thing to extend when the
+// verification page arrives.
+func deviceAuthorizationStep(clientID string) Step {
+	return Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/auth/device",
+			Form:   map[string]string{"client_id": clientID, "scope": "openid"},
+		},
+		Capture: map[string]string{"device_code": "device_code", "user_code": "user_code"},
+	}
+}
+
+// devicePollStep polls once, which is how a case reaches the *second* poll.
+//
+// It insists on a 400: the poll before anybody has approved the code answers
+// authorization_pending, and a step that silently accepted a 200 would mean the
+// case after it was measuring something else entirely.
+func devicePollStep(clientID string) Step {
+	return Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type":  "urn:ietf:params:oauth:grant-type:device_code",
+				"client_id":   clientID,
+				"device_code": "{{device_code}}",
+			},
+		},
+		ExpectStatus: []int{http.StatusBadRequest},
+	}
+}
+
+// devicePendingFixture is a client and a device code nobody has answered yet.
+func devicePendingFixture(clientID, extraAttributes string) Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: append(deviceClientSteps(clientID, extraAttributes), deviceAuthorizationStep(clientID)),
+	}
+}
+
+// devicePolledFixture is that, polled once already, so the case's own request
+// is the second poll inside the interval.
+//
+// **The interval is shortened to 1 second and the case still answers
+// slow_down**, which is the point: the window runs from the last poll rather
+// than from the mint, so a second poll immediately after the first is refused
+// whatever the interval is. A one-second interval is used rather than the
+// realm's five so that the fixture is not sitting inside a five-second window
+// it never intended to be measuring.
+func devicePolledFixture() Fixture {
+	const clientID = "gloak-probe-device-polled"
+	f := devicePendingFixture(clientID, `"oauth2.device.polling.interval":"1"`)
+	f.Steps = append(f.Steps, devicePollStep(clientID))
+	return f
+}
+
+// deviceExpiredFixture is a device code with a one-second life, waited out.
+//
+// The delay is the same mechanism confidential-expired-token uses and for the
+// same reason: an expiry cannot be reached by asking for it, only by waiting.
+// Two seconds against a one-second lifespan is the margin that makes it
+// deterministic rather than a race with the recorder's own latency - and it is
+// well inside the measured window in which an expired code still answers
+// expired_token rather than "Device code not valid".
+func deviceExpiredFixture() Fixture {
+	f := devicePendingFixture("gloak-probe-device-expired", `"oauth2.device.code.lifespan":"1"`)
+	f.Delay = 2 * time.Second
+	return f
+}
+
+// deviceConfidentialFixture is a confidential client with the device grant on,
+// for the 401 that is about the missing secret rather than about the grant.
+//
+// The secret is never captured, because the case deliberately does not send
+// one: what it measures is that a confidential client presenting nothing is
+// unauthorized_client, one code away from the invalid_client an unknown client
+// gets.
+func deviceConfidentialFixture() Fixture {
+	const clientID = "gloak-probe-device-confidential"
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"clientId":"` + clientID + `","enabled":true,"publicClient":false,` +
+						`"attributes":{` + deviceGrantAttribute + `}}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+		},
+	}
 }
 
 // adminTokenStep is the first step of every admin fixture: the password grant

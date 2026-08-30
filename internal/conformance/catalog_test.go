@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"regexp"
 	"slices"
@@ -113,6 +114,135 @@ func TestRecordedCaseRules(t *testing.T) {
 		}
 		if _, err := os.Stat(GoldenPath(goldenDir, c.ID)); errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("%q: Recorded means the golden was measured, but none exists", c.ID)
+		}
+	}
+}
+
+// unservedEndpointPhrases maps a phrase a Reason uses to claim an endpoint has
+// not been built to the path that claim is about.
+//
+// **It is a table of literal phrases on purpose.** The obvious guard here is a
+// heuristic - a Reason mentioning an endpoint the router serves is suspicious -
+// and it cries wolf on the first case it meets: five device-grant cases POST to
+// the token endpoint and say "the device authorization endpoint is not
+// implemented", which is a true sentence about an endpoint that is not the one
+// the case requests. Reading the subject out of English is what that guard
+// would have to do, and it would be wrong on seven of the thirty-one Reasons in
+// the catalogue today. Matching a written-down phrase is wrong on none of them.
+//
+// The cost is that it is a ratchet: a Reason phrased some other way is
+// unchecked until somebody adds the phrasing. That is the same bargain
+// namedOutsideTheConvention and parkedGoldens take, and it buys the same thing -
+// every line here was checked once, by a person, against the router.
+//
+// The path is spelled for the master realm because that is what every case in
+// the catalogue addresses, and because the probe needs a literal path rather
+// than a pattern.
+var unservedEndpointPhrases = map[string]string{
+	"the token endpoint is not implemented":                      "/realms/master/protocol/openid-connect/token",
+	"the authorization endpoint is not implemented":              "/realms/master/protocol/openid-connect/auth",
+	"the device authorization endpoint is not implemented":       "/realms/master/protocol/openid-connect/auth/device",
+	"the backchannel authentication endpoint is not implemented": "/realms/master/protocol/openid-connect/ext/ciba/auth",
+	"dynamic client registration is not implemented":             "/realms/master/clients-registrations/openid-connect",
+	"the userinfo endpoint is not implemented":                   "/realms/master/protocol/openid-connect/userinfo",
+	"the introspection endpoint is not implemented":              "/realms/master/protocol/openid-connect/token/introspect",
+	"the revocation endpoint is not implemented":                 "/realms/master/protocol/openid-connect/revoke",
+	"the logout endpoint is not implemented":                     "/realms/master/protocol/openid-connect/logout",
+}
+
+// staleReasonsOwnedElsewhere are the cases whose Reason this guard finds false
+// and whose file this cut does not own.
+//
+// catalog_oidc_pending.go is the device-grant stream's while that work is in
+// flight, so the five entries below are reported rather than edited. Each value
+// is what the Reason should say instead, so correcting it is a copy.
+//
+// It is not an amnesty. An entry whose Reason has stopped being stale fails
+// here, which is what makes the list shrink to nothing rather than becoming
+// somewhere findings go to be forgotten.
+//
+// **It shrank to nothing on 2026-08-30**, the day it was written, when the
+// device-grant stream merged this guard and corrected all five Reasons. Three
+// took the text suggested here verbatim. Two did not, and the reason is worth
+// keeping: the suggestions for `oidc/token/device-code-grant` and
+// `oidc/token/ciba-grant` - "the device_code grant is not implemented" and "the
+// CIBA grant is not implemented" - were already stale when they were written,
+// because both grants landed the same day. What is actually missing for one is
+// the device verification and consent pages, and for the other an
+// authentication channel a default 26.7.1 does not configure. A hand-off's
+// suggested text is a hand-off, not a measurement.
+//
+// The map is deliberately left rather than deleted: it is what a future cut
+// finding a stale Reason in somebody else's file writes into.
+var staleReasonsOwnedElsewhere = map[string]string{}
+
+// TestNoReasonClaimsAServedEndpointIsUnserved is the sweep this file could not
+// do by reading.
+//
+// A Reason is not a comment. It is what the next person reads when deciding
+// what to work on, and a stale one sends them past work that is already
+// possible or towards work that is already done. Two families were found stale
+// this week and both by accident: four authorization cases said "the
+// authorization endpoint is not implemented" the day after it was implemented,
+// and five token cases still say "the token endpoint is not implemented" while
+// it serves four grants.
+//
+// Both are the same claim - a named endpoint is not built - and both are
+// falsifiable against the router without serving the case, which matters
+// because 21 of the 28 Pending cases carry no fixture and cannot be served at
+// all. The probe is a method no route registers: Gloak answers a **known** path
+// with the wrong method 404 `{"error":"HTTP 404 Not Found"}` and an unrouted
+// path with 404 `{"error":"Unable to find matching target resource method"}`,
+// which is Keycloak's measured pair and the thing withKeycloakFallbacks exists
+// to tell apart. So a routed path is visible without authenticating, without a
+// fixture, and without running a handler that could change anything.
+func TestNoReasonClaimsAServedEndpointIsUnserved(t *testing.T) {
+	h := newFixture(t, "bootstrap")
+	routed := func(path string) bool {
+		// TRACE is registered by nothing, so this reaches the fallback either
+		// way and never runs a handler.
+		req := httptest.NewRequest(http.MethodTrace, path, nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return !bytes.Contains(w.Body.Bytes(), []byte("Unable to find matching target resource method"))
+	}
+
+	// A guard whose probe cannot tell the two apart passes everything. Both
+	// directions are asserted against a path that is certainly routed and one
+	// that certainly is not, so a fallback that stopped distinguishing them
+	// fails here rather than making every case below vacuous.
+	if !routed("/realms/master/protocol/openid-connect/token") {
+		t.Fatal("the token endpoint reads as unrouted, so this test cannot see a served endpoint")
+	}
+	if routed("/realms/master/no/such/path") {
+		t.Fatal("an invented path reads as routed, so this test would report every case")
+	}
+
+	flagged := map[string]bool{}
+	for _, c := range Catalog {
+		if c.Status == Implemented {
+			continue
+		}
+		for phrase, path := range unservedEndpointPhrases {
+			if !strings.Contains(c.Reason, phrase) || !routed(path) {
+				continue
+			}
+			flagged[c.ID] = true
+			if want, listed := staleReasonsOwnedElsewhere[c.ID]; listed {
+				t.Logf("%q: known stale, owned elsewhere; the Reason should say %q", c.ID, want)
+				continue
+			}
+			t.Errorf("%q says %q and %s is served - a Reason that names built work "+
+				"sends the next reader past it. Say what is actually missing.",
+				c.ID, phrase, path)
+		}
+	}
+
+	for id, want := range staleReasonsOwnedElsewhere {
+		if !flagged[id] {
+			t.Errorf("%q is declared stale here and its Reason no longer is - "+
+				"drop the entry rather than leaving a hand-off nobody has re-read "+
+				"(it was to become %q)", id, want)
 		}
 	}
 }
