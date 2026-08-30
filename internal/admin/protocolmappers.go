@@ -229,8 +229,23 @@ func (h *handler) createProtocolMapper(w http.ResponseWriter, r *http.Request, _
 		writeDuplicateResource(w)
 		return
 	}
-	if findProtocolMapperByName(holder.mappers(), *rep.Name) != nil {
+	// The name check and the id check share this message, which is why the
+	// order between them is not observable and why both are here. See the id
+	// uniqueness note above findProtocolMapper: an id this container already
+	// holds is the local conflict, and one anywhere else on the server is the
+	// generic duplicate.
+	if findProtocolMapperByName(holder.mappers(), *rep.Name) != nil ||
+		(rep.ID != "" && findProtocolMapper(holder.mappers(), rep.ID) != nil) {
 		httpx.WriteAdminError(w, http.StatusConflict, "Protocol mapper exists with same name")
+		return
+	}
+	taken, err := h.protocolMapperIDTaken(r.Context(), rep.ID, "")
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	if taken {
+		writeDuplicateResource(w)
 		return
 	}
 
@@ -280,6 +295,20 @@ func (h *handler) addProtocolMappers(w http.ResponseWriter, r *http.Request, _ *
 		if findProtocolMapperByName(next, *rep.Name) != nil {
 			httpx.WriteOAuthError(w, http.StatusConflict, "conflict",
 				"Protocol mapper name must be unique per protocol")
+			return
+		}
+		// **This route has one answer where the single create has two.** An id
+		// already in the growing set - the container's own mappers plus the
+		// entries before this one - and an id held anywhere else on the server
+		// are both the generic duplicate here, where the single create answers
+		// the first of those with its name conflict. Measured on both cells.
+		taken, err := h.protocolMapperIDTaken(r.Context(), rep.ID, "")
+		if err != nil {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		if taken || (rep.ID != "" && findProtocolMapper(next, rep.ID) != nil) {
+			writeDuplicateResource(w)
 			return
 		}
 		next = append(next, protocolMapperFrom(rep))
@@ -455,6 +484,122 @@ func protocolMappersFromRepresentation(in []protocolMapperRepresentation) []mode
 	return out
 }
 
+// A protocol mapper id is unique across the **server**, not the realm and not
+// the container. F78, measured 2026-08-30: a client scope created in a
+// different realm carrying a mapper id already in use in master is a 409.
+//
+// Five routes enforce it - POST /clients, POST /client-scopes,
+// PUT /clients/{uuid}, POST .../protocol-mappers/models and
+// POST .../protocol-mappers/add-models - and they do not answer alike. The
+// follow-up said the answer is decided by *where* the colliding mapper is and
+// not by which route asked; measured on a 2x2 that is half right. The location
+// decides on `models` and decides nothing on `add-models`, whose two cells are
+// the same body:
+//
+//	                        id in this container      id anywhere else
+//	POST models             Protocol mapper exists    Duplicate resource error
+//	                        with same name (409)      (409)
+//	POST add-models         Duplicate resource        Duplicate resource error
+//	                        error (409)               (409)
+//	POST /clients           Client <id> already       Duplicate resource error
+//	                        exists (409)              (409)
+//	POST /client-scopes     Client Scope <name>       Duplicate resource error
+//	                        already exists (409)      (409)
+//	PUT /clients/{uuid}     Cannot add protocol       Duplicate resource error
+//	                        mapper '<name>'.          (409)
+//	                        Duplicate resource
+//	                        error (400 invalid_input)
+//
+// The rule the six local cells share is that a collision the route can see in
+// the object it is building gets that route's **own** conflict, and one only
+// the rest of the server knows about gets the generic one - which is Keycloak
+// catching a duplicate in the persistence context and letting a database
+// constraint through at flush. Reading it as "the location decides" alone puts
+// the wrong body on `add-models`.
+//
+// On the two mapper routes the id check runs **after** the provider check and
+// after the name check: an id held elsewhere plus a name held here answers
+// about the name, and an id held here plus an unknown provider answers about
+// the provider.
+
+// duplicateProtocolMapperID returns the first id two mappers in one list share,
+// and "" when they are all distinct. A container holds at most fourteen
+// mappers, so the quadratic walk is cheaper than the map it would replace.
+func duplicateProtocolMapperID(in []model.ProtocolMapper) string {
+	for i := range in {
+		if in[i].ID == "" {
+			continue
+		}
+		for j := i + 1; j < len(in); j++ {
+			if in[j].ID == in[i].ID {
+				return in[i].ID
+			}
+		}
+	}
+	return ""
+}
+
+// protocolMapperIDTaken reports whether any container other than holderID holds
+// this protocol mapper id, over both kinds of container and every realm.
+//
+// holderID is the container the caller is writing, and excluding it is what
+// lets a create check itself after it has been written: the row is already
+// there by then, so without the exclusion every create would collide with
+// itself. Pass "" when nothing should be excluded.
+func (h *handler) protocolMapperIDTaken(ctx context.Context, mapperID, holderID string) (bool, error) {
+	if mapperID == "" {
+		return false, nil
+	}
+	for _, owner := range []func(context.Context, string) (string, error){
+		h.store.Clients().ProtocolMapperOwner,
+		h.store.ClientScopes().ProtocolMapperOwner,
+	} {
+		id, err := owner(ctx, mapperID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				continue
+			}
+			return false, err
+		}
+		if id != holderID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// protocolMapperConflict is the whole check for the two creates that carry a
+// `protocolMappers` array, returning the response to write or nil.
+//
+// local is the message that route uses for a duplicate it can see in its own
+// request - `Client <id> already exists` and `Client Scope <name> already
+// exists`, which are the same messages those routes answer a clientId or a name
+// conflict with. Measured both ways: two mappers in one body sharing an id
+// answer it, and an id another container holds answers the generic duplicate.
+//
+// holderID is the container that was just written, excluded from the search for
+// the reason protocolMapperIDTaken gives.
+func (h *handler) protocolMapperConflict(ctx context.Context, in []model.ProtocolMapper,
+	holderID, local string) func(http.ResponseWriter) {
+	if duplicateProtocolMapperID(in) != "" {
+		return func(w http.ResponseWriter) {
+			httpx.WriteAdminError(w, http.StatusConflict, local)
+		}
+	}
+	for _, m := range in {
+		taken, err := h.protocolMapperIDTaken(ctx, m.ID, holderID)
+		if err != nil {
+			return func(w http.ResponseWriter) {
+				httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			}
+		}
+		if taken {
+			return writeDuplicateResource
+		}
+	}
+	return nil
+}
+
 func findProtocolMapper(in []model.ProtocolMapper, id string) *model.ProtocolMapper {
 	for i := range in {
 		if in[i].ID == id {
@@ -471,6 +616,75 @@ func findProtocolMapperByName(in []model.ProtocolMapper, name string) *model.Pro
 		}
 	}
 	return nil
+}
+
+// findProtocolMapperByProtocolAndName is findProtocolMapperByName with the key
+// PUT /clients/{uuid} actually matches on. The protocol half is measured: a PUT
+// naming an existing mapper's name under a **different** protocol does not
+// match it - the old mapper is removed and a new one added with a new id.
+func findProtocolMapperByProtocolAndName(in []model.ProtocolMapper, protocol, name string) *model.ProtocolMapper {
+	for i := range in {
+		if in[i].Protocol == protocol && in[i].Name == name {
+			return &in[i]
+		}
+	}
+	return nil
+}
+
+// mergeClientProtocolMappers applies a PUT /clients/{uuid} body's
+// protocolMappers array onto the client's current ones, or returns the refusal
+// the request gets instead.
+//
+// **It matches by (protocol, name), not by id**, which is measured and is not
+// what a reader would guess from a body that carries ids:
+//
+//	same name, different id       204, and the mapper **keeps its own id**
+//	same name, no id              204, same
+//	same name, other protocol     204, old mapper gone, new id
+//	name the client does not hold added
+//	a mapper the body omits       removed
+//
+// A match is updated in place and only `protocolMapper` and `config` are
+// written onto it, which is the same pair `PUT .../protocol-mappers/models`
+// writes and discards the rest of.
+//
+// The id only matters on the **add** path, and that is where the fifth of
+// F78's routes enforces uniqueness: an id this client already holds, or one an
+// earlier entry in the same body took, is a 400 `invalid_input` naming the
+// mapper, and an id another container holds anywhere on the server is the
+// generic 409. Sending a client's own representation straight back is
+// therefore a 204 rather than a conflict, which is the read-modify-write a
+// naive "an id in use is refused" check would break.
+func (h *handler) mergeClientProtocolMappers(ctx context.Context, current, want []model.ProtocolMapper,
+	holderID string) ([]model.ProtocolMapper, func(http.ResponseWriter)) {
+	out := make([]model.ProtocolMapper, 0, len(want))
+	for _, m := range want {
+		if existing := findProtocolMapperByProtocolAndName(current, m.Protocol, m.Name); existing != nil {
+			kept := *existing
+			kept.ProtocolMapper = m.ProtocolMapper
+			kept.Config = m.Config
+			out = append(out, kept)
+			continue
+		}
+		if findProtocolMapper(current, m.ID) != nil || findProtocolMapper(out, m.ID) != nil {
+			name := m.Name
+			return nil, func(w http.ResponseWriter) {
+				httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_input",
+					"Cannot add protocol mapper '"+name+"'. Duplicate resource error")
+			}
+		}
+		taken, err := h.protocolMapperIDTaken(ctx, m.ID, holderID)
+		if err != nil {
+			return nil, func(w http.ResponseWriter) {
+				httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			}
+		}
+		if taken {
+			return nil, writeDuplicateResource
+		}
+		out = append(out, m)
+	}
+	return out, nil
 }
 
 func lastMapper(holder mapperHolder) model.ProtocolMapper {

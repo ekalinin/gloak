@@ -5,6 +5,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/ekalinin/gloak/internal/model"
@@ -18,6 +19,31 @@ var (
 	// Handlers map it to Keycloak's 409 errorMessage shape.
 	ErrConflict = errors.New("store: conflict")
 )
+
+// HoldsProtocolMapper reports whether a container's serialised protocol mappers
+// hold this id.
+//
+// It sits here rather than in either driver because both drivers store that
+// column as the same JSON, written by the same marshaller, and a scan written
+// twice is a scan that can come to disagree - which is the one thing the two
+// drivers must not do. It is not SQL and it knows no dialect; it reads the
+// bytes a driver has already fetched.
+//
+// A column that does not parse holds nothing. That cannot happen through any
+// write in this repository, and answering "no" for it keeps a corrupt row from
+// making an id permanently unusable.
+func HoldsProtocolMapper(serialised string, mapperID string) bool {
+	var mappers []model.ProtocolMapper
+	if err := json.Unmarshal([]byte(serialised), &mappers); err != nil {
+		return false
+	}
+	for _, m := range mappers {
+		if m.ID == mapperID {
+			return true
+		}
+	}
+	return false
+}
 
 type Store interface {
 	Realms() RealmRepo
@@ -61,6 +87,12 @@ type ClientRepo interface {
 	ListByRealm(ctx context.Context, realmID string) ([]*model.Client, error)
 	Update(ctx context.Context, c *model.Client) error
 	Delete(ctx context.Context, realmID, id string) error
+	// ProtocolMapperOwner returns the id of the client holding this protocol
+	// mapper id, and ErrNotFound when none does. It takes **no realm**, and
+	// that is the measurement rather than an oversight: a client scope created
+	// in one realm carrying a mapper id already in use in another is a 409, so
+	// the uniqueness is server-wide. See HoldsProtocolMapper.
+	ProtocolMapperOwner(ctx context.Context, mapperID string) (string, error)
 }
 
 // ClientScopeRepo stores a realm's client scopes and the two membership sets
@@ -89,6 +121,10 @@ type ClientScopeRepo interface {
 	// deleting a scope that was a realm default and attached to a client left
 	// both listings without it.
 	Delete(ctx context.Context, realmID, id string) error
+	// ProtocolMapperOwner is ClientRepo's, over the other kind of container. A
+	// mapper id is unique across the two of them together, so a caller asking
+	// whether one is free has to ask both.
+	ProtocolMapperOwner(ctx context.Context, mapperID string) (string, error)
 
 	// ListRealmDefaults returns the realm's own default (defaultScope true) or
 	// optional (false) client scopes - what a client with no lists of its own

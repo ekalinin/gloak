@@ -121,6 +121,18 @@ func (h *handler) createClient(w http.ResponseWriter, r *http.Request, rc *reqCo
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
+	// **A protocol mapper id is unique across the server**, and the check runs
+	// after the clientId conflict: a create naming a taken clientId and a taken
+	// mapper id answers about the client. That is why it is here rather than
+	// before Create, and why the client just written is excluded from the
+	// search - by now it holds these very mappers. See the id uniqueness note
+	// in protocolmappers.go for the two answers and which cell each belongs to.
+	if refusal := h.protocolMapperConflict(r.Context(), m.ProtocolMappers, m.ID,
+		"Client "+rep.ClientID+" already exists"); refusal != nil {
+		_ = h.store.Clients().Delete(r.Context(), rc.realm.ID, m.ID)
+		refusal(w)
+		return
+	}
 	if m.ServiceAccountsEnabled {
 		if _, err := h.ensureServiceAccount(r.Context(), rc.realm, m); err != nil {
 			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
@@ -176,11 +188,29 @@ func (h *handler) updateClient(w http.ResponseWriter, r *http.Request, rc *reqCo
 		return
 	}
 
-	if merged.ProtocolMappers == nil {
+	// Whether the body carried the key at all is what decides between "leave
+	// the mappers alone" and "merge onto them", and after this branch the two
+	// are indistinguishable - which is why the merge happens here rather than
+	// after newClientFrom.
+	sent := merged.ProtocolMappers != nil
+	if !sent {
 		merged.ProtocolMappers = kept
 	}
 
 	updated := newClientFrom(merged, rc.realm.ID)
+	if sent {
+		// **Not a wholesale replace.** The array is matched onto the client's
+		// current mappers by (protocol, name), matches keep their own ids, and
+		// only the add path can collide - see mergeClientProtocolMappers, which
+		// carries the measurements and the two refusals.
+		mappers, refusal := h.mergeClientProtocolMappers(r.Context(),
+			current.ProtocolMappers, updated.ProtocolMappers, current.ID)
+		if refusal != nil {
+			refusal(w)
+			return
+		}
+		updated.ProtocolMappers = mappers
+	}
 	// Identity is not the caller's to change through this endpoint.
 	//
 	// ClientID is pinned here and not in the store: RealmRepo's rename has to

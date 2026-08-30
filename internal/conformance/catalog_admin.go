@@ -7722,4 +7722,327 @@ var adminCases = []Case{
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},
+
+	// --- F78: a protocol mapper id is unique across the server ---
+	//
+	// Five routes enforce it and they answer with two bodies, and which body a
+	// caller gets is decided by the route **and** by where the colliding mapper
+	// is. The follow-up said the location alone decides; the four cells below
+	// are what says otherwise, and the two add-models rows are the pair that
+	// does it. None of these claims an Operation - every route is claimed.
+	{
+		// An id the container it is aimed at already holds. This one route
+		// answers it with the name conflict, for a request whose name is free.
+		ID: "admin/protocol-mappers/duplicate-id-same-container",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: create a mapper, id already in this container",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes/" + f78HolderScopeID + "/protocol-mappers/models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"` + f78HeldMapperID + `","name":"gloak-probe-f78-free",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The same id, aimed at a container that does not hold it. Same route,
+		// same status, a different body - which is the half of the follow-up's
+		// claim that survived.
+		ID: "admin/protocol-mappers/duplicate-id-other-container",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: create a mapper, id held by another container",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder-second",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes/" + f78SecondScopeID + "/protocol-mappers/models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"` + f78HeldMapperID + `","name":"gloak-probe-f78-free",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **The cell that refutes "the location decides".** Same container,
+		// same id, the batch route - and the generic duplicate, where the
+		// single create beside it answers its own name conflict. An
+		// implementation that shared one predicate between the two routes
+		// passes the three other cells and fails this one.
+		ID: "admin/protocol-mappers/add-models-duplicate-id-same-container",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: add mappers, id already in this container",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes/" + f78HolderScopeID + "/protocol-mappers/add-models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"` + f78HeldMapperID + `","name":"gloak-probe-f78-free",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}]`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The fourth cell, which is the third's twin. Two cells of one route
+		// answering identically is what a 2x2 is for; without it the batch
+		// route's answer could still be read as "the location decides, and this
+		// route's local answer happens to be the generic one".
+		ID: "admin/protocol-mappers/add-models-duplicate-id-other-container",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: add mappers, id held by another container",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder-second",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes/" + f78SecondScopeID + "/protocol-mappers/add-models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"` + f78HeldMapperID + `","name":"gloak-probe-f78-free",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}]`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// A create whose nested mapper carries an id another container holds.
+		ID: "admin/client-scopes/create-duplicate-mapper-id",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: create a client scope, mapper id already in use",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-f78-collide","protocol":"openid-connect",` +
+				`"protocolMappers":[` + f78HeldMapper + `]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The refused create left nothing behind. Without this the 409 above is
+		// satisfied by a handler that writes the scope and then reports the
+		// conflict - which, with no transaction in the store, is exactly the
+		// shape the fix has.
+		ID: "admin/client-scopes/create-duplicate-mapper-id-rolled-back",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: create a client scope, mapper id already in use, rolled back",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-rollback",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-scopes/" + f78RollbackID,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **Two mappers in one body sharing an id**, which the route answers
+		// with its own conflict - the same message a taken name gets, for a
+		// name nobody has taken.
+		ID: "admin/client-scopes/create-duplicate-mapper-id-in-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: create a client scope, two mappers sharing an id",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-f78-dupbody","protocol":"openid-connect",` +
+				`"protocolMappers":[{"id":"` + f78FreeMapperID + `","name":"gloak-probe-f78-a",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"},` +
+				`{"id":"` + f78FreeMapperID + `","name":"gloak-probe-f78-b",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The client create's two cells, the same pair over the other kind of
+		// container. Its local message names the clientId where the scope's
+		// names the scope.
+		ID: "admin/clients/create-duplicate-mapper-id",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: create a client, mapper id already in use",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"clientId":"gloak-probe-f78-collide-client","enabled":true,` +
+				`"protocolMappers":[` + f78HeldMapper + `]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/clients/create-duplicate-mapper-id-in-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: create a client, two mappers sharing an id",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"clientId":"gloak-probe-f78-dupbody-client","enabled":true,` +
+				`"protocolMappers":[{"id":"` + f78FreeMapperID + `","name":"gloak-probe-f78-a",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"},` +
+				`{"id":"` + f78FreeMapperID + `","name":"gloak-probe-f78-b",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **The route the follow-up's correction turns on.** The colliding
+		// mapper is in another *realm* and the create is still a 409, so the
+		// uniqueness is server-wide. A realm-wide index answers this one 201
+		// and passes every other case in this family.
+		ID: "admin/client-scopes/create-duplicate-mapper-id-across-realms",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Scopes: create a client scope in another realm, mapper id already in use",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder-realm",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-f78-realm/client-scopes",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-f78-cross","protocol":"openid-connect",` +
+				`"protocolMappers":[` + f78HeldMapper + `]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The fifth route. An id another container holds is the generic 409
+		// here as everywhere else.
+		ID: "admin/clients/update-duplicate-mapper-id",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: update a client, mapper id already in use",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder-client",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/clients/" + f78ClientID,
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"protocolMappers":[` + f78HeldMapper + `]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **A sixth body, and it is not a 409 at all.** Two entries sharing an
+		// id on the update route answer 400 `invalid_input`, naming the second
+		// mapper. Five routes, three local messages and two statuses.
+		ID: "admin/clients/update-duplicate-mapper-id-in-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: update a client, two mappers sharing an id",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder-client",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/clients/" + f78ClientID,
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"protocolMappers":[{"id":"f7800000-0000-4000-8000-0000000000ee",` +
+				`"name":"gloak-probe-f78-a","protocol":"openid-connect",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper"},` +
+				`{"id":"f7800000-0000-4000-8000-0000000000ee",` +
+				`"name":"gloak-probe-f78-b","protocol":"openid-connect",` +
+				`"protocolMapper":"oidc-usermodel-attribute-mapper"}]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **The update matches by name and keeps the id it already had.** The
+		// fixture's PUT sent the same name under a different id; the mapper
+		// read back carries the id the create gave it, with the provider and
+		// the config the PUT sent.
+		//
+		// This is what makes the route's uniqueness check land only on the add
+		// path: without it, a client's own representation put straight back
+		// would be a 400.
+		ID: "admin/clients/update-mapper-keeps-its-id",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: update a client, a mapper matched by name",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-renamed-by-put",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/" + f78RenamedID,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		UnorderedKeys: []string{"attributes"},
+	},
 }

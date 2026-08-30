@@ -419,6 +419,34 @@ func (r *clientRepo) Delete(ctx context.Context, realmID, id string) error {
 	return affectedOne(res)
 }
 
+// ProtocolMapperOwner scans every client on the server. There is no WHERE on
+// the realm because the uniqueness is server-wide, and none on the mapper id
+// because the mappers are a JSON column rather than a table - the only thing a
+// unique index could sit on here is a row that does not exist.
+//
+// The scan is store.HoldsProtocolMapper so that the Postgres driver beside this
+// one cannot read the same bytes differently.
+func (r *clientRepo) ProtocolMapperOwner(ctx context.Context, mapperID string) (string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, protocol_mappers FROM client`)
+	if err != nil {
+		return "", classify(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, mappers string
+		if err := rows.Scan(&id, &mappers); err != nil {
+			return "", classify(err)
+		}
+		if store.HoldsProtocolMapper(mappers, mapperID) {
+			return id, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", classify(err)
+	}
+	return "", store.ErrNotFound
+}
+
 // scanWithScopes reads one client and fills its two client-scope name lists.
 //
 // The names are **derived**, not stored. The client row carried them as two
@@ -1617,6 +1645,29 @@ func (r *clientScopeRepo) Delete(ctx context.Context, realmID, id string) error 
 		return classify(err)
 	}
 	return affectedOne(res)
+}
+
+// ProtocolMapperOwner is clientRepo's over the other container - see there for
+// why there is no realm in the query.
+func (r *clientScopeRepo) ProtocolMapperOwner(ctx context.Context, mapperID string) (string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, protocol_mappers FROM client_scope`)
+	if err != nil {
+		return "", classify(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, mappers string
+		if err := rows.Scan(&id, &mappers); err != nil {
+			return "", classify(err)
+		}
+		if store.HoldsProtocolMapper(mappers, mapperID) {
+			return id, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", classify(err)
+	}
+	return "", store.ErrNotFound
 }
 
 func (r *clientScopeRepo) ListRealmDefaults(ctx context.Context, realmID string, defaultScope bool) ([]*model.ClientScope, error) {

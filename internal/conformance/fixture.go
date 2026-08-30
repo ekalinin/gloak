@@ -705,6 +705,26 @@ var Fixtures = map[string]Fixture{
 	"inline-credential-keeps-temporary": inlineCredentialKeepsTemporaryFixture(),
 	// A user with no password, for the update route's own inline array.
 	"inline-credential-update": inlineCredentialUpdateFixture(),
+	// F78's fixtures. Every one of them puts a mapper id somewhere and then
+	// lets a case try to take it from somewhere else.
+	//
+	// The ids are fixed rather than captured, which the body's-id-wins rule on
+	// POST /clients and POST /client-scopes allows and which the goldens need:
+	// the whole measurement is which container an id is already in.
+	"mapper-id-holder":        mapperIDHolderFixture(false, false),
+	"mapper-id-holder-second": mapperIDHolderFixture(true, false),
+	"mapper-id-holder-client": mapperIDHolderFixture(false, true),
+	// A second realm, so the case can try the id from outside master. This is
+	// the correction the follow-up carries: the uniqueness is server-wide, and
+	// a realm-wide index would answer this one 201.
+	"mapper-id-holder-realm": mapperIDHolderRealmFixture(),
+	// A refused create, so the case after it can read that the container is
+	// not there. Same reason inline-credential-rollback is a fixture.
+	"mapper-id-rollback": mapperIDRollbackFixture(),
+	// A client whose mapper was re-sent under its own name with somebody
+	// else's id, which Keycloak matches by name and leaves the id alone.
+	"mapper-renamed-by-put": mapperRenamedByPutFixture(),
+
 	// A create that was refused for a valueless credential, so the case after
 	// it can read that the user is not there. The refusal is a fixture step
 	// rather than the case before it, because a golden that needs its
@@ -3726,6 +3746,153 @@ func inlineCredentialTwiceFixture() Fixture {
 		Steps: append(f.Steps,
 			inlineCredentialGrantStep("gloak-probe-inline-twice", "probe-first",
 				[]int{http.StatusBadRequest})),
+	}
+}
+
+// The fixed ids F78's fixtures build with. A mapper id is unique across the
+// server, so these must not collide with anything any other fixture creates -
+// which is what the f78 infix is for.
+const (
+	f78HolderScopeID = "f7800000-0000-4000-8000-000000000001"
+	f78SecondScopeID = "f7800000-0000-4000-8000-000000000002"
+	f78ClientID      = "f7800000-0000-4000-8000-000000000003"
+	f78RollbackID    = "f7800000-0000-4000-8000-000000000004"
+	f78RenamedID     = "f7800000-0000-4000-8000-000000000005"
+	// The id every case in the family tries to take, held by the scope above.
+	f78HeldMapperID = "f7800000-0000-4000-8000-0000000000aa"
+	// A free id, for the bodies that must fail on something other than the id.
+	f78FreeMapperID = "f7800000-0000-4000-8000-0000000000bb"
+)
+
+// f78HeldMapper is the mapper the holder scope carries, spelled once so a case
+// can send the same id its fixture put in the store.
+const f78HeldMapper = `{"id":"` + f78HeldMapperID + `","name":"gloak-probe-f78-held",` +
+	`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}`
+
+// mapperIDHolderFixture creates a client scope holding one mapper at a known
+// id, and optionally a second empty container to aim at it from.
+//
+// second adds an empty client scope; client adds an empty client. They are two
+// flags rather than two fixtures because the measurement is the same one over
+// both kinds of container, and the id has to be held by exactly one thing on
+// the server for any of it to mean anything.
+func mapperIDHolderFixture(second, client bool) Fixture {
+	f := Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/client-scopes",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"id":"` + f78HolderScopeID + `","name":"gloak-probe-f78-holder",` +
+						`"protocol":"openid-connect","protocolMappers":[` + f78HeldMapper + `]}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+		},
+	}
+	if second {
+		f.Steps = append(f.Steps, Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/client-scopes",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"id":"` + f78SecondScopeID + `","name":"gloak-probe-f78-second",` +
+					`"protocol":"openid-connect"}`),
+			},
+			ExpectStatus: idempotentCreate,
+		})
+	}
+	if client {
+		f.Steps = append(f.Steps, Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"id":"` + f78ClientID + `","clientId":"gloak-probe-f78-client",` +
+					`"enabled":true,"protocolMappers":[{"id":"` + f78FreeMapperID + `",` +
+					`"name":"gloak-probe-f78-own","protocol":"openid-connect",` +
+					`"protocolMapper":"oidc-usermodel-attribute-mapper"}]}`),
+			},
+			ExpectStatus: idempotentCreate,
+		})
+	}
+	return f
+}
+
+// mapperIDHolderRealmFixture is the holder plus a realm of its own, for the one
+// case that asks the question the follow-up got wrong: whether the id is unique
+// across the realm or across the server.
+func mapperIDHolderRealmFixture() Fixture {
+	f := mapperIDHolderFixture(false, false)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`{"realm":"gloak-probe-f78-realm","enabled":true}`),
+		},
+		ExpectStatus: idempotentCreate,
+	})
+	return f
+}
+
+// mapperIDRollbackFixture holds the id and then has a create refused for it, so
+// the case that follows can read that the refused scope is not there.
+//
+// A create that is rejected halfway is the shape this implementation has to get
+// right without a transaction, and a 409 alone does not say whether it did.
+func mapperIDRollbackFixture() Fixture {
+	f := mapperIDHolderFixture(false, false)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/client-scopes",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body: []byte(`{"id":"` + f78RollbackID + `","name":"gloak-probe-f78-rollback",` +
+				`"protocol":"openid-connect","protocolMappers":[` + f78HeldMapper + `]}`),
+		},
+		ExpectStatus: []int{http.StatusConflict},
+	})
+	return f
+}
+
+// mapperRenamedByPutFixture creates a client with one mapper and then PUTs the
+// same **name** back carrying a different id.
+//
+// Keycloak matches the body's mappers to the client's by (protocol, name) and
+// keeps the id it already had, so the case after this reads the original id -
+// which is what tells a name match from the wholesale replace Gloak used to do.
+func mapperRenamedByPutFixture() Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"id":"` + f78RenamedID + `","clientId":"gloak-probe-f78-renamed",` +
+						`"enabled":true,"protocolMappers":[{"id":"f7800000-0000-4000-8000-0000000000cc",` +
+						`"name":"gloak-probe-f78-kept","protocol":"openid-connect",` +
+						`"protocolMapper":"oidc-usermodel-attribute-mapper","config":{"claim.name":"one"}}]}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPut,
+					Path:    "/admin/realms/master/clients/" + f78RenamedID,
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"protocolMappers":[{"id":"f7800000-0000-4000-8000-0000000000dd",` +
+						`"name":"gloak-probe-f78-kept","protocol":"openid-connect",` +
+						`"protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"two"}}]}`),
+				},
+			},
+		},
 	}
 }
 
