@@ -122,15 +122,35 @@ var adminCases = []Case{
 		// fixed iteration order. Membership stays asserted.
 		Unordered: []string{"*/defaultClientScopes", "*/optionalClientScopes"},
 		Volatile:  []string{"*/id"},
-		// See Case.UnorderedKeys: attributes is a Java Map serialised in hash
-		// order, which Go cannot reproduce without emulating java.util.HashMap.
+		// The retreat on a **client's** attributes is no longer about the
+		// order being unknown, and F90 is what measured the difference.
+		// javamap.KeyOrder reproduces every attribute key set a default 26.7.1
+		// puts on a client - five of them, no bucket collision anywhere in the
+		// set, pinned by TestKeyOrderReproducesAClientsAttributes. What still
+		// cannot reproduce it is Gloak: model.Client.Attributes is a Go map and
+		// encoding/json sorts it, so `account` serves
+		// `post.logout.redirect.uris, realm_client` where Keycloak serves them
+		// the other way round. Dropping the mask today fails this case rather
+		// than tightening it. The mask comes off when internal/admin serialises
+		// the map through javamap.KeyOrder - see follow-up F92, and the four
+		// sibling cases below that carry the same mask for the same reason.
 		UnorderedKeys: []string{"*/attributes"},
 	},
 	{
-		// The unfiltered list, which cannot pass yet: account-console and
-		// security-admin-console carry protocolMappers, and protocol mappers
-		// are P5. Recorded so the contract is in the repository and so the
-		// moment P5 makes it reproducible, the Recorded alarm says so.
+		// The unfiltered list. Its Reason said "protocolMappers, which is P5"
+		// until 2026-08-30, and P5 landed: the mappers are stored and served,
+		// and re-serving this case shows only three differences left, none of
+		// which is a missing mapper.
+		//
+		// Two are `master-realm`, which Gloak's bootstrap creates without the
+		// display name Keycloak gives it and without either client-scope list.
+		// The third is `account-console`'s `audience resolve`, which Keycloak
+		// serves as `"config":{}` from this route and populated from the
+		// dedicated mapper route - the "one mapper serialises two ways" bullet
+		// in AGENTS.md - where Gloak serves it populated from both. See F93.
+		//
+		// A stale Reason is what sends the next reader past work that is
+		// already possible, so it names the three rather than the phase.
 		ID: "admin/clients/list-all",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -138,7 +158,9 @@ var adminCases = []Case{
 			Retrieved: "2026-08-22",
 		},
 		Status: Recorded,
-		Reason: "two bootstrapped clients carry protocolMappers, which is P5",
+		Reason: "master-realm is bootstrapped with no name and neither client-scope list, " +
+			"and account-console's audience resolve serves a populated config where this route " +
+			"measures an empty one",
 		// No Operation: admin/clients/list already claims this one.
 		//
 		// The one case in the catalogue that enumerates the realm, so it has
@@ -154,6 +176,8 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type"},
 		Unordered:     []string{"*/defaultClientScopes", "*/optionalClientScopes"},
 		Volatile:      []string{"*/id", "*/protocolMappers/*/id"},
+		// The client-attributes retreat, for the reason admin/clients/list
+		// gives above: reproducible by javamap.KeyOrder, not by a Go map.
 		UnorderedKeys: []string{"*/attributes"},
 	},
 	{
@@ -174,6 +198,7 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type"},
 		Unordered:     []string{"defaultClientScopes", "optionalClientScopes"},
 		Volatile:      []string{"id"},
+		// The same retreat on the same two keys - see admin/clients/list.
 		UnorderedKeys: []string{"attributes"},
 	},
 	{
@@ -488,6 +513,9 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 		Unordered:     []string{"defaultClientScopes", "optionalClientScopes"},
 		Volatile:      []string{"id", "secret", "attributes/client.secret.creation.time"},
+		// A created client's two attributes come back
+		// `realm_client, client.secret.creation.time`, which javamap.KeyOrder
+		// reproduces and a Go map sorts the other way - see admin/clients/list.
 		UnorderedKeys: []string{"attributes"},
 	},
 
@@ -517,6 +545,9 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 		Unordered:     []string{"defaultClientScopes", "optionalClientScopes"},
 		Volatile:      []string{"id", "secret", "attributes/client.secret.creation.time"},
+		// A created client's two attributes come back
+		// `realm_client, client.secret.creation.time`, which javamap.KeyOrder
+		// reproduces and a Go map sorts the other way - see admin/clients/list.
 		UnorderedKeys: []string{"attributes"},
 	},
 
@@ -1592,10 +1623,13 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
-		// attributes is a Java Map in hash order and Go sorts map keys. This is
-		// the suite's one documented retreat from byte-exactness; see the
-		// UnorderedKeys note in case.go.
-		UnorderedKeys: []string{"*/attributes"},
+		// **No UnorderedKeys.** It carried one until F90 measured what it was
+		// masking: the fixture gives this role a single attribute, and a
+		// one-key object has no order to give up. The mask was inert - the
+		// golden's bytes are the same with it and without it - and an inert
+		// retreat is worse than none, because it reads as though something was
+		// measured and conceded. If a second attribute is ever added here, it
+		// is measured then rather than pre-emptively excused now.
 	},
 	{
 		ID: "admin/roles/list-realm-search-excludes-client-roles",
@@ -3677,14 +3711,23 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/defaultRole/id", "*/defaultRole/containerId"},
-		// The realm's attributes are a Java map in hash order, and javamap
-		// cannot place them: it gets six of the eight keys right and puts
-		// cibaAuthRequestedUserHint, cibaBackchannelTokenDeliveryMode and
-		// cibaExpiresIn in sorted order where Keycloak has the second, the
-		// third and then the first. Those three share a bucket, and javamap is
-		// exact only where buckets do not collide - its own doc says so. So
-		// this masks the order rather than reproducing it, the retreat a
-		// client's attributes already take.
+		// The realm's attributes are a Java map in hash order and javamap
+		// cannot place them, which is a different reason from the one a
+		// client's attributes have and was re-measured on 2026-08-30 rather
+		// than inherited.
+		//
+		// master answers six keys here and a created realm eight, and in both
+		// the leading run shares **one bucket**: cibaBackchannelTokenDeliveryMode,
+		// cibaExpiresIn, cibaAuthRequestedUserHint - and oauth2DeviceCodeLifespan
+		// too on the eight. javamap.KeyOrder breaks a chain alphabetically, so
+		// it puts cibaAuthRequestedUserHint first and gets the first three
+		// positions wrong; every position after them is right, which is what
+		// says the bucket rule holds and only the tie-break does not. Keycloak
+		// chains in insertion order and nothing observable says what that was.
+		// TestKeyOrderCannotPlaceARealmsAttributes pins it.
+		//
+		// So this mask stays, and it stays for a reason rather than because
+		// nobody looked. See F90.
 		UnorderedKeys: []string{"*/attributes"},
 	},
 	{
@@ -3738,8 +3781,9 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 		Volatile:      []string{"id", "defaultRole/id", "defaultRole/containerId"},
 		// The realm's attributes are a Java map in hash order and javamap
-		// cannot place them - see the listing above for which three keys it
-		// gets wrong and why.
+		// cannot place them - see the listing above for which three positions
+		// it gets wrong and why. This realm is a created one, so its map is
+		// the eight-key shape.
 		UnorderedKeys: []string{"attributes"},
 	},
 	{
