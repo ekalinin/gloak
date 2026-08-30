@@ -1817,6 +1817,15 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		if !reflect.DeepEqual(names(got), []string{"realm-role"}) {
 			t.Errorf("a mapping outlived the role that carried it: %v", names(got))
 		}
+		// Both tables, because they are two tables: a mutation dropping the
+		// foreign key from one of them survived a check that read the other.
+		got, err = s.Roles().ListClientScopeScopeMappings(ctx, sc.ID)
+		if err != nil {
+			t.Fatalf("ListClientScopeScopeMappings after the id was reused: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("a scope's mapping outlived the role that carried it: %v", names(got))
+		}
 	})
 }
 
