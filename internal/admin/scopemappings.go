@@ -141,12 +141,15 @@ func (h *handler) scopeClientMappingsOf(ctx context.Context, rc *reqContext, dir
 			byClient[role.ClientID] = append(byClient[role.ClientID], role)
 		}
 	}
-	if len(byClient) == 0 {
-		// nil rather than an empty map, so omitempty drops the key: a container
-		// with only realm mappings was measured answering realmMappings alone,
-		// and one with nothing answering `{}`.
-		return nil, nil
-	}
+	// There is deliberately no `if len(byClient) == 0 { return nil, nil }` here.
+	// A container with no client mappings was measured answering `realmMappings`
+	// alone, and one with nothing at all answering `{}`, and `omitempty` on a
+	// slice already drops an empty one - nil or not. An early return spelling
+	// that out is dead code, which a mutation replacing it with `if false`
+	// proved by surviving; the absent-key rule is pinned by
+	// admin/scope-mappings/refused-batch-writes-nothing, whose whole body is
+	// `{}`, and by mutating the struct tag rather than this branch. The same
+	// mistake was made and found once already, on protocolMapperListOrNil.
 	entries := make(map[string]clientMappingsEntry, len(byClient))
 	ids := make([]string, 0, len(byClient))
 	for uuid, held := range byClient {
