@@ -59,24 +59,27 @@ Working today:
 - RP-initiated logout: the redirect, the session end, and
   `post.logout.redirect.uris` - which turned out to be a filter over
   `redirectUris` rather than a separate registration
-- the browser login: the authentication session, the login form,
-  `/login-actions/authenticate`, and an authorization code carrying the
-  `session_state` that was minted before the password was seen
-- protocol mappers: the tag in full, on client scopes and on clients - 21
-  operations
+- **the browser code flow, end to end**: `GET /auth`, the login form,
+  `/login-actions/authenticate`, an authorization code carrying the
+  `session_state` minted before the password was seen, and its exchange at the
+  token endpoint - twelve measured rejections, not the eight the first
+  recording named
+- protocol mappers and scope mappings: both tags in full - 54 operations, where
+  the scope-mapping guard turned out **not** to be the role-mapping guard, in
+  both directions at once
 - client secrets, service accounts, user credentials and user logout
 - a documentation-derived conformance suite (`internal/conformance`) that checks
   Gloak's responses byte-for-byte against bytes recorded from a live
   Keycloak 26.7.1
 - a parity meter whose denominator comes from Keycloak's own OpenAPI description
-  rather than from a hand-kept list: **205 of 499 enumerated behaviours served**,
+  rather than from a hand-kept list: **242 of 500 enumerated behaviours served**,
   plus four chapters whose surface has not been counted
 - an external oracle: `make oracle` drives Gloak with `kcadm.sh`, Keycloak's own
   admin CLI, which asks for things no recorded case asks for
 
-Not implemented yet: exchanging an authorization code at the token endpoint,
-the login page's own markup (the flow is served, the theme is not), SSO
-recognition, back-channel and front-channel logout, scope mappings, SAML, user
+Not implemented yet: the login page's own markup (the flow is served, the theme
+is not), SSO recognition - a second visit serves the form where Keycloak
+redirects straight through - back-channel and front-channel logout, SAML, user
 federation, identity brokering, authorization services, the admin console.
 
 Where this is going is `docs/superpowers/specs/2026-08-21-gloak-parity-roadmap.md`:
@@ -192,10 +195,10 @@ and stay out of the total rather than being dropped from it silently, which
 would inflate the percentage by hiding the parts nobody has counted. It reads:
 
 ```
-total: 205 of 499 enumerated behaviours served; 4 chapters not enumerated
+total: 242 of 500 enumerated behaviours served; 4 chapters not enumerated
 ```
 
-The denominator is 499 rather than 413 plus a fixed number because the protocol
+The denominator is 500 rather than 413 plus a fixed number because the protocol
 chapters have no OpenAPI source and are counted case by case, so they grow as
 measurements find behaviours nobody had named. It moved from 485 on 2026-08-29
 for the first time since it was set, and again the next day when the logout
@@ -255,15 +258,17 @@ deliberate - it is how "measured, never remembered" stops being a convention.
 JWKS keys and Gloak generated one; realm keys are now modelled and persisted, so
 that case passes.
 
-**`make record` is silent on a clean checkout.** It rewrites 290 goldens with
+**`make record` is silent on a clean checkout.** It rewrites 327 goldens with
 identical bytes and moves none, so any diff at all is one to read carefully.
 
 That was not always so. Four login-theme pages churned their whole body on every
 run, because the `/resources/<hash>/` segment is regenerated per container start,
-and the count went from three to four inside two days. All four are `Pending`, so
-nothing compared them and the churn bought nothing. The recorder now leaves a
+and the count went from three to four inside two days. Those four are `Pending`,
+so nothing compared them and the churn bought nothing. The recorder now leaves a
 `Pending` golden exactly as it found it; the way to ask for one back is to
-promote the case to `Recorded`, which is what `Recorded` already means.
+promote the case to `Recorded`, which is what `Recorded` already means. Seven
+`Pending` goldens are parked in all, each declared in `parkedGoldens` with the
+reason it is kept - a parked golden is a measurement, never a contract.
 
 A fourth used to churn - `oidc/token/password-grant-admin-cli`'s `scope`, whose
 word order is not stable across container starts. `UnorderedWords` sorts the
