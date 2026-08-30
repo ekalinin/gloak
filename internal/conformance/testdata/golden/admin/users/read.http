@@ -9,4 +9,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-{"id":"{{string}}","username":"admin","emailVerified":false,"attributes":{"is_temporary_admin":["true"]},"enabled":true,"createdTimestamp":"{{number}}","totp":false,"disableableCredentialTypes":[],"requiredActions":[],"notBefore":0,"access":{"manageGroupMembership":true,"resetPassword":true,"view":true,"mapRoles":true,"impersonate":true,"manage":true}}
+{"id":"{{user_id}}","username":"admin","emailVerified":false,"attributes":{"is_temporary_admin":["true"]},"enabled":true,"createdTimestamp":"{{number}}","totp":false,"disableableCredentialTypes":[],"requiredActions":[],"notBefore":0,"access":{"manageGroupMembership":true,"resetPassword":true,"view":true,"mapRoles":true,"impersonate":true,"manage":true}}

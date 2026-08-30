@@ -763,8 +763,8 @@ var bodyMasks = []bodyMask{
 // It is a function taking a body rather than a loop inside the test so that
 // TestInertMaskGuardSeesEveryKind can hand it bodies known to be inert. A guard
 // nothing can make fail is the failure mode this file exists to prevent.
-func inertMasks(c Case, body []byte) ([]inertMask, error) {
-	var out []inertMask
+func inertMasks(c Case, body []byte) ([]maskFinding, error) {
+	var out []maskFinding
 	for _, m := range bodyMasks {
 		for _, p := range m.paths(c) {
 			values, err := MaskedValues(body, []string{p})
@@ -772,7 +772,7 @@ func inertMasks(c Case, body []byte) ([]inertMask, error) {
 				return nil, fmt.Errorf("%s %q: %w", m.name, p, err)
 			}
 			if len(values) == 0 {
-				out = append(out, inertMask{m.name, p, "addresses nothing in the recorded body"})
+				out = append(out, maskFinding{m.name, p, "addresses nothing in the recorded body"})
 				continue
 			}
 			if m.changes == nil {
@@ -793,7 +793,7 @@ func inertMasks(c Case, body []byte) ([]inertMask, error) {
 				}
 			}
 			if !live {
-				out = append(out, inertMask{m.name, p, fmt.Sprintf(
+				out = append(out, maskFinding{m.name, p, fmt.Sprintf(
 					"covers %d value(s) and sorting every one of them is the identity", len(values))})
 			}
 		}
@@ -801,19 +801,19 @@ func inertMasks(c Case, body []byte) ([]inertMask, error) {
 	return out, nil
 }
 
-// inertMask is one mask a body proves does nothing. It is a struct rather than
-// a message so that the declared-exception list can be keyed on the mask being
-// named rather than on the wording that describes it.
-type inertMask struct {
+// maskFinding is one mask a body proves is doing less than it claims. It is a
+// struct rather than a message so that the declared-exception lists can be keyed
+// on the mask being named rather than on the wording that describes it.
+type maskFinding struct {
 	mask string
 	path string
 	why  string
 }
 
-func (m inertMask) String() string { return fmt.Sprintf("%s %q %s", m.mask, m.path, m.why) }
+func (m maskFinding) String() string { return fmt.Sprintf("%s %q %s", m.mask, m.path, m.why) }
 
-// key spells an entry of inertMasksLeftInPlace.
-func (m inertMask) key(id string) string { return fmt.Sprintf("%s %s %q", id, m.mask, m.path) }
+// key spells an entry of inertMasksLeftInPlace or capturedMasksLeftInPlace.
+func (m maskFinding) key(id string) string { return fmt.Sprintf("%s %s %q", id, m.mask, m.path) }
 
 // inertMasksLeftInPlace is every mask the guard below reports that is still in
 // the catalogue, keyed "<case ID> <mask> <path>", with the reason it is still
@@ -883,6 +883,175 @@ func TestNoMaskIsInertOnItsGolden(t *testing.T) {
 	for _, entry := range stale {
 		t.Errorf("inertMasksLeftInPlace excuses %q and it is not inert any more; "+
 			"drop the entry rather than leaving a reason nobody has re-read", entry)
+	}
+}
+
+// capturedValue matches a value ReplaceCaptured has already rewritten: the
+// whole string, and nothing but the placeholder.
+var capturedValue = regexp.MustCompile(`^"\{\{([a-z_0-9]+)\}\}"$`)
+
+// volatileMasksOverCaptures is every Volatile path whose values are, by the
+// time Normalize runs, already the placeholder a fixture capture put there.
+//
+// This is F46 one level down, in the body instead of the header. A mask over a
+// whole value asserts nothing about it, and here there was something to assert:
+// ReplaceCaptured has already turned the server-minted id into `{{group_id}}`,
+// which is stable, identical on both sides, and says *which object this is*.
+// Normalize then replaces it with `"{{string}}"` and that sentence is gone.
+//
+// The assertion lost is not decoration. admin/groups/children-list masked both
+// `*/id` and `*/parentId`; a handler answering with the child's own id in
+// `parentId` compared equal to one answering with the parent's, because both
+// sides read `"{{string}}"`. The same shape covers eleven `containerId`s, every
+// role-mapping listing and every group read.
+//
+// A path whose values are only *partly* captured is left alone and must be: the
+// realm's own id is in a `containerId` beside a client's and nothing captures
+// it, so the mask is still earning its place on the other element.
+func volatileMasksOverCaptures(paths []string, body []byte, vars map[string]string) ([]maskFinding, error) {
+	var out []maskFinding
+	for _, p := range paths {
+		values, err := MaskedValues(body, []string{p})
+		if err != nil {
+			return nil, fmt.Errorf("Volatile %q: %w", p, err)
+		}
+		if len(values) == 0 {
+			continue // addressing nothing is TestNoMaskIsInertOnItsGolden's finding
+		}
+		captured := true
+		for _, v := range values {
+			m := capturedValue.FindSubmatch(bytes.TrimSpace(v))
+			if m == nil {
+				captured = false
+				break
+			}
+			if _, ok := vars[string(m[1])]; !ok {
+				captured = false
+				break
+			}
+		}
+		if captured {
+			out = append(out, maskFinding{"Volatile", p, fmt.Sprintf(
+				"covers %d value(s), every one of them already {{captured}} by the fixture", len(values))})
+		}
+	}
+	return out, nil
+}
+
+// TestNoVolatileMaskCoversACapturedValue is the half of the sweep a committed
+// golden cannot answer, asked of the served body instead.
+//
+// By the time a golden is written the value is `"{{string}}"`, so the file
+// cannot say what was masked. One question can still be asked, and it is the
+// one that matters: was the value *already* deterministic when Normalize
+// reached it? ReplaceCaptured runs first and rewrites every id a fixture step
+// captured, so a `Volatile` sitting on one of those is masking a value that was
+// stable, comparable and identical on both sides - the widest possible mask
+// over the narrowest possible thing.
+//
+// It runs against Gloak rather than against Keycloak, which is the right oracle
+// for this question and not a compromise: what it inspects is the harness's own
+// ReplaceCaptured pass, which both sides run, on a body whose shape TestConformance
+// has already proved matches the reference byte for byte.
+//
+// If a case ever legitimately needs a mask this reports - a value Gloak pins and
+// Keycloak does not - the way to say so is a comment in the case and an entry in
+// capturedMasksLeftInPlace, the way inertMasksLeftInPlace does it.
+func TestNoVolatileMaskCoversACapturedValue(t *testing.T) {
+	matched := map[string]bool{}
+	for _, c := range Catalog {
+		if c.Status != Implemented || len(c.Volatile) == 0 {
+			continue
+		}
+		t.Run(c.ID, func(t *testing.T) {
+			got, vars, err := serve(t, c)
+			if err != nil {
+				t.Fatalf("serve: %v", err)
+			}
+			// The two passes that run before Normalize, in passes.go's order.
+			// Anything after Normalize would be looking at the mask's own output.
+			body := ReplaceIssuer(ReplaceCaptured(got.Body.Bytes(), vars), testIssuer)
+			if len(bytes.TrimSpace(body)) == 0 || !json.Valid(body) {
+				return
+			}
+			found, err := volatileMasksOverCaptures(c.Volatile, body, vars)
+			if err != nil {
+				t.Fatalf("%v", err)
+			}
+			for _, m := range found {
+				if _, listed := capturedMasksLeftInPlace[m.key(c.ID)]; listed {
+					matched[m.key(c.ID)] = true
+					continue
+				}
+				t.Errorf("%s - drop the mask and let the golden assert which object this is", m)
+			}
+		})
+	}
+
+	stale := make([]string, 0, len(capturedMasksLeftInPlace))
+	for entry := range capturedMasksLeftInPlace {
+		if !matched[entry] {
+			stale = append(stale, entry)
+		}
+	}
+	sort.Strings(stale)
+	for _, entry := range stale {
+		t.Errorf("capturedMasksLeftInPlace excuses %q and it no longer covers a capture; "+
+			"drop the entry rather than leaving a reason nobody has re-read", entry)
+	}
+}
+
+// capturedMasksLeftInPlace is every mask the guard above reports that is still
+// in the catalogue, keyed the way inertMasksLeftInPlace is, with the reason.
+//
+// One entry, and it is a finding rather than an exemption: the mask is too wide
+// and the file it lives in belonged to another stream the week this sweep ran.
+// A stale entry fails, so the day that stream narrows it this list says so.
+var capturedMasksLeftInPlace = map[string]string{
+	`oidc/token/authorization-code-grant Volatile "session_state"`: "the token response's session_state is the " +
+		"one the authorization redirect handed back, captured as {{session_state}} - so masking it drops the " +
+		"assertion that the token belongs to the browser session that authorised it. " +
+		"catalog_oidc_pending.go is another stream's.",
+}
+
+// TestVolatileCaptureGuardCanFail proves the guard above can fail, and that it
+// leaves the two shapes of mask that are earning their place alone.
+func TestVolatileCaptureGuardCanFail(t *testing.T) {
+	vars := map[string]string{"group_id": "0f8f1f52-0000-0000-0000-000000000001"}
+	body := []byte(`{"id":"{{group_id}}","mixed":[{"c":"{{group_id}}"},{"c":"7b712638"}],` +
+		`"minted":"7b712638","absent":null}`)
+
+	for _, tc := range []struct {
+		name   string
+		paths  []string
+		report bool
+	}{
+		{"a captured value", []string{"id"}, true},
+		{"a minted value", []string{"minted"}, false},
+		// The realm's own id beside a captured client's: the mask is still
+		// earning its place on the element nothing captured.
+		{"one captured element of two", []string{"mixed/*/c"}, false},
+		// A placeholder no fixture captured is not a capture. Nothing writes one
+		// today, and a guard that reads any {{...}} as one would be trusting the
+		// spelling rather than the session.
+		{"an uncaptured placeholder", []string{"id"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := vars
+			if tc.name == "an uncaptured placeholder" {
+				v = map[string]string{}
+			}
+			got, err := volatileMasksOverCaptures(tc.paths, body, v)
+			if err != nil {
+				t.Fatalf("%v", err)
+			}
+			if tc.report && len(got) == 0 {
+				t.Errorf("%v went unreported", tc.paths)
+			}
+			if !tc.report && len(got) != 0 {
+				t.Errorf("%v was reported anyway: %v", tc.paths, got)
+			}
+		})
 	}
 }
 

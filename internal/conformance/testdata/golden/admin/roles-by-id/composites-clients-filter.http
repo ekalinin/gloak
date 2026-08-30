@@ -9,4 +9,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-[{"id":"{{string}}","name":"gloak-probe-composite-child-client","composite":false,"clientRole":true,"containerId":"{{string}}"}]
+[{"id":"{{child_client_id}}","name":"gloak-probe-composite-child-client","composite":false,"clientRole":true,"containerId":"{{client_uuid}}"}]

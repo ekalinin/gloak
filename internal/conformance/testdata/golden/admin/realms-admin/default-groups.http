@@ -9,4 +9,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-[{"id":"{{string}}","name":"gloak-probe-dg-child","path":"/gloak-probe-dg-top/gloak-probe-dg-child","parentId":"{{string}}","subGroups":[]},{"id":"{{string}}","name":"gloak-probe-dg-top","path":"/gloak-probe-dg-top","subGroups":[]}]
+[{"id":"{{dg_child}}","name":"gloak-probe-dg-child","path":"/gloak-probe-dg-top/gloak-probe-dg-child","parentId":"{{dg_top}}","subGroups":[]},{"id":"{{dg_top}}","name":"gloak-probe-dg-top","path":"/gloak-probe-dg-top","subGroups":[]}]

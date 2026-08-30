@@ -9,4 +9,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-[{"id":"{{string}}","name":"gloak-probe-group-members","path":"/gloak-probe-group-members","subGroups":[]}]
+[{"id":"{{group_id}}","name":"gloak-probe-group-members","path":"/gloak-probe-group-members","subGroups":[]}]
