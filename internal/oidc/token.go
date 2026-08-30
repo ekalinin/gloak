@@ -2,8 +2,11 @@ package oidc
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -17,12 +20,47 @@ import (
 )
 
 // Grant types this endpoint dispatches on. Anything else is answered
-// unsupported_grant_type; the authorization_code grant arrives with P3, which
-// is what mints a code.
+// unsupported_grant_type.
 const (
 	grantPassword          = "password"
 	grantRefreshToken      = "refresh_token"
 	grantClientCredentials = "client_credentials"
+	grantAuthorizationCode = "authorization_code"
+)
+
+// The authorization_code grant's measured answers, in the order they are
+// reached. Measured 2026-08-30 against a live 26.7.1 by driving two faults at
+// once, one pair per adjacency:
+//
+//	1. grant_type absent      Missing form parameter: grant_type   (above)
+//	2. grant_type unknown     Unsupported grant_type               (above)
+//	3. client authentication  401, and it does **not** spend the code
+//	4. a duplicated form key  duplicated parameter
+//	5. code absent            Missing parameter: code
+//	6. code not redeemable    Code not valid
+//	7. redirect_uri           Incorrect redirect_uri
+//	8. the code's own client  Auth error: Found different client_id in clientSession
+//	9. PKCE, four answers
+//
+// Two of those are not where they look. **The redirect URI is compared before
+// the client is**: another client redeeming a code with a wrong redirect_uri
+// answers about the redirect_uri, so step 7 cannot be folded into step 8 as "is
+// this caller allowed this code". And **the duplicated-parameter check is
+// fourth**, after client authentication - zz twice with an unknown client_id is
+// the 401, and zz twice with a valid client and no code is the duplicate.
+//
+// Everything from step 6 onwards spends the code; step 3 does not, because the
+// code has not been looked at yet. See docs/superpowers/plans/2026-08-30-p3-code-grant.md
+// section 1.
+const (
+	descMissingCode        = "Missing parameter: code"
+	descCodeNotValid       = "Code not valid"
+	descIncorrectRedirect  = "Incorrect redirect_uri"
+	descDifferentClient    = "Auth error: Found different client_id in clientSession"
+	descVerifierMissing    = "PKCE code verifier not specified"
+	descVerifierUnexpected = "PKCE code verifier specified but challenge not present in authorization"
+	descVerifierMalformed  = "PKCE verification failed: Invalid code verifier"
+	descVerifierMismatch   = "PKCE verification failed: Code mismatch"
 )
 
 // defaultClientScopes is what a client grants when the request asks for no
@@ -91,7 +129,7 @@ func (h *handler) token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch grantType {
-	case grantPassword, grantRefreshToken, grantClientCredentials:
+	case grantPassword, grantRefreshToken, grantClientCredentials, grantAuthorizationCode:
 	default:
 		httpx.WriteOAuthError(w, http.StatusBadRequest,
 			"unsupported_grant_type", "Unsupported grant_type")
@@ -101,6 +139,21 @@ func (h *handler) token(w http.ResponseWriter, r *http.Request) {
 	client, authErr := h.authenticateClient(r.Context(), realm, r.PostForm, r.Header)
 	if authErr != nil {
 		authErr.write(w)
+		return
+	}
+	// A repeated form key is this endpoint's error too, with the authorization
+	// endpoint's lower-case spelling and its "any key, even one nobody reads"
+	// rule - zz twice is enough and so is grant_type twice.
+	//
+	// Two things about it are this endpoint's own. It reads the **body** and not
+	// the query: zz twice on the query of a valid password grant is a 200, one
+	// in each is a 200, and both in the body is this 400. And it runs **after**
+	// client authentication, where /auth's runs seventh: zz twice with an
+	// unknown client_id is the 401, and zz twice with a valid client and a wrong
+	// password is this. Measured 2026-08-30 on all six pairs.
+	if hasDuplicate(r.PostForm) {
+		httpx.WriteOAuthError(w, http.StatusBadRequest,
+			authErrInvalidRequest, descDuplicatedParameter)
 		return
 	}
 	k := h.realmKeys(w, r, realm)
@@ -114,7 +167,134 @@ func (h *handler) token(w http.ResponseWriter, r *http.Request) {
 		h.refreshTokenGrant(w, r, realm, client, k)
 	case grantClientCredentials:
 		h.clientCredentialsGrant(w, r, realm, client, k)
+	case grantAuthorizationCode:
+		h.authorizationCodeGrant(w, r, realm, client, k)
 	}
+}
+
+// authorizationCodeGrant redeems a code the browser flow minted.
+//
+// The check order is the measured one and the two surprises in it are recorded
+// on the constant block above. What is worth repeating here is that
+// **spendCode is called before any of the code's contents are judged**: a
+// failed exchange spends the code, measured on four different failures, so the
+// retry after a wrong redirect_uri, a wrong client, a missing verifier or a
+// mismatched one all answer "Code not valid" rather than repeating themselves.
+// The one failure that does not spend it is client authentication, and that
+// falls out of it happening in token() above rather than being a special case.
+func (h *handler) authorizationCodeGrant(w http.ResponseWriter, r *http.Request,
+	realm *model.Realm, client *model.Client, k *keys.RealmKeys) {
+	// Presence, not value. An empty code= answers "Code not valid" - it reaches
+	// the lookup - where an absent one answers about the parameter.
+	if _, present := r.PostForm["code"]; !present {
+		httpx.WriteOAuthError(w, http.StatusBadRequest, authErrInvalidRequest, descMissingCode)
+		return
+	}
+	code, ok := h.auth.spendCode(realm.Name, r.PostForm.Get("code"))
+	if !ok {
+		writeCodeNotValid(w)
+		return
+	}
+	// The redirect URI is compared against what the authorization request
+	// stored, never against the client's registered patterns: a code minted for
+	// one registered URI and redeemed naming another registered one is refused.
+	// An absent redirect_uri compares unequal rather than being caught by a
+	// presence check, which is why this is not "Missing parameter".
+	if r.PostForm.Get("redirect_uri") != code.RedirectURI {
+		httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_grant", descIncorrectRedirect)
+		return
+	}
+	if code.ClientUUID != client.ID {
+		httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_grant", descDifferentClient)
+		return
+	}
+	if desc, bad := checkCodeVerifier(code, r.PostForm); bad {
+		httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_grant", desc)
+		return
+	}
+
+	ctx := r.Context()
+	session, err := h.store.Sessions().UserSessionByID(ctx, realm.ID, code.SessionID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			// Measured: deleting the user session between the login and the
+			// exchange makes the code answer "Code not valid", not a session
+			// error. The code is only redeemable while its session lives.
+			writeCodeNotValid(w)
+			return
+		}
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	user, err := h.store.Users().ByID(ctx, realm.ID, code.UserID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeCodeNotValid(w)
+			return
+		}
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	// auth_time is when the user authenticated, which for this grant is when the
+	// session started - measured as iat - auth_time == 6 on a login left six
+	// seconds before the exchange, so issuing time is the wrong value.
+	authTime := time.UnixMilli(session.StartedAt)
+	h.writeTokens(w, r, realm, client, user, session, code.Scope, k, false, authTime, code.Nonce)
+}
+
+func writeCodeNotValid(w http.ResponseWriter) {
+	httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_grant", descCodeNotValid)
+}
+
+// checkCodeVerifier is the PKCE half of the redemption, and it is four answers
+// rather than one.
+//
+// Measured 2026-08-30 over the whole grid. An absent verifier against a stored
+// challenge and a present verifier against no challenge are two different
+// errors, and both are different from a mismatch. **An empty code_verifier= is
+// "Invalid code verifier", not "not specified"** - so the absence check is on
+// the parameter and the shape check catches the empty string.
+//
+// The shape is RFC 7636's code_verifier production, measured at both bounds and
+// on the alphabet: 42 characters and 129 characters are both "Invalid code
+// verifier", 128 reaches the comparison and answers "Code mismatch", and 43 "!"
+// characters are invalid.
+//
+// A stored method of "" means the request sent a challenge and no method, which
+// is measured to default to plain - the same default checkPKCE records at the
+// authorization endpoint.
+func checkCodeVerifier(code *authCode, form url.Values) (string, bool) {
+	verifier, present := form["code_verifier"]
+	if code.CodeChallenge == "" {
+		if present {
+			return descVerifierUnexpected, true
+		}
+		return "", false
+	}
+	if !present {
+		return descVerifierMissing, true
+	}
+	// RFC 7636 gives the verifier and the challenge the same production, and
+	// both halves are measured to enforce it, so validCodeChallenge is reused
+	// rather than copied.
+	if !validCodeChallenge(verifier[0]) {
+		return descVerifierMalformed, true
+	}
+	if codeChallengeFor(verifier[0], code.CodeChallengeMethod) != code.CodeChallenge {
+		return descVerifierMismatch, true
+	}
+	return "", false
+}
+
+// codeChallengeFor is what a verifier hashes to under a method. S256 is the
+// unpadded base64url of its SHA-256; plain, and an absent method, are the
+// verifier itself.
+func codeChallengeFor(verifier, method string) string {
+	if method != "S256" {
+		return verifier
+	}
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 // passwordGrant is the Resource Owner Password Credentials grant.
@@ -173,7 +353,7 @@ func (h *handler) passwordGrant(w http.ResponseWriter, r *http.Request, realm *m
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	h.writeTokens(w, r, realm, client, user, session, scope, k, false)
+	h.writeTokens(w, r, realm, client, user, session, scope, k, false, time.Time{}, "")
 }
 
 // refreshTokenGrant exchanges a refresh token for a fresh set.
@@ -239,7 +419,7 @@ func (h *handler) refreshTokenGrant(w http.ResponseWriter, r *http.Request, real
 	// the "Token endpoint response" section of the observed-behaviour document
 	// as the weakest of the unmasked duration values. The recorded golden
 	// agrees with the configured 1800 because the session is seconds old there.
-	h.writeTokens(w, r, realm, client, user, session, clientSession.Scope, k, false)
+	h.writeTokens(w, r, realm, client, user, session, clientSession.Scope, k, false, time.Time{}, "")
 }
 
 func writeInvalidRefreshToken(w http.ResponseWriter) {
@@ -279,7 +459,7 @@ func (h *handler) clientCredentialsGrant(w http.ResponseWriter, r *http.Request,
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	h.writeTokens(w, r, realm, client, user, session, scope, k, true)
+	h.writeTokens(w, r, realm, client, user, session, scope, k, true, time.Time{}, "")
 }
 
 // serviceAccountUser returns the account a client acts as, creating it on
@@ -361,7 +541,15 @@ func (h *handler) startSession(ctx context.Context, realm *model.Realm, client *
 // refresh_expires_in 0 rather than the realm's lifespan. The refresh token is
 // not merely left out of the body - none is issued, so a service account
 // session cannot be refreshed.
-func (h *handler) writeTokens(w http.ResponseWriter, r *http.Request, realm *model.Realm, client *model.Client, user *model.User, session *model.UserSession, scope string, k *keys.RealmKeys, serviceAccount bool) {
+//
+// authTime and nonce are the browser flow's and are the zero value for every
+// other grant, which is what makes their claims absent there. **The refresh
+// grant passes the zero auth time and Keycloak does not**: measured, refreshing
+// a browser-login session keeps the original auth_time and refreshing a
+// password-grant session has none, so auth_time belongs to the user session and
+// Gloak has nowhere to keep it - model.UserSession is internal/model's. Filed
+// rather than guessed.
+func (h *handler) writeTokens(w http.ResponseWriter, r *http.Request, realm *model.Realm, client *model.Client, user *model.User, session *model.UserSession, scope string, k *keys.RealmKeys, serviceAccount bool, authTime time.Time, nonce string) {
 	realmRoles, clientRoles, err := h.tokenRoles(r.Context(), realm, user)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
@@ -380,6 +568,8 @@ func (h *handler) writeTokens(w http.ResponseWriter, r *http.Request, realm *mod
 		AccessLife:     accessLife,
 		RefreshLife:    realm.RefreshTokenLifespan,
 		IncludeIDToken: hasScope(scope, "openid"),
+		AuthTime:       authTime,
+		Nonce:          nonce,
 	})
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")

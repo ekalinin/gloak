@@ -202,12 +202,16 @@ func (h *handler) writeRestartRedirect(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 	tab := &authTab{
-		ClientID:     client.ClientID,
-		ClientUUID:   client.ID,
-		RedirectURI:  rec.RedirectURI,
-		ResponseMode: rec.ResponseMode,
-		State:        rec.State,
-		HasState:     rec.HasState,
+		ClientID:            client.ClientID,
+		ClientUUID:          client.ID,
+		RedirectURI:         rec.RedirectURI,
+		ResponseMode:        rec.ResponseMode,
+		State:               rec.State,
+		HasState:            rec.HasState,
+		Scope:               rec.Scope,
+		Nonce:               rec.Nonce,
+		CodeChallenge:       rec.CodeChallenge,
+		CodeChallengeMethod: rec.CodeChallengeMethod,
 	}
 	sess, err := h.beginAuthSession(w, r, realm, tab, nil)
 	if err != nil {
@@ -355,18 +359,25 @@ func (h *handler) verifyLoginCredentials(r *http.Request, realm *model.Realm, us
 // wrong together.
 func (h *handler) completeLogin(w http.ResponseWriter, r *http.Request, realm *model.Realm,
 	client *model.Client, sess *authSession, tab *authTab, user *model.User, k *keys.RealmKeys) error {
-	scope := grantedScope("")
+	// The granted scope follows the authorization request, not a constant.
+	// Measured: a login asking scope=openid produces a token response whose
+	// scope is "openid profile email" and which carries an id_token, and one
+	// asking for none produces neither the word nor the token.
+	scope := grantedScope(tab.Scope)
 	session, err := h.startSessionWithID(r.Context(), sess.RootID, realm, client, user, scope)
 	if err != nil {
 		return err
 	}
 	code, err := h.auth.newCode(&authCode{
-		Realm:       realm.Name,
-		ClientUUID:  client.ID,
-		RedirectURI: tab.RedirectURI,
-		UserID:      user.ID,
-		SessionID:   session.ID,
-		Scope:       scope,
+		Realm:               realm.Name,
+		ClientUUID:          client.ID,
+		RedirectURI:         tab.RedirectURI,
+		UserID:              user.ID,
+		SessionID:           session.ID,
+		Scope:               scope,
+		Nonce:               tab.Nonce,
+		CodeChallenge:       tab.CodeChallenge,
+		CodeChallengeMethod: tab.CodeChallengeMethod,
 	})
 	if err != nil {
 		return err
