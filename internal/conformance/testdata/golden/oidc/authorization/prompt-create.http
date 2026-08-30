@@ -1,0 +1,130 @@
+# GET /realms/master/protocol/openid-connect/auth
+HTTP/1.1 400 Bad Request
+Cache-Control: no-store, must-revalidate, max-age=0
+Content-Language: en
+Content-Length: {{volatile}}
+Content-Security-Policy: frame-src 'self'; frame-ancestors 'self'; object-src 'none';
+Content-Type: text/html;charset=utf-8
+Referrer-Policy: no-referrer
+Set-Cookie: AUTH_SESSION_ID=cWRLNC1tRzBMcG5ZQ3hiLTRJS1lCWm12LklRcHljZXNGSFgtR05rSllZeEJFOUNHZWV3YXJTVXhheE8zYnhUWnlTRHhQZ2o5QVQtLVpBSlY3ZjVmb3h4RlVtaFJHOFdBUFp6SFM5SldNR09OTmFn;Version=1;Path=/realms/master/;Secure;HttpOnly;SameSite=None
+Set-Cookie: KC_AUTH_SESSION_HASH="doFZB1zRPGOwAFS6vATrE1oVD2qWWY6KFelQy8dCVcCt8s6bcYz+IRa0N1Yd/L8w";Version=1;Path=/realms/master/;Max-Age=60;Secure;SameSite=None
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+<!DOCTYPE html>
+<html class="login-pf" lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <meta name="color-scheme" content="light dark">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>Sign in to Keycloak</title>
+        <link rel="icon" href="/resources/ynxld/login/keycloak.v2/img/favicon.ico" />
+        <link href="/resources/ynxld/common/keycloak/vendor/patternfly-v5/patternfly.min.css" rel="stylesheet" />
+        <link href="/resources/ynxld/common/keycloak/vendor/patternfly-v5/patternfly-addons.css" rel="stylesheet" />
+        <link href="/resources/ynxld/login/keycloak.v2/css/styles.css" rel="stylesheet" />
+    <script type="importmap">
+        {
+            "imports": {
+                "rfc4648": "/resources/ynxld/common/keycloak/vendor/rfc4648/rfc4648.js"
+            }
+        }
+    </script>
+      <script type="module" async blocking="render">
+          const DARK_MODE_CLASS = "pf-v5-theme-dark";
+          const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
+          updateDarkMode(mediaQuery.matches);
+          mediaQuery.addEventListener("change", (event) => updateDarkMode(event.matches));
+
+          function updateDarkMode(isEnabled) {
+            const { classList } = document.documentElement;
+
+            if (isEnabled) {
+              classList.add(DARK_MODE_CLASS);
+            } else {
+              classList.remove(DARK_MODE_CLASS);
+            }
+          }
+      </script>
+    <script type="module" src="/resources/ynxld/login/keycloak.v2/js/passwordVisibility.js"></script>
+    <script type="module">
+        import { startSessionPolling } from "/resources/ynxld/login/keycloak.v2/js/authChecker.js";
+
+        startSessionPolling(
+            "/realms/master/login-actions/restart?client_id=gloak-probe-browser&tab_id=XZYbTuYdweg&client_data=eyJydSI6Imh0dHA6Ly9sb2NhbGhvc3Q6OTk5OS9jYWxsYmFjayIsInJ0IjoiY29kZSIsInN0IjoieHl6MTIzIn0&skip_logout=true"
+        );
+    </script>
+    <script type="module">
+        document.addEventListener("click", (event) => {
+            const link = event.target.closest("a[data-once-link]");
+
+            if (!link) {
+                return;
+            }
+
+            if (link.getAttribute("aria-disabled") === "true") {
+                event.preventDefault();
+                return;
+            }
+
+            const { disabledClass } = link.dataset;
+
+            if (disabledClass) {
+                link.classList.add(...disabledClass.trim().split(/\s+/));
+            }
+
+            link.setAttribute("role", "link");
+            link.setAttribute("aria-disabled", "true");
+        });
+    </script>
+        <script type="module">
+            import { checkAuthSession } from "/resources/ynxld/login/keycloak.v2/js/authChecker.js";
+
+            checkAuthSession(
+                "doFZB1zRPGOwAFS6vATrE1oVD2qWWY6KFelQy8dCVcCt8s6bcYz+IRa0N1Yd/L8w"
+            );
+        </script>
+    <script>
+      // Workaround for https://bugzilla.mozilla.org/show_bug.cgi?id=1404468
+      const isFirefox = true;
+    </script>
+</head>
+
+<body id="keycloak-bg" class="" data-page-id="login-error">
+<div class="pf-v5-c-login">
+  <div class="pf-v5-c-login__container">
+    <header id="kc-header" class="pf-v5-c-login__header">
+      <div id="kc-header-wrapper"
+              class="pf-v5-c-brand"><div class="kc-logo-text"><span>Keycloak</span></div></div>
+    </header>
+    <main class="pf-v5-c-login__main">
+      <div class="pf-v5-c-login__main-header">
+        <h1 class="pf-v5-c-title pf-m-3xl" id="kc-page-title">        We are sorry...
+</h1>
+      </div>
+      <div class="pf-v5-c-login__main-body">
+
+
+        <div id="kc-error-message">
+            <p class="instruction">Registration not allowed</p>
+        </div>
+
+
+
+          <div class="pf-v5-c-login__main-footer">
+
+          </div>
+      </div>
+
+        <div class="pf-v5-c-login__main-footer">
+        </div>
+    </main>
+  </div>
+</div>
+</body>
+</html>

@@ -3,6 +3,8 @@ package token
 import (
 	"time"
 
+	jose "github.com/go-jose/go-jose/v4"
+
 	"github.com/ekalinin/gloak/internal/keys"
 )
 
@@ -60,4 +62,27 @@ func IssueIdentityCookie(k *keys.RealmKeys, issuer, subject, sessionID, jti, sta
 		SessionID:    sessionID,
 		StateChecker: stateChecker,
 	})
+}
+
+// ParseIdentityCookie verifies a KEYCLOAK_IDENTITY value, which is what makes a
+// browser recognisable as already signed in.
+//
+// It is HS512 like the refresh token, so the algorithm list is the refresh
+// token's - and the `typ` assertion is the whole of what stops the two standing
+// in for each other. Without it a refresh token would be accepted as a browser
+// session cookie and an identity cookie as a refresh token, because they share a
+// key and a signature algorithm.
+//
+// The expiry **is** checked, unlike ParseID's. That is measured rather than
+// chosen: a cookie naming a session that no longer exists, one whose signature
+// has been rewritten, and one that is not a JWT at all are all answered
+// identically - both cookies cleared, and the request served as an anonymous
+// one - so a cookie that cannot be used is never a rejection here, and there is
+// no branch that would want an expired one.
+func ParseIdentityCookie(k *keys.RealmKeys, issuer, raw string, now time.Time) (*Parsed, error) {
+	claims, err := verify(raw, []jose.SignatureAlgorithm{jose.HS512}, k.HMACSecret())
+	if err != nil {
+		return nil, err
+	}
+	return check(claims, issuer, SerializedIDType, now)
 }

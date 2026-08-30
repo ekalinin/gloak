@@ -164,10 +164,12 @@ type Case struct {
 	// ordering cannot carry it. A pristine case whose fixture creates
 	// something pollutes every pristine case after it, which is not a
 	// hypothetical: admin/groups/list creates a group, admin/groups/count
-	// counts it, and that case's number is masked to this day because the
-	// recorder said 3 where a pristine replay says 2. Ordering also cannot be
-	// checked - admin/users/count's body is the single byte `1`, and no guard
-	// can tell a polluted count from a clean one. So the container is what
+	// counts it, and that case's number was masked for it, because the recorder
+	// said 3 where a pristine replay says 2. **The mask came off when the
+	// container regime landed** - F47 - and the golden holds `{"count":2}`
+	// again, so the example is history rather than a live defect. Ordering also
+	// cannot be checked - admin/users/count's body is the single byte `1`, and
+	// no guard can tell a polluted count from a clean one. So the container is what
 	// resets, not the position: bootstrap plus this case's own fixture, which
 	// is exactly what the verifier's newFixture builds.
 	//

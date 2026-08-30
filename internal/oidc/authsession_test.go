@@ -12,6 +12,11 @@ import (
 // endpoint's authorization_code grant is the next cut. A helper with no caller
 // and no test is how a wrong one ships.
 
+// testSessionHash is a stand-in for sessionHash's output: 48 bytes in standard
+// base64, which is the measured shape of KC_AUTH_SESSION_HASH. It is a constant
+// rather than a call so that the store's tests need no realm keys.
+const testSessionHash = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4v"
+
 func testStore(t *testing.T) (*authStore, *time.Time) {
 	t.Helper()
 	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
@@ -24,7 +29,15 @@ func newTestSession(t *testing.T, s *authStore) (*authSession, *authTab) {
 	t.Helper()
 	tab := &authTab{TabID: "tab-1", ClientID: "probe", ClientUUID: "uuid-1",
 		RedirectURI: "http://localhost:9999/callback"}
-	sess, err := s.newAuthSession("master", tab)
+	// The root id and the hash are the caller's now, because the SSO branch has
+	// to supply the user session's own id rather than mint one. The values here
+	// stand in for what resumeAuthSession derives; the lengths are the measured
+	// ones, which is what the tests below read.
+	rootID, err := randomBase64URL(rootIDBytes)
+	if err != nil {
+		t.Fatalf("randomBase64URL: %v", err)
+	}
+	sess, err := s.newAuthSession("master", rootID, testSessionHash, tab)
 	if err != nil {
 		t.Fatalf("newAuthSession: %v", err)
 	}

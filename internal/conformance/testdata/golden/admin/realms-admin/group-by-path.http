@@ -9,4 +9,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-{"id":"{{string}}","name":"gloak-probe-dg-top","path":"/gloak-probe-dg-top","subGroupCount":1,"subGroups":[],"attributes":{},"realmRoles":[],"clientRoles":{}}
+{"id":"{{dg_top}}","name":"gloak-probe-dg-top","path":"/gloak-probe-dg-top","subGroupCount":1,"subGroups":[],"attributes":{},"realmRoles":[],"clientRoles":{}}

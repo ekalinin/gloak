@@ -9,4 +9,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-[{"id":"{{string}}","name":"gloak-probe-mapping-app-role","composite":false,"clientRole":true,"containerId":"{{client_uuid}}","attributes":{"probe":["v1","v2"]}}]
+[{"id":"{{app_role_id}}","name":"gloak-probe-mapping-app-role","composite":false,"clientRole":true,"containerId":"{{client_uuid}}","attributes":{"probe":["v1","v2"]}}]

@@ -395,6 +395,10 @@ var Fixtures = map[string]Fixture{
 	// create a 409.
 	"device-client":  deviceClientFixture("gloak-probe-device", ""),
 	"device-pending": devicePendingFixture("gloak-probe-device-pending", ""),
+	// A device authorization taken through the browser and cancelled, so the
+	// case's own request is the poll that reports access_denied. It is the
+	// first fixture that drives the login and the consent pages.
+	"device-denied": deviceDeniedFixture(),
 	// Polled once already, so the case's own request is the second poll inside
 	// the interval and answers slow_down.
 	"device-polled": devicePolledFixture(),
@@ -4284,4 +4288,86 @@ func authActionWriteFixture(realm, method, path, body string) Fixture {
 	}
 	f.Steps = append(f.Steps, Step{Request: req})
 	return f
+}
+
+// deviceDeniedFixture drives a whole device authorization through the browser
+// and cancels it, so the case's own request is the poll that reports
+// access_denied.
+//
+// **This is the only fixture in the file that walks two endpoints' worth of
+// pages**, and every step of it exists because the previous one mints something
+// no literal can name: the user code comes from the device request, the tab id
+// from the verification redirect, the login action from the login page, and the
+// consent form's action and its hidden `code` from the consent page.
+//
+// Two of the steps look like they could be shortened and cannot. The
+// verification landing is a **302** whose Location is
+// /login-actions/authenticate?client_id&tab_id&client_data, and CaptureHeader
+// yields a URL's last path segment rather than its query, so the tab id is taken
+// with CaptureQuery and the following step's path is spelled out. And
+// client_data is the literal `e30` - base64url of `{}` - because a device
+// authorization has no redirect URI, no response type and no state to encode,
+// which is measured on all three places the value appears in a device login.
+//
+// The `code` input is captured and sent although the endpoint is measured **not
+// to check it**: what the fixture reproduces is the request the page makes, not
+// the smallest request that works.
+func deviceDeniedFixture() Fixture {
+	const clientID = "gloak-probe-device-denied"
+	steps := append(deviceClientSteps(clientID, ""), deviceAuthorizationStep(clientID))
+	return Fixture{State: "bootstrap", Steps: append(steps,
+		Step{
+			Request: Request{
+				Method: http.MethodGet,
+				Path:   "/realms/master/device",
+				Query:  map[string]string{"user_code": "{{user_code}}"},
+			},
+			ExpectStatus: []int{http.StatusFound},
+			CaptureQuery: map[string]string{"tab_id": "tab_id"},
+		},
+		Step{
+			Request: Request{
+				Method: http.MethodGet,
+				Path:   "/realms/master/login-actions/authenticate",
+				Query: map[string]string{
+					"client_id": clientID, "tab_id": "{{tab_id}}", "client_data": "e30",
+				},
+			},
+			ExpectStatus: []int{http.StatusOK},
+			CaptureForm:  map[string]string{"login_action": "action"},
+		},
+		Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "{{login_action}}",
+				Form: map[string]string{
+					"username": "admin", "password": "admin", "credentialId": "",
+				},
+			},
+			ExpectStatus: []int{http.StatusFound},
+		},
+		Step{
+			Request: Request{
+				Method: http.MethodGet,
+				Path:   "/realms/master/login-actions/required-action",
+				Query: map[string]string{
+					"execution": "OAUTH_GRANT", "client_id": clientID,
+					"tab_id": "{{tab_id}}", "client_data": "e30",
+				},
+			},
+			ExpectStatus: []int{http.StatusOK},
+			CaptureForm: map[string]string{
+				"consent_action": "action",
+				"consent_code":   "input:code",
+			},
+		},
+		Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "{{consent_action}}",
+				Form:   map[string]string{"code": "{{consent_code}}", "cancel": "No"},
+			},
+			ExpectStatus: []int{http.StatusFound},
+		},
+	)}
 }

@@ -9,4 +9,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-[{"id":"{{string}}","username":"gloak-probe-group-member","firstName":"Ada","lastName":"Lovelace","email":"gloak-probe-group-member@example.com","emailVerified":false,"enabled":true,"createdTimestamp":"{{number}}","totp":false,"disableableCredentialTypes":[],"requiredActions":[],"notBefore":0}]
+[{"id":"{{user_id}}","username":"gloak-probe-group-member","firstName":"Ada","lastName":"Lovelace","email":"gloak-probe-group-member@example.com","emailVerified":false,"enabled":true,"createdTimestamp":"{{number}}","totp":false,"disableableCredentialTypes":[],"requiredActions":[],"notBefore":0}]

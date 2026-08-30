@@ -9,4 +9,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-{"realmMappings":[{"id":"{{string}}","name":"gloak-probe-group-realm-role","composite":false,"clientRole":false,"containerId":"{{string}}"}],"clientMappings":{"gloak-probe-group-map-client":{"id":"{{string}}","client":"gloak-probe-group-map-client","mappings":[{"id":"{{string}}","name":"gloak-probe-group-client-role","composite":false,"clientRole":true,"containerId":"{{string}}"}]}}}
+{"realmMappings":[{"id":"{{realm_role_id}}","name":"gloak-probe-group-realm-role","composite":false,"clientRole":false,"containerId":"{{string}}"}],"clientMappings":{"gloak-probe-group-map-client":{"id":"{{client_uuid}}","client":"gloak-probe-group-map-client","mappings":[{"id":"{{client_role_id}}","name":"gloak-probe-group-client-role","composite":false,"clientRole":true,"containerId":"{{client_uuid}}"}]}}}

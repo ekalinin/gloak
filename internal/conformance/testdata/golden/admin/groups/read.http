@@ -9,4 +9,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-{"id":"{{string}}","name":"gloak-probe-group-tree","path":"/gloak-probe-group-tree","subGroupCount":1,"subGroups":[],"attributes":{},"realmRoles":[],"clientRoles":{},"access":{"view":true,"viewMembers":true,"manageMembers":true,"manage":true,"manageMembership":true}}
+{"id":"{{group_id}}","name":"gloak-probe-group-tree","path":"/gloak-probe-group-tree","subGroupCount":1,"subGroups":[],"attributes":{},"realmRoles":[],"clientRoles":{},"access":{"view":true,"viewMembers":true,"manageMembers":true,"manage":true,"manageMembership":true}}

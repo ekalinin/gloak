@@ -80,12 +80,9 @@ const postLogoutRedirectAttribute = "post.logout.redirect.uris"
 // P3 made for the authorization endpoint's page family and for the same reason:
 // the status, the headers and which branch was taken are what a client acts on.
 //
-// The confirmation page is the one place Gloak has fewer branches than Keycloak
-// and it is not a shortcut. Keycloak serves it when a **browser session** exists
-// and the request carries no authority to end it; without a session the same
-// request redirects. Gloak has no browser session cookie, so it always takes the
-// second branch - which is the correct answer for every request Gloak can
-// receive today, and becomes a divergence the moment P13 sets a session cookie.
+// The confirmation page's browser-session branch is now served, which is F65.
+// See confirmBeforeRedirect for the grid that places it: the browser session
+// changes **one** cell of seven.
 func (h *handler) logout(w http.ResponseWriter, r *http.Request) {
 	realm := h.resolveRealm(w, r)
 	if realm == nil {
@@ -147,6 +144,14 @@ func (h *handler) logoutFrontChannel(w http.ResponseWriter, r *http.Request, rea
 		}
 	}
 
+	// Step 4. A browser that is signed in and has sent nothing that authorises a
+	// logout is **asked** rather than redirected, and it is asked before
+	// anything is destroyed. See confirmBeforeRedirect.
+	if hint == nil && h.confirmBeforeRedirect(r, realm, k) {
+		httpx.WriteThemePage(w, http.StatusOK, logoutCacheControl, logoutConfirmPageTitle)
+		return
+	}
+
 	// Validated. Only now is anything destroyed: measured, every rejection
 	// above leaves the session alive, so a failed logout is not a partial one.
 	if hint != nil {
@@ -166,6 +171,49 @@ func (h *handler) logoutFrontChannel(w http.ResponseWriter, r *http.Request, rea
 		return
 	}
 	httpx.WriteLogoutRedirect(w, logoutLocation(target, params))
+}
+
+// confirmBeforeRedirect reports whether this request gets the `Logging out`
+// confirmation page instead of the redirect it asked for.
+//
+// **The browser session changes exactly one cell of seven**, measured with each
+// row on its own fresh login:
+//
+//	session  hint  target   answer
+//	live     no    no       200 Logging out
+//	live     no    YES      200 Logging out      <- the cell, and F65
+//	live     yes   no       200 You are logged out
+//	live     yes   yes      302
+//	none     no    no       200 Logging out
+//	none     no    yes      302
+//	none     yes   no       200 You are logged out
+//
+// So this is not "a live session means the page": a valid `id_token_hint` still
+// redirects on a signed-in browser, which is why the caller asks only when there
+// is no hint. Gloak answered the target cell with a 302 until now, and F65 said
+// it would become a divergence the moment a session cookie was set - it did, and
+// this is it.
+//
+// The page **ends nothing**. Measured: GET /auth immediately after it still
+// answers a code, so a browser that asks to log out and is asked to confirm is
+// still signed in. Destroying the session here would be the tidy-up that turns a
+// question into an answer.
+//
+// A cookie that does not verify is not a session, and it is deliberately not
+// cleared here the way the authorization endpoint clears it: nothing was
+// measured clearing it on this endpoint, and inventing a Set-Cookie is inventing
+// a response.
+func (h *handler) confirmBeforeRedirect(r *http.Request, realm *model.Realm, k *keys.RealmKeys) bool {
+	cookie, err := r.Cookie(identityCookie)
+	if err != nil {
+		return false
+	}
+	parsed, err := token.ParseIdentityCookie(k, h.realmIssuer(realm.Name), cookie.Value, time.Now())
+	if err != nil {
+		return false
+	}
+	_, err = h.store.Sessions().UserSessionByID(r.Context(), realm.ID, parsed.SessionID)
+	return err == nil
 }
 
 // resolveLogoutHint verifies the id_token_hint, reporting false for every way

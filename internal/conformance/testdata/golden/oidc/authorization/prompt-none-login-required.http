@@ -1,0 +1,12 @@
+# GET /realms/master/protocol/openid-connect/auth
+HTTP/1.1 302 Found
+Cache-Control: no-store, must-revalidate, max-age=0
+Content-Length: {{volatile}}
+Location: http://localhost:9999/callback?error=login_required&state=xyz123&iss={{issuer}}%2Frealms%2Fmaster
+Referrer-Policy: no-referrer
+Set-Cookie: {{volatile}}
+Set-Cookie: {{volatile}}
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Robots-Tag: none
+
