@@ -59,6 +59,14 @@ func NewRouter(s store.Store, k *keys.Manager, issuerBase string) http.Handler {
 // bodies and adding a third would be a divergence.
 func Register(mux *http.ServeMux, s store.Store, k *keys.Manager, issuerBase string) {
 	h := &handler{store: s, keys: k, issuerBase: issuerBase, auth: newAuthStore(), device: newDeviceStore()}
+	h.register(mux)
+}
+
+// register puts the routes on a mux. It is split out of Register so a test can
+// hold the handler and its router at once, which is what the device grant's
+// clock tests need: the poll interval and the expiry grace window are reached
+// by moving a stored code, never by sleeping.
+func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /realms/{realm}/.well-known/openid-configuration", h.discovery)
 	// Both verbs, and they do not read the same place: GET takes its
 	// parameters from the query and POST from the form body. See
