@@ -18,7 +18,9 @@
 //
 //   - [KeyOrder] models `new HashMap<>()`: 16 buckets, doubling each time the
 //     0.75 load factor is crossed. Measured 2026-08-23 against Keycloak 26.7.1
-//     and confirmed on six key sets - see javamap_test.go.
+//     and confirmed on six key sets - see javamap_test.go, which carries them as
+//     vectors, and the "Java map key order" section of
+//     docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
 //   - [SizedKeyOrder] models the map Keycloak serialises a protocol mapper's
 //     `config` from, which is built for the entry count it was given and passes
 //     through a second, larger table on the way. Measured 2026-08-30, and there
