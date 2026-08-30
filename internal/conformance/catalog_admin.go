@@ -8200,4 +8200,723 @@ var adminCases = []Case{
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 	},
+
+	// --- P8's first cut: the SPI registry and the required actions ---
+	//
+	// Eighteen operations of the Authentication Management tag's thirty-nine.
+	// The other twenty-one are the flow model - flows, executions and the
+	// shared authenticator config - and are deliberately not here: Gloak walks
+	// a hard-coded browser flow, so serving the routes that edit a stored one
+	// would move state nothing consumes. See
+	// docs/superpowers/plans/2026-08-30-p8-authentication.md.
+	//
+	// Nothing in this block writes to **master**. The two pristine listings
+	// below enumerate the realm's required actions, and every write case works
+	// in a realm of its own for that reason.
+	{
+		// 42 entries, and every byte of them is measured. The three keys come
+		// back `displayName, description, id` because Keycloak builds this
+		// entry as a Java map and serialises it in bucket order -
+		// javamap.KeyOrder places it exactly, which is why the struct's field
+		// order is explained rather than merely copied.
+		ID: "admin/authentication-management/authenticator-providers",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: the authenticator provider registry",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/authentication/authenticator-providers",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/authentication/authenticator-providers",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The one registry with a fourth key, and the fourth key comes
+		// **first**: `supportsSecret, displayName, description, id`. That is
+		// what a fourth key does to a HashMap's bucket order and has nothing to
+		// do with its meaning.
+		ID: "admin/authentication-management/client-authenticator-providers",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: the client authenticator registry",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/authentication/client-authenticator-providers",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/authentication/client-authenticator-providers",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/authentication-management/form-action-providers",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: the form action registry",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/authentication/form-action-providers",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/authentication/form-action-providers",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// One entry, and the only registry whose id `config-description` does
+		// **not** resolve: `config-description/registration-page-form` is a 404
+		// where the other 52 ids are 200.
+		ID: "admin/authentication-management/form-providers",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: the form provider registry",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/authentication/form-providers",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/authentication/form-providers",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **Not a list**, whatever its siblings look like: an object keyed by
+		// client-authenticator id whose key order is the listing's.
+		//
+		// This case is the one that pins the finding a byte comparison caught
+		// and a reader would not have: `federated-jwt` answers `"properties":[]`
+		// from `config-description/federated-jwt` and **two** properties here.
+		// Four of the five client authenticators have the two lists equal,
+		// which is exactly why one list looked like enough.
+		ID: "admin/authentication-management/per-client-config-description",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: the per-client config description",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/authentication/per-client-config-description",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/authentication/per-client-config-description",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// A provider with no config at all: `properties` is `[]` rather than
+		// absent, on 32 of the 52.
+		ID: "admin/authentication-management/config-description",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: an authenticator's config description",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/authentication/config-description/{providerId}",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/authentication/config-description/auth-cookie",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// A property carrying `defaultValue` and `options`, which is what says
+		// the three optional members of the property struct are in the right
+		// places. No Operation: the case above already claims this one.
+		ID: "admin/authentication-management/config-description-with-options",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: a config description carrying options",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/authentication/config-description/idp-review-profile",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The **sixteenth** spelling of not-found on this API, and the first of
+		// three the Authentication Management tag adds.
+		ID: "admin/authentication-management/config-description-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: an unknown authenticator provider",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/authentication/config-description/gloak-probe-nope",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// PristineRealm: the body is the realm's whole set of required actions,
+		// so anything another case registered or renamed would land in it.
+		//
+		// Fourteen rows in priority order. Three carry `enabled:false` and none
+		// carries `defaultAction:true`, which is what a default install has.
+		ID: "admin/authentication-management/required-actions",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: the registered required actions",
+			Retrieved: "2026-08-30",
+		},
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/authentication/required-actions",
+		Fixture:       "admin-token",
+		PristineRealm: true,
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/authentication/required-actions",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// `[]` on a pristine realm, and **not** a constant: it is `[]` because
+		// all fourteen providers are registered, and a delete puts one in it.
+		// The case below reads the populated shape from a realm of its own.
+		ID: "admin/authentication-management/unregistered-required-actions",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: the unregistered required actions",
+			Retrieved: "2026-08-30",
+		},
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/authentication/unregistered-required-actions",
+		Fixture:       "admin-token",
+		PristineRealm: true,
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/authentication/unregistered-required-actions",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// Seven keys in the measured order.
+		ID: "admin/authentication-management/required-action",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: one required action",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/authentication/required-actions/{alias}",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/authentication/required-actions/CONFIGURE_TOTP",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// `Failed to find required action` with **no** full stop. The DELETE
+		// case below is the same missing row with one, and that pair is the
+		// whole point of having both.
+		ID: "admin/authentication-management/required-action-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: reading a required action that is not there",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/authentication/required-actions/gloak-probe-nope",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// `Failed to find required action.` **with** the full stop, for the
+		// identical missing alias the case above reads. One resource, one key,
+		// two sentences, and the verb is what picks.
+		ID: "admin/authentication-management/required-action-delete-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: deleting a required action that is not there",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/authentication/required-actions/gloak-probe-nope",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// `{"config":{}}`, a one-key wrapper rather than the map itself.
+		ID: "admin/authentication-management/required-action-config",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: a required action's config",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/authentication/required-actions/{alias}/config",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/authentication/required-actions/CONFIGURE_TOTP/config",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// `{"properties":[...]}` and nothing else - **not** the four-key shape
+		// `config-description/{providerId}` serves. Two endpoints on one tag
+		// whose paths differ by a segment and whose bodies share one key.
+		//
+		// Its `max_auth_age` carries `"defaultValue":300` on a property whose
+		// `"type"` is `"String"`: a number on a string property, which is why
+		// the field is `any`.
+		ID: "admin/authentication-management/required-action-config-description",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: a required action's config description",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/authentication/required-actions/{alias}/config-description",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/authentication/required-actions/CONFIGURE_TOTP/config-description",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **400, not 404**, for a row that exists. `delete_account` is the one
+		// required action of the fourteen that is not configurable, and the
+		// `/config` sub-resource answers about configurability rather than
+		// about the row.
+		ID: "admin/authentication-management/required-action-config-not-configurable",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: the config of an action that has none",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/authentication/required-actions/delete_account/config",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The same row through the neighbouring route answers **404** with a
+		// third sentence. One alias, two sub-resources, two statuses.
+		ID: "admin/authentication-management/required-action-config-description-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: the config description of an action that has none",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/authentication/required-actions/delete_account/config-description",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The strict decoder, which is the first one measured in this API.
+		// Every other endpoint here ignores a field it does not know; this one
+		// names the Java class, the field, the line and the column.
+		//
+		// The body is chosen so the column is not the body's length: the
+		// unknown key is **first**, so a reader can see that the number tracks
+		// the offending field rather than the end of the request.
+		ID: "admin/authentication-management/required-action-unknown-field",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: an unrecognised field on the representation",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/authentication/required-actions/CONFIGURE_TOTP",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"zz":1,"alias":"CONFIGURE_TOTP"}`),
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The config route's own decoder, which is strict too and names a
+		// different class. Sent to master because a 400 changes nothing.
+		ID: "admin/authentication-management/required-action-config-unknown-field",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: an unrecognised field on the config",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/authentication/required-actions/CONFIGURE_TOTP/config",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"alias":"x","config":{}}`),
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The 204 that has **no Cache-Control**. Its DELETE sibling is the only
+		// other operation on the tag without one; the four remaining writes all
+		// carry `no-cache`. It does carry X-Frame-Options, because the request
+		// declared an application/* Content-Type.
+		ID: "admin/authentication-management/required-action-update",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: update a required action",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/authentication/required-actions/{alias}",
+		Fixture:   "auth-actions",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-auth-put/authentication/required-actions/TERMS_AND_CONDITIONS",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"alias":"TERMS_AND_CONDITIONS","name":"Terms and Conditions",` +
+				`"providerId":"TERMS_AND_CONDITIONS","enabled":true,"defaultAction":true,` +
+				`"priority":20,"config":{}}`),
+		},
+		AssertHeaders: []string{"Cache-Control", "X-Frame-Options"},
+	},
+	{
+		// The rename, read back. The body's alias won and the body's
+		// providerId - `gloak-probe-ignored` - did not: the row still says
+		// `UPDATE_PROFILE`. Writing the representation back wholesale is the
+		// obvious implementation and this golden is what refuses it.
+		ID: "admin/authentication-management/required-action-renamed",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: a required action the body renamed",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "auth-action-renamed",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-auth-renamed/authentication/" +
+				"required-actions/gloak-probe-renamed-action",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The orphan a PUT with `{}` leaves: still in the listing, with **no
+		// `alias` key at all** and no `name`, `enabled` false and priority 0,
+		// which sorts it first. Keycloak's own defect, reproduced.
+		//
+		// It also pins the pair of emptiness rules: `alias` disappears when
+		// empty and `name` would not have, which is why one is a string with
+		// omitempty and the other a pointer.
+		ID: "admin/authentication-management/required-action-orphaned",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: the row a PUT with an empty body leaves",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "auth-action-orphan",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-auth-orphan/authentication/required-actions",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The 204 with **no Cache-Control and no X-Frame-Options**: no
+		// Cache-Control because this verb and its PUT sibling are the pair that
+		// omit it, and no X-Frame-Options because a DELETE with no body
+		// declares no Content-Type. Two different rules, one response.
+		ID: "admin/authentication-management/required-action-delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: unregister a required action",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/authentication/required-actions/{alias}",
+		Fixture:   "auth-actions-delete",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/gloak-probe-auth-del/authentication/required-actions/idp_link",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		// The unregistered listing with something in it, which a pristine realm
+		// cannot show. Two keys per entry, and the `name` is the **provider's**
+		// display name rather than the deleted row's.
+		ID: "admin/authentication-management/unregistered-after-delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: the unregistered listing after a delete",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "auth-action-unregistered",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-auth-unreg/authentication/" +
+				"unregistered-required-actions",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// Registering a provider that is already registered: **409 in the RFC
+		// 6749 shape**, not the errorMessage one the conflicts elsewhere on
+		// this API use.
+		//
+		// It is a POST whose body carries no `name`, which keeps it out of the
+		// pollution guard's creation set - and it is also the shape that
+		// produces the six-key representation, so the body is doing two jobs.
+		ID: "admin/authentication-management/register-required-action-duplicate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: registering an action that is registered",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/authentication/register-required-action",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"providerId":"CONFIGURE_TOTP"}`),
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// A providerId that names nothing: 400, and its own sentence again.
+		ID: "admin/authentication-management/register-required-action-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: registering a provider that does not exist",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/authentication/register-required-action",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"providerId":"gloak-probe-nope"}`),
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The successful registration, in a realm whose idp_link was
+		// unregistered by its fixture. 204 with Cache-Control, unlike the two
+		// /required-actions/{alias} verbs.
+		ID: "admin/authentication-management/register-required-action",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: register a required action",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/authentication/register-required-action",
+		Fixture:   "auth-action-unregistered",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/gloak-probe-auth-unreg/authentication/" +
+				"register-required-action",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"providerId":"idp_link"}`),
+		},
+		AssertHeaders: []string{"Cache-Control", "X-Frame-Options"},
+	},
+	{
+		ID: "admin/authentication-management/raise-priority",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: raise a required action's priority",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/authentication/required-actions/{alias}/raise-priority",
+		Fixture:   "auth-actions-raise",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/gloak-probe-auth-raise/authentication/" +
+				"required-actions/UPDATE_PASSWORD/raise-priority",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{}`),
+		},
+		AssertHeaders: []string{"Cache-Control", "X-Frame-Options"},
+	},
+	{
+		ID: "admin/authentication-management/lower-priority",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: lower a required action's priority",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/authentication/required-actions/{alias}/lower-priority",
+		Fixture:   "auth-actions-lower",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/gloak-probe-auth-lower/authentication/" +
+				"required-actions/UPDATE_PASSWORD/lower-priority",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{}`),
+		},
+		AssertHeaders: []string{"Cache-Control", "X-Frame-Options"},
+	},
+	{
+		// The **effect** of raise-priority, which its 204 cannot show: the two
+		// rows have exchanged priority values. UPDATE_PASSWORD was 57 and
+		// CONFIGURE_TOTP 54, and they are now 54 and 57. A decrement would have
+		// produced 56, so the two hypotheses differ in this body.
+		ID: "admin/authentication-management/priority-exchanged",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: the listing after a raise",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "auth-action-raised",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-auth-raised/authentication/required-actions",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/authentication-management/required-action-config-update",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: write a required action's config",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/authentication/required-actions/{alias}/config",
+		Fixture:   "auth-actions-config",
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/gloak-probe-auth-cfg/authentication/" +
+				"required-actions/CONFIGURE_TOTP/config",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"config":{"max_auth_age":"600"}}`),
+		},
+		AssertHeaders: []string{"Cache-Control", "X-Frame-Options"},
+	},
+	{
+		// The config write **filters**: its fixture sent a declared key and an
+		// undeclared one, and only the declared one is here. The
+		// representation's own PUT writes the same field and does not filter,
+		// which is a rule no single golden can hold and which
+		// TestTheTwoConfigWritersDisagreeAboutUnknownKeys pins.
+		ID: "admin/authentication-management/required-action-config-filtered",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: the config write drops undeclared keys",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "auth-action-config-filtered",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-auth-cfgf/authentication/" +
+				"required-actions/CONFIGURE_TOTP/config",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The delete leaves `{"config":{}}` rather than removing the key, which
+		// the case above's sibling read is what would show. Its 204 carries
+		// Cache-Control and **no** X-Frame-Options: a DELETE with no body.
+		ID: "admin/authentication-management/required-action-config-delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authentication Management: clear a required action's config",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/authentication/required-actions/{alias}/config",
+		Fixture:   "auth-actions-config-del",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path: "/admin/realms/gloak-probe-auth-cfgd/authentication/" +
+				"required-actions/CONFIGURE_TOTP/config",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
+	},
 }
