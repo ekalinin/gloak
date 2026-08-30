@@ -1687,6 +1687,115 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 			t.Errorf("a deleted scope is still attached: %v", got.DefaultClientScopes)
 		}
 	})
+
+	t.Run("scope mappings round-trip on both containers and cascade with the role", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := newRealm(t, s)
+
+		sc := &model.ClientScope{ID: model.NewID(), RealmID: realm.ID,
+			Name: "probe-scope", Protocol: "openid-connect"}
+		if err := s.ClientScopes().Create(ctx, sc); err != nil {
+			t.Fatalf("ClientScopes().Create: %v", err)
+		}
+		c := &model.Client{ID: model.NewID(), RealmID: realm.ID, ClientID: "probe",
+			Protocol: "openid-connect", RedirectURIs: []string{}, WebOrigins: []string{},
+			Attributes: map[string]string{}}
+		if err := s.Clients().Create(ctx, c); err != nil {
+			t.Fatalf("Clients().Create: %v", err)
+		}
+		rr := &model.Role{ID: model.NewID(), RealmID: realm.ID, Name: "realm-role"}
+		cr := &model.Role{ID: model.NewID(), RealmID: realm.ID, ClientID: c.ID, Name: "client-role"}
+		for _, role := range []*model.Role{rr, cr} {
+			if err := s.Roles().Create(ctx, role); err != nil {
+				t.Fatalf("Roles().Create(%q): %v", role.Name, err)
+			}
+		}
+
+		// A container takes roles of either kind - measured: a client role
+		// posted to .../scope-mappings/realm lands and reads back under the
+		// client half of the combined view.
+		for _, role := range []*model.Role{rr, cr} {
+			if err := s.Roles().AddClientScopeScopeMapping(ctx, sc.ID, role.ID); err != nil {
+				t.Fatalf("AddClientScopeScopeMapping(%q): %v", role.Name, err)
+			}
+			if err := s.Roles().AddClientScopeMapping(ctx, c.ID, role.ID); err != nil {
+				t.Fatalf("AddClientScopeMapping(%q): %v", role.Name, err)
+			}
+		}
+		// **Both adds are idempotent**, on both containers. A repeat is 204 and
+		// not a conflict, so the store must not report one.
+		if err := s.Roles().AddClientScopeScopeMapping(ctx, sc.ID, rr.ID); err != nil {
+			t.Fatalf("AddClientScopeScopeMapping twice: %v", err)
+		}
+		if err := s.Roles().AddClientScopeMapping(ctx, c.ID, rr.ID); err != nil {
+			t.Fatalf("AddClientScopeMapping twice: %v", err)
+		}
+
+		names := func(in []*model.Role) []string {
+			out := make([]string, 0, len(in))
+			for _, r := range in {
+				out = append(out, r.Name)
+			}
+			return out
+		}
+		got, err := s.Roles().ListClientScopeScopeMappings(ctx, sc.ID)
+		if err != nil {
+			t.Fatalf("ListClientScopeScopeMappings: %v", err)
+		}
+		if !reflect.DeepEqual(names(got), []string{"client-role", "realm-role"}) {
+			t.Errorf("the scope's mappings = %v, want [client-role realm-role]", names(got))
+		}
+		got, err = s.Roles().ListClientScopeMappings(ctx, c.ID)
+		if err != nil {
+			t.Fatalf("ListClientScopeMappings: %v", err)
+		}
+		if !reflect.DeepEqual(names(got), []string{"client-role", "realm-role"}) {
+			t.Errorf("the client's mappings = %v, want [client-role realm-role]", names(got))
+		}
+
+		// **The two containers are separate rows.** Removing from one leaves
+		// the other, which is what says the two tables are not one.
+		if err := s.Roles().RemoveClientScopeScopeMapping(ctx, sc.ID, rr.ID); err != nil {
+			t.Fatalf("RemoveClientScopeScopeMapping: %v", err)
+		}
+		got, err = s.Roles().ListClientScopeMappings(ctx, c.ID)
+		if err != nil {
+			t.Fatalf("ListClientScopeMappings after the scope's removal: %v", err)
+		}
+		if len(got) != 2 {
+			t.Errorf("removing from the scope changed the client: %v", names(got))
+		}
+		// **Both removes are idempotent** - a role that is not mapped is 204.
+		if err := s.Roles().RemoveClientScopeScopeMapping(ctx, sc.ID, rr.ID); err != nil {
+			t.Fatalf("RemoveClientScopeScopeMapping twice: %v", err)
+		}
+		if err := s.Roles().RemoveClientScopeMapping(ctx, c.ID, model.NewID()); err != nil {
+			t.Fatalf("RemoveClientScopeMapping of a role never mapped: %v", err)
+		}
+
+		// **Deleting the role deletes the mapping**, measured on a live 26.7.1:
+		// a mapped realm role deleted through DELETE /roles/{name} left the
+		// scope answering one fewer. That cascade is the reason these are tables
+		// with a foreign key rather than a JSON column on the container.
+		if err := s.Roles().Delete(ctx, realm.ID, cr.ID); err != nil {
+			t.Fatalf("Roles().Delete: %v", err)
+		}
+		got, err = s.Roles().ListClientScopeMappings(ctx, c.ID)
+		if err != nil {
+			t.Fatalf("ListClientScopeMappings after the role delete: %v", err)
+		}
+		if !reflect.DeepEqual(names(got), []string{"realm-role"}) {
+			t.Errorf("the deleted role survives in the mappings: %v", names(got))
+		}
+		got, err = s.Roles().ListClientScopeScopeMappings(ctx, sc.ID)
+		if err != nil {
+			t.Fatalf("ListClientScopeScopeMappings after the role delete: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("the deleted role survives on the scope: %v", names(got))
+		}
+	})
 }
 
 // newRealm creates one realm for a subtest that only needs somewhere to hang
