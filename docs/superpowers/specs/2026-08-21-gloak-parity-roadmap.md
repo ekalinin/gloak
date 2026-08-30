@@ -209,7 +209,8 @@ operations is allocated below; none is left unassigned.
 | P5 second cut | Protocol mappers, **done 2026-08-30** | P5 first cut | `admin/protocol-mappers` 0->21, the tag closed outright. Seven of its 21 are the `client-templates` alias again, verified byte-identical against the server rather than inferred from the first cut. Scope Mappings is cut C | 21 ops |
 | **P6** | Sessions and logout in full, **first cut done 2026-08-30** | P3 | back-channel, front-channel, session iframe, offline sessions, Attack Detection 3 | 3 ops + cases |
 | P6 first cut | The RP-initiated logout endpoint | P3 | `oidc/logout` 0->10, and the chapter's denominator 5->14. The estimate before the cut was **+1**, from counting the five cases already in the catalogue; the endpoint has two verbs, two request families per verb and six response shapes | 0 ops |
-| **P7** | Advanced grants | P1, P5 | `device` 5, `ciba` 3, `registration` 6, token exchange, JWT bearer, DPoP, PAR | ~20 cases |
+| **P7** | Advanced grants, **first cut done 2026-08-30** | P1, P5 | `device` 5, `ciba` 3, `registration` 6, token exchange, JWT bearer, DPoP, PAR | ~20 cases |
+| P7 first cut | The device grant's flow, CIBA's refusals | P5 | `oidc/device` 0->11 of 12, `oidc/ciba` 0->10 of 12. The eight cases the catalogue held all measured the grant **disabled**, which is its state on every client of a default install; the two endpoints have twenty-two distinct answers. CIBA cannot complete on a default container at all, which is a measurement rather than a gap | 0 ops |
 | **P8** | Authentication flow engine | P3 | Authentication Management 39, required actions, OTP, WebAuthn, brute force | 39 ops |
 | **P9** | Federation and brokering | P4, P8 | Identity Providers 17, Component 6 | 23 ops |
 | **P10** | Authorization services (UMA 2.0) | P5 | `authz/resource-server/*` | 31 ops |
@@ -220,10 +221,10 @@ operations is allocated below; none is left unassigned.
 | P13 first cut | The browser login, end to end | P3, P5 | no operations, and the column that matters is `oidc/authorization`'s `recorded` going **4 -> 0**: the chapter no longer holds a case waiting on an endpoint nobody built. The flow is served - authentication session, login form, `/login-actions/authenticate`, authorization code - and the theme's markup is not | 0 ops |
 | **P14** | Operational parity | P4 | events and audit, SMTP, health and metrics, clustering | not in OpenAPI |
 
-Denominator today: **413 Admin API operations plus 87 protocol behaviours, 500
+Denominator today: **413 Admin API operations plus 103 protocol behaviours, 516
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **242** after
-P5 completed and the code grant landed, and **P2, P4 and P5 are complete** - up from 8 before P1, 25 after it, 89 after the second cut's
+surface is not counted and which the report says so about. Served: **263** after
+P7's first cut, and **P2, P4 and P5 are complete** - up from 8 before P1, 25 after it, 89 after the second cut's
 roles half, 100 after that cut was complete, 109 after the group tree and 113
 after the membership.
 
@@ -248,7 +249,27 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-08-30 (third fold).** `make conformance` reports **242 of 500**,
+**Updated 2026-08-30 (fourth fold).** `make conformance` reports **263 of 516**.
+The denominator grew by sixteen because the device and CIBA endpoints turned out
+to have twenty-two distinct answers where the catalogue held eight - and the
+eight it held all measured the grant **disabled**, which is its state on every
+client of a default install. A chapter's cases can describe the wrong half of an
+endpoint, not only too few of them.
+
+Three findings from the round, none of which any single cut could have produced:
+
+- **A defect filed as one was six**, for the second time in a week. F49 and F84
+  are the same shape: a field the admin API ignores is rarely alone, because
+  whatever review missed it missed its neighbours.
+- **F78's already-corrected entry was wrong a fourth way.** It had been rewritten
+  once by the cut that found it wrong. The next cut found the correction half
+  right.
+- **Nothing in the gate checked `gofmt`**, so three files reached `main`
+  unformatted and were found by somebody reading a diff. `vet` is a correctness
+  tool and says nothing about layout; there was no step that could have caught
+  it, and now there is one in both the Makefile and the workflow.
+
+**Earlier on 2026-08-30 (third fold).** `make conformance` reported **242 of 500**,
 **P5 is complete**, and **Gloak can complete a browser OAuth flow for the first
 time**: `GET /auth`, the login form, the code, the exchange.
 
