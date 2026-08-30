@@ -312,7 +312,7 @@ func (h *handler) attemptLogin(w http.ResponseWriter, r *http.Request, realm *mo
 	// consent page is a second request and the session does not exist until it
 	// comes back. Measured: the 302 to the consent page sets no cookies at all.
 	tab.UserID = user.ID
-	if h.consentNeeded(realm, client, user, parsePrompt(tab.Prompt)) {
+	if h.tabConsentNeeded(realm, client, user, tab) {
 		h.writeRequiredActionRedirect(w, realm, client, tab)
 		return
 	}
@@ -514,7 +514,7 @@ func (h *handler) serveLoginPage(w http.ResponseWriter, realm *model.Realm, sess
 // loginActionURL is the form's action, and its five parameters are in the
 // measured order: session_code, execution, client_id, tab_id, client_data.
 func (h *handler) loginActionURL(realm *model.Realm, tab *authTab, sessionCode string) (string, error) {
-	data, err := encodeClientData(tab.RedirectURI, responseTypeCode, tab.ResponseMode, tab.State, tab.HasState)
+	data, err := tab.clientData()
 	if err != nil {
 		return "", err
 	}
@@ -543,8 +543,19 @@ func (h *handler) writeLoginActionErrorPage(w http.ResponseWriter) {
 // startSessionWithID is startSession with the session id supplied rather than
 // minted, which the browser login needs because its id was decided at GET /auth
 // and is already in the browser's AUTH_SESSION_ID cookie.
+//
+// **A session that already exists is reused rather than replaced**, and that is
+// measured: a signed-in browser sent through the consent page by prompt=consent
+// comes back with the session_state its first login had, not a new one. The id
+// this is called with is the authentication session's root, and on the
+// consent-from-SSO path that root **is** a live user session - so creating one
+// would either collide or quietly start a second session for a browser that
+// never logged in twice.
 func (h *handler) startSessionWithID(ctx context.Context, id string, realm *model.Realm,
 	client *model.Client, user *model.User, scope string) (*model.UserSession, error) {
+	if existing, err := h.store.Sessions().UserSessionByID(ctx, realm.ID, id); err == nil {
+		return existing, h.attachClientSessionTo(ctx, existing, client, scope)
+	}
 	now := time.Now().UnixMilli()
 	session := &model.UserSession{
 		ID:          id,

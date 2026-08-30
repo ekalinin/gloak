@@ -457,6 +457,59 @@ func assertIdentityCleared(t *testing.T, b *browser) {
 	}
 }
 
+// TestALiveBrowserSessionChangesOneLogoutCell is F65, and one cell is the whole
+// of it.
+//
+// The grid was measured with each row on its own fresh login. Six of the seven
+// rows are what Gloak already answered; the seventh - a live browser session, no
+// id_token_hint, and a registered target - is the confirmation page where Gloak
+// sent a 302. A valid hint still redirects on a signed-in browser, which is what
+// says this is not "a live session means the page".
+//
+// The page **ends nothing**: GET /auth immediately afterwards still answers a
+// code.
+func TestALiveBrowserSessionChangesOneLogoutCell(t *testing.T) {
+	target := url.QueryEscape(probeRedirectURI)
+	for _, tc := range []struct {
+		name     string
+		signedIn bool
+		query    string
+		want     int
+	}{
+		{"live, no hint, no target", true, "client_id=probe", http.StatusOK},
+		{"live, no hint, a target", true, "client_id=probe&post_logout_redirect_uri=" + target, http.StatusOK},
+		{"none, no hint, no target", false, "client_id=probe", http.StatusOK},
+		{"none, no hint, a target", false, "client_id=probe&post_logout_redirect_uri=" + target, http.StatusFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newBrowser(t)
+			if tc.signedIn {
+				b = signIn(t)
+			}
+			w := b.do(http.MethodGet,
+				"/realms/master/protocol/openid-connect/logout?"+tc.query, nil)
+			if w.Code != tc.want {
+				t.Fatalf("want %d, got %d (%s)", tc.want, w.Code, w.Header().Get("Location"))
+			}
+			if tc.want == http.StatusOK && !strings.Contains(w.Body.String(), "Logging out") {
+				t.Errorf("want the confirmation page, got %s", w.Body)
+			}
+		})
+	}
+
+	t.Run("the confirmation page ends nothing", func(t *testing.T) {
+		b := signIn(t)
+		if w := b.do(http.MethodGet,
+			"/realms/master/protocol/openid-connect/logout?client_id=probe", nil); w.Code != http.StatusOK {
+			t.Fatalf("want the confirmation page, got %d", w.Code)
+		}
+		if w := b.do(http.MethodGet,
+			"/realms/master/protocol/openid-connect/auth?"+baseQuery(nil), nil); w.Code != http.StatusFound {
+			t.Errorf("the confirmation page ended the session: GET /auth answered %d", w.Code)
+		}
+	})
+}
+
 // cookieNames lists the cookies a response set, in order.
 func cookieNames(raw []string) []string {
 	var names []string

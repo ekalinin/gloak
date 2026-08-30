@@ -88,6 +88,17 @@ func authServerAndStore(t *testing.T) (http.Handler, store.Store) {
 		// only redemption failure that does **not** spend the code.
 		{ClientID: "probe-confidential", Enabled: true, StandardFlowEnabled: true,
 			Secret: "s3cret", RedirectURIs: []string{probeRedirectURI}},
+		// The device grant's browser half needs a client the grant is enabled
+		// on - it is off on all six a default 26.7.1 bootstraps - and the
+		// consent page needs one that asks for consent. They are two clients
+		// rather than one because the two flows disagree about consent in a way
+		// worth testing separately: the device grant asks every time and the
+		// browser flow remembers.
+		{ClientID: "probe-device", Enabled: true, PublicClient: true, StandardFlowEnabled: true,
+			RedirectURIs: []string{probeRedirectURI},
+			Attributes:   map[string]string{"oauth2.device.authorization.grant.enabled": "true"}},
+		{ClientID: "probe-consent", Enabled: true, PublicClient: true, StandardFlowEnabled: true,
+			ConsentRequired: true, RedirectURIs: []string{probeRedirectURI}},
 	}
 	for _, c := range clients {
 		c.ID = model.NewID()

@@ -1,6 +1,7 @@
 package oidc
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -222,17 +223,37 @@ func (h *handler) resolveSSO(w http.ResponseWriter, r *http.Request, realm *mode
 		h.writeRegistrationPage(w)
 		return
 	}
-	if fresh && !h.consentNeeded(realm, client, sess.User, prompt) {
+	if fresh {
+		if h.consentNeeded(realm, client, sess.User, prompt) {
+			h.beginConsentFromSSO(w, r, realm, client, k, sess, req)
+			return
+		}
 		h.completeSSO(w, r, realm, client, k, sess, req)
 		return
 	}
-	// Either nobody is signed in, or somebody is and the client still wants a
-	// consent this browser has not given. Both start at the login page, and the
-	// second is what makes prompt=consent on an already-consented client re-ask:
-	// measured, that request 302s to /login-actions/required-action rather than
-	// answering a code, so the consent page is reached through the flow rather
-	// than served from here.
 	h.beginLoginFromParams(w, r, realm, client, req)
+}
+
+// beginConsentFromSSO is what a signed-in browser gets when the client still
+// wants a consent: the login is skipped and the consent page is not.
+//
+// Measured with prompt=consent on a live session at an already-consented client:
+// a **302 straight to /login-actions/required-action?execution=OAUTH_GRANT**,
+// setting AUTH_SESSION_ID, KC_AUTH_SESSION_HASH and KC_RESTART, with no login
+// page in between. And accepting it answers a code carrying the **original**
+// session_state, so the SSO session is reused here exactly as it is on the
+// silent path - which is why the authentication session is rooted at the user
+// session's id and the user goes onto the tab now rather than at a credential
+// check that never happens.
+func (h *handler) beginConsentFromSSO(w http.ResponseWriter, r *http.Request, realm *model.Realm,
+	client *model.Client, k *keys.RealmKeys, sess *browserSession, req *authRequest) {
+	tab := req.tab(client)
+	tab.UserID = sess.User.ID
+	if _, err := h.resumeAuthSession(w, r, realm, k, sess.Session.ID, tab, req.restart(realm, client)); err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	h.writeRequiredActionRedirect(w, realm, client, tab)
 }
 
 // openSilentSession is the pair of cookies the two rejections at step 10 send,
@@ -269,6 +290,23 @@ func (h *handler) consentNeeded(realm *model.Realm, client *model.Client, user *
 		return true
 	}
 	return !h.consents.granted(realm.ID, user.ID, client.ID)
+}
+
+// tabConsentNeeded is consentNeeded for a login in progress, and it has one more
+// input than the authorization endpoint's: **the device grant asks every time.**
+//
+// Measured three device logins in a row, on one user, on a client whose
+// consentRequired is false: all three served the OAUTH_GRANT page after the
+// credentials. And a consent record **is** written - the user's `/consents`
+// listing holds `dev-a` afterwards - so this is an endpoint recording a grant it
+// then ignores, not an endpoint that fails to record one. Reusing the
+// authorization endpoint's predicate here is the obvious saving and it skips the
+// only page the device grant has.
+func (h *handler) tabConsentNeeded(realm *model.Realm, client *model.Client, user *model.User, tab *authTab) bool {
+	if tab.DeviceUserCode != "" {
+		return true
+	}
+	return h.consentNeeded(realm, client, user, parsePrompt(tab.Prompt))
 }
 
 // completeSSO is the redirect a recognised browser gets: a fresh authorization
@@ -354,7 +392,11 @@ func (h *handler) writeSSOCode(w http.ResponseWriter, r *http.Request, realm *mo
 // reason.
 func (h *handler) attachClientSession(r *http.Request, session *model.UserSession,
 	client *model.Client, scope string) error {
-	ctx := r.Context()
+	return h.attachClientSessionTo(r.Context(), session, client, scope)
+}
+
+func (h *handler) attachClientSessionTo(ctx context.Context, session *model.UserSession,
+	client *model.Client, scope string) error {
 	if _, err := h.store.Sessions().ClientSession(ctx, session.ID, client.ID); err == nil {
 		return nil
 	}

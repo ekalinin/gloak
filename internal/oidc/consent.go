@@ -76,7 +76,7 @@ func (h *handler) serveConsentPage(w http.ResponseWriter, realm *model.Realm,
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	data, err := encodeClientData(tab.RedirectURI, responseTypeCode, tab.ResponseMode, tab.State, tab.HasState)
+	data, err := tab.clientData()
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
@@ -213,7 +213,7 @@ func (h *handler) finishFlow(w http.ResponseWriter, r *http.Request, realm *mode
 // leave a signed-in browser behind a consent that was never given.
 func (h *handler) writeRequiredActionRedirect(w http.ResponseWriter, realm *model.Realm,
 	client *model.Client, tab *authTab) {
-	data, err := encodeClientData(tab.RedirectURI, responseTypeCode, tab.ResponseMode, tab.State, tab.HasState)
+	data, err := tab.clientData()
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return

@@ -22,15 +22,6 @@ import (
 // with no feedback at all, so absent and wrong are two answers rather than one.
 const msgInvalidUserCode = "Invalid code, please try again."
 
-// deviceClientData is the client_data the verification redirect carries: `e30`,
-// which is base64url of `{}`.
-//
-// The device flow has no redirect URI, no response type and no state, so the
-// browser's restart hint is an **empty object** rather than an absent parameter.
-// That is measured on the redirect itself, and it is why encodeClientData is not
-// used here: it would emit `{"ru":"","rt":"code"}`.
-const deviceClientData = "e30"
-
 // deviceVerification serves GET on **both** paths the device endpoint answers.
 //
 // `/realms/{realm}/device` and `/realms/{realm}/protocol/openid-connect/auth/device`

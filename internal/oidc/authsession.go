@@ -545,6 +545,25 @@ func encodeClientData(redirectURI, responseType, responseMode, state string, has
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
+// deviceClientData is the client_data a device authorization carries: `e30`,
+// which is base64url of `{}`.
+//
+// The device flow has no redirect URI, no response type and no state, so the
+// browser's restart hint is an **empty object** rather than the two-key one
+// encodeClientData would produce. Measured on all three places the value
+// appears in a device login - the verification redirect, the login form's action
+// and the consent page's action - and it is `e30` on every one.
+const deviceClientData = "e30"
+
+// clientData renders the tab's own client_data, which is the empty object for a
+// device authorization and the four-key encoding for everything else.
+func (t *authTab) clientData() (string, error) {
+	if t.DeviceUserCode != "" {
+		return deviceClientData, nil
+	}
+	return encodeClientData(t.RedirectURI, responseTypeCode, t.ResponseMode, t.State, t.HasState)
+}
+
 // decodeClientData parses one, for the single caller that is allowed to read
 // its contents - see clientDataTarget for why that caller is the only one.
 func decodeClientData(raw string) (clientData, error) {
