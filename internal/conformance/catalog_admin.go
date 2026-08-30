@@ -7308,13 +7308,17 @@ var adminCases = []Case{
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
-		// **The combined view is the direct list, not the composite one.** The
-		// same client whose `.../realm/composite` answers every realm role in
-		// the realm answers `{}` here, because it has mapped nothing.
+		// **The combined view is the direct list, not the composite one, and not
+		// the direct-scope set either.** The same client whose
+		// `.../realm/composite` answers every realm role in the realm answers
+		// `{}` here, because it has mapped nothing - **and it owns a role**,
+		// which its `available` and `composite` reads would count and this one
+		// measurably does not.
 		//
-		// Composing this read out of hasScope is the tidy-up that would make
-		// the two agree, and it passes every other case in this cut: on every
-		// other container the two coincide.
+		// The owned role is what makes this case bite. Without it the fixture's
+		// client has nothing to distinguish `sc.mappings()` from the wider set,
+		// and a mutation building this body out of the latter **survived** -
+		// on every other container in this cut the two coincide.
 		ID: "admin/scope-mappings/full-scope-all",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",

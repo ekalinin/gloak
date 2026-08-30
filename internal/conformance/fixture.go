@@ -3349,10 +3349,32 @@ func scopeMappingOwnerStep(uuid, clientID string, fullScope bool) Step {
 // scopeMappingFullScopeFixture creates a client with fullScopeAllowed set and
 // **maps nothing**, so the case reading its composite is reading the flag
 // rather than a mapping.
+//
+// It gives the client **one role of its own**, which is not decoration. A
+// client's own roles are in its own scope, and the question that answers is
+// which reads consult that: measured, `available` and `composite` do, and the
+// two direct reads and the combined view do **not**. Without the role,
+// admin/scope-mappings/full-scope-all answers `{}` whether the combined view is
+// built from the mappings or from the direct-scope set, and a mutation swapping
+// the two survived exactly there.
 func scopeMappingFullScopeFixture() Fixture {
 	return Fixture{
 		State: "bootstrap",
-		Steps: []Step{adminTokenStep(), scopeMappingOwnerStep(smFullScopeID, "gloak-probe-sm-full", true)},
+		Steps: []Step{
+			adminTokenStep(),
+			scopeMappingOwnerStep(smFullScopeID, "gloak-probe-sm-full", true),
+			{
+				Request: Request{
+					Method: http.MethodPost,
+					Path:   "/admin/realms/master/clients/" + smFullScopeID + "/roles",
+					Headers: map[string]string{
+						"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json",
+					},
+					Body: []byte(`{"name":"` + smClientRole + `"}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+		},
 	}
 }
 
