@@ -13,17 +13,27 @@ import (
 
 // requiredActionRepresentation is the body the required-action routes serve.
 //
-// Seven keys in the measured order. Only `name` is conditional, and it is a
-// pointer rather than `string,omitempty` because **absent and empty are two
-// measured answers**: a row registered through POST /register-required-action
-// with no `name` reads back with six keys, and one registered with `""` reads
-// back carrying `"name":""`. omitempty collapses those.
+// Seven keys in the measured order, and **the two conditional ones are
+// conditional in opposite ways** - which is the sort of thing one shared rule
+// gets wrong:
+//
+//   - `alias` is plain omitempty. A row whose alias is the empty string, which
+//     is what `PUT` with `{}` leaves behind, reads back with **no `alias` key
+//     at all**.
+//   - `name` is a **pointer**, because absent and empty are two different
+//     measured answers here. A row registered with no `name` reads back without
+//     the key; a row whose name was set to `""` reads back carrying
+//     `"name":""`. omitempty on a string collapses those two into one.
+//
+// Two adjacent string keys on one body, opposite emptiness rules, both
+// measured. Giving `alias` the pointer treatment or `name` the omitempty one
+// puts a key in a body Keycloak leaves it out of, or the reverse.
 //
 // `config` is unconditional and `{}` when empty - model.StringMap marshals nil
 // as `{}` for that reason. DELETE .../config was measured leaving
 // `{"config":{}}` rather than removing the key.
 type requiredActionRepresentation struct {
-	Alias         string          `json:"alias"`
+	Alias         string          `json:"alias,omitempty"`
 	Name          *string         `json:"name,omitempty"`
 	ProviderID    string          `json:"providerId"`
 	Enabled       bool            `json:"enabled"`

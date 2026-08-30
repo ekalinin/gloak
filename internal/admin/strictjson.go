@@ -119,9 +119,15 @@ func firstUnknownField(body []byte, out any) (unknownField, bool) {
 		}
 		if !known[key] {
 			return unknownField{
-				name:   key,
-				line:   1 + bytes.Count(body[:start], []byte("\n")),
-				column: end + 1 - lineStart(body, start),
+				name: key,
+				line: 1 + bytes.Count(body[:start], []byte("\n")),
+				// end is the zero-based index of the last consumed character,
+				// so end+1 is how many characters of the line were consumed and
+				// end+2 is the one-based position of the next one. Jackson
+				// reports that next position, which is why `{"zz":1}` is column
+				// 8 and not 7 - a first attempt got exactly that wrong on all
+				// four measured bodies at once.
+				column: end - lineStart(body, start) + 2,
 			}, true
 		}
 	}

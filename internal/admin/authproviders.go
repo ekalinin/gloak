@@ -74,6 +74,18 @@ type authProvider struct {
 	Description    string           `json:"description"`
 	SupportsSecret bool             `json:"supportsSecret"`
 	Properties     []configProperty `json:"properties"`
+	// PerClientProperties is what per-client-config-description serves for a
+	// **client** authenticator, and it is not Properties.
+	//
+	// `federated-jwt` answers `"properties":[]` from
+	// `config-description/federated-jwt` and **two** properties from
+	// `per-client-config-description`, on one container in one second. Four of
+	// the five client authenticators have the two lists equal, which is exactly
+	// why one list looked like enough: the economy that makes `name` and
+	// `helpText` one table does not extend to the properties, and the
+	// byte comparison against a live server is what said so rather than
+	// anything a reader would have noticed.
+	PerClientProperties []configProperty `json:"perClientProperties,omitempty"`
 }
 
 type authProviderRegistry struct {
@@ -290,7 +302,7 @@ func (d perClientConfigDescription) MarshalJSON() ([]byte, error) {
 func (h *handler) readPerClientConfigDescription(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 	out := make(perClientConfigDescription, 0, len(authProviders.ClientAuthenticators))
 	for _, p := range authProviders.ClientAuthenticators {
-		out = append(out, perClientEntry{id: p.ID, properties: p.Properties})
+		out = append(out, perClientEntry{id: p.ID, properties: p.PerClientProperties})
 	}
 	writeAdminJSON(w, out)
 }

@@ -1211,35 +1211,59 @@
    "displayName": "Signed JWT",
    "description": "Validates client based on signed JWT issued by client and signed with the Client private key",
    "supportsSecret": false,
-   "properties": []
+   "properties": [],
+   "perClientProperties": []
   },
   {
    "id": "client-secret",
    "displayName": "Client Id and Secret",
    "description": "Validates client based on 'client_id' and 'client_secret' sent either in request parameters or in 'Authorization: Basic' header",
    "supportsSecret": true,
-   "properties": []
+   "properties": [],
+   "perClientProperties": []
   },
   {
    "id": "federated-jwt",
    "displayName": "Signed JWT - Federated",
    "description": "Validates client based on signed JWT issued and signed by an external identity provider",
    "supportsSecret": false,
-   "properties": []
+   "properties": [],
+   "perClientProperties": [
+    {
+     "name": "jwt.credential.issuer",
+     "label": "Identity provider",
+     "helpText": "Issuer of the client assertion. Use the alias of an identity provider set up in this realm.",
+     "type": "String",
+     "secret": false,
+     "required": true,
+     "readOnly": false
+    },
+    {
+     "name": "jwt.credential.sub",
+     "label": "Federated subject",
+     "helpText": "External clientId (subject) as provided by the identity provider.",
+     "type": "String",
+     "secret": false,
+     "required": true,
+     "readOnly": false
+    }
+   ]
   },
   {
    "id": "client-x509",
    "displayName": "X509 Certificate",
    "description": "Validates client based on a X509 Certificate",
    "supportsSecret": false,
-   "properties": []
+   "properties": [],
+   "perClientProperties": []
   },
   {
    "id": "client-secret-jwt",
    "displayName": "Signed JWT with Client Secret",
    "description": "Validates client based on signed JWT issued by client and signed with the Client Secret",
    "supportsSecret": true,
-   "properties": []
+   "properties": [],
+   "perClientProperties": []
   }
  ],
  "formProviders": [
