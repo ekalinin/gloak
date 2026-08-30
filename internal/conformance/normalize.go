@@ -151,8 +151,13 @@ func SortUnorderedWords(raw []byte, paths []string) ([]byte, error) {
 	return out, nil
 }
 
-// MaskedValues returns the raw JSON of every value the given paths address, in
-// the order the walk meets them, without changing a byte.
+// MaskedValues returns the raw JSON of every value the given paths address,
+// without changing a byte.
+//
+// The order is editPaths': deepest path group first, document order inside a
+// group. It is **not** the document's, and it does not pair value i with path i.
+// Callers ask "what does this mask cover?" of one path at a time, which is the
+// question the ordering is irrelevant to.
 //
 // It exists so that a guard can ask what a mask actually covers. The obvious
 // way to write one is a second little path resolver in the test file, and that
