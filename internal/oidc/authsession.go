@@ -137,6 +137,20 @@ type authTab struct {
 	ResponseMode string
 	State        string
 	HasState     bool
+	// Scope, Nonce and the two PKCE fields are the rest of the authorization
+	// request, carried here because the **token endpoint** consumes them and
+	// there is nowhere else they survive: the code's three parts are a random
+	// value, the session_state and the client's UUID.
+	//
+	// Scope decides the token response's scope and therefore whether an id_token
+	// exists at all - measured "openid profile email" for a request asking
+	// scope=openid. Nonce is the ID token's nonce claim. The PKCE pair is what
+	// the code_verifier is checked against, and without it the verifier check has
+	// nothing to check.
+	Scope               string
+	Nonce               string
+	CodeChallenge       string
+	CodeChallengeMethod string
 	// Username is echoed back into the re-served form's value attribute, the way
 	// the measured page echoes it.
 	Username string
@@ -150,14 +164,21 @@ type authTab struct {
 // the value is opaque to the client either way, and every conformance case in
 // this flow masks Set-Cookie as volatile - but it is another thing two replicas
 // would not share, and it is filed with the rest.
+// It carries the PKCE pair for a reason worth spelling out: a restart that
+// dropped it would let a client downgrade its own PKCE by discarding one
+// cookie, and Keycloak's JWE carries the whole original request.
 type restartRecord struct {
-	Realm        string
-	ClientID     string
-	RedirectURI  string
-	State        string
-	HasState     bool
-	ResponseMode string
-	ExpiresAt    time.Time
+	Realm               string
+	ClientID            string
+	RedirectURI         string
+	State               string
+	HasState            bool
+	ResponseMode        string
+	Scope               string
+	Nonce               string
+	CodeChallenge       string
+	CodeChallengeMethod string
+	ExpiresAt           time.Time
 }
 
 // authCode is a minted authorization code and everything the token endpoint

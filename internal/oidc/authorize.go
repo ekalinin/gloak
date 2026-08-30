@@ -275,6 +275,14 @@ func (h *handler) authorize(w http.ResponseWriter, r *http.Request) {
 // mode is the already-resolved mode rather than the raw parameter, so a request
 // that named none stores the empty string and client_data omits `rm`, which is
 // what the measured client_data does.
+//
+// **Four more of the request are stored than the login itself needs**: the
+// scope, the nonce and the PKCE pair are consumed at the *token* endpoint, and
+// the authorization code has nowhere to carry them - its three parts are a
+// random value, the session_state and the client's UUID. They go on the tab and
+// on the restart record together, because a login that restarts and lost its
+// code_challenge would be a PKCE downgrade a client could ask for by discarding
+// a cookie.
 func (h *handler) beginLogin(w http.ResponseWriter, r *http.Request, realm *model.Realm,
 	client *model.Client, redirectURI, mode string, params url.Values, state string, hasState bool) {
 	named := ""
@@ -282,20 +290,28 @@ func (h *handler) beginLogin(w http.ResponseWriter, r *http.Request, realm *mode
 		named = mode
 	}
 	tab := &authTab{
-		ClientID:     client.ClientID,
-		ClientUUID:   client.ID,
-		RedirectURI:  redirectURI,
-		ResponseMode: named,
-		State:        state,
-		HasState:     hasState,
+		ClientID:            client.ClientID,
+		ClientUUID:          client.ID,
+		RedirectURI:         redirectURI,
+		ResponseMode:        named,
+		State:               state,
+		HasState:            hasState,
+		Scope:               params.Get("scope"),
+		Nonce:               params.Get("nonce"),
+		CodeChallenge:       params.Get("code_challenge"),
+		CodeChallengeMethod: params.Get("code_challenge_method"),
 	}
 	sess, err := h.beginAuthSession(w, r, realm, tab, &restartRecord{
-		Realm:        realm.Name,
-		ClientID:     client.ClientID,
-		RedirectURI:  redirectURI,
-		State:        state,
-		HasState:     hasState,
-		ResponseMode: named,
+		Realm:               realm.Name,
+		ClientID:            client.ClientID,
+		RedirectURI:         redirectURI,
+		State:               state,
+		HasState:            hasState,
+		ResponseMode:        named,
+		Scope:               tab.Scope,
+		Nonce:               tab.Nonce,
+		CodeChallenge:       tab.CodeChallenge,
+		CodeChallengeMethod: tab.CodeChallengeMethod,
 	})
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")

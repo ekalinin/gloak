@@ -60,6 +60,11 @@ type Issuer struct {
 // them - see internal/roles - and both are the user's *effective* roles, with
 // composites already expanded. ClientRoles is keyed by clientId, not by the
 // client's UUID, because that is what the claim carries.
+//
+// AuthTime and Nonce are the browser flow's, and both are zero for every other
+// grant - measured, a password grant's tokens carry neither. AuthTime is when
+// the user authenticated, which is not when this issuance happens: the code
+// grant passes the session's start rather than now.
 type Request struct {
 	Client         *model.Client
 	User           *model.User
@@ -70,6 +75,18 @@ type Request struct {
 	AccessLife     time.Duration
 	RefreshLife    time.Duration
 	IncludeIDToken bool
+	AuthTime       time.Time
+	Nonce          string
+}
+
+// authTimeClaim is the auth_time value, or nil for the grants that omit the key
+// altogether.
+func (r Request) authTimeClaim() *int64 {
+	if r.AuthTime.IsZero() {
+		return nil
+	}
+	seconds := r.AuthTime.Unix()
+	return &seconds
 }
 
 // Set is what one issuance produces. IDToken is empty unless the openid scope
@@ -132,6 +149,7 @@ func (i *Issuer) accessClaims(r Request, iat, exp int64) any {
 	return accessClaims{
 		Exp:               exp,
 		Iat:               iat,
+		AuthTime:          r.authTimeClaim(),
 		Jti:               model.NewID(),
 		Iss:               i.Issuer,
 		Aud:               audienceClaim(Audience(r.Client.ClientID, r.ClientRoles)),
@@ -153,12 +171,14 @@ func (i *Issuer) idClaims(r Request, accessToken string, iat, exp int64) idClaim
 	return idClaims{
 		Exp:               exp,
 		Iat:               iat,
+		AuthTime:          r.authTimeClaim(),
 		Jti:               model.NewID(),
 		Iss:               i.Issuer,
 		Aud:               r.Client.ClientID,
 		Sub:               r.UserSession.UserID,
 		Typ:               TypeID,
 		Azp:               r.Client.ClientID,
+		Nonce:             r.Nonce,
 		Sid:               r.UserSession.ID,
 		AtHash:            atHash(accessToken),
 		Acr:               "1",

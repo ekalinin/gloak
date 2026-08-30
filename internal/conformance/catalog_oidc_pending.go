@@ -375,15 +375,22 @@ var oidcPending = []Case{
 	// The other seven - oidc/token/authorization-code-grant,
 	// refresh-token-grant, client-credentials-grant, device-code-grant,
 	// ciba-grant, dpop-bound-token, and oidc/ciba/poll-complete further down
-	// this file - have no golden at all; none of them can be recorded yet.
-	// Unmasking expires_in/refresh_expires_in for those seven is an
-	// inference from the one measured case, not a measurement of its own: it
-	// assumes they share the master realm's token endpoint closely enough to
-	// behave the same way. The direction is safe - removing a path from
-	// Volatile writes no value anywhere, and a wrong inference fails loudly
-	// the moment a case gains a fixture and gets recorded - but it is an
+	// this file - had no golden at all when this was written; none of them
+	// could be recorded yet. Unmasking expires_in/refresh_expires_in for those
+	// seven was an inference from the one measured case, not a measurement of
+	// its own: it assumed they share the master realm's token endpoint closely
+	// enough to behave the same way. The direction is safe - removing a path
+	// from Volatile writes no value anywhere, and a wrong inference fails
+	// loudly the moment a case gains a fixture and gets recorded - but it is an
 	// inference, not the measurement this project's rule asks for. Confirm
 	// each one when it gains a fixture.
+	//
+	// **Three of the seven have been confirmed since.**
+	// oidc/token/authorization-code-grant, client-credentials-grant and
+	// refresh-token-grant all carry recorded goldens now, with expires_in 60
+	// and refresh_expires_in 1800 asserted rather than masked, so the
+	// inference held everywhere it has been tested - including on the refresh
+	// response the paragraph below calls the weakest. Four remain inferred.
 	//
 	// oidc/token/refresh-token-grant is the weakest member of the seven:
 	// refresh_expires_in on a *refresh* response is bounded by the
@@ -454,8 +461,7 @@ var oidcPending = []Case{
 			Section:   "Grant types: authorization code",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Recorded,
-		Reason:  "the token endpoint does not serve the authorization_code grant",
+		Status:  Implemented,
 		Fixture: "browser-code",
 		Request: Request{
 			Method: http.MethodPost,
@@ -713,6 +719,40 @@ var oidcPending = []Case{
 		AssertHeaders: []string{"Content-Type"},
 	},
 	{
+		// The authorization endpoint's `duplicated parameter` has a sibling
+		// here, measured 2026-08-30, and two things about it are this
+		// endpoint's own.
+		//
+		// It reads the **body** and not the query: `zz` twice on the query of
+		// an otherwise valid password grant is a 200, one in each is a 200, and
+		// both in the body is this 400. And it runs **after** client
+		// authentication, where /auth's runs seventh - `zz` twice with an
+		// unknown client_id is the 401 and `zz` twice with a valid client and a
+		// wrong password is this. It is not this grant's either: `grant_type`
+		// twice answers the same way, and so does `zz` twice on an
+		// authorization_code request.
+		//
+		// The request is spelled with Body rather than Form because Form is a
+		// Go map and cannot say a key twice - the same thing RawQuery exists
+		// for on the query side. The Content-Type has to be set by hand for the
+		// same reason: buildRequest only sets it for a Form.
+		ID: "oidc/token/duplicated-parameter",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Token endpoint: request validation",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "bootstrap",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/realms/master/protocol/openid-connect/token",
+			Headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded"},
+			Body:    []byte("grant_type=password&client_id=admin-cli&username=admin&password=admin&zz=1&zz=2"),
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "Pragma"},
+	},
+	{
 		ID: "oidc/token/unknown-grant-type",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
@@ -738,8 +778,7 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: authorization code reuse",
 			Retrieved: "2026-08-20",
 		},
-		Status: Recorded,
-		Reason: "the token endpoint does not serve the authorization_code grant",
+		Status: Implemented,
 		// The fixture redeems the code once, so this request is the replay.
 		Fixture: "browser-code-spent",
 		Request: Request{
@@ -809,8 +848,7 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: PKCE, S256 challenge method",
 			Retrieved: "2026-08-20",
 		},
-		Status: Recorded,
-		Reason: "the token endpoint does not serve the authorization_code grant",
+		Status: Implemented,
 		// The login is its own, not shared with authorization-code-grant.
 		// Measured 2026-08-29: a failed exchange spends the code, so a second
 		// case reusing this login would measure "Code not valid" instead of

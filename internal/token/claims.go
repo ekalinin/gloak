@@ -46,9 +46,18 @@ import (
 // which is why they are pointers and interfaces rather than plain values: Go's
 // omitempty would drop a populated `realm_access` with an empty role list too,
 // and that is a state Keycloak can reach.
+//
+// auth_time is a sixth absent-rather-than-empty key and it is the browser
+// flow's. Measured 2026-08-30 on one container: an authorization_code grant's
+// access token carries it immediately after iat and a password grant's carries
+// none, on a client with no lightweight attribute, so the variable is the grant.
+// It is the time the **user** authenticated rather than the time the token was
+// issued - a login followed by a six-second pause before the exchange produced
+// iat - auth_time == 6 - and it survives a refresh of that session.
 type accessClaims struct {
 	Exp               int64          `json:"exp"`
 	Iat               int64          `json:"iat"`
+	AuthTime          *int64         `json:"auth_time,omitempty"`
 	Jti               string         `json:"jti"`
 	Iss               string         `json:"iss"`
 	Aud               any            `json:"aud,omitempty"`
@@ -126,15 +135,24 @@ type lightweightClaims struct {
 // idClaims is the ID token's claim set. aud is a string here, and it is the
 // issuing client rather than the audiences the access token resolves - the one
 // place the two disagree.
+//
+// Two keys are the browser flow's, both measured 2026-08-30 and both absent
+// rather than empty. auth_time sits after iat exactly as it does on the access
+// token - and it is on the ID token even for a **lightweight** client, whose
+// access token has none. nonce sits between azp and sid, and it appears only
+// when the authorization request carried one; the access and refresh tokens
+// never carry it whatever the request said.
 type idClaims struct {
 	Exp               int64  `json:"exp"`
 	Iat               int64  `json:"iat"`
+	AuthTime          *int64 `json:"auth_time,omitempty"`
 	Jti               string `json:"jti"`
 	Iss               string `json:"iss"`
 	Aud               string `json:"aud"`
 	Sub               string `json:"sub"`
 	Typ               string `json:"typ"`
 	Azp               string `json:"azp"`
+	Nonce             string `json:"nonce,omitempty"`
 	Sid               string `json:"sid"`
 	AtHash            string `json:"at_hash"`
 	Acr               string `json:"acr"`
