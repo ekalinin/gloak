@@ -274,6 +274,15 @@ func TestCodeGrantRejectionOrder(t *testing.T) {
 		code:        "invalid_grant",
 		description: "Incorrect redirect_uri",
 	}, {
+		// The one adjacency nobody would guess: the redirect URI is compared
+		// before the caller is compared with the code's own client, so a
+		// stranger sending a wrong redirect_uri is told about the URI.
+		name:        "a wrong redirect_uri beats another client",
+		exchange:    map[string]string{"client_id": "probe-implicit", "redirect_uri": "http://localhost:9999/other"},
+		status:      http.StatusBadRequest,
+		code:        "invalid_grant",
+		description: "Incorrect redirect_uri",
+	}, {
 		name:        "another client beats a missing verifier",
 		auth:        s256,
 		exchange:    map[string]string{"client_id": "probe-implicit"},
