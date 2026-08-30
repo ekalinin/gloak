@@ -80,10 +80,17 @@ type RequiredActionRepo interface {
 	// the verb - see writeRequiredActionNotFound.
 	ByAlias(ctx context.Context, realmID, alias string) (*model.RequiredActionProvider, error)
 	Create(ctx context.Context, m *model.RequiredActionProvider) error
-	// Update writes alias, name, enabled, defaultAction, priority and config
-	// back. It does **not** write providerId: that field is read off the wire
-	// by PUT /required-actions/{alias} and discarded, measured, so a row's
-	// provider cannot change after registration.
+	// Update writes every mutable column back, providerId included.
+	//
+	// That the admin API never *moves* providerId is a rule about
+	// PUT /required-actions/{alias}, which reads the field off the wire and
+	// discards it, and internal/admin is the single place that decides it.
+	// This interface held the rule too until a mutation test found that
+	// neither copy was pinned: with the store refusing the write, a handler
+	// that assigned the body's providerId changed nothing observable, and with
+	// the handler not assigning, a store that wrote the column changed nothing
+	// either. Two guards, one behaviour, and every single-point mutation
+	// invisible. See docs/superpowers/handover/p8-authentication.md.
 	Update(ctx context.Context, m *model.RequiredActionProvider) error
 	Delete(ctx context.Context, realmID, id string) error
 }

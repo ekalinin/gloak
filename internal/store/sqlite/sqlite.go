@@ -1791,14 +1791,15 @@ func (r *requiredActionRepo) ListByRealm(ctx context.Context, realmID string) ([
 	return collectRequiredActions(rows)
 }
 
-// Update deliberately omits provider_id. PUT /required-actions/{alias} reads
-// providerId off the wire and discards it, measured, so the column is written
-// once at registration and never again.
+// Update writes every mutable column, provider_id included. Which fields a
+// request may move is internal/admin's decision and is made there alone - see
+// store.RequiredActionRepo.Update for why this interface stopped making it too.
 func (r *requiredActionRepo) Update(ctx context.Context, m *model.RequiredActionProvider) error {
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE required_action_provider SET alias = ?, name = ?, enabled = ?,
-		 default_action = ?, priority = ?, config = ? WHERE realm_id = ? AND id = ?`,
-		m.Alias, m.Name, m.Enabled, m.DefaultAction, m.Priority,
+		`UPDATE required_action_provider SET alias = ?, name = ?, provider_id = ?,
+		 enabled = ?, default_action = ?, priority = ?, config = ?
+		 WHERE realm_id = ? AND id = ?`,
+		m.Alias, m.Name, m.ProviderID, m.Enabled, m.DefaultAction, m.Priority,
 		encode(m.Config), m.RealmID, m.ID)
 	if err != nil {
 		return classify(err)

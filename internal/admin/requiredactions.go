@@ -177,8 +177,13 @@ func (h *handler) readRequiredAction(w http.ResponseWriter, r *http.Request, rc 
 //     `{"alias":"ZZZ",...}` answered 204, made the old alias a 404 and the new
 //     one a 200. This is the rename.
 //   - **providerId is read off the wire and discarded.** The same body said
-//     `"providerId":"XXX"` and the stored row kept UPDATE_PROFILE. That is why
-//     store.RequiredActionRepo.Update has no provider_id column in its SET.
+//     `"providerId":"XXX"` and the stored row kept UPDATE_PROFILE. The
+//     assignment below is deliberately absent, and this is the **only** place
+//     that decides it: the store writes every column it is given, so adding
+//     `m.ProviderID = rep.ProviderID` here is enough to break the rule and is
+//     therefore enough for a test to catch. It used to be enforced in the store
+//     as well, and a mutation test found that the two guards made each other
+//     invisible.
 //   - **`{}` is a 204 that orphans the row.** Every field takes its zero value,
 //     so the alias becomes "", the row leaves every alias-addressed route and
 //     stays in the listing as a six-key object with no `alias` key at all. It

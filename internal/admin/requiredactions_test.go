@@ -445,6 +445,67 @@ func TestRequiredActionListingAdmitsTheUsersRoles(t *testing.T) {
 	}
 }
 
+// TestUnregisteredCarriesTheProviderNameInSPIOrder pins two things no golden
+// can, because a pristine realm's answer here is `[]`.
+//
+// The `name` is the **provider's** display name and not the deleted row's: a
+// row renamed to "MY OWN NAME" and then deleted came back as "Linking Identity
+// Provider" on a live 26.7.1.
+//
+// And the order is the SPI's own, which is neither alphabetical, nor by
+// priority, nor the order the rows were deleted in. **All fourteen are
+// unregistered** rather than a readable handful, and that is the whole point:
+// the first version of this test deleted three, and a mutation swapping
+// `TERMS_AND_CONDITIONS` with `update_user_locale` in the seed survived it,
+// because only one of that pair was in the answer. Those two are one of the two
+// **bucket collisions** in this key set - the exact places `javamap.KeyOrder`
+// puts the pair the other way round - so a test that does not hold both
+// members of both pairs is not testing the part of the order that is hard.
+func TestUnregisteredCarriesTheProviderNameInSPIOrder(t *testing.T) {
+	h, _, _ := newServer(t)
+	token := adminToken(t, h)
+
+	rename := `{"alias":"idp_link","name":"MY OWN NAME","providerId":"idp_link",` +
+		`"enabled":true,"defaultAction":false,"priority":120}`
+	if w := send(t, h, http.MethodPut, authBase+"/required-actions/idp_link", token, rename); w.Code != http.StatusNoContent {
+		t.Fatalf("rename: %d %s", w.Code, w.Body)
+	}
+	// Deleted in priority order, which the answer is measurably not in.
+	for _, alias := range []string{
+		"TERMS_AND_CONDITIONS", "UPDATE_PROFILE", "VERIFY_EMAIL", "CONFIGURE_TOTP",
+		"UPDATE_PASSWORD", "delete_account", "UPDATE_EMAIL", "webauthn-register",
+		"webauthn-register-passwordless", "VERIFY_PROFILE", "delete_credential",
+		"idp_link", "CONFIGURE_RECOVERY_AUTHN_CODES", "update_user_locale",
+	} {
+		if w := send(t, h, http.MethodDelete, authBase+"/required-actions/"+alias, token, ""); w.Code != http.StatusNoContent {
+			t.Fatalf("DELETE %s: %d %s", alias, w.Code, w.Body)
+		}
+	}
+	w := get(t, h, authBase+"/unregistered-required-actions", token)
+	want := `[{"providerId":"CONFIGURE_TOTP","name":"Configure OTP"},` +
+		`{"providerId":"webauthn-register-passwordless","name":"Webauthn Register Passwordless"},` +
+		`{"providerId":"UPDATE_PASSWORD","name":"Update Password"},` +
+		`{"providerId":"update_user_locale","name":"Update User Locale"},` +
+		`{"providerId":"TERMS_AND_CONDITIONS","name":"Terms and Conditions"},` +
+		`{"providerId":"idp_link","name":"Linking Identity Provider"},` +
+		`{"providerId":"delete_account","name":"Delete Account"},` +
+		`{"providerId":"VERIFY_EMAIL","name":"Verify Email"},` +
+		`{"providerId":"UPDATE_EMAIL","name":"Update Email"},` +
+		`{"providerId":"webauthn-register","name":"Webauthn Register"},` +
+		`{"providerId":"VERIFY_PROFILE","name":"Verify Profile"},` +
+		`{"providerId":"delete_credential","name":"Delete Credential"},` +
+		`{"providerId":"CONFIGURE_RECOVERY_AUTHN_CODES","name":"Recovery Authentication Codes"},` +
+		`{"providerId":"UPDATE_PROFILE","name":"Update Profile"}]`
+	if got := w.Body.String(); got != want {
+		t.Errorf("unregistered:\n got %s\nwant %s", got, want)
+	}
+	// And the listing beside it is empty, which is what says a delete really
+	// unregisters rather than hiding.
+	if w := get(t, h, authBase+"/required-actions", token); w.Body.String() != "[]" {
+		t.Errorf("required-actions after deleting all fourteen: %s", w.Body)
+	}
+}
+
 // itoa avoids importing strconv for one call in a table.
 func itoa(n int) string {
 	if n == 0 {
