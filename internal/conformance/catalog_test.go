@@ -181,7 +181,7 @@ var staleReasonsOwnedElsewhere = map[string]string{
 //
 // Both are the same claim - a named endpoint is not built - and both are
 // falsifiable against the router without serving the case, which matters
-// because 22 of the 28 Pending cases carry no fixture and cannot be served at
+// because 21 of the 28 Pending cases carry no fixture and cannot be served at
 // all. The probe is a method no route registers: Gloak answers a **known** path
 // with the wrong method 404 `{"error":"HTTP 404 Not Found"}` and an unrouted
 // path with 404 `{"error":"Unable to find matching target resource method"}`,
