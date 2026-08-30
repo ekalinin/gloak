@@ -501,7 +501,60 @@ func CreateRealm(ctx context.Context, s store.Store, name string, want *model.Re
 			return nil, err
 		}
 	}
+	// Last, because both of them name a role and a container that have to exist
+	// already.
+	if err := ensureScopeMappings(ctx, s, realm.ID); err != nil {
+		return nil, err
+	}
 	return realm, nil
+}
+
+// ensureScopeMappings writes the two scope mappings a pristine realm has.
+//
+// **There are exactly two**, and they were counted rather than assumed:
+// `GET .../scope-mappings` was read on all fifteen bootstrapped client scopes
+// and all six bootstrapped clients, on master and on a realm created through
+// `POST /admin/realms`, and nineteen of the twenty-one answered `{}`.
+//
+//	client scope offline_access  ->  the realm role offline_access
+//	client account-console       ->  account's manage-account and view-groups
+//
+// The second is only observable because `account-console` is
+// `fullScopeAllowed: false`: a client with the flag set has every role in scope
+// already and these rows would change nothing a caller could see. Four of the
+// six bootstrapped clients have it off, which is why the flag is not a detail -
+// see the fullScope clause of internal/admin's hasScope.
+func ensureScopeMappings(ctx context.Context, s store.Store, realmID string) error {
+	scope, err := s.ClientScopes().ByName(ctx, realmID, "offline_access")
+	if err != nil {
+		return fmt.Errorf("bootstrap: find the offline_access client scope: %w", err)
+	}
+	role, err := s.Roles().ByName(ctx, realmID, "", "offline_access")
+	if err != nil {
+		return fmt.Errorf("bootstrap: find the offline_access realm role: %w", err)
+	}
+	if err := s.Roles().AddClientScopeScopeMapping(ctx, scope.ID, role.ID); err != nil {
+		return fmt.Errorf("bootstrap: map offline_access into its client scope: %w", err)
+	}
+
+	console, err := s.Clients().ByClientID(ctx, realmID, "account-console")
+	if err != nil {
+		return fmt.Errorf("bootstrap: find account-console: %w", err)
+	}
+	account, err := s.Clients().ByClientID(ctx, realmID, "account")
+	if err != nil {
+		return fmt.Errorf("bootstrap: find account: %w", err)
+	}
+	for _, name := range []string{"manage-account", "view-groups"} {
+		r, err := s.Roles().ByName(ctx, realmID, account.ID, name)
+		if err != nil {
+			return fmt.Errorf("bootstrap: find account role %q: %w", name, err)
+		}
+		if err := s.Roles().AddClientScopeMapping(ctx, console.ID, r.ID); err != nil {
+			return fmt.Errorf("bootstrap: map %q into account-console's scope: %w", name, err)
+		}
+	}
+	return nil
 }
 
 // createClient fills in the fields measured identical on every bootstrapped

@@ -6117,4 +6117,1249 @@ var adminCases = []Case{
 		AssertHeaders:       []string{"Content-Type"},
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
+	// ---------------------------------------------------------------------
+	// P5 cut C: scope mappings. Thirty-three operations, eleven behaviours,
+	// three path spellings.
+	//
+	// The eleven under a client scope come first, then the eleven the
+	// `client-templates` alias serves - which are measured **byte-identical**,
+	// headers included, with none of the one exception the parent family and the
+	// protocol mappers each had, because nothing on this tag mints a `Location`
+	// for the two spellings to disagree about. The alias reads share the parent's
+	// fixture and container for exactly that reason; the alias writes get their
+	// own, because a write cannot be recorded twice against one container and
+	// mean the same thing.
+	//
+	// Appended at the very end of the slice, as cut B's were.
+	// ---------------------------------------------------------------------
+	{
+		ID: "admin/scope-mappings/all",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: the combined view of a container's scope mappings",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-scopes/{client-scope-id}/scope-mappings",
+		Fixture:   "scope-mappings-scope",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000021/scope-mappings",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		// The role ids are minted by the server: a role create answers a
+		// Location ending in the role's **name**, so nothing lets a fixture
+		// choose one. The clientMappings key, its `id` and the mappings'
+		// containerId are the fixture's own fixed client UUID and stay
+		// asserted.
+		Volatile: []string{"realmMappings/*/id", "realmMappings/*/containerId",
+			"clientMappings/*/mappings/*/id"},
+	},
+	{
+		ID: "admin/scope-mappings/realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: get the realm-level roles in a container's scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-scopes/{client-scope-id}/scope-mappings/realm",
+		Fixture:   "scope-mappings-scope",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000021/scope-mappings/realm",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/scope-mappings/realm-available",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: get the realm-level roles that can be added",
+			Retrieved: "2026-08-30",
+		},
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/client-scopes/{client-scope-id}/scope-mappings/realm/available",
+		PristineRealm: true,
+		Fixture:       "scope-mappings-scope",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000021/scope-mappings/realm/available",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/scope-mappings/realm-composite",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: get the effective realm-level roles",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-scopes/{client-scope-id}/scope-mappings/realm/composite",
+		Fixture:   "scope-mappings-scope",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000021/scope-mappings/realm/composite",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/scope-mappings/add-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: add realm-level roles to a container's scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/client-scopes/{client-scope-id}/scope-mappings/realm",
+		Fixture:   "scope-mappings-scope-add",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000022/scope-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{sm_realm_role_id}}"}]`),
+		},
+		// A JSON request body, so this 204 carries X-Frame-Options. It carries
+		// **no Cache-Control at all**, where the client-scope DELETE one level
+		// up does - pinned per endpoint, like every other Cache-Control here.
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+	},
+	{
+		ID: "admin/scope-mappings/remove-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: remove realm-level roles from a container's scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/client-scopes/{client-scope-id}/scope-mappings/realm",
+		Fixture:   "scope-mappings-scope-drop",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path:   "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000023/scope-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{sm_realm_role_id}}"}]`),
+		},
+		// A JSON request body, so this 204 carries X-Frame-Options. It carries
+		// **no Cache-Control at all**, where the client-scope DELETE one level
+		// up does - pinned per endpoint, like every other Cache-Control here.
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+	},
+	{
+		ID: "admin/scope-mappings/client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: get one client's roles in a container's scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-scopes/{client-scope-id}/scope-mappings/clients/{client}",
+		Fixture:   "scope-mappings-scope",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000021/scope-mappings/clients/c11e0000-0000-4000-8000-000000000031",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/scope-mappings/client-available",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: get one client's roles that can be added",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-scopes/{client-scope-id}/scope-mappings/clients/{client}/available",
+		Fixture:   "scope-mappings-scope",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000021/scope-mappings/clients/c11e0000-0000-4000-8000-000000000031/available",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/scope-mappings/client-composite",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: get one client's effective roles",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-scopes/{client-scope-id}/scope-mappings/clients/{client}/composite",
+		Fixture:   "scope-mappings-scope",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000021/scope-mappings/clients/c11e0000-0000-4000-8000-000000000031/composite",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/scope-mappings/add-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: add one client's roles to a container's scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/client-scopes/{client-scope-id}/scope-mappings/clients/{client}",
+		Fixture:   "scope-mappings-scope-add-role",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000024/scope-mappings/clients/c11e0000-0000-4000-8000-000000000034",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"name":"gloak-probe-sm-client-role"}]`),
+		},
+		// A JSON request body, so this 204 carries X-Frame-Options. It carries
+		// **no Cache-Control at all**, where the client-scope DELETE one level
+		// up does - pinned per endpoint, like every other Cache-Control here.
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+	},
+	{
+		ID: "admin/scope-mappings/remove-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: remove one client's roles from a container's scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/client-scopes/{client-scope-id}/scope-mappings/clients/{client}",
+		Fixture:   "scope-mappings-scope-drop-role",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path:   "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000025/scope-mappings/clients/c11e0000-0000-4000-8000-000000000035",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"name":"gloak-probe-sm-client-role"}]`),
+		},
+		// A JSON request body, so this 204 carries X-Frame-Options. It carries
+		// **no Cache-Control at all**, where the client-scope DELETE one level
+		// up does - pinned per endpoint, like every other Cache-Control here.
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+	},
+
+	{
+		ID: "admin/scope-mappings/template-all",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: the combined view of a container's scope mappings",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-templates/{client-scope-id}/scope-mappings",
+		Fixture:   "scope-mappings-scope",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000021/scope-mappings",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		// The role ids are minted by the server: a role create answers a
+		// Location ending in the role's **name**, so nothing lets a fixture
+		// choose one. The clientMappings key, its `id` and the mappings'
+		// containerId are the fixture's own fixed client UUID and stay
+		// asserted.
+		Volatile: []string{"realmMappings/*/id", "realmMappings/*/containerId",
+			"clientMappings/*/mappings/*/id"},
+	},
+	{
+		ID: "admin/scope-mappings/template-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: get the realm-level roles in a container's scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-templates/{client-scope-id}/scope-mappings/realm",
+		Fixture:   "scope-mappings-scope",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000021/scope-mappings/realm",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/scope-mappings/template-realm-available",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: get the realm-level roles that can be added",
+			Retrieved: "2026-08-30",
+		},
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/client-templates/{client-scope-id}/scope-mappings/realm/available",
+		PristineRealm: true,
+		Fixture:       "scope-mappings-scope",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000021/scope-mappings/realm/available",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/scope-mappings/template-realm-composite",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: get the effective realm-level roles",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-templates/{client-scope-id}/scope-mappings/realm/composite",
+		Fixture:   "scope-mappings-scope",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000021/scope-mappings/realm/composite",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/scope-mappings/template-add-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: add realm-level roles to a container's scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/client-templates/{client-scope-id}/scope-mappings/realm",
+		Fixture:   "scope-mappings-template-add",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000026/scope-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{sm_realm_role_id}}"}]`),
+		},
+		// A JSON request body, so this 204 carries X-Frame-Options. It carries
+		// **no Cache-Control at all**, where the client-scope DELETE one level
+		// up does - pinned per endpoint, like every other Cache-Control here.
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+	},
+	{
+		ID: "admin/scope-mappings/template-remove-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: remove realm-level roles from a container's scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/client-templates/{client-scope-id}/scope-mappings/realm",
+		Fixture:   "scope-mappings-template-drop",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path:   "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000027/scope-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{sm_realm_role_id}}"}]`),
+		},
+		// A JSON request body, so this 204 carries X-Frame-Options. It carries
+		// **no Cache-Control at all**, where the client-scope DELETE one level
+		// up does - pinned per endpoint, like every other Cache-Control here.
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+	},
+	{
+		ID: "admin/scope-mappings/template-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: get one client's roles in a container's scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-templates/{client-scope-id}/scope-mappings/clients/{client}",
+		Fixture:   "scope-mappings-scope",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000021/scope-mappings/clients/c11e0000-0000-4000-8000-000000000031",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/scope-mappings/template-client-available",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: get one client's roles that can be added",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-templates/{client-scope-id}/scope-mappings/clients/{client}/available",
+		Fixture:   "scope-mappings-scope",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000021/scope-mappings/clients/c11e0000-0000-4000-8000-000000000031/available",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/scope-mappings/template-client-composite",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: get one client's effective roles",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-templates/{client-scope-id}/scope-mappings/clients/{client}/composite",
+		Fixture:   "scope-mappings-scope",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000021/scope-mappings/clients/c11e0000-0000-4000-8000-000000000031/composite",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/scope-mappings/template-add-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: add one client's roles to a container's scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/client-templates/{client-scope-id}/scope-mappings/clients/{client}",
+		Fixture:   "scope-mappings-template-add-role",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000028/scope-mappings/clients/c11e0000-0000-4000-8000-000000000038",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"name":"gloak-probe-sm-client-role"}]`),
+		},
+		// A JSON request body, so this 204 carries X-Frame-Options. It carries
+		// **no Cache-Control at all**, where the client-scope DELETE one level
+		// up does - pinned per endpoint, like every other Cache-Control here.
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+	},
+	{
+		ID: "admin/scope-mappings/template-remove-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: remove one client's roles from a container's scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/client-templates/{client-scope-id}/scope-mappings/clients/{client}",
+		Fixture:   "scope-mappings-template-drop-role",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path:   "/admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000029/scope-mappings/clients/c11e0000-0000-4000-8000-000000000039",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"name":"gloak-probe-sm-client-role"}]`),
+		},
+		// A JSON request body, so this 204 carries X-Frame-Options. It carries
+		// **no Cache-Control at all**, where the client-scope DELETE one level
+		// up does - pinned per endpoint, like every other Cache-Control here.
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+	},
+
+	{
+		ID: "admin/scope-mappings/owner-all",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: the combined view of a container's scope mappings",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/scope-mappings",
+		Fixture:   "scope-mappings-client",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000021/scope-mappings",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		// The role ids are minted by the server: a role create answers a
+		// Location ending in the role's **name**, so nothing lets a fixture
+		// choose one. The clientMappings key, its `id` and the mappings'
+		// containerId are the fixture's own fixed client UUID and stay
+		// asserted.
+		Volatile: []string{"realmMappings/*/id", "realmMappings/*/containerId",
+			"clientMappings/*/mappings/*/id"},
+	},
+	{
+		ID: "admin/scope-mappings/owner-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: get the realm-level roles in a container's scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/scope-mappings/realm",
+		Fixture:   "scope-mappings-client",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000021/scope-mappings/realm",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/scope-mappings/owner-realm-available",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: get the realm-level roles that can be added",
+			Retrieved: "2026-08-30",
+		},
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/clients/{client-uuid}/scope-mappings/realm/available",
+		PristineRealm: true,
+		Fixture:       "scope-mappings-client",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000021/scope-mappings/realm/available",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/scope-mappings/owner-realm-composite",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: get the effective realm-level roles",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/scope-mappings/realm/composite",
+		Fixture:   "scope-mappings-client",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000021/scope-mappings/realm/composite",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/scope-mappings/owner-add-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: add realm-level roles to a container's scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/clients/{client-uuid}/scope-mappings/realm",
+		Fixture:   "scope-mappings-client-add",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000022/scope-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{sm_realm_role_id}}"}]`),
+		},
+		// A JSON request body, so this 204 carries X-Frame-Options. It carries
+		// **no Cache-Control at all**, where the client-scope DELETE one level
+		// up does - pinned per endpoint, like every other Cache-Control here.
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+	},
+	{
+		ID: "admin/scope-mappings/owner-remove-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: remove realm-level roles from a container's scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/clients/{client-uuid}/scope-mappings/realm",
+		Fixture:   "scope-mappings-client-drop",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path:   "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000023/scope-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{sm_realm_role_id}}"}]`),
+		},
+		// A JSON request body, so this 204 carries X-Frame-Options. It carries
+		// **no Cache-Control at all**, where the client-scope DELETE one level
+		// up does - pinned per endpoint, like every other Cache-Control here.
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+	},
+	{
+		ID: "admin/scope-mappings/owner-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: get one client's roles in a container's scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/scope-mappings/clients/{client}",
+		Fixture:   "scope-mappings-client",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000021/scope-mappings/clients/c11e0000-0000-4000-8000-00000000003a",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/scope-mappings/owner-client-available",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: get one client's roles that can be added",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/scope-mappings/clients/{client}/available",
+		Fixture:   "scope-mappings-client",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000021/scope-mappings/clients/c11e0000-0000-4000-8000-00000000003a/available",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/scope-mappings/owner-client-composite",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: get one client's effective roles",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/scope-mappings/clients/{client}/composite",
+		Fixture:   "scope-mappings-client",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000021/scope-mappings/clients/c11e0000-0000-4000-8000-00000000003a/composite",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		ID: "admin/scope-mappings/owner-add-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: add one client's roles to a container's scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/clients/{client-uuid}/scope-mappings/clients/{client}",
+		Fixture:   "scope-mappings-client-add-role",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000024/scope-mappings/clients/c11e0000-0000-4000-8000-00000000003d",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"name":"gloak-probe-sm-client-role"}]`),
+		},
+		// A JSON request body, so this 204 carries X-Frame-Options. It carries
+		// **no Cache-Control at all**, where the client-scope DELETE one level
+		// up does - pinned per endpoint, like every other Cache-Control here.
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+	},
+	{
+		ID: "admin/scope-mappings/owner-remove-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: remove one client's roles from a container's scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/clients/{client-uuid}/scope-mappings/clients/{client}",
+		Fixture:   "scope-mappings-client-drop-role",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path:   "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000025/scope-mappings/clients/c11e0000-0000-4000-8000-00000000003e",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"name":"gloak-probe-sm-client-role"}]`),
+		},
+		// A JSON request body, so this 204 carries X-Frame-Options. It carries
+		// **no Cache-Control at all**, where the client-scope DELETE one level
+		// up does - pinned per endpoint, like every other Cache-Control here.
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+	},
+
+	{
+		// **`composite` expands what is mapped and `available` does not.** The
+		// fixture maps one composite realm role and nothing else; this body
+		// holds it **and its child**, which was never mapped.
+		//
+		// An implementation that answered the direct list here passes
+		// admin/scope-mappings/realm-composite, whose container has a
+		// non-composite role mapped and where the two lists coincide.
+		ID: "admin/scope-mappings/composite-expands-a-composite",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: a composite role in scope puts its children in scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "scope-mappings-composite",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-00000000002a" +
+				"/scope-mappings/realm/composite",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		// The other half of the same measurement: the child that
+		// admin/scope-mappings/composite-expands-a-composite finds **in** the
+		// composite is still **in** this available list, because available
+		// subtracts what is mapped directly rather than what is in scope.
+		//
+		// Computing available from the composite is the obvious tidy-up - the
+		// two reads look like complements - and it is what this case rules out.
+		ID: "admin/scope-mappings/available-keeps-a-reachable-child",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: available is the complement of the direct list",
+			Retrieved: "2026-08-30",
+		},
+		Status:        Implemented,
+		PristineRealm: true,
+		Fixture:       "scope-mappings-composite",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-00000000002a" +
+				"/scope-mappings/realm/available",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		// **`briefRepresentation` is honoured by `.../composite` alone**, which
+		// is the user role-mapping family's rule confirmed on a new family - the
+		// first time one of this API's parameter rules has generalised rather
+		// than inverted. `false` grows an `attributes` key; the six other reads
+		// on this family ignore the parameter entirely.
+		//
+		// Plumbing the parameter through all seven is the tidy-up that breaks
+		// the six.
+		ID: "admin/scope-mappings/composite-brief-false",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: the effective realm-level roles, briefRepresentation=false",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "scope-mappings-scope",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000021" +
+				"/scope-mappings/realm/composite",
+			Query:   map[string]string{"briefRepresentation": "false"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		// **`fullScopeAllowed` is a third input to `composite`, and only a
+		// client has it.** The fixture's client maps nothing at all and this
+		// body is **every realm role in the realm** - which is why the case is
+		// PristineRealm.
+		//
+		// An implementation that computed composite from the mappings alone
+		// answers `[]` here and passes every other case in this cut, because
+		// every other container is a client scope or a client with the flag
+		// off. Two of the six bootstrapped clients carry it, so this is not a
+		// corner.
+		ID: "admin/scope-mappings/full-scope-composite",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: a fullScopeAllowed client has every role in scope",
+			Retrieved: "2026-08-30",
+		},
+		Status:        Implemented,
+		PristineRealm: true,
+		Fixture:       "scope-mappings-full-scope",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000026" +
+				"/scope-mappings/realm/composite",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		// **What the write's 204 cannot show.** The fixture posted a **client**
+		// role to `.../scope-mappings/realm`, by id, with no `name` at all, and
+		// got 204. This body says where it went: under `clientMappings`, not
+		// under `realmMappings` and not nowhere.
+		//
+		// So the `realm` path segment is a precondition on nothing - the write
+		// resolves by id, realm-wide, and stores the role under its own
+		// container. Three implementations answer that 204 and only this read
+		// tells them apart. Adding a `role.ClientID == ""` check to make the
+		// write agree with its own path is the tidy-up this case refuses.
+		ID: "admin/scope-mappings/realm-write-lands-under-its-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: the realm write takes a client role and files it correctly",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "scope-mappings-written",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-00000000002b" +
+				"/scope-mappings",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **The realm write resolves by `id` and the client write by `name`.**
+		// This is the realm write with a real role's **name** and no id: a
+		// **500**, Keycloak's own defect, because the lookup is by id and a null
+		// one reaches the store.
+		//
+		// The client write's mirror image is
+		// admin/scope-mappings/client-write-without-a-name. One decoder that
+		// accepted an entry when *either* key matched passes every happy path in
+		// this cut and gets both of these wrong.
+		ID: "admin/scope-mappings/realm-write-without-an-id",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: the realm write with a name and no id",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "scope-mappings-scope",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000021" +
+				"/scope-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"name":"gloak-probe-sm-realm-role"}]`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The other half: the client write with a real role's **id** and no
+		// name is a 404, where the realm write with an id alone is a 204.
+		ID: "admin/scope-mappings/client-write-without-a-name",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: the client write with an id and no name",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "scope-mappings-written",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-00000000002b" +
+				"/scope-mappings/clients/c11e0000-0000-4000-8000-00000000003f",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{sm_client_role_id}}"}]`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// A role id that resolves to nothing: 404 `Role not found`, the same
+		// spelling the user role-mapping writes answer and **not** the four
+		// other not-found strings this API has for a role.
+		ID: "admin/scope-mappings/unknown-role",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: a role id that resolves to nothing",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "scope-mappings-scope",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000021" +
+				"/scope-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"99999999-9999-4999-8999-999999999999"}]`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// An unknown container: `Could not find client scope`, the spelling
+		// `/client-scopes/{id}` uses and not the `Client scope not found` the
+		// two default-scope families answer for the same missing object.
+		ID: "admin/scope-mappings/unknown-scope",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: a client scope that does not exist",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-0000000000fe" +
+				"/scope-mappings/realm",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// An unknown `{client}` segment answers **`Could not find client`**,
+		// where the role-mapping family's identical-looking segment answers
+		// `Client not found`. Same missing client, two routes, two strings -
+		// which is why mappingClientFromPath is not reused here.
+		ID: "admin/scope-mappings/unknown-role-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: a role container that does not exist",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "scope-mappings-scope",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000021" +
+				"/scope-mappings/clients/c11e0000-0000-4000-8000-0000000000fe",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The per-role check is the composite-write rule, not the
+		// caller-relative one.** A `manage-clients` caller - which passes both
+		// the coarse gate and the fine write check - is **403** mapping an
+		// ordinary realm role that is not an admin role at all.
+		//
+		// mayGrantRole, the predicate the user and group families use, allows
+		// this: the role is not one of the realm's admin roles, so nothing about
+		// the caller's own rights is even consulted. Reusing it here is the
+		// obvious move and this case is what refuses it.
+		ID: "admin/scope-mappings/refused-realm-role",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: a manage-clients caller mapping a realm role",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "scope-mappings-narrow-caller",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-00000000002d" +
+				"/scope-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{caller_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{sm_realm_role_id}}"}]`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **`available` runs the write's predicate, so a weaker caller gets a
+		// shorter list rather than a refusal.** The same `manage-clients` caller
+		// that is 403 writing a realm role reads this list as `[]`, where a
+		// caller holding `manage-realm` too sees every realm role in the realm.
+		//
+		// Fourth instance of "200 with a shorter list to a weaker caller" on
+		// this API, and the one that says the set a caller may write is exactly
+		// the set its own available read shows it.
+		ID: "admin/scope-mappings/available-to-a-manage-clients-caller",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: available to a caller that may map nothing in it",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "scope-mappings-narrow-caller",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-00000000002d" +
+				"/scope-mappings/realm/available",
+			Headers: map[string]string{"Authorization": "Bearer {{caller_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
+	{
+		// **What the 403 cannot show.** The fixture's batch named a client role
+		// this caller may map **first** and a realm role it may not second, and
+		// got 403. This body says the first one was not written either.
+		//
+		// A loop that applied as it validated answers the same 403 and leaves a
+		// row behind. Only this read sees it, and the array order is
+		// load-bearing: with the refused entry first, a half-applying loop would
+		// have written nothing and passed.
+		ID: "admin/scope-mappings/refused-batch-writes-nothing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: a batch validates before it applies",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "scope-mappings-batch-refused",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-00000000002c" +
+				"/scope-mappings",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **415, and this family is where it became reachable.** These are the
+		// first routes in Gloak whose `DELETE` carries a body, and a body needs
+		// a Content-Type that whatever HTTP library the caller uses will pick
+		// for itself.
+		//
+		// Measured on both verbs: `application/json` and **no Content-Type at
+		// all** are accepted, and anything else is this 415. The absent case is
+		// not an artefact - it was measured separately from a suppressed-header
+		// probe that first looked like it.
+		ID: "admin/scope-mappings/unsupported-media-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: a write whose Content-Type is not JSON",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "scope-mappings-scope",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000021" +
+				"/scope-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "text/plain",
+			},
+			Body: []byte(`[]`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The parse code follows the body's shape, not the endpoint.** An
+		// object sent to an array endpoint is `unknown_error`; the truncated
+		// array these routes actually want is `invalid_request`, which
+		// decodeRoleList next door would answer `unknown_error` to.
+		//
+		// This is the second family to use cut B's shape classifier, and the
+		// case that says it is in the path.
+		ID: "admin/scope-mappings/wrong-shape-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: an object body on an array endpoint",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "scope-mappings-scope",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000021" +
+				"/scope-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The truncated **array** - the shape these endpoints want - answers the
+		// other code. The pair is what says the rule is the body's and not the
+		// route's.
+		ID: "admin/scope-mappings/truncated-array-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: a truncated array body",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "scope-mappings-scope",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000021" +
+				"/scope-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **`query-clients` is admitted by the gate and refused after the
+		// container**, which is why a scope that does not exist answers it
+		// **404** and a scope that does answers 403. Asking only what it gets on
+		// a scope that exists cannot tell the two arrangements apart, and this
+		// project shipped the wrong one on the strength of exactly that on the
+		// protocol-mapper family a day earlier.
+		//
+		// The scope id names nothing on purpose.
+		ID: "admin/scope-mappings/to-a-query-clients-caller",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: a caller holding query-clients",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "narrow-caller-query-clients",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-0000000000fd" +
+				"/scope-mappings/realm",
+			Headers: map[string]string{"Authorization": "Bearer {{caller_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The combined view is the direct list, not the composite one, and not
+		// the direct-scope set either.** The same client whose
+		// `.../realm/composite` answers every realm role in the realm answers
+		// `{}` here, because it has mapped nothing - **and it owns a role**,
+		// which its `available` and `composite` reads would count and this one
+		// measurably does not.
+		//
+		// The owned role is what makes this case bite. Without it the fixture's
+		// client has nothing to distinguish `sc.mappings()` from the wider set,
+		// and a mutation building this body out of the latter **survived** -
+		// on every other container in this cut the two coincide.
+		ID: "admin/scope-mappings/full-scope-all",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: the combined view of a fullScopeAllowed client",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "scope-mappings-full-scope",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/c11e0000-0000-4000-8000-000000000026" +
+				"/scope-mappings",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **A client's own roles are in its own scope**, without ever being
+		// mapped. The fixture's client has `fullScopeAllowed` off and maps
+		// nothing of its own, and this read - its own roles against its own
+		// scope - answers `[]` rather than the two roles it owns.
+		//
+		// An implementation whose available read subtracts only the mappings
+		// answers both roles here and passes every other case in this cut,
+		// because every other available read points at a *different* client.
+		ID: "admin/scope-mappings/a-clients-own-roles-are-in-scope",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Scope Mappings: a client's own roles need no mapping",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "scope-mappings-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/c11e0000-0000-4000-8000-00000000003a" +
+				"/scope-mappings/clients/c11e0000-0000-4000-8000-00000000003a/available",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+		Volatile:      []string{"*/id", "*/containerId"},
+	},
 }

@@ -1,0 +1,12 @@
+# GET /admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-00000000002a/scope-mappings/realm/composite
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"id":"{{string}}","name":"gloak-probe-sm-composite","composite":true,"clientRole":false,"containerId":"{{string}}"},{"id":"{{string}}","name":"gloak-probe-sm-realm-role","composite":false,"clientRole":false,"containerId":"{{string}}"}]

@@ -1444,6 +1444,81 @@ func (r *roleRepo) ListGroupRoles(ctx context.Context, groupID string) ([]*model
 	return out, nil
 }
 
+// The scope mappings of a client and of a client scope. Two tables, one shape,
+// and the six methods are spelled out rather than parameterised by a container
+// kind: a kind argument is the query that forgets which holder it meant, which
+// is what 0011 already refused for the user and group mirrors.
+//
+// Both adds swallow a repeat and both removes swallow a missing row, because
+// both verbs are measured idempotent on both containers.
+//
+// ORDER BY name is Gloak's, not Keycloak's. Keycloak serves these in its
+// realm-role-listing order, which is not reproducible across container starts,
+// so the conformance cases sort both sides and this picks the order that at
+// least does not move between two reads of one Gloak.
+
+func (r *roleRepo) AddClientScopeMapping(ctx context.Context, clientID, roleID string) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO scope_mapping (client_id, role_id) VALUES ($1, $2)
+		 ON CONFLICT DO NOTHING`, clientID, roleID)
+	return classify(err)
+}
+
+func (r *roleRepo) RemoveClientScopeMapping(ctx context.Context, clientID, roleID string) error {
+	_, err := r.pool.Exec(ctx,
+		`DELETE FROM scope_mapping WHERE client_id = $1 AND role_id = $2`, clientID, roleID)
+	return classify(err)
+}
+
+func (r *roleRepo) ListClientScopeMappings(ctx context.Context, clientID string) ([]*model.Role, error) {
+	return r.scopeMappings(ctx,
+		`SELECT r.id, r.realm_id, r.client_id, r.name, r.description, r.composite
+		 FROM keycloak_role r
+		 JOIN scope_mapping m ON m.role_id = r.id
+		 WHERE m.client_id = $1 ORDER BY r.name`, clientID)
+}
+
+func (r *roleRepo) AddClientScopeScopeMapping(ctx context.Context, clientScopeID, roleID string) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO client_scope_role_mapping (client_scope_id, role_id) VALUES ($1, $2)
+		 ON CONFLICT DO NOTHING`, clientScopeID, roleID)
+	return classify(err)
+}
+
+func (r *roleRepo) RemoveClientScopeScopeMapping(ctx context.Context, clientScopeID, roleID string) error {
+	_, err := r.pool.Exec(ctx,
+		`DELETE FROM client_scope_role_mapping
+		 WHERE client_scope_id = $1 AND role_id = $2`, clientScopeID, roleID)
+	return classify(err)
+}
+
+func (r *roleRepo) ListClientScopeScopeMappings(ctx context.Context, clientScopeID string) ([]*model.Role, error) {
+	return r.scopeMappings(ctx,
+		`SELECT r.id, r.realm_id, r.client_id, r.name, r.description, r.composite
+		 FROM keycloak_role r
+		 JOIN client_scope_role_mapping m ON m.role_id = r.id
+		 WHERE m.client_scope_id = $1 ORDER BY r.name`, clientScopeID)
+}
+
+// scopeMappings is what the two listings share once the join differs. The
+// attribute load is part of it because `.../composite?briefRepresentation=false`
+// serves a role's attributes, so a scope mapping read reaches the same rows a
+// role read does.
+func (r *roleRepo) scopeMappings(ctx context.Context, query, id string) ([]*model.Role, error) {
+	rows, err := r.pool.Query(ctx, query, id)
+	if err != nil {
+		return nil, classify(err)
+	}
+	out, err := collectRoles(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadRoleAttributes(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // clientScopeColumns is spelled once so the statements below cannot drift apart
 // on the order scanClientScope depends on. prefixedClientScopeColumns is the
 // same list qualified for the two joins.

@@ -251,6 +251,26 @@ type RoleRepo interface {
 	// not expand composites the way internal/roles.Effective does.
 	ListUsersWithRole(ctx context.Context, realmID, roleID string) ([]*model.User, error)
 
+	// A **client's** scope mappings: the roles that survive into a token it
+	// issues. Not a role the client holds - nothing holds these - so they are a
+	// third pair of tables beside the user's and the group's rather than a
+	// third kind of holder on either.
+	//
+	// Both verbs are measured idempotent, on both containers: adding a role
+	// already mapped is 204 and removing one that is not mapped is 204. So the
+	// add swallows a conflict and the remove swallows a missing row - the group
+	// mirror's shape, not the user's.
+	AddClientScopeMapping(ctx context.Context, clientID, roleID string) error
+	RemoveClientScopeMapping(ctx context.Context, clientID, roleID string) error
+	ListClientScopeMappings(ctx context.Context, clientID string) ([]*model.Role, error)
+
+	// A **client scope's** scope mappings. `Scope` twice is deliberate: the
+	// container is a client scope and the thing stored is a scope mapping, and
+	// the two words carry different halves of that.
+	AddClientScopeScopeMapping(ctx context.Context, clientScopeID, roleID string) error
+	RemoveClientScopeScopeMapping(ctx context.Context, clientScopeID, roleID string) error
+	ListClientScopeScopeMappings(ctx context.Context, clientScopeID string) ([]*model.Role, error)
+
 	// Update writes a role back whole: name, description and attributes are
 	// all replaced by what the caller holds. It replaces rather than merging
 	// because PUT on a role does - measured, and the opposite of PUT on a

@@ -1,0 +1,11 @@
+# POST /admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000021/scope-mappings/realm
+HTTP/1.1 400 Bad Request
+Content-Length: {{volatile}}
+Content-Type: application/json
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"error":"invalid_request","error_description":"Cannot parse the JSON"}
