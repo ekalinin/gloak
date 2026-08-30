@@ -54,7 +54,45 @@ type Store interface {
 	Groups() GroupRepo
 	Keys() KeyRepo
 	Sessions() SessionRepo
+	RequiredActions() RequiredActionRepo
 	Close() error
+}
+
+// RequiredActionRepo stores a realm's registered required action providers.
+//
+// It is keyed by a server-minted id rather than by alias, and the reason is
+// measured rather than tidy: PUT /required-actions/{alias} writes the body's
+// alias over the row's, so a PUT with an empty body renames a row to the empty
+// string and leaves it in the listing addressable by nothing. See
+// 0017_required_action.sql.
+type RequiredActionRepo interface {
+	// ListByRealm returns every registered required action, ordered by
+	// priority ascending. That order is the contract: the listing was measured
+	// in priority order on master and on a created realm, and the orphan row a
+	// PUT with `{}` leaves behind - priority 0 - sorted first.
+	//
+	// A tie is broken by id so the two drivers agree with each other. Nothing
+	// measured says what Keycloak does with one, because no measured realm has
+	// two rows at one priority.
+	ListByRealm(ctx context.Context, realmID string) ([]*model.RequiredActionProvider, error)
+	// ByAlias resolves one row. An alias that matches nothing is ErrNotFound,
+	// which the handlers turn into **two** different 404 bodies depending on
+	// the verb - see writeRequiredActionNotFound.
+	ByAlias(ctx context.Context, realmID, alias string) (*model.RequiredActionProvider, error)
+	Create(ctx context.Context, m *model.RequiredActionProvider) error
+	// Update writes every mutable column back, providerId included.
+	//
+	// That the admin API never *moves* providerId is a rule about
+	// PUT /required-actions/{alias}, which reads the field off the wire and
+	// discards it, and internal/admin is the single place that decides it.
+	// This interface held the rule too until a mutation test found that
+	// neither copy was pinned: with the store refusing the write, a handler
+	// that assigned the body's providerId changed nothing observable, and with
+	// the handler not assigning, a store that wrote the column changed nothing
+	// either. Two guards, one behaviour, and every single-point mutation
+	// invisible. See docs/superpowers/handover/p8-authentication.md.
+	Update(ctx context.Context, m *model.RequiredActionProvider) error
+	Delete(ctx context.Context, realmID, id string) error
 }
 
 type RealmRepo interface {

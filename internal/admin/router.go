@@ -107,6 +107,58 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/realms/{realm}/client-types", h.guardRealmFeature(writeFeatureNotEnabled))
 	mux.HandleFunc("PUT /admin/realms/{realm}/client-types", h.guardRealmFeature(writeFeatureNotEnabled))
 
+	// Authentication Management, the eighteen operations of P8's first cut.
+	// The other twenty-one - the flows, the executions and the shared
+	// authenticator config - are not here, and that is a decision rather than
+	// an omission: Gloak walks a hard-coded browser flow, so serving the
+	// routes that edit a stored one would move state nothing consumes. See
+	// docs/superpowers/plans/2026-08-30-p8-authentication.md section 0.
+	//
+	// The SPI registry: six read-only operations off one embedded table. They
+	// take the realm's read pair, measured across all 21 roles of the realm's
+	// own container.
+	mux.HandleFunc("GET /admin/realms/{realm}/authentication/authenticator-providers",
+		h.guardAny(realmConfigReadRoles, h.listAuthenticatorProviders))
+	mux.HandleFunc("GET /admin/realms/{realm}/authentication/client-authenticator-providers",
+		h.guardAny(realmConfigReadRoles, h.listClientAuthenticatorProviders))
+	mux.HandleFunc("GET /admin/realms/{realm}/authentication/form-action-providers",
+		h.guardAny(realmConfigReadRoles, h.listFormActionProviders))
+	mux.HandleFunc("GET /admin/realms/{realm}/authentication/form-providers",
+		h.guardAny(realmConfigReadRoles, h.listFormProviders))
+	mux.HandleFunc("GET /admin/realms/{realm}/authentication/per-client-config-description",
+		h.guardAny(realmConfigReadRoles, h.readPerClientConfigDescription))
+	mux.HandleFunc("GET /admin/realms/{realm}/authentication/config-description/{providerID}",
+		h.guardAny(realmConfigReadRoles, h.readAuthenticatorConfigDescription))
+
+	// The required actions. Every route here takes the realm's pair to read and
+	// manage-realm to write - **except the listing**, which is measurably
+	// wider: view-users and query-users get a 200 on it and a 403 on every one
+	// of its siblings, with a byte-identical body. One tag, three role sets.
+	mux.HandleFunc("GET /admin/realms/{realm}/authentication/required-actions",
+		h.guardAny(requiredActionsListReadRoles, h.listRequiredActions))
+	mux.HandleFunc("GET /admin/realms/{realm}/authentication/unregistered-required-actions",
+		h.guardAny(realmConfigReadRoles, h.listUnregisteredRequiredActions))
+	mux.HandleFunc("POST /admin/realms/{realm}/authentication/register-required-action",
+		h.guardAny(realmWriteRoles, h.registerRequiredAction))
+	mux.HandleFunc("GET /admin/realms/{realm}/authentication/required-actions/{alias}",
+		h.guardAny(realmConfigReadRoles, h.readRequiredAction))
+	mux.HandleFunc("PUT /admin/realms/{realm}/authentication/required-actions/{alias}",
+		h.guardAny(realmWriteRoles, h.updateRequiredAction))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/authentication/required-actions/{alias}",
+		h.guardAny(realmWriteRoles, h.deleteRequiredAction))
+	mux.HandleFunc("GET /admin/realms/{realm}/authentication/required-actions/{alias}/config",
+		h.guardAny(realmConfigReadRoles, h.readRequiredActionConfig))
+	mux.HandleFunc("PUT /admin/realms/{realm}/authentication/required-actions/{alias}/config",
+		h.guardAny(realmWriteRoles, h.updateRequiredActionConfig))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/authentication/required-actions/{alias}/config",
+		h.guardAny(realmWriteRoles, h.deleteRequiredActionConfig))
+	mux.HandleFunc("GET /admin/realms/{realm}/authentication/required-actions/{alias}/config-description",
+		h.guardAny(realmConfigReadRoles, h.readRequiredActionConfigDescription))
+	mux.HandleFunc("POST /admin/realms/{realm}/authentication/required-actions/{alias}/raise-priority",
+		h.guardAny(realmWriteRoles, h.raiseRequiredActionPriority))
+	mux.HandleFunc("POST /admin/realms/{realm}/authentication/required-actions/{alias}/lower-priority",
+		h.guardAny(realmWriteRoles, h.lowerRequiredActionPriority))
+
 	// Listing and counting accept query-users as well as view-users, measured:
 	// a caller holding only query-users gets 200 on both. Reading one user
 	// does not - it answers 403.
@@ -1112,3 +1164,25 @@ var realmConfigReadRoles = []string{"view-realm", "manage-realm"}
 // manage-clients - measured the same way as the realm-role pair above, on an
 // ordinary client. GET .../roles answered 200 for both roles.
 var clientRolesReadRoles = []string{"view-clients", "manage-clients"}
+
+// requiredActionsListReadRoles is GET .../authentication/required-actions, and
+// it is the widest read on its tag by two roles.
+//
+// Measured across all 21 roles of the target realm's own container plus a
+// caller holding none: view-realm, manage-realm, view-users and query-users all
+// answer 200, while every other read on the tag - the four registries,
+// per-client-config-description, config-description and every
+// required-actions/{alias} route - answers 403 to the two users roles.
+//
+// **It is not the "200 with a shorter list to a weaker caller" pattern** this
+// API has three instances of. A query-users caller's body is byte-identical to
+// a manage-realm caller's; the admission is genuinely wider rather than the
+// body being narrower. So it is a role set and not a filter, and reusing
+// realmConfigReadRoles here would refuse two callers Keycloak admits.
+//
+// It is a separate variable from realmConfigReadRoles for the reason that one
+// is separate from realmRolesReadRoles: they were measured on different routes,
+// and sharing would make a later split look like a regression.
+var requiredActionsListReadRoles = []string{
+	"view-realm", "manage-realm", "view-users", "query-users",
+}

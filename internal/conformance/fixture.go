@@ -782,6 +782,58 @@ var Fixtures = map[string]Fixture{
 			},
 		},
 	},
+
+	// P8's required-action fixtures. **Every one of them works in a realm of
+	// its own**, and that is not tidiness: master's required-action goldens are
+	// PristineRealm, and a rename or a delete anywhere in master would show up
+	// in them. A realm per fixture also keeps each fixture idempotent, which a
+	// shared one could not be - renaming a row twice fails the second time,
+	// because the alias the second run addresses is already gone.
+	"auth-actions":            authActionRealmFixture("gloak-probe-auth-put"),
+	"auth-actions-delete":     authActionRealmFixture("gloak-probe-auth-del"),
+	"auth-actions-raise":      authActionRealmFixture("gloak-probe-auth-raise"),
+	"auth-actions-lower":      authActionRealmFixture("gloak-probe-auth-lower"),
+	"auth-actions-config":     authActionRealmFixture("gloak-probe-auth-cfg"),
+	"auth-actions-config-del": authActionRealmFixture("gloak-probe-auth-cfgd"),
+
+	// A realm whose UPDATE_PROFILE row has been renamed, so a case can read the
+	// row back under the alias the body chose and find the providerId the body
+	// did **not** change.
+	"auth-action-renamed": authActionWriteFixture("gloak-probe-auth-renamed",
+		http.MethodPut, "/required-actions/UPDATE_PROFILE",
+		`{"alias":"gloak-probe-renamed-action","name":"gloak-probe-renamed",`+
+			`"providerId":"gloak-probe-ignored","enabled":true,"defaultAction":true,`+
+			`"priority":40,"config":{}}`),
+
+	// A realm whose UPDATE_PROFILE row has been orphaned by a PUT with an empty
+	// body. The listing is the only place that row is still visible.
+	"auth-action-orphan": authActionWriteFixture("gloak-probe-auth-orphan",
+		http.MethodPut, "/required-actions/UPDATE_PROFILE", `{}`),
+
+	// Two realms with idp_link unregistered, one per case, and the duplication
+	// is the point. A fixture step that deletes is **not idempotent**, so two
+	// cases sharing one of these would leave the second one's fixture asking
+	// the server to delete a row the first case's fixture had already taken
+	// away - which is a 404 and a failed recording. It failed exactly that way
+	// once before this comment existed, and the recorder is the only place it
+	// shows: each case passes on its own.
+	"auth-action-unregistered": authActionWriteFixture("gloak-probe-auth-unreg",
+		http.MethodDelete, "/required-actions/idp_link", ""),
+	"auth-action-to-register": authActionWriteFixture("gloak-probe-auth-reg",
+		http.MethodDelete, "/required-actions/idp_link", ""),
+
+	// A realm whose UPDATE_PASSWORD row has been raised over CONFIGURE_TOTP, so
+	// a case can read the listing and see the two priorities **exchanged**
+	// rather than one decremented. 57 and 54 are three apart on purpose.
+	"auth-action-raised": authActionWriteFixture("gloak-probe-auth-raised",
+		http.MethodPost, "/required-actions/UPDATE_PASSWORD/raise-priority", `{}`),
+
+	// A realm whose CONFIGURE_TOTP config was written with one declared key and
+	// one the provider does not declare. The undeclared one is dropped, which
+	// the representation's own PUT does not do.
+	"auth-action-config-filtered": authActionWriteFixture("gloak-probe-auth-cfgf",
+		http.MethodPut, "/required-actions/CONFIGURE_TOTP/config",
+		`{"config":{"max_auth_age":"600","gloak-probe-undeclared":"nope"}}`),
 }
 
 // The fixed client-scope ids P5's fixtures create their scopes with. They are
@@ -4203,6 +4255,38 @@ func inlineCredentialUpdateFixture() Fixture {
 			Body:    []byte(`{"credentials":[{"type":"password","value":"probe-pass"}]}`),
 		},
 	}, inlineCredentialGrantStep("gloak-probe-inline-put", "probe-pass", nil))
+	return f
+}
+
+// authActionRealmFixture is a realm of its own for a required-action write
+// case, and nothing else.
+//
+// P8's write cases each get one. A single shared realm would make every one of
+// them depend on the catalogue's order - the raise-priority case would see
+// whatever the update case had already moved - and AGENTS.md's rule is that a
+// golden needing its neighbour to have run first is not a measurement.
+func authActionRealmFixture(realm string) Fixture {
+	return realmFixture(realm)
+}
+
+// authActionWriteFixture is a realm plus one write against its authentication
+// routes, for the cases whose subject is the **effect** of a write rather than
+// its 204.
+//
+// An empty body sends no Content-Type, which is what a DELETE with no body does
+// on the wire and what decides whether the 204 carries X-Frame-Options.
+func authActionWriteFixture(realm, method, path, body string) Fixture {
+	f := realmFixture(realm)
+	req := Request{
+		Method:  method,
+		Path:    "/admin/realms/" + realm + "/authentication" + path,
+		Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+	}
+	if body != "" {
+		req.Headers["Content-Type"] = "application/json"
+		req.Body = []byte(body)
+	}
+	f.Steps = append(f.Steps, Step{Request: req})
 	return f
 }
 

@@ -1898,6 +1898,124 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 			t.Errorf("after a mapper-less scope: got %q, %v; want %q", got, err, scope.ID)
 		}
 	})
+
+	// The required actions have one column no other table in this schema has:
+	// a **nullable** string whose NULL and whose empty value are two different
+	// observable answers on the wire. That is the place two drivers are most
+	// able to disagree, and it is the reason this block exists rather than the
+	// package being trusted because it compiles.
+	t.Run("required actions round-trip, including a null name and an empty alias", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := newRealm(t, s)
+		name := "Configure OTP"
+		empty := ""
+
+		rows := []*model.RequiredActionProvider{
+			// A name that is set, out of priority order on purpose.
+			{ID: model.NewID(), RealmID: realm.ID, Alias: "CONFIGURE_TOTP",
+				Name: &name, ProviderID: "CONFIGURE_TOTP", Enabled: true, Priority: 54,
+				Config: model.StringMap{{Key: "zzz", Value: "1"}, {Key: "aaa", Value: "2"}}},
+			// A name that was never set. It must come back nil and not "".
+			{ID: model.NewID(), RealmID: realm.ID, Alias: "UPDATE_EMAIL",
+				ProviderID: "UPDATE_EMAIL", Priority: 70},
+			// A name explicitly set to the empty string. It must come back ""
+			// and not nil - the whole reason the column is nullable.
+			{ID: model.NewID(), RealmID: realm.ID, Alias: "VERIFY_EMAIL",
+				Name: &empty, ProviderID: "VERIFY_EMAIL", DefaultAction: true, Priority: 50},
+			// The orphan a PUT with an empty body leaves: no alias at all.
+			{ID: model.NewID(), RealmID: realm.ID, ProviderID: "VERIFY_PROFILE"},
+		}
+		for _, m := range rows {
+			if err := s.RequiredActions().Create(ctx, m); err != nil {
+				t.Fatalf("Create %q: %v", m.Alias, err)
+			}
+		}
+
+		got, err := s.RequiredActions().ListByRealm(ctx, realm.ID)
+		if err != nil {
+			t.Fatalf("ListByRealm: %v", err)
+		}
+		wantOrder := []string{"", "VERIFY_EMAIL", "CONFIGURE_TOTP", "UPDATE_EMAIL"}
+		var gotOrder []string
+		for _, m := range got {
+			gotOrder = append(gotOrder, m.Alias)
+		}
+		if !slices.Equal(gotOrder, wantOrder) {
+			t.Errorf("ListByRealm order: got %v, want %v", gotOrder, wantOrder)
+		}
+
+		byAlias := func(alias string) *model.RequiredActionProvider {
+			t.Helper()
+			m, err := s.RequiredActions().ByAlias(ctx, realm.ID, alias)
+			if err != nil {
+				t.Fatalf("ByAlias(%q): %v", alias, err)
+			}
+			return m
+		}
+		if m := byAlias("UPDATE_EMAIL"); m.Name != nil {
+			t.Errorf("a name never set came back %q, want nil", *m.Name)
+		}
+		if m := byAlias("VERIFY_EMAIL"); m.Name == nil || *m.Name != "" {
+			t.Errorf("a name set to the empty string came back nil")
+		} else if !m.DefaultAction || m.Enabled {
+			t.Errorf("the two flags did not round-trip: %+v", m)
+		}
+		// The orphan is addressable by the empty alias, which is how the listing
+		// can hold a row no alias route reaches.
+		if m := byAlias(""); m.ProviderID != "VERIFY_PROFILE" {
+			t.Errorf("the empty alias resolved to %q", m.ProviderID)
+		}
+		// The config's key order is the contract, so a driver that stored it as
+		// a structured type and sorted the keys has to fail here.
+		if m := byAlias("CONFIGURE_TOTP"); len(m.Config) != 2 ||
+			m.Config[0].Key != "zzz" || m.Config[1].Key != "aaa" {
+			t.Errorf("config key order: %v", m.Config)
+		}
+
+		// Update writes every column, provider_id included: which fields an API
+		// request may move is internal/admin's decision, not this layer's.
+		m := byAlias("UPDATE_EMAIL")
+		m.Alias = "renamed"
+		m.ProviderID = "moved"
+		m.Priority = 1
+		m.Config = model.StringMap{{Key: "k", Value: "v"}}
+		if err := s.RequiredActions().Update(ctx, m); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		back := byAlias("renamed")
+		if back.ProviderID != "moved" || back.Priority != 1 || len(back.Config) != 1 {
+			t.Errorf("Update did not write every column: %+v", back)
+		}
+		if _, err := s.RequiredActions().ByAlias(ctx, realm.ID, "UPDATE_EMAIL"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("the old alias still resolves: %v", err)
+		}
+
+		if err := s.RequiredActions().Delete(ctx, realm.ID, back.ID); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		if _, err := s.RequiredActions().ByAlias(ctx, realm.ID, "renamed"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("after Delete: want ErrNotFound, got %v", err)
+		}
+		if err := s.RequiredActions().Delete(ctx, realm.ID, back.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("Delete of a gone row: want ErrNotFound, got %v", err)
+		}
+		if err := s.RequiredActions().Update(ctx, back); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("Update of a gone row: want ErrNotFound, got %v", err)
+		}
+		if _, err := s.RequiredActions().ByAlias(ctx, realm.ID, "nope"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("ByAlias of nothing: want ErrNotFound, got %v", err)
+		}
+		// A realm with none at all is an empty slice rather than a nil one, so
+		// the handler's `[]` does not become `null`.
+		other := &model.Realm{ID: model.NewID(), Name: "other", Enabled: true}
+		if err := s.Realms().Create(ctx, other); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		if rows, err := s.RequiredActions().ListByRealm(ctx, other.ID); err != nil || rows == nil || len(rows) != 0 {
+			t.Errorf("an empty realm: got %v, %v; want a non-nil empty slice", rows, err)
+		}
+	})
 }
 
 // newRealm creates one realm for a subtest that only needs somewhere to hang

@@ -1,0 +1,12 @@
+# GET /admin/realms/master/authentication/form-action-providers
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"displayName":"reCAPTCHA Enterprise","description":"Adds Google reCAPTCHA Enterprise to the form.","id":"registration-recaptcha-enterprise"},{"displayName":"reCAPTCHA","description":"Adds Google reCAPTCHA to the form.","id":"registration-recaptcha-action"},{"displayName":"Registration User Profile Creation","description":"This action must always be first! Validates the username and user profile of the user in validation phase.  In success phase, this will create the user in the database including his user profile.","id":"registration-user-creation"},{"displayName":"Password Validation","description":"Validates that password matches password confirmation field.  It also will store password in user's credential store.","id":"registration-password-action"},{"displayName":"Terms and conditions","description":"Asks the user to accept terms and conditions before submitting its registration form.","id":"registration-terms-and-conditions"}]

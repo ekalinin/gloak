@@ -136,6 +136,10 @@ func (s *Store) Keys() store.KeyRepo     { return &keyRepo{s.pool} }
 
 func (s *Store) Sessions() store.SessionRepo { return &sessionRepo{s.pool} }
 
+func (s *Store) RequiredActions() store.RequiredActionRepo {
+	return &requiredActionRepo{s.pool}
+}
+
 // classify maps driver errors onto the store's sentinels so handlers never
 // inspect driver-specific error text.
 func classify(err error) error {
@@ -1706,6 +1710,97 @@ func collectClientScopes(rows pgx.Rows) ([]*model.ClientScope, error) {
 	out := []*model.ClientScope{}
 	for rows.Next() {
 		m, err := scanClientScope(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+// requiredActionColumns is the row of required_action_provider, in the order
+// the representation serialises them - so a reader comparing this list against
+// the measured body does not have to reorder anything in their head.
+const requiredActionColumns = `id, realm_id, alias, name, provider_id, enabled, default_action, priority, config`
+
+type requiredActionRepo struct{ pool *pgxpool.Pool }
+
+func (r *requiredActionRepo) Create(ctx context.Context, m *model.RequiredActionProvider) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO required_action_provider (`+requiredActionColumns+`)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		m.ID, m.RealmID, m.Alias, m.Name, m.ProviderID, boolToInt(m.Enabled),
+		boolToInt(m.DefaultAction), m.Priority, encode(m.Config))
+	return classify(err)
+}
+
+func (r *requiredActionRepo) ByAlias(ctx context.Context, realmID, alias string) (*model.RequiredActionProvider, error) {
+	return scanRequiredAction(r.pool.QueryRow(ctx,
+		`SELECT `+requiredActionColumns+` FROM required_action_provider
+		 WHERE realm_id = $1 AND alias = $2 ORDER BY priority, id LIMIT 1`,
+		realmID, alias))
+}
+
+func (r *requiredActionRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.RequiredActionProvider, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+requiredActionColumns+` FROM required_action_provider
+		 WHERE realm_id = $1 ORDER BY priority, id`, realmID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return collectRequiredActions(rows)
+}
+
+// Update writes every mutable column, provider_id included. Which fields a
+// request may move is internal/admin's decision and is made there alone - see
+// store.RequiredActionRepo.Update for why this interface stopped making it too.
+func (r *requiredActionRepo) Update(ctx context.Context, m *model.RequiredActionProvider) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE required_action_provider SET alias = $1, name = $2, provider_id = $3,
+		 enabled = $4, default_action = $5, priority = $6, config = $7
+		 WHERE realm_id = $8 AND id = $9`,
+		m.Alias, m.Name, m.ProviderID, boolToInt(m.Enabled),
+		boolToInt(m.DefaultAction), m.Priority, encode(m.Config), m.RealmID, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(tag.RowsAffected())
+}
+
+func (r *requiredActionRepo) Delete(ctx context.Context, realmID, id string) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM required_action_provider WHERE realm_id = $1 AND id = $2`, realmID, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(tag.RowsAffected())
+}
+
+// scanRequiredAction reads enabled and default_action through ints, because
+// the migration declares them INTEGER in both drivers - see boolToInt - and
+// pgx will not encode a Go bool into an int4 or decode one back. SQLite's
+// driver converts either way and hid this until the shared driver conformance
+// covered the table.
+func scanRequiredAction(row scanner) (*model.RequiredActionProvider, error) {
+	m := &model.RequiredActionProvider{}
+	var config string
+	var enabled, defaultAction int
+	if err := row.Scan(&m.ID, &m.RealmID, &m.Alias, &m.Name, &m.ProviderID,
+		&enabled, &defaultAction, &m.Priority, &config); err != nil {
+		return nil, classify(err)
+	}
+	m.Enabled, m.DefaultAction = enabled != 0, defaultAction != 0
+	if err := decode(config, &m.Config); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func collectRequiredActions(rows pgx.Rows) ([]*model.RequiredActionProvider, error) {
+	defer rows.Close()
+	out := []*model.RequiredActionProvider{}
+	for rows.Next() {
+		m, err := scanRequiredAction(rows)
 		if err != nil {
 			return nil, err
 		}

@@ -1,0 +1,12 @@
+# GET /admin/realms/master/authentication/per-client-config-description
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"client-jwt":[],"client-secret":[],"federated-jwt":[{"name":"jwt.credential.issuer","label":"Identity provider","helpText":"Issuer of the client assertion. Use the alias of an identity provider set up in this realm.","type":"String","secret":false,"required":true,"readOnly":false},{"name":"jwt.credential.sub","label":"Federated subject","helpText":"External clientId (subject) as provided by the identity provider.","type":"String","secret":false,"required":true,"readOnly":false}],"client-x509":[],"client-secret-jwt":[]}

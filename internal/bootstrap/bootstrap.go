@@ -476,6 +476,15 @@ func CreateRealm(ctx context.Context, s store.Store, name string, want *model.Re
 		return nil, err
 	}
 
+	// The required actions depend on nothing else in the realm - no client, no
+	// role, no scope names one - so they can sit anywhere. They are here rather
+	// than at the end because the fourteen rows are realm configuration in the
+	// same sense the client scopes are, and reading the two together is what a
+	// person comparing a pristine realm against the server does.
+	if err := ensureRequiredActions(ctx, s, realm.ID); err != nil {
+		return nil, err
+	}
+
 	for _, c := range realmClients(name) {
 		if err := createClient(ctx, s, realm.ID, c); err != nil {
 			return nil, err

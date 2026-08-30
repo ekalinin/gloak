@@ -1,0 +1,9 @@
+# POST /admin/realms/gloak-probe-auth-lower/authentication/required-actions/UPDATE_PASSWORD/lower-priority
+HTTP/1.1 204 No Content
+Cache-Control: no-cache
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
