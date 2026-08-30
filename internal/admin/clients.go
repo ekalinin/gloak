@@ -158,9 +158,26 @@ func (h *handler) updateClient(w http.ResponseWriter, r *http.Request, rc *reqCo
 	}
 
 	merged := clientRepresentationOf(current, rc.caller, rc.realm.Name)
+	// The mappers are the one field on this body that **replaces** rather than
+	// merging, so the slice is emptied before the decode runs over it. Go's
+	// encoding/json unmarshals a JSON array into an existing slice element by
+	// element and keeps whatever the new element does not name, which would
+	// turn a PUT naming one mapper into a PUT that edited the first one and
+	// kept the rest. It is the same trap the realm's clientProfiles pair
+	// records, and it is invisible on every other slice on this body because
+	// they all hold strings.
+	//
+	// Emptying is not clearing: a body that omits the key leaves the slice nil
+	// and the mappers are restored below.
+	kept := merged.ProtocolMappers
+	merged.ProtocolMappers = nil
 	if err := json.NewDecoder(r.Body).Decode(&merged); err != nil {
 		httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_request", "Cannot parse the JSON")
 		return
+	}
+
+	if merged.ProtocolMappers == nil {
+		merged.ProtocolMappers = kept
 	}
 
 	updated := newClientFrom(merged, rc.realm.ID)
@@ -287,6 +304,12 @@ func newClientFrom(rep clientRepresentation, realmID string) *model.Client {
 		DefaultClientScopes:  rep.DefaultClientScopes,
 		OptionalClientScopes: rep.OptionalClientScopes,
 		Attributes:           nonNilMap(rep.Attributes),
+		// Unlike the two scope lists above, `protocolMappers` **is** honoured on
+		// the update path as well as the create: a PUT naming it replaces the
+		// set, a PUT naming `[]` empties it and a PUT omitting the key keeps it.
+		// Measured on all three. So the same rule that makes the scope lists
+		// write-once does not extend to the key next to them.
+		ProtocolMappers: protocolMappersFromRepresentation(rep.ProtocolMappers),
 	}
 	if m.ID == "" {
 		m.ID = model.NewID()

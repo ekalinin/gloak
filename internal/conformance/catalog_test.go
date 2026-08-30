@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"net/http"
@@ -462,39 +463,70 @@ func TestEveryCreatedObjectCarriesTheProbePrefix(t *testing.T) {
 // creations would put six bootstrapped admin role names into the set and make
 // this test fail on any golden that legitimately lists one.
 //
-// One body names one object, so only the **first** key in createdKeys that the
-// body carries is read. Taking all four invented an object: the client created
-// with `{"clientId":"gloak-probe-described","name":"A name",...}` was reported
-// as a role called "A name", which is `ClientRepresentation.name` - a display
-// name, not the key anything is addressed by. Found by F58's first run, before
-// the convention it checks was written.
+// **One JSON object names one object**, so the most specific key in createdKeys
+// that an object carries is the one read, and the rest of that object's keys are
+// its properties. Reading all four keys of a body invented an object: the client
+// created with `{"clientId":"gloak-probe-described","name":"A name",...}` was
+// reported as a role called "A name", which is `ClientRepresentation.name` - a
+// display name, not the key anything is addressed by.
+//
+// The rule is per object rather than per **body**, and the difference is not
+// pedantic. A create can carry objects nested inside it:
+// `POST /clients` with `{"clientId":"...","protocolMappers":[{"name":"..."}]}`
+// creates a client *and* two protocol mappers, and they outlive the request the
+// same way. Applied per body, the client's `clientId` won and the nested mappers
+// were never recorded - which both lost them from the guard and made the guard
+// report a false positive on the case whose own fixture had created them,
+// because the exemption reads this same set. Two cuts landed green on their own
+// and failed together on exactly that.
 func createdObjects() []createdObject {
-	patterns := make([]*regexp.Regexp, len(createdKeys))
-	for i, key := range createdKeys {
-		patterns[i] = regexp.MustCompile(`"` + key + `":"([^"]+)"`)
-	}
 	seen := map[createdObject]bool{}
 	var out []createdObject
+	// walk records every JSON object in v, most-specific-key-first, and
+	// recurses into nested objects and arrays.
+	var walk func(v any, creator string)
+	walk = func(v any, creator string) {
+		switch t := v.(type) {
+		case map[string]any:
+			for _, key := range createdKeys {
+				name, ok := t[key].(string)
+				if !ok {
+					continue
+				}
+				// An empty name creates nothing - admin/client-scopes/create-empty-name
+				// sends one on purpose and is measured answering 400 - and a
+				// {{name}} is a reference a step captures, so no golden holds it
+				// literally. Neither is an object anything could later find.
+				o := createdObject{key: key, name: name, creator: creator}
+				if name != "" && !strings.Contains(name, "{{") && !seen[o] {
+					seen[o] = true
+					out = append(out, o)
+				}
+				break
+			}
+			for _, nested := range t {
+				walk(nested, creator)
+			}
+		case []any:
+			for _, nested := range t {
+				walk(nested, creator)
+			}
+		}
+	}
 	collect := func(r Request, creator string) {
 		body := bytes.TrimSpace(r.Body)
 		if r.Method != http.MethodPost || len(body) == 0 || body[0] != '{' {
 			return
 		}
-		for i, pattern := range patterns {
-			ms := pattern.FindAllSubmatch(body, -1)
-			if len(ms) == 0 {
-				continue
-			}
-			for _, m := range ms {
-				o := createdObject{key: createdKeys[i], name: string(m[1]), creator: creator}
-				if strings.Contains(o.name, "{{") || seen[o] {
-					continue
-				}
-				seen[o] = true
-				out = append(out, o)
-			}
+		var doc any
+		if err := json.Unmarshal(body, &doc); err != nil {
+			// A body that does not parse creates nothing, and that is a
+			// measurement rather than a gap: admin/users/create-malformed sends
+			// one on purpose and Keycloak answers 400. Skipping it is the true
+			// answer, not a guard quietly looking away.
 			return
 		}
+		walk(doc, creator)
 	}
 	for name, f := range Fixtures {
 		for _, s := range f.Steps {

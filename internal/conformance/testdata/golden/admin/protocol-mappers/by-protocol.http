@@ -1,0 +1,12 @@
+# GET /admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000011/protocol-mappers/protocol/saml
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"id":"9a99e400-0000-4000-8000-000000000002","name":"gloak-probe-mapper-b","protocol":"saml","protocolMapper":"saml-user-property-mapper","consentRequired":false,"config":{"attribute.name":"gloak-b"}}]
