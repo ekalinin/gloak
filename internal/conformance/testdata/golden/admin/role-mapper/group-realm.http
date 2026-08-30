@@ -9,4 +9,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-[{"id":"{{string}}","name":"gloak-probe-group-realm-role","composite":false,"clientRole":false,"containerId":"{{string}}"}]
+[{"id":"{{realm_role_id}}","name":"gloak-probe-group-realm-role","composite":false,"clientRole":false,"containerId":"{{string}}"}]

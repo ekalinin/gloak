@@ -9,4 +9,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-[{"id":"{{string}}","name":"zz-gloak-srch","path":"/zz-gloak-srch","subGroupCount":1,"subGroups":[{"id":"{{string}}","name":"aa-gloak-srch-kid","path":"/zz-gloak-srch/aa-gloak-srch-kid","parentId":"{{string}}","subGroupCount":0,"subGroups":[],"access":{"view":true,"viewMembers":true,"manageMembers":true,"manage":true,"manageMembership":true}}],"access":{"view":true,"viewMembers":true,"manageMembers":true,"manage":true,"manageMembership":true}}]
+[{"id":"{{group_id}}","name":"zz-gloak-srch","path":"/zz-gloak-srch","subGroupCount":1,"subGroups":[{"id":"{{string}}","name":"aa-gloak-srch-kid","path":"/zz-gloak-srch/aa-gloak-srch-kid","parentId":"{{group_id}}","subGroupCount":0,"subGroups":[],"access":{"view":true,"viewMembers":true,"manageMembers":true,"manage":true,"manageMembership":true}}],"access":{"view":true,"viewMembers":true,"manageMembers":true,"manage":true,"manageMembership":true}}]

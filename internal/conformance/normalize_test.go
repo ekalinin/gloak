@@ -378,3 +378,66 @@ func TestRootPathDoesNotMatchANestedKey(t *testing.T) {
 		t.Fatalf("want an error for a root path over an object, got %s", got)
 	}
 }
+
+// MaskedValues is what lets a guard ask a mask what it covers. Its whole
+// justification is that it is the masking walk with a different onMatch, so it
+// is tested on the same shapes the masks are: a wildcard, a nested path and the
+// root.
+func TestMaskedValuesReturnsWhatTheMasksWouldEdit(t *testing.T) {
+	in := []byte(`{"a":{"b":[1,2]},"rows":[{"id":"x"},{"id":"y"}],"c":"one two"}`)
+
+	got, err := MaskedValues(in, []string{"a/b", "rows/*/id", "c"})
+	if err != nil {
+		t.Fatalf("MaskedValues: %v", err)
+	}
+	// Deepest path group first, which is editPaths' order and not the
+	// document's: "rows/*/id" is three segments, "a/b" two and "c" one. Written
+	// down because document order is what a reader assumes, and a caller that
+	// pairs these values with the paths that asked for them would be wrong.
+	want := []string{`"x"`, `"y"`, `[1,2]`, `"one two"`}
+	if len(got) != len(want) {
+		t.Fatalf("want %v, got %s", want, got)
+	}
+	for i := range want {
+		if string(got[i]) != want[i] {
+			t.Errorf("value %d: want %s, got %s", i, want[i], got[i])
+		}
+	}
+}
+
+// A path addressing nothing is the finding the inertness guard rests on, and
+// the masks are silent about it: Normalize walks the body, matches nothing and
+// edits nothing, with no error at all. An empty result has to mean exactly that
+// and not "something went wrong", or a guard reads a failure as a clean sweep.
+func TestMaskedValuesReturnsNothingForAPathThatIsNotThere(t *testing.T) {
+	in := []byte(`[]`)
+
+	got, err := MaskedValues(in, []string{"*/id"})
+	if err != nil {
+		t.Fatalf("MaskedValues: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("want no values for a path over an empty array, got %s", got)
+	}
+	// The same body through the mask itself, to show the silence is the mask's
+	// and not this function's.
+	masked, err := Normalize(in, []string{"*/id"})
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if string(masked) != `[]` {
+		t.Fatalf("Normalize edited a body it addresses nothing in: %s", masked)
+	}
+}
+
+func TestMaskedValuesReachesTheDocumentRoot(t *testing.T) {
+	in := []byte(`[{"id":"x"}]`)
+
+	got, err := MaskedValues(in, []string{"."})
+	if err != nil {
+		t.Fatalf("MaskedValues: %v", err)
+	}
+	if len(got) != 1 || string(got[0]) != `[{"id":"x"}]` {
+		t.Fatalf("want the whole document, got %s", got)
+	}
+}

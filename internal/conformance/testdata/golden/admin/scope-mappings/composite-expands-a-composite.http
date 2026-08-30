@@ -9,4 +9,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-[{"id":"{{string}}","name":"gloak-probe-sm-composite","composite":true,"clientRole":false,"containerId":"{{string}}"},{"id":"{{string}}","name":"gloak-probe-sm-realm-role","composite":false,"clientRole":false,"containerId":"{{string}}"}]
+[{"id":"{{sm_composite_role_id}}","name":"gloak-probe-sm-composite","composite":true,"clientRole":false,"containerId":"{{string}}"},{"id":"{{sm_realm_role_id}}","name":"gloak-probe-sm-realm-role","composite":false,"clientRole":false,"containerId":"{{string}}"}]
