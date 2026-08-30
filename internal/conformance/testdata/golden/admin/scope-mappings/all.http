@@ -1,0 +1,12 @@
+# GET /admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-000000000021/scope-mappings
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"realmMappings":[{"id":"{{string}}","name":"gloak-probe-sm-realm-role","composite":false,"clientRole":false,"containerId":"{{string}}"}],"clientMappings":{"gloak-probe-sm-rc":{"id":"c11e0000-0000-4000-8000-000000000031","client":"gloak-probe-sm-rc","mappings":[{"id":"{{string}}","name":"gloak-probe-sm-client-role","composite":false,"clientRole":true,"containerId":"c11e0000-0000-4000-8000-000000000031"}]}}}

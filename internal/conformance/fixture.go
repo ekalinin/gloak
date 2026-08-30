@@ -3489,6 +3489,12 @@ func scopeMappingNarrowCallerFixture() Fixture {
 // callerFixture next door builds the whole fixture rather than a step list, and
 // these cases need the caller **and** a container, so the steps are rebuilt
 // here.
+//
+// The password arrives through `PUT .../reset-password` rather than an inline
+// `credentials` array on the create, which is passwordFixture's shape and is
+// **not** cosmetic: the inline array works on Keycloak and Gloak ignores it, so
+// a fixture written the short way records against the reference container and
+// then fails to log in against the handler. Found by writing it the short way.
 func scopeMappingCallerSteps(username string) []Step {
 	return []Step{
 		{
@@ -3496,8 +3502,7 @@ func scopeMappingCallerSteps(username string) []Step {
 				Method:  http.MethodPost,
 				Path:    "/admin/realms/master/users",
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
-				Body: []byte(`{"username":"` + username + `","enabled":true,` +
-					`"credentials":[{"type":"password","value":"probe-pass","temporary":false}]}`),
+				Body:    []byte(`{"username":"` + username + `","enabled":true}`),
 			},
 			ExpectStatus: idempotentCreate,
 		},
@@ -3509,6 +3514,14 @@ func scopeMappingCallerSteps(username string) []Step {
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 			},
 			Capture: map[string]string{"caller_user_id": "0/id"},
+		},
+		{
+			Request: Request{
+				Method:  http.MethodPut,
+				Path:    "/admin/realms/master/users/{{caller_user_id}}/reset-password",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"type":"password","value":"probe-pass","temporary":false}`),
+			},
 		},
 		{
 			Request: Request{

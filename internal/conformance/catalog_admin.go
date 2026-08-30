@@ -6148,7 +6148,13 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Volatile:      []string{"realmMappings/*/id", "realmMappings/*/containerId"},
+		// The role ids are minted by the server: a role create answers a
+		// Location ending in the role's **name**, so nothing lets a fixture
+		// choose one. The clientMappings key, its `id` and the mappings'
+		// containerId are the fixture's own fixed client UUID and stay
+		// asserted.
+		Volatile: []string{"realmMappings/*/id", "realmMappings/*/containerId",
+			"clientMappings/*/mappings/*/id"},
 	},
 	{
 		ID: "admin/scope-mappings/realm",
@@ -6382,7 +6388,13 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Volatile:      []string{"realmMappings/*/id", "realmMappings/*/containerId"},
+		// The role ids are minted by the server: a role create answers a
+		// Location ending in the role's **name**, so nothing lets a fixture
+		// choose one. The clientMappings key, its `id` and the mappings'
+		// containerId are the fixture's own fixed client UUID and stay
+		// asserted.
+		Volatile: []string{"realmMappings/*/id", "realmMappings/*/containerId",
+			"clientMappings/*/mappings/*/id"},
 	},
 	{
 		ID: "admin/scope-mappings/template-realm",
@@ -6616,7 +6628,13 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Volatile:      []string{"realmMappings/*/id", "realmMappings/*/containerId"},
+		// The role ids are minted by the server: a role create answers a
+		// Location ending in the role's **name**, so nothing lets a fixture
+		// choose one. The clientMappings key, its `id` and the mappings'
+		// containerId are the fixture's own fixed client UUID and stay
+		// asserted.
+		Volatile: []string{"realmMappings/*/id", "realmMappings/*/containerId",
+			"clientMappings/*/mappings/*/id"},
 	},
 	{
 		ID: "admin/scope-mappings/owner-realm",
