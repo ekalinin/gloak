@@ -13,6 +13,7 @@ import (
 	"github.com/ekalinin/gloak/internal/keys"
 	"github.com/ekalinin/gloak/internal/model"
 	"github.com/ekalinin/gloak/internal/oidc"
+	"github.com/ekalinin/gloak/internal/store"
 	"github.com/ekalinin/gloak/internal/store/sqlite"
 )
 
@@ -30,6 +31,16 @@ const probeRedirectURI = "http://localhost:9999/callback"
 // registers none at all - which is the same reason the conformance fixtures
 // register their own.
 func authServer(t *testing.T) http.Handler {
+	t.Helper()
+	h, _ := authServerAndStore(t)
+	return h
+}
+
+// authServerAndStore is authServer for the one test that has to reach past the
+// protocol surface: a code whose user session has been removed answers "Code
+// not valid", and no request this package can issue ends a session it does not
+// hold a token for.
+func authServerAndStore(t *testing.T) (http.Handler, store.Store) {
 	t.Helper()
 	ctx := context.Background()
 	s, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "gloak.db"))
@@ -71,6 +82,12 @@ func authServer(t *testing.T) http.Handler {
 			RedirectURIs: []string{"http://localhost:9993/cb?a=*"}},
 		{ClientID: "probe-midstar", Enabled: true, PublicClient: true, StandardFlowEnabled: true,
 			RedirectURIs: []string{"http://localhost:9992/*/cb"}},
+		// A confidential client that can complete a browser login, for the one
+		// measurement about the token endpoint that needs client authentication
+		// to fail: its 401 is reached before the code is looked at, so it is the
+		// only redemption failure that does **not** spend the code.
+		{ClientID: "probe-confidential", Enabled: true, StandardFlowEnabled: true,
+			Secret: "s3cret", RedirectURIs: []string{probeRedirectURI}},
 	}
 	for _, c := range clients {
 		c.ID = model.NewID()
@@ -80,7 +97,7 @@ func authServer(t *testing.T) http.Handler {
 			t.Fatalf("create %s: %v", c.ClientID, err)
 		}
 	}
-	return oidc.NewRouter(s, keys.NewManager(s), "http://localhost:8080")
+	return oidc.NewRouter(s, keys.NewManager(s), "http://localhost:8080"), s
 }
 
 // authorize issues one GET /auth and returns the response.
