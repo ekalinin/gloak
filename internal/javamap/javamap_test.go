@@ -123,11 +123,12 @@ func TestKeyOrderDoesNotModifyItsInput(t *testing.T) {
 
 // vector is one measured (insertion order, served order) pair. Both are
 // space-separated because no measured key contains a space, and a table of
-// forty of them is unreadable written out as slices.
+// fifty of them is unreadable written out as slices.
 type vector struct {
-	name string
-	in   string // the order the create request's JSON carried the keys
-	want string // the order the mapper route served them back in
+	name     string
+	builtFor int    // how many keys the create request carried; 0 means all of them
+	in       string // the order the keys were inserted in
+	want     string // the order the mapper route served them back in
 }
 
 func (v vector) keys() []string  { return strings.Fields(v.in) }
@@ -137,9 +138,14 @@ func checkVectors(t *testing.T, vectors []vector) {
 	t.Helper()
 	for _, v := range vectors {
 		t.Run(v.name, func(t *testing.T) {
-			got := javamap.SizedKeyOrder(v.keys())
+			keys := v.keys()
+			builtFor := v.builtFor
+			if builtFor == 0 {
+				builtFor = len(keys)
+			}
+			got := javamap.SizedKeyOrder(builtFor, keys)
 			if !slices.Equal(got, v.order()) {
-				t.Fatalf("\nin   %v\nwant %v\ngot  %v", v.keys(), v.order(), got)
+				t.Fatalf("\nin   %v\nwant %v\ngot  %v", keys, v.order(), got)
 			}
 		})
 	}
@@ -434,11 +440,140 @@ func TestSizedKeyOrderPinsTheIntermediateTableSize(t *testing.T) {
 	checkVectors(t, intermediateTableVectors)
 }
 
+// grownVectors are configs whose create appended keys of its own: a provider
+// that mirrors access.token.claim into introspection.token.claim, and
+// id.token.claim into userinfo.token.claim, adds them **after** the map has
+// already been through the first table. So the map was built for the request's
+// key count and serialised at a larger one, and the two counts are what
+// builtFor carries.
+//
+// Eleven of these twelve come out right if builtFor is ignored, which is why
+// there are twelve. The one that does not - a request of four grown to six -
+// puts access.token.claim and introspection.token.claim in one final bucket,
+// and whether the first table separated them is decided by a count the keys
+// themselves do not carry.
+var grownVectors = []vector{
+	{
+		name:     "two mirrored keys, access first",
+		builtFor: 2,
+		in: "access.token.claim id.token.claim " +
+			"introspection.token.claim userinfo.token.claim",
+		want: "id.token.claim access.token.claim " +
+			"introspection.token.claim userinfo.token.claim",
+	},
+	{
+		name:     "two mirrored keys, id first",
+		builtFor: 2,
+		in: "id.token.claim access.token.claim " +
+			"introspection.token.claim userinfo.token.claim",
+		want: "id.token.claim access.token.claim " +
+			"introspection.token.claim userinfo.token.claim",
+	},
+	{
+		name:     "request of three grown to four",
+		builtFor: 3,
+		in: "access.token.claim claim.name user.attribute " +
+			"introspection.token.claim",
+		want: "user.attribute access.token.claim " +
+			"introspection.token.claim claim.name",
+	},
+	{
+		name:     "request of four grown to six",
+		builtFor: 4,
+		in: "claim.name id.token.claim access.token.claim " +
+			"jsonType.label introspection.token.claim " +
+			"userinfo.token.claim",
+		want: "id.token.claim access.token.claim " +
+			"introspection.token.claim claim.name jsonType.label " +
+			"userinfo.token.claim",
+	},
+	{
+		name:     "request of five grown to seven",
+		builtFor: 5,
+		in: "user.attribute access.token.claim id.token.claim " +
+			"claim.name jsonType.label introspection.token.claim " +
+			"userinfo.token.claim",
+		want: "introspection.token.claim userinfo.token.claim " +
+			"user.attribute id.token.claim access.token.claim " +
+			"claim.name jsonType.label",
+	},
+	{
+		name:     "request of six grown to eight",
+		builtFor: 6,
+		in: "user.attribute access.token.claim id.token.claim " +
+			"claim.name jsonType.label multivalued " +
+			"introspection.token.claim userinfo.token.claim",
+		want: "introspection.token.claim multivalued userinfo.token.claim " +
+			"user.attribute id.token.claim access.token.claim " +
+			"claim.name jsonType.label",
+	},
+	{
+		name:     "request of seven grown to eight",
+		builtFor: 7,
+		in:       "a b c d access.token.claim e f introspection.token.claim",
+		want:     "a b c introspection.token.claim d e f access.token.claim",
+	},
+	{
+		name:     "request of eight grown to nine",
+		builtFor: 8,
+		in:       "k1 k2 k3 k4 k5 k6 k7 id.token.claim userinfo.token.claim",
+		want:     "k1 k2 userinfo.token.claim k3 k4 k5 id.token.claim k6 k7",
+	},
+	{
+		name:     "the colliding trio with two mirrors behind it",
+		builtFor: 5,
+		in: "zz aa mm access.token.claim id.token.claim " +
+			"introspection.token.claim userinfo.token.claim",
+		want: "zz aa mm introspection.token.claim userinfo.token.claim " +
+			"id.token.claim access.token.claim",
+	},
+	{
+		name:     "request of ten grown to eleven",
+		builtFor: 10,
+		in: "p1 p2 p3 p4 p5 p6 p7 p8 p9 access.token.claim " +
+			"introspection.token.claim",
+		want: "p1 p2 p3 introspection.token.claim p4 p5 p6 p7 p8 p9 " +
+			"access.token.claim",
+	},
+	{
+		name:     "request of twelve grown to fourteen",
+		builtFor: 12,
+		in: "q01 q02 q03 q04 q05 q06 q07 q08 q09 q10 access.token.claim " +
+			"id.token.claim introspection.token.claim " +
+			"userinfo.token.claim",
+		want: "access.token.claim q10 q02 q01 introspection.token.claim " +
+			"q04 q03 q06 q05 userinfo.token.claim q08 q07 " +
+			"id.token.claim q09",
+	},
+	{
+		name:     "a mirroring provider that had nothing to mirror",
+		builtFor: 2,
+		in:       "claim.name user.attribute",
+		want:     "claim.name user.attribute",
+	},
+}
+
+func TestSizedKeyOrderModelsAMapThatGrewAfterItWasBuilt(t *testing.T) {
+	checkVectors(t, grownVectors)
+}
+
+// builtFor is a count and not a hint, so a caller that has none should get the
+// ungrown answer rather than a silently different one.
+func TestSizedKeyOrderReadsAnImpossibleBuiltForAsTheWholeSlice(t *testing.T) {
+	keys := []string{"claim.name", "jsonType.label", "user.attribute"}
+	want := javamap.SizedKeyOrder(len(keys), keys)
+	for _, builtFor := range []int{-1, 0, len(keys) + 1, 1 << 20} {
+		if got := javamap.SizedKeyOrder(builtFor, keys); !slices.Equal(got, want) {
+			t.Errorf("builtFor=%d: want %v, got %v", builtFor, want, got)
+		}
+	}
+}
+
 // The two functions are not interchangeable, and a caller that reaches for the
 // wrong one should get a visibly wrong answer rather than a nearly right one.
 func TestSizedKeyOrderIsNotKeyOrder(t *testing.T) {
 	in := []string{"user.attribute", "claim.name"}
-	sized := javamap.SizedKeyOrder(in)
+	sized := javamap.SizedKeyOrder(len(in), in)
 	plain := javamap.KeyOrder(in)
 	if slices.Equal(sized, plain) {
 		t.Fatalf("the two constructors agree on %v, so one of the two models is now unused", in)
@@ -447,17 +582,17 @@ func TestSizedKeyOrderIsNotKeyOrder(t *testing.T) {
 
 func TestSizedKeyOrderDoesNotModifyItsInput(t *testing.T) {
 	in := []string{"user.attribute", "claim.name"}
-	javamap.SizedKeyOrder(in)
+	javamap.SizedKeyOrder(len(in), in)
 	if !slices.Equal(in, []string{"user.attribute", "claim.name"}) {
 		t.Fatalf("input was modified: %v", in)
 	}
 }
 
 func TestSizedKeyOrderHandlesTheEmptyAndSingleCases(t *testing.T) {
-	if got := javamap.SizedKeyOrder(nil); len(got) != 0 {
+	if got := javamap.SizedKeyOrder(0, nil); len(got) != 0 {
 		t.Fatalf("nil produced %v", got)
 	}
-	if got := javamap.SizedKeyOrder([]string{"claim.name"}); !slices.Equal(got, []string{"claim.name"}) {
+	if got := javamap.SizedKeyOrder(1, []string{"claim.name"}); !slices.Equal(got, []string{"claim.name"}) {
 		t.Fatalf("one key produced %v", got)
 	}
 }

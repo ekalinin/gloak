@@ -20,9 +20,9 @@
 //     0.75 load factor is crossed. Measured 2026-08-23 against Keycloak 26.7.1
 //     and confirmed on six key sets - see javamap_test.go.
 //   - [SizedKeyOrder] models the map Keycloak serialises a protocol mapper's
-//     `config` from, which is built for its entry count and passes through a
-//     second, larger table on the way. Measured 2026-08-30, and there is no
-//     table size that fits without the second one.
+//     `config` from, which is built for the entry count it was given and passes
+//     through a second, larger table on the way. Measured 2026-08-30, and there
+//     is no single table size that fits.
 //
 // Handing a sized map to KeyOrder is wrong on more than half of the measured
 // mapper configs, so the two are separate exported functions rather than one
@@ -72,9 +72,18 @@ func KeyOrder(keys []string) []string {
 // mapper's `config` in. The input is not modified.
 //
 // keys are the keys in the order they were **inserted**, which for a mapper
-// config is the order the create request's JSON carried them. That argument is
-// load-bearing: keys that collide chain in insertion order, and this reproduces
-// that rather than guessing at it the way KeyOrder has to.
+// config is the order the create request's JSON carried them, followed by any
+// the create appended for itself. That argument is load-bearing: keys that
+// collide chain in insertion order, and this reproduces that rather than
+// guessing at it the way KeyOrder has to.
+//
+// builtFor is how many entries the map was built for, which is the number of
+// keys the request carried. It is len(keys) for a config the create left alone
+// and smaller for one it grew: a provider that mirrors `access.token.claim`
+// into `introspection.token.claim` appends the mirror **after** the map has
+// already been through the first table, so the two counts differ and the answer
+// does with them. Anything outside 1..len(keys) is read as len(keys), which is
+// the ungrown case.
 //
 // Two tables, not one, and the measurement is what says so. `{claim.name,
 // jsonType.label, user.attribute}` comes back in one order from all six of its
@@ -83,16 +92,20 @@ func KeyOrder(keys []string) []string {
 // from all six, so that something does not separate *those* three. One table
 // cannot do both. Read off the server at every entry count from 1 to 50: the
 // keys pass through a table asked for 7n/4 buckets and are then re-inserted
-// into one asked for n.
-func SizedKeyOrder(keys []string) []string {
+// into one asked for the entry count.
+func SizedKeyOrder(builtFor int, keys []string) []string {
 	out := slices.Clone(keys)
-	n := len(out)
+	if builtFor <= 0 || builtFor > len(out) {
+		builtFor = len(out)
+	}
 	// The order the keys reach the final table in, which is what decides a
 	// chain there. 7n/4 is measured, not derived: the doubling it produces
 	// moves between n=9 and n=10, n=18 and n=19, and n=37 and n=38, and those
-	// three boundaries are what pin the numerator.
-	byBucket(out, capacity(7*n/4, n))
-	byBucket(out, capacity(n, n))
+	// three boundaries are what pin the numerator. Only the keys the map was
+	// built for go through it - the appended ones arrive afterwards and keep
+	// their place at the end.
+	byBucket(out[:builtFor], capacity(7*builtFor/4, builtFor))
+	byBucket(out, capacity(len(out), len(out)))
 	return out
 }
 
