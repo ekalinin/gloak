@@ -7829,6 +7829,58 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type"},
 	},
 	{
+		// **A body wrong in both ways at once, and the name answers.** The id
+		// belongs to another container and the name belongs to this one; the
+		// reply is the name conflict, so the id check runs last on this route.
+		// Both cells of this route already share that message, which is why the
+		// order between them needs a body that reaches only one of the two.
+		ID: "admin/protocol-mappers/duplicate-id-and-name",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: create a mapper, id held elsewhere and name held here",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder-second",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes/" + f78SecondScopeID + "/protocol-mappers/models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"` + f78HeldMapperID + `","name":"` + f78TakenMapperName + `",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The same adjacency on the batch route, where the two answers really
+		// are different bodies: the name conflict is `Protocol mapper name must
+		// be unique per protocol` and the id conflict is `Duplicate resource
+		// error`. Swapping the two checks is invisible on the route above and
+		// visible here.
+		ID: "admin/protocol-mappers/add-models-duplicate-id-and-name",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: add mappers, id held elsewhere and name held here",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-id-holder-second",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes/" + f78SecondScopeID + "/protocol-mappers/add-models",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"` + f78HeldMapperID + `","name":"` + f78TakenMapperName + `",` +
+				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}]`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
 		// A create whose nested mapper carries an id another container holds.
 		ID: "admin/client-scopes/create-duplicate-mapper-id",
 		Doc: Doc{
@@ -7890,9 +7942,9 @@ var adminCases = []Case{
 				"Content-Type":  "application/json",
 			},
 			Body: []byte(`{"name":"gloak-probe-f78-dupbody","protocol":"openid-connect",` +
-				`"protocolMappers":[{"id":"` + f78FreeMapperID + `","name":"gloak-probe-f78-a",` +
+				`"protocolMappers":[{"id":"` + f78BodyMapperID + `","name":"gloak-probe-f78-a",` +
 				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"},` +
-				`{"id":"` + f78FreeMapperID + `","name":"gloak-probe-f78-b",` +
+				`{"id":"` + f78BodyMapperID + `","name":"gloak-probe-f78-b",` +
 				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}]}`),
 		},
 		AssertHeaders: []string{"Content-Type"},
@@ -7938,9 +7990,9 @@ var adminCases = []Case{
 				"Content-Type":  "application/json",
 			},
 			Body: []byte(`{"clientId":"gloak-probe-f78-dupbody-client","enabled":true,` +
-				`"protocolMappers":[{"id":"` + f78FreeMapperID + `","name":"gloak-probe-f78-a",` +
+				`"protocolMappers":[{"id":"` + f78BodyMapperID + `","name":"gloak-probe-f78-a",` +
 				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"},` +
-				`{"id":"` + f78FreeMapperID + `","name":"gloak-probe-f78-b",` +
+				`{"id":"` + f78BodyMapperID + `","name":"gloak-probe-f78-b",` +
 				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}]}`),
 		},
 		AssertHeaders: []string{"Content-Type"},
@@ -8011,10 +8063,10 @@ var adminCases = []Case{
 				"Authorization": "Bearer {{access_token}}",
 				"Content-Type":  "application/json",
 			},
-			Body: []byte(`{"protocolMappers":[{"id":"f7800000-0000-4000-8000-0000000000ee",` +
+			Body: []byte(`{"protocolMappers":[{"id":"` + f78PutBodyID + `",` +
 				`"name":"gloak-probe-f78-a","protocol":"openid-connect",` +
 				`"protocolMapper":"oidc-usermodel-attribute-mapper"},` +
-				`{"id":"f7800000-0000-4000-8000-0000000000ee",` +
+				`{"id":"` + f78PutBodyID + `",` +
 				`"name":"gloak-probe-f78-b","protocol":"openid-connect",` +
 				`"protocolMapper":"oidc-usermodel-attribute-mapper"}]}`),
 		},
@@ -8029,6 +8081,15 @@ var adminCases = []Case{
 		// This is what makes the route's uniqueness check land only on the add
 		// path: without it, a client's own representation put straight back
 		// would be a 400.
+		//
+		// It reads the mapper through its own route rather than reading the
+		// client, and that is not a preference. The client representation
+		// carries `defaultClientScopes`, which the shared container's earlier
+		// cases have added realm defaults to and the verifier's fresh handler
+		// has not - so the golden would hold three scopes this fixture never
+		// made and fail for a reason that has nothing to do with the mapper.
+		// Addressing the mapper by the id the create gave it is also a stronger
+		// assertion: a wholesale replace answers this request 404.
 		ID: "admin/clients/update-mapper-keeps-its-id",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -8038,11 +8099,61 @@ var adminCases = []Case{
 		Status:  Implemented,
 		Fixture: "mapper-renamed-by-put",
 		Request: Request{
-			Method:  http.MethodGet,
-			Path:    "/admin/realms/master/clients/" + f78RenamedID,
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/" + f78RenamedID +
+				"/protocol-mappers/models/" + f78KeptMapperID,
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		UnorderedKeys: []string{"attributes"},
+	},
+
+	// --- F89: the count SizedKeyOrder needs ---
+	//
+	// Neither of these carries UnorderedKeys. The point of both is the key
+	// order inside `config`, so sorting it away would leave the case asserting
+	// nothing it was written for.
+	{
+		// **The case that makes F89 observable.** Four config keys grown to six
+		// by the provider's two mirrors: the map is built for four and
+		// serialised at six, and the three candidate orders - no ordering,
+		// ordering at six, ordering at four - are three different bodies.
+		//
+		// Every other mapper in this catalogue uses a key set whose hash order
+		// happens to be its insertion order, which is why the lost count broke
+		// nothing that anything could see.
+		ID: "admin/protocol-mappers/config-key-order-grown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: the config key order of a mapper the create grew",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-config-order",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    f89MapperPath + "/" + f89GrownID,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The same rule with the count out of the way: a provider that mirrors
+		// nothing, so the map is built for three and serialised at three. It
+		// still comes back in an order the request did not write, which is what
+		// separates "the count is wrong" from "there is no ordering at all".
+		ID: "admin/protocol-mappers/config-key-order",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Protocol Mappers: the config key order of a mapper the create left alone",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "mapper-config-order",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    f89MapperPath + "/" + f89UngrownID,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 	},
 }

@@ -725,6 +725,12 @@ var Fixtures = map[string]Fixture{
 	// else's id, which Keycloak matches by name and leaves the id alone.
 	"mapper-renamed-by-put": mapperRenamedByPutFixture(),
 
+	// F89's fixture: two mappers whose config key order is **not** the order
+	// the request wrote them in. Every other mapper in this catalogue uses a
+	// key set measured to be order-stable, which is why nothing here could see
+	// the count SizedKeyOrder needs going missing.
+	"mapper-config-order": mapperConfigOrderFixture(),
+
 	// A create that was refused for a valueless credential, so the case after
 	// it can read that the user is not there. The refusal is a fixture step
 	// rather than the case before it, because a golden that needs its
@@ -3760,8 +3766,19 @@ const (
 	f78RenamedID     = "f7800000-0000-4000-8000-000000000005"
 	// The id every case in the family tries to take, held by the scope above.
 	f78HeldMapperID = "f7800000-0000-4000-8000-0000000000aa"
-	// A free id, for the bodies that must fail on something other than the id.
-	f78FreeMapperID = "f7800000-0000-4000-8000-0000000000bb"
+	// One id per container that holds one. **They must all differ**, and not
+	// only for tidiness: the recorder shares a container, so an id one
+	// fixture's holder carries is an id another case's body cannot reuse
+	// without its answer depending on which case ran first.
+	f78SecondMapperID = "f7800000-0000-4000-8000-0000000000bb"
+	f78ClientMapperID = "f7800000-0000-4000-8000-0000000000cc"
+	f78BodyMapperID   = "f7800000-0000-4000-8000-0000000000dd"
+	f78PutBodyID      = "f7800000-0000-4000-8000-0000000000ee"
+	f78KeptMapperID   = "f7800000-0000-4000-8000-0000000000f1"
+	f78SentMapperID   = "f7800000-0000-4000-8000-0000000000f2"
+	// The name the second scope holds, for the one body that is wrong about
+	// the name and about the id at once.
+	f78TakenMapperName = "gloak-probe-f78-taken"
 )
 
 // f78HeldMapper is the mapper the holder scope carries, spelled once so a case
@@ -3794,13 +3811,18 @@ func mapperIDHolderFixture(second, client bool) Fixture {
 		},
 	}
 	if second {
+		// The second scope holds a **name** and not the id, which is what lets
+		// a case send a body that is wrong in both ways at once and see which
+		// check answers.
 		f.Steps = append(f.Steps, Step{
 			Request: Request{
 				Method:  http.MethodPost,
 				Path:    "/admin/realms/master/client-scopes",
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 				Body: []byte(`{"id":"` + f78SecondScopeID + `","name":"gloak-probe-f78-second",` +
-					`"protocol":"openid-connect"}`),
+					`"protocol":"openid-connect","protocolMappers":[{"id":"` + f78SecondMapperID + `",` +
+					`"name":"` + f78TakenMapperName + `","protocol":"openid-connect",` +
+					`"protocolMapper":"oidc-usermodel-attribute-mapper"}]}`),
 			},
 			ExpectStatus: idempotentCreate,
 		})
@@ -3812,7 +3834,7 @@ func mapperIDHolderFixture(second, client bool) Fixture {
 				Path:    "/admin/realms/master/clients",
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 				Body: []byte(`{"id":"` + f78ClientID + `","clientId":"gloak-probe-f78-client",` +
-					`"enabled":true,"protocolMappers":[{"id":"` + f78FreeMapperID + `",` +
+					`"enabled":true,"protocolMappers":[{"id":"` + f78ClientMapperID + `",` +
 					`"name":"gloak-probe-f78-own","protocol":"openid-connect",` +
 					`"protocolMapper":"oidc-usermodel-attribute-mapper"}]}`),
 			},
@@ -3876,7 +3898,7 @@ func mapperRenamedByPutFixture() Fixture {
 					Path:    "/admin/realms/master/clients",
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body: []byte(`{"id":"` + f78RenamedID + `","clientId":"gloak-probe-f78-renamed",` +
-						`"enabled":true,"protocolMappers":[{"id":"f7800000-0000-4000-8000-0000000000cc",` +
+						`"enabled":true,"protocolMappers":[{"id":"` + f78KeptMapperID + `",` +
 						`"name":"gloak-probe-f78-kept","protocol":"openid-connect",` +
 						`"protocolMapper":"oidc-usermodel-attribute-mapper","config":{"claim.name":"one"}}]}`),
 				},
@@ -3887,11 +3909,77 @@ func mapperRenamedByPutFixture() Fixture {
 					Method:  http.MethodPut,
 					Path:    "/admin/realms/master/clients/" + f78RenamedID,
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
-					Body: []byte(`{"protocolMappers":[{"id":"f7800000-0000-4000-8000-0000000000dd",` +
+					Body: []byte(`{"protocolMappers":[{"id":"` + f78SentMapperID + `",` +
 						`"name":"gloak-probe-f78-kept","protocol":"openid-connect",` +
 						`"protocolMapper":"oidc-hardcoded-claim-mapper","config":{"claim.name":"two"}}]}`),
 				},
 			},
+		},
+	}
+}
+
+// The fixed ids F89's fixture builds with. A mapper id is unique across the
+// server - see f78HeldMapperID - so these carry their own infix too.
+const (
+	f89ScopeID    = "f8900000-0000-4000-8000-000000000001"
+	f89GrownID    = "f8900000-0000-4000-8000-0000000000aa"
+	f89UngrownID  = "f8900000-0000-4000-8000-0000000000bb"
+	f89ScopeName  = "gloak-probe-f89"
+	f89GrownName  = "gloak-probe-f89-grown"
+	f89PlainName  = "gloak-probe-f89-plain"
+	f89MapperPath = "/admin/realms/master/client-scopes/" + f89ScopeID + "/protocol-mappers/models"
+)
+
+// mapperConfigOrderFixture creates a client scope holding two mappers whose
+// config comes back in an order the request did not write.
+//
+// The first grows: `oidc-usermodel-attribute-mapper` mirrors two of its four
+// keys, so the map is **built for four** and **serialised at six**, and the
+// three candidate orders are all different -
+//
+//	SizedKeyOrder(4)  id.token.claim, access.token.claim,
+//	                  introspection.token.claim, claim.name, jsonType.label,
+//	                  userinfo.token.claim      <- measured
+//	SizedKeyOrder(6)  ... introspection.token.claim second
+//	the request's     claim.name first
+//
+// so one body separates "no ordering at all", "ordering with the wrong count"
+// and the answer. The second does not grow, and is there so the ordering can be
+// seen without the count in the way: `oidc-nonce-backwards-compatible-mapper`
+// mirrors nothing, and three keys written claim.name, jsonType.label,
+// user.attribute come back claim.name, user.attribute, jsonType.label.
+func mapperConfigOrderFixture() Fixture {
+	mapper := func(id, name, provider, config string) Step {
+		return Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    f89MapperPath,
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"id":"` + id + `","name":"` + name + `","protocol":"openid-connect",` +
+					`"protocolMapper":"` + provider + `","config":` + config + `}`),
+			},
+			ExpectStatus: idempotentCreate,
+		}
+	}
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/client-scopes",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"id":"` + f89ScopeID + `","name":"` + f89ScopeName + `",` +
+						`"protocol":"openid-connect"}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			mapper(f89GrownID, f89GrownName, "oidc-usermodel-attribute-mapper",
+				`{"claim.name":"c","jsonType.label":"String",`+
+					`"access.token.claim":"true","id.token.claim":"true"}`),
+			mapper(f89UngrownID, f89PlainName, "oidc-nonce-backwards-compatible-mapper",
+				`{"claim.name":"c","jsonType.label":"String","user.attribute":"u"}`),
 		},
 	}
 }

@@ -1,0 +1,11 @@
+# POST /admin/realms/master/client-scopes/f7800000-0000-4000-8000-000000000002/protocol-mappers/add-models
+HTTP/1.1 409 Conflict
+Content-Length: {{volatile}}
+Content-Type: application/json
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"error":"conflict","error_description":"Protocol mapper name must be unique per protocol"}
