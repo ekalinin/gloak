@@ -89,10 +89,13 @@ var parkedGoldens = map[string]string{
 		"endpoint's carries none",
 	"oidc/logout/invalid-id-token-hint": "the third instruction the 400 page serves, and the one that pins " +
 		"the hint being judged before the redirect URI",
-	"oidc/device/authorization-request": "a reproducible four-line body: the device grant's refusal on a " +
-		"client that has the grant disabled, which is every client on a default 26.7.1",
-	"oidc/ciba/authentication-request": "a reproducible two-key body, and the one record of CIBA answering " +
-		"401 where the device endpoint beside it answers 400",
+	// The device and CIBA entries were here until 2026-08-30 and both are gone
+	// rather than moved: their cases are Implemented, so their goldens are
+	// compared and the whole point of parking is that nothing compares them.
+	// The device one's request has moved too - it measured the refusal on
+	// admin-cli, which is now oidc/device/grant-disabled's, while
+	// oidc/device/authorization-request measures the grant with a client that
+	// has it on.
 	"oidc/registration/without-initial-access-token": "a reproducible body naming the 'Trusted Hosts' policy, " +
 		"which is why anonymous registration is 403 rather than 401 on a default 26.7.1",
 }

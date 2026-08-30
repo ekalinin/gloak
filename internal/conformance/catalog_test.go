@@ -160,13 +160,21 @@ var unservedEndpointPhrases = map[string]string{
 // It is not an amnesty. An entry whose Reason has stopped being stale fails
 // here, which is what makes the list shrink to nothing rather than becoming
 // somewhere findings go to be forgotten.
-var staleReasonsOwnedElsewhere = map[string]string{
-	"oidc/token/device-code-grant":       "the device_code grant is not implemented",
-	"oidc/token/ciba-grant":              "the CIBA grant is not implemented",
-	"oidc/token/token-exchange":          "the token-exchange grant is not implemented",
-	"oidc/token/jwt-authorization-grant": "the jwt-bearer grant is not implemented",
-	"oidc/token/dpop-bound-token":        "DPoP is not implemented",
-}
+//
+// **It shrank to nothing on 2026-08-30**, the day it was written, when the
+// device-grant stream merged this guard and corrected all five Reasons. Three
+// took the text suggested here verbatim. Two did not, and the reason is worth
+// keeping: the suggestions for `oidc/token/device-code-grant` and
+// `oidc/token/ciba-grant` - "the device_code grant is not implemented" and "the
+// CIBA grant is not implemented" - were already stale when they were written,
+// because both grants landed the same day. What is actually missing for one is
+// the device verification and consent pages, and for the other an
+// authentication channel a default 26.7.1 does not configure. A hand-off's
+// suggested text is a hand-off, not a measurement.
+//
+// The map is deliberately left rather than deleted: it is what a future cut
+// finding a stale Reason in somebody else's file writes into.
+var staleReasonsOwnedElsewhere = map[string]string{}
 
 // TestNoReasonClaimsAServedEndpointIsUnserved is the sweep this file could not
 // do by reading.

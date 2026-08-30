@@ -1,6 +1,5 @@
 # POST /realms/master/protocol/openid-connect/auth/device
-HTTP/1.1 200 OK
-Cache-Control: no-store, must-revalidate, max-age=0
+HTTP/1.1 401 Unauthorized
 Content-Length: {{volatile}}
 Content-Type: application/json
 Referrer-Policy: no-referrer
@@ -9,4 +8,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-{"device_code":"{{string}}","user_code":"{{string}}","verification_uri":"{{issuer}}/realms/master/device","verification_uri_complete":"{{string}}","expires_in":600,"interval":5}
+{"error":"invalid_client","error_description":"Invalid client or Invalid client credentials"}
