@@ -205,6 +205,7 @@ operations is allocated below; none is left unassigned.
 | **P4** | Multi-realm, specced 2026-08-29, **complete 2026-08-29** | P2 | Realms Admin 45, Key 1. The tag's 45 is a denominator and **16** is what P4 builds: the rest is P5's client scopes, P8's authentication, P12's organizations and P14's events, export and import, and the roadmap already said the last of those. Both cuts done: the realm as a resource 5 ops, then keys, default groups, group-by-path, client policies and client types 11 ops. `Realms Admin` stays at 15 of 45 and that is the finished state | 46 ops |
 | **P5** | Client scopes and protocol mappers, **first cut done 2026-08-30** | P2 | Client Scopes 10, Protocol Mappers 21, Scope Mappings 33, Client Attribute Certificate 7, Client Initial Access 3, Client Registration Policy 1. The 75 is a denominator and is badly misleading as work: **23 of it is `client-templates`, a path alias for `client-scopes` measured identical on all three verbs**, and one operation is P9's. Twelve operations P5 *does* build are counted in other tags - the realm's six `default-*-client-scopes` and a client's six `*-client-scopes`. The first cut is those 22, and closes the `Client Scopes` tag outright | 75 ops |
 | P5 first cut | Client scopes, the two attachment families, and F49 | P2 | `admin/client-scopes` 0->10, `admin/clients` 10->16, `admin/realms-admin` 15->21. Protocol Mappers and Scope Mappings are cuts B and C | 22 ops |
+| P5 second cut | Protocol mappers, **done 2026-08-30** | P5 first cut | `admin/protocol-mappers` 0->21, the tag closed outright. Seven of its 21 are the `client-templates` alias again, verified byte-identical against the server rather than inferred from the first cut. Scope Mappings is cut C | 21 ops |
 | **P6** | Sessions and logout in full, **first cut done 2026-08-30** | P3 | back-channel, front-channel, session iframe, offline sessions, Attack Detection 3 | 3 ops + cases |
 | P6 first cut | The RP-initiated logout endpoint | P3 | `oidc/logout` 0->10, and the chapter's denominator 5->14. The estimate before the cut was **+1**, from counting the five cases already in the catalogue; the endpoint has two verbs, two request families per verb and six response shapes | 0 ops |
 | **P7** | Advanced grants | P1, P5 | `device` 5, `ciba` 3, `registration` 6, token exchange, JWT bearer, DPoP, PAR | ~20 cases |
@@ -213,13 +214,14 @@ operations is allocated below; none is left unassigned.
 | **P10** | Authorization services (UMA 2.0) | P5 | `authz/resource-server/*` | 31 ops |
 | **P11** | SAML 2.0 | P4 | descriptors, SSO and SLO bindings | not in OpenAPI |
 | **P12** | Organizations and Workflows | P4 | Organizations 36, Workflows 9 | 45 ops |
-| **P13** | Themes, i18n, account console, admin console | P5 | - | not in OpenAPI |
+| **P13** | Themes, i18n, account console, admin console, **first cut done 2026-08-30** | P5 | - | not in OpenAPI |
+| P13 first cut | The browser login, end to end | P3, P5 | no operations, and the column that matters is `oidc/authorization`'s `recorded` going **4 -> 0**: the chapter no longer holds a case waiting on an endpoint nobody built. The flow is served - authentication session, login form, `/login-actions/authenticate`, authorization code - and the theme's markup is not | 0 ops |
 | **P14** | Operational parity | P4 | events and audit, SMTP, health and metrics, clustering | not in OpenAPI |
 
-Denominator today: **413 Admin API operations plus 85 protocol behaviours, 498
+Denominator today: **413 Admin API operations plus 86 protocol behaviours, 499
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **179** after
-P5's first cut, and **P2 and P4 are complete** - up from 8 before P1, 25 after it, 89 after the second cut's
+surface is not counted and which the report says so about. Served: **205** after
+P5's second cut and P13's first, and **P2 and P4 are complete** - up from 8 before P1, 25 after it, 89 after the second cut's
 roles half, 100 after that cut was complete, 109 after the group tree and 113
 after the membership.
 
@@ -244,8 +246,31 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-08-30, after three more parallel cuts.** `make conformance`
-reports **179 of 498**. Three streams - P5's first cut, P6's first cut and a
+**Updated 2026-08-30 (second fold), after three more.** `make conformance`
+reports **205 of 499**, and `oidc/authorization`'s `recorded` column reached
+**zero**: no case in that chapter is waiting on an endpoint nobody built.
+
+The three were the browser login, the protocol mappers and the recorder's own
+debt, and the integration produced the sharpest finding of the week. **Two cuts
+were green on their own and failed together**: the pollution guard reads "one
+object per creation body", and a `POST /clients` carrying `protocolMappers`
+creates a client *and* two mappers. The nested mappers were never recorded,
+which lost them from the guard and made it report a false positive against the
+very case whose own fixture had made them. Neither author could have seen it -
+each was correct against the tree they had. It is F71.
+
+A second integration finding: the login cut's most surprising measurement -
+`PUT .../protocol-mappers/models/{id}` writes the mapper the **body's** id
+names, not the path's - was implemented, documented at the call site, and tested
+by nothing, because every other case sends a body whose id agrees with its path.
+A mutation swapping the two left the whole suite green. **The case where they
+disagree is the only place the difference is observable**, and it now exists.
+
+Both of these argue for the same thing: the fold is not clerical work, and it is
+the only place where the combination is examined at all.
+
+**Earlier on 2026-08-30, after three parallel cuts.** `make conformance`
+reported **179 of 498**. Three streams - P5's first cut, P6's first cut and a
 harness sweep - ran the same way as the four the day before, and the collision
 analysis had to be redone because it came out differently: P5, P8 and P12 all
 live in `internal/admin`, so **only one admin stream can run at a time**. The

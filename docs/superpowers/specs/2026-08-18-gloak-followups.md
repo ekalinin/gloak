@@ -75,6 +75,28 @@ problem - which is recorded at F53 rather than hidden, because a follow-up that
 closes and immediately recurs is saying something about the check, not about the
 cases.
 
+**Status, 2026-08-30 (second fold).** Three more cuts - the browser login, the
+protocol mappers and the recorder's own debt - **closed F49's neighbours F58,
+F59, F63's prerequisite, F69 and F70**, and opened **F71 through F80**. Parity
+reached 205 of 499, and `oidc/authorization`'s `recorded` column reached **zero**:
+the chapter no longer holds a case waiting on an endpoint nobody built.
+
+The pattern held for a third day and produced its sharpest example. Two cuts
+were green on their own and **failed together**: the pollution guard's rule
+"one body names one object" was applied per *body*, and a `POST /clients`
+carrying `protocolMappers` creates a client and two mappers. The nested mappers
+were never recorded, which lost them from the guard and made it report a false
+positive against the very case whose own fixture had made them. Neither author
+could have seen it; it is filed at F71 with the fix.
+
+Two sentences in the observed document were **still false on 2026-08-30**,
+having been corrected in `AGENTS.md` on 2026-08-29 and nowhere else - the
+hintless logout and `post.logout.redirect.uris`. They were re-measured
+independently rather than copied across, and the observed document now carries
+both corrections with the reason. That a correction can land in one of two
+documents and sit unnoticed for a day is worth more attention than either
+sentence.
+
 One thing that is deliberately **not** filed. P4's handover proposes an entry
 for "a golden that enumerates a realm-wide set without `PristineRealm`", naming
 `admin/role-mapper/group-realm-available`. That case gained the flag in
@@ -2377,7 +2399,19 @@ already exist as `defaultScopeNames` and `optionalScopeNames` in
 `internal/bootstrap`. Client scopes are P5's; this is the part of them that is
 already observable from an endpoint that is already served.
 
-## F50: `GET /auth` answers a fully valid request with the page family's 400
+## F50: `GET /auth` answers a fully valid request with the page family's 400 (closed)
+
+**Closed 2026-08-30.** A valid authorization request now serves a login form,
+`POST /login-actions/authenticate` checks the credential, and the redirect
+carries a real authorization code. The four cases that were `Recorded` because
+of this are `Implemented`, and `oidc/authorization`'s `recorded` column is zero
+for the first time.
+
+What is still a placeholder is the page **body** - the theme's Freemarker output
+with its per-container resource hash - not the flow. See F67.
+
+What the finding said, kept for the record:
+
 
 Deliberate, and documented at the handler rather than hidden. A request that
 survives all ten checks reaches the point where Keycloak renders its login page,
@@ -2531,7 +2565,24 @@ the parity design's §10 says of the realm representation's other 104. It is her
 so that "client policies work" is never inferred from "client policies round
 trip".
 
-## F58: a paged golden's window is held by a naming convention nobody enforces
+## F58: a paged golden's window is held by a naming convention nobody enforces (closed)
+
+**Closed 2026-08-30** by `TestEveryCreatedObjectCarriesTheProbePrefix`, over the
+same `createdObjects()` set the pollution guard reads.
+
+Its first run turned up **seven** real exceptions and none was renamed, which is
+the interesting part. Two matter: `aa-gloak-srch-kid` sorts before every
+bootstrapped name in the realm - exactly this entry's hazard, one resource family
+over - and three group names whose sort positions **are**
+`admin/groups/search-pages-the-matches`'s measurement, so renaming them would
+change a measurement rather than protect one. Each is declared in
+`namedOutsideTheConvention` with its reason, and an entry that stops matching
+anything fails too, so a reason nobody has re-read cannot sit there.
+
+An eighth was a phantom and a defect in the pollution guard: see **F71**.
+
+What the finding said, kept for the record:
+
 
 `admin/roles/list-realm-page-no-search` sends `first=1&max=2` with no `search`,
 and its golden holds `create-realm` and `default-roles-master`. The case's
@@ -2553,7 +2604,23 @@ guard, so asserting a prefix over it is three lines. Not done at the time
 because it is a new rule *about the catalogue* rather than a fix to a measured
 divergence, and imposing one belongs to whoever owns the convention.
 
-## F59: `Case.Unordered` silently sorts only the root when the root is one of its paths
+## F59: `Case.Unordered` silently sorts only the root when the root is one of its paths (closed)
+
+**Closed 2026-08-30 by handling it rather than erroring**, and the judgement is
+worth keeping. Erroring on the combination was the cheaper option and this entry
+invited it - but it would have left `admin/client-scopes/list` masking
+`*/protocolMappers` whole, and **thirty-five bootstrapped protocol mappers under
+no golden**. The walk now runs once per distinct path depth, deepest first;
+inside one depth no path can be a prefix of another, because being a prefix
+means being shorter. Four entry points collapsed into one `editPaths`, so the
+change is smaller than the code it replaced.
+
+The two goldens were re-recorded and Gloak reproduces all thirty-five mappers
+byte for byte, `config` key order included - a Java map that needed **no**
+`UnorderedKeys` retreat.
+
+What the finding said, kept for the record:
+
 
 `editor.sortArray` decodes the value it matched in one go, so a path matching
 the root consumes the whole document and the nested paths are never visited.
@@ -2608,7 +2675,20 @@ set directly rather than deriving it from them.
 That was the plan - the roadmap staged the engine behind the scopes - and the
 prerequisite is now built. What remains is the derivation.
 
-## F64: Gloak issues no `AUTH_SESSION_ID`
+## F64: Gloak issues no `AUTH_SESSION_ID` (closed)
+
+**Closed 2026-08-30.** `GET /auth` issues one, and its decoded value is
+`<root id>.<86 chars>` where the root id is the same value that becomes the
+redirect's `session_state`, `KEYCLOAK_IDENTITY`'s `sid` and the authorization
+code's second part.
+
+Two things about it are Gloak's own and are filed rather than claimed:
+`KC_RESTART` is a **handle** where Keycloak's is a self-contained JWE (F73), and
+`AUTH_SESSION_ID`'s second half is a stored random string rather than a derived
+one (F74).
+
+What the finding said, kept for the record:
+
 
 Keycloak sets a fresh one on the logout 302 and on both 200 pages. Gloak has no
 authentication-session concept and minting a cookie value would be inventing an
@@ -2656,7 +2736,29 @@ and would emit it unchanged.
 **One follow-up for two endpoints**: it is the same unhandled case as
 `security-admin-console`'s host-relative `/admin/master/console/*` at `/auth`.
 
-## F69: `make record` rewrites `Pending` theme-page goldens on every run
+## F69: `make record` rewrites `Pending` theme-page goldens on every run (closed)
+
+**Closed 2026-08-30 by `GoldenIsAsserted(c Case) bool`** in `case.go`, the one
+predicate both the recorder and `TestConformance` read, so the two cannot drift
+about which goldens are compared and which are merely present.
+
+The "unless asked" this entry called for is **promoting the case to
+`Recorded`** - which is what `Recorded` already means, and which a reviewer sees
+as a one-word edit in the diff, where an environment variable is a thing nobody
+sets and nobody reads.
+
+Verified across four container starts through `make record`'s own
+testcontainers: with the skip deliberately removed, exactly the four names below
+moved and nothing else; with it in place, **none**, and 290 goldens were
+rewritten with identical bytes.
+
+What it does **not** do is keep a parked golden honest. Nothing compares it, so
+nothing notices when Keycloak's answer moves underneath it - which was already
+true before the recorder stopped rewriting it. Whether a `Pending` case should
+carry a golden at all is **F72**.
+
+What the finding said, kept for the record:
+
 
 Four goldens now churn their whole body on every recording because the
 `/resources/<hash>/` segment is regenerated per container start:
@@ -2683,3 +2785,121 @@ GET.
 **Closed 2026-08-30**: `Step.Mutates` declares it, and the test now also rejects
 `Mutates` on a step that *does* capture something and on any non-GET, so the
 escape hatch cannot be used to wave through a step that is simply unnecessary.
+
+## F71: the pollution guard read one object per body where a body can carry several (closed)
+
+Found 2026-08-30 at the fold, by two cuts that were green on their own and
+failed together.
+
+F45's guard reads the most specific `createdKeys` entry a creation body carries,
+and F58's first run narrowed that to **one object per body** to kill a phantom:
+`{"clientId":"gloak-probe-described","name":"A name"}` was being reported as a
+role called `A name`, which is `ClientRepresentation.name`.
+
+Applied per **body**, that rule is wrong in the other direction. A create can
+carry objects nested inside it: `POST /clients` with
+`{"clientId":"...","protocolMappers":[{"name":"..."}]}` creates a client **and**
+two protocol mappers, and they outlive the request exactly as the client does.
+The client's `clientId` won and the nested mappers were never recorded - which
+lost them from the guard, and, because the exemption reads the same set, made
+the guard report a false positive against the very case whose own fixture had
+created them. A client-scope fixture and a client fixture share the mapper
+names, so only the scope's were attributed.
+
+**Closed** by applying the rule per JSON **object** rather than per body. The
+phantom stays suppressed - a client's display name loses to its `clientId`
+inside one object - while objects nested in arrays under it are recorded.
+
+Two shapes the old regular expression excluded by accident and the walk has to
+exclude on purpose: a body that does not parse, and an empty name.
+`admin/users/create-malformed` and `admin/client-scopes/create-empty-name` send
+one each, on purpose, and both are measured answering 400. Both are creates that
+create nothing.
+
+**The lesson is about integration, not about either cut.** Neither author could
+have seen it: each guard and each fixture was correct against the tree its
+author had. It is the second finding this week that only existed in the
+combination.
+
+## F72: should a `Pending` case carry a golden at all?
+
+F69 stopped the recorder rewriting them, which was the cost. The question it
+leaves is whether the file should be there.
+
+Nothing compares a `Pending` golden, so nothing notices when Keycloak's answer
+moves underneath it - true before F69 and true after, since the rewrite was
+compared by nothing either. What the file buys is a reader being able to see
+the measured bytes without a container. What it costs is four theme pages of
+committed HTML that look like a contract and are not.
+
+Worth deciding once, for all four, rather than per cut.
+
+## F73: `KC_RESTART` is a handle where Keycloak's is a self-contained JWE
+
+Keycloak's `KC_RESTART` carries the restart state inside the cookie, signed and
+encrypted. Gloak's is a handle into the in-memory authentication session store.
+
+Observably the same on the branches measured so far - the cookie is opaque to a
+client either way - and different the moment there are two Gloak processes, or
+the moment something restarts. It is filed beside F75 rather than inside it,
+because the fix is not the same fix.
+
+## F74: `AUTH_SESSION_ID`'s second half is stored rather than derived
+
+Its decoded value is `<root id>.<86 chars>`. Gloak stores those 86 characters;
+whether Keycloak derives them from anything is unmeasured, and nothing
+observable distinguishes the two today.
+
+Filed so that the next person to look does not have to re-establish that it was
+a choice rather than a measurement.
+
+## F75: the authentication session and the authorization code are in memory
+
+Both live in the handler, not the store. That is the faithful model - Keycloak
+keeps both in Infinispan caches rather than in its schema, because both are
+short-lived - and it means **this cut is single-process**: two Gloak replicas
+will not share a login in progress or a code awaiting exchange.
+
+That matters here in a way it does not for Keycloak, because realm signing keys
+were deliberately persisted so that two replicas agree. The design to use is
+written in the P13 handover; the trigger is whoever first runs two replicas.
+
+## F76: the `authorization_code` grant is not served at the token endpoint
+
+The code is minted, stored, and spent on the first attempt. Redeeming it is
+eight measured rejections and its own cut, and PKCE is carried nowhere yet:
+`/auth` validates `code_challenge` and `code_challenge_method` and neither is
+attached to the code.
+
+Until it lands, a browser login produces a code nothing can exchange.
+
+## F77: SSO is not recognised
+
+Gloak sets `KEYCLOAK_IDENTITY` and never reads it, so a second `GET /auth` from
+a browser that has already logged in serves the form again rather than
+redirecting straight through.
+
+That is also what makes F65's confirmation-page branch unreachable today, so
+the two close together or not at all.
+
+## F78: a protocol mapper id is not realm-unique in Gloak
+
+Keycloak's are. This bit the cut that found it: three fixtures shared an id and
+three client scopes were silently never created, which is the failure mode of a
+constraint that exists upstream and not here.
+
+## F79: two protocol mapper providers seed config keys of their own
+
+Measured, and Gloak stores what it is given. A create naming one of the two
+comes back from Keycloak with keys the request did not send.
+
+## F80: `internal/javamap` models the wrong constructor for a sized map
+
+A protocol mapper's `config` is a Java `HashMap` **sized to its entry count**,
+which is a different table size from the one `javamap` models. Fourteen vectors
+were measured against it and it gets **six** wrong.
+
+Nothing is broken by this today: the conformance cases use config key sets
+measured to be order-stable, so their goldens assert real bytes with no
+`UnorderedKeys` mask. What is wrong is the package's own claim about what it
+reproduces. The vectors are in the P5 handover.
