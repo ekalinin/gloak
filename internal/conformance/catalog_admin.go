@@ -7362,4 +7362,320 @@ var adminCases = []Case{
 		Unordered:     []string{"."},
 		Volatile:      []string{"*/id", "*/containerId"},
 	},
+
+	// --- F84: the credentials array POST /users and PUT /users/{id} carry ---
+	//
+	// None of these claims an Operation. All three routes they touch are
+	// claimed already; what they add is the part of those routes' contract that
+	// was being served wrong.
+	{
+		// **The case F84 says no case for POST /users would have found.** The
+		// create answers 201 with an empty body whether the array was honoured
+		// or dropped, so the assertion is split: the fixture logs in as the
+		// user - a step that simply fails when the password was not stored -
+		// and this reads the credential the array produced.
+		ID: "admin/users/inline-credential",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user with an inline credentials array",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "inline-credential",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/credentials",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/createdDate"},
+	},
+	{
+		// **type is ignored and userLabel is dropped**, both in one body. The
+		// entry asked for an `otp` labelled "office laptop"; the credential is
+		// a `password` with no userLabel key, and the fixture's grant says the
+		// value really is the password.
+		//
+		// The type half is reset-password's measured behaviour arriving on a
+		// second route; the label half is not - reset-password *clears* a
+		// label, and this never reads one.
+		ID: "admin/users/inline-credential-ignores-type-and-label",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, inline credential of another type",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "inline-credential-otp",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/credentials",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/createdDate"},
+	},
+	{
+		// Two entries, one credential. The fixture already proved which value
+		// survived - the second grants and the first is refused - and this is
+		// the other half: the listing has one row, not two.
+		ID: "admin/users/inline-credential-twice",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, two inline credentials",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "inline-credential-twice",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/credentials",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/createdDate"},
+	},
+	{
+		// **An empty value is a 201 and a credential that describes no hash.**
+		// Three keys where every other credential has four or five: there is no
+		// credentialData at all. Keycloak's own defect - the password grant
+		// against this user is a 500 - and reproduced as far as the admin API
+		// reaches.
+		ID: "admin/users/inline-credential-empty-value",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, inline credential with an empty value",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "inline-credential-empty-value",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/credentials",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/createdDate"},
+	},
+	{
+		// temporary true puts UPDATE_PASSWORD on the user, the way it does
+		// through reset-password. What it does **not** do is the mirror image:
+		// a later non-temporary inline credential leaves the action in place,
+		// where reset-password with temporary false removes it. Only the add is
+		// asserted here; the difference is written up in AGENTS.md.
+		ID: "admin/users/inline-credential-temporary",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, temporary inline credential",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "inline-credential-temporary",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"id", "createdTimestamp"},
+	},
+	{
+		// The same array on PUT /users/{id}. F84 was filed against the create
+		// and is a defect on both routes, so the update has its own fixture,
+		// its own grant and its own golden rather than being assumed from the
+		// create's.
+		ID: "admin/users/update-inline-credential",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: update the user with an inline credentials array",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "inline-credential-update",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/credentials",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/createdDate"},
+	},
+	{
+		// **An entry with no value is a 500 and the user is rolled back.** The
+		// user this body names does not exist afterwards, which is what the
+		// next case reads.
+		//
+		// It is the third answer this API gives to a missing password:
+		// reset-password says 400 "No password provided", the update route says
+		// 400 "Could not update user!", and the create says this.
+		ID: "admin/users/create-credential-without-value",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, inline credential with no value",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"username":"gloak-probe-novalue","enabled":true,` +
+				`"credentials":[{"type":"password"}]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The rollback, read back. Without it the 500 above is satisfied by a
+		// handler that creates the user and then fails, which is what a
+		// first attempt at this actually did.
+		//
+		// The rejected create is in the **fixture**, not in the case before
+		// this one. Reading it out of catalogue order would make the golden
+		// hold only while that order holds - and worse, it would pass for the
+		// wrong reason under the verifier, which serves each case from a
+		// handler that has seen nothing but this case's own fixture and would
+		// answer `[]` whether or not anything had ever been rolled back.
+		ID: "admin/users/create-credential-without-value-rolled-back",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, inline credential with no value, rolled back",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "inline-credential-rollback",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users",
+			Query:   map[string]string{"username": "gloak-probe-rollback", "exact": "true"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The update route's answer to the body the create answers 500: 400,
+		// and the errorMessage shape rather than the OAuth one. Two routes on
+		// one resource, one bad body, two families - the fifth time this API has
+		// punished a decoder shared by a pair.
+		ID: "admin/users/update-credential-without-value",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: update the user, inline credential with no value",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-created-user",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"credentials":[{"type":"password"}]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The same body the create answers 500. This is the boundary probe for
+		// the shared decoder: admin/users/create-null-body pins the 500 and
+		// this pins that the PUT does **not** answer it, which is the half a
+		// decoder written once gets wrong.
+		ID: "admin/users/update-null-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: update the user, null body",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-created-user",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`null`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **A binding failure is unknown_error where a syntax failure is
+		// invalid_request.** admin/users/create-malformed sends a truncated
+		// object and gets invalid_request; this sends a well-formed object
+		// whose credentials key holds a string and gets the other code.
+		//
+		// Every earlier probe of this endpoint sent a truncated document, which
+		// is why invalid_request looked like the answer to "malformed body". It
+		// is the answer to "malformed JSON", and this is the body that tells
+		// them apart.
+		ID: "admin/users/create-credentials-wrong-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, credentials of the wrong JSON type",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"username":"gloak-probe-badcreds","credentials":"nonsense"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The same rule reached through a body that names no credential at all,
+		// so the code cannot be read as something the credentials key does.
+		ID: "admin/users/create-enabled-wrong-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, enabled of the wrong JSON type",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"username":"gloak-probe-badenabled","enabled":"yes"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// A body whose first token is not `{` at all. Same code as the two
+		// above and a different reason for it, which is why all three are here:
+		// wrong shape and wrong type share an answer that a truncated object
+		// does not.
+		ID: "admin/users/create-array-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: create a new user, array body",
+			Retrieved: "2026-08-30",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
 }

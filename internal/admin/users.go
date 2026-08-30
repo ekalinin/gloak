@@ -44,6 +44,12 @@ type userRepresentation struct {
 	RequiredActions            *[]string           `json:"requiredActions,omitempty"`
 	NotBefore                  *int                `json:"notBefore,omitempty"`
 	Access                     any                 `json:"access,omitempty"`
+	// Credentials is write-only. Nothing that serialises a user ever sets it -
+	// a credential is read through .../credentials, which carries a different
+	// shape and no secret - so omitempty keeps it out of every response, and
+	// it is here so that POST and PUT can read the array Keycloak honours on
+	// both. See credentialRequest for what an entry means.
+	Credentials []credentialRequest `json:"credentials,omitempty"`
 }
 
 // userAccess is the permissions block a single read carries, in the measured
@@ -205,6 +211,12 @@ func (h *handler) readUser(w http.ResponseWriter, r *http.Request, rc *reqContex
 //
 // **The username is lowercased.** A create naming Probe-UPPER answers 201 and
 // the user reads back as probe-upper.
+//
+// **An inline credentials array is honoured**, which is follow-up F84 and was
+// the whole of what this handler was missing: a user created with
+// {"username":"x","credentials":[{"type":"password","value":"..."}]} can use
+// the password grant immediately. See applyCredentials for what an entry means
+// and credentialRequest for the five fields that are read and dropped.
 func (h *handler) createUser(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 	rep, ok := decodeUser(w, r)
 	if !ok {
@@ -239,10 +251,26 @@ func (h *handler) createUser(w http.ResponseWriter, r *http.Request, rc *reqCont
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
+	// **The credentials are checked after the username, and a bad one takes the
+	// user with it.** Measured on both cells: a create naming a username
+	// somebody already holds and carrying a valueless credential answers the
+	// 409, so the conflict is decided first; the same credential on a free
+	// username answers 500 and leaves no user behind at all. Keycloak rolls a
+	// transaction back where this deletes what it just made, which is the same
+	// observable and the only one available without transactions in the store.
+	if credentialsMissingValue(rep.Credentials) {
+		_ = h.store.Users().Delete(r.Context(), rc.realm.ID, m.ID)
+		writeUserUnknownError(w)
+		return
+	}
 	// Measured: a user created here holds default-roles-master and nothing
 	// else. Without it the user exists but every token it is issued carries no
 	// aud, no realm_access and no resource_access.
 	if err := roles.AssignDefaults(r.Context(), h.store.Roles(), rc.realm.ID, rc.realm.Name, m.ID); err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	if err := h.applyCredentials(r.Context(), m, rep.Credentials); err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
@@ -263,6 +291,12 @@ func (h *handler) createUser(w http.ResponseWriter, r *http.Request, rc *reqCont
 // answers 409, so the conflict check runs before the change is discarded -
 // which is why this reads the request's username even though it never applies
 // it.
+//
+// **It honours an inline credentials array too.** F84 was filed against
+// POST /users and is a defect on both routes: a PUT carrying
+// {"credentials":[{"type":"password","value":"..."}]} answers 204 and the user
+// logs in with it. The two routes disagree about the failures rather than about
+// the success - see decodeInto and writeUserUpdateFailed.
 func (h *handler) updateUser(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 	current, ok := h.userFromPath(w, r, rc)
 	if !ok {
@@ -270,7 +304,7 @@ func (h *handler) updateUser(w http.ResponseWriter, r *http.Request, rc *reqCont
 	}
 
 	merged := userRepresentationOf(current, true)
-	if !decodeInto(w, r, &merged) {
+	if !decodeInto(w, r, &merged, writeUserUpdateFailed) {
 		return
 	}
 
@@ -286,6 +320,15 @@ func (h *handler) updateUser(w http.ResponseWriter, r *http.Request, rc *reqCont
 		}
 	}
 
+	// The same order the create was measured in - the username conflict above
+	// decides first, and a valueless credential only then. What differs is the
+	// answer: 400 "Could not update user!" here where the create answers the
+	// 500 unknown_error body.
+	if credentialsMissingValue(merged.Credentials) {
+		writeUserUpdateFailed(w)
+		return
+	}
+
 	updated := *current
 	updated.Email = merged.Email
 	updated.EmailVerified = merged.EmailVerified
@@ -293,6 +336,10 @@ func (h *handler) updateUser(w http.ResponseWriter, r *http.Request, rc *reqCont
 	updated.FirstName = merged.FirstName
 	updated.LastName = merged.LastName
 	if err := h.store.Users().Update(r.Context(), &updated); err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	if err := h.applyCredentials(r.Context(), &updated, merged.Credentials); err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
@@ -321,34 +368,85 @@ func (h *handler) deleteUser(w http.ResponseWriter, r *http.Request, rc *reqCont
 // decodeUser reads a UserRepresentation from the request body.
 func decodeUser(w http.ResponseWriter, r *http.Request) (userRepresentation, bool) {
 	var rep userRepresentation
-	ok := decodeInto(w, r, &rep)
+	ok := decodeInto(w, r, &rep, writeUserUnknownError)
 	return rep, ok
 }
 
 // decodeInto reads the body over an existing representation, which is what
-// makes PUT a merge, and writes the two measured failures.
+// makes PUT a merge, and writes the four measured failures.
 //
 // The empty-body case is the odd one and it is copied on purpose: Keycloak
-// answers 500 with the unknown_error body for a request whose body is empty or
-// the literal null, where a body that is merely malformed gets a 400. Same
-// class of defect as DELETE .../client-secret/rotated, and reproduced for the
-// same reason.
-func decodeInto(w http.ResponseWriter, r *http.Request, rep *userRepresentation) bool {
+// answers 500 with the unknown_error body for a POST whose body is empty or the
+// literal null, where a body that is merely malformed gets a 400. Same class of
+// defect as DELETE .../client-secret/rotated, and reproduced for the same
+// reason. **The PUT next door answers that body 400
+// {"errorMessage":"Could not update user!"} instead**, measured 2026-08-30, so
+// the answer arrives as an argument rather than being decided here - the fifth
+// time this API has punished one decoder shared by two routes.
+//
+// The other three rows are the same shape rule decodeMapperBody records, with
+// one more measurement under it. A **binding** failure is unknown_error and a
+// **syntax** failure is invalid_request:
+//
+//	{                              invalid_request   syntax, right shape
+//	[                              unknown_error     wrong shape
+//	{"credentials":"nonsense"}     unknown_error     right shape, wrong type
+//	{"enabled":"yes"}              unknown_error     right shape, wrong type
+//
+// The two type-mismatch rows are new. Every earlier probe of this endpoint sent
+// a truncated document, so invalid_request looked like the answer to "malformed
+// body" when it is the answer to "malformed JSON"; a well-formed document whose
+// field will not bind is the other family. Gloak served invalid_request for all
+// four until the credentials array made the difference reachable from a body a
+// caller would really send.
+func decodeInto(w http.ResponseWriter, r *http.Request, rep *userRepresentation,
+	empty func(http.ResponseWriter)) bool {
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return false
 	}
-	if trimmed := strings.TrimSpace(string(raw)); trimmed == "" || trimmed == "null" {
-		httpx.WriteOAuthError(w, http.StatusInternalServerError, "unknown_error",
-			"For more on this error consult the server log.")
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		empty(w)
+		return false
+	}
+	if trimmed[0] != '{' {
+		writeUserCannotParse(w, "unknown_error")
 		return false
 	}
 	if err := json.Unmarshal(raw, rep); err != nil {
-		httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_request", "Cannot parse the JSON")
+		var mismatch *json.UnmarshalTypeError
+		if errors.As(err, &mismatch) {
+			writeUserCannotParse(w, "unknown_error")
+			return false
+		}
+		writeUserCannotParse(w, "invalid_request")
 		return false
 	}
 	return true
+}
+
+// writeUserCannotParse is the 400 both parse families answer, differing only in
+// the code. The description is identical, which is why the code is the argument.
+func writeUserCannotParse(w http.ResponseWriter, code string) {
+	httpx.WriteOAuthError(w, http.StatusBadRequest, code, "Cannot parse the JSON")
+}
+
+// writeUserUnknownError is the 500 POST /users answers for an empty body and
+// for a credential carrying no value - Keycloak's own defect on both, and one
+// body for the two.
+func writeUserUnknownError(w http.ResponseWriter) {
+	httpx.WriteOAuthError(w, http.StatusInternalServerError, "unknown_error",
+		"For more on this error consult the server log.")
+}
+
+// writeUserUpdateFailed is PUT /users/{id}'s answer to the two bodies the
+// create answers with a 500: an empty or null body, and a credential with no
+// value. Same two inputs, same endpoint family, a different status and a
+// different error shape.
+func writeUserUpdateFailed(w http.ResponseWriter) {
+	httpx.WriteAdminError(w, http.StatusBadRequest, "Could not update user!")
 }
 
 // writeUsernameConflict emits the measured 409. The message names no username,

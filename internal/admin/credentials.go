@@ -35,12 +35,17 @@ const passwordCredentialType = "password"
 // userLabel, createdDate and credentialData, and nothing else - no value, no
 // salt, no secretData. credentialData describes how the secret was hashed so a
 // client can tell argon2 from pbkdf2; it never describes the secret.
+//
+// credentialData carries omitempty for one measured body: a credential created
+// from an inline `credentials` entry whose value was "" comes back as three
+// keys, with no credentialData at all, because there is no hash to describe.
+// Nothing else on this API produces such a credential.
 type credentialRepresentation struct {
 	ID             string `json:"id"`
 	Type           string `json:"type"`
 	UserLabel      string `json:"userLabel,omitempty"`
 	CreatedDate    int64  `json:"createdDate"`
-	CredentialData string `json:"credentialData"`
+	CredentialData string `json:"credentialData,omitempty"`
 }
 
 // credentialData is the object Keycloak serialises **into a JSON string** and
@@ -105,6 +110,89 @@ func additionalParametersJSON(params map[string][]string) (json.RawMessage, erro
 	}
 	b.WriteByte('}')
 	return b.Bytes(), nil
+}
+
+// credentialRequest is one entry of the `credentials` array POST /users and
+// PUT /users/{id} carry, and almost nothing in CredentialRepresentation's field
+// list survives the trip. Measured 2026-08-30, one body at a time:
+//
+//   - **type is ignored**, the way reset-password ignores it. "otp",
+//     "nonsense" and an absent type each produced a password credential the
+//     password grant then accepted.
+//   - **userLabel is dropped.** A create naming one answers 201 and the
+//     credential reads back with no userLabel at all, so a label can still only
+//     arrive through PUT .../credentials/{id}/userLabel.
+//   - **id, createdDate and priority are dropped too.** The server mints its
+//     own id and stamps its own date - the opposite of POST /clients and
+//     POST /client-scopes, where the body's id wins.
+//   - **secretData and credentialData are dropped**, so this is not an import
+//     path: a body carrying either still gets a freshly hashed argon2
+//     credential.
+//
+// Only value and temporary are read, which is why only those two are fields
+// with anything behind them. Type and UserLabel are declared so the keys are
+// consumed rather than looked at, and so a reader sees the omission is
+// deliberate - protocolMapperRequest.ConsentRequired is here for the same
+// reason.
+type credentialRequest struct {
+	Type string `json:"type"`
+	// A pointer because absent and empty are different answers: absent or null
+	// is a rejection and "" is a 201 that stores a credential with no hash.
+	// See credentialsMissingValue and newPasswordCredential.
+	Value     *string `json:"value"`
+	Temporary bool    `json:"temporary"`
+	UserLabel string  `json:"userLabel"`
+}
+
+// credentialsMissingValue reports whether any entry carries no value, which is
+// the one thing that makes an inline credentials array a rejection.
+//
+// Absent and null are the same input to Keycloak and both are rejected; ""
+// and even "  " are accepted. The caller decides which rejection: 500 on the
+// create, 400 "Could not update user!" on the update.
+func credentialsMissingValue(creds []credentialRequest) bool {
+	for _, c := range creds {
+		if c.Value == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// applyCredentials stores the inline credentials array a user create or update
+// carried. It is a no-op for an absent, null or empty array, all three of which
+// were measured answering 201 with no credential.
+//
+// **Each entry replaces the one before it.** SetCredential upserts on
+// (user_id, type) and newPasswordCredential reuses the id it finds, so an array
+// of two passwords leaves one credential holding the second value - measured,
+// the first no longer grants and the listing has one row.
+//
+// **temporary is a disjunction over the array, and it only ever adds.** Both
+// orderings of {true, false} left UPDATE_PASSWORD on the user, so it is not
+// last-wins; and a non-temporary inline credential put onto a user that already
+// carries the action leaves it there, where reset-password with temporary false
+// removes it. Reusing resetPassword's withAction call is the obvious saving and
+// it is wrong on that second measurement - which is the same trap AGENTS.md
+// already records for reset-password's ignored type.
+func (h *handler) applyCredentials(ctx context.Context, user *model.User, creds []credentialRequest) error {
+	temporary := false
+	for _, c := range creds {
+		cred, err := h.newPasswordCredential(ctx, user, *c.Value)
+		if err != nil {
+			return err
+		}
+		if err := h.store.Users().SetCredential(ctx, cred); err != nil {
+			return err
+		}
+		temporary = temporary || c.Temporary
+	}
+	if !temporary {
+		return nil
+	}
+	updated := *user
+	updated.RequiredActions = withAction(user.RequiredActions, updatePasswordAction, true)
+	return h.store.Users().Update(ctx, &updated)
 }
 
 // passwordRepresentation is the body reset-password takes.
@@ -353,6 +441,17 @@ func writeCredentialNotFound(w http.ResponseWriter) {
 // makes it appear escaped in the response. Marshalling it inline as an object
 // would produce valid JSON that differs from Keycloak's byte for byte.
 func credentialRepresentationOf(c *model.Credential) (credentialRepresentation, error) {
+	// A credential with no algorithm describes no hash, and Keycloak omits the
+	// key rather than sending an object full of zeroes. See
+	// newPasswordCredential for the one body that produces one.
+	if c.Algorithm == "" {
+		return credentialRepresentation{
+			ID:          c.ID,
+			Type:        c.Type,
+			UserLabel:   c.Label,
+			CreatedDate: c.CreatedDate,
+		}, nil
+	}
 	params, err := additionalParametersJSON(c.AdditionalParameters)
 	if err != nil {
 		return credentialRepresentation{}, err
@@ -404,6 +503,25 @@ func (h *handler) newPasswordCredential(ctx context.Context, user *model.User, p
 		id = existing.ID
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return nil, err
+	}
+
+	// **An empty password is stored as a credential that hashes nothing.**
+	// Measured: {"type":"password","value":""} inline on a create answers 201
+	// and the credential reads back as id, type and createdDate with no
+	// credentialData, and the password grant against that user is then a 500.
+	// Keycloak's own defect, reproduced as far as this side of it reaches - a
+	// later reset-password over the same id fixes it up and keeps the id.
+	//
+	// reset-password never arrives here with one: it answers an empty value
+	// 400 "No password provided" before this is called. The inline array is the
+	// only route that can produce it.
+	if password == "" {
+		return &model.Credential{
+			ID:          id,
+			UserID:      user.ID,
+			Type:        passwordCredentialType,
+			CreatedDate: time.Now().UnixMilli(),
+		}, nil
 	}
 
 	return &model.Credential{

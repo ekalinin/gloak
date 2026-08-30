@@ -670,6 +670,50 @@ var Fixtures = map[string]Fixture{
 	"narrow-caller-manage-clients": callerFixture("gloak-probe-caller-manage-clients", "manage-clients"),
 	// The same caller, with a scope and a realm role to aim at.
 	"scope-mappings-narrow-caller": scopeMappingNarrowCallerFixture(),
+
+	// F84's fixtures. Every one of them puts the password in the create's own
+	// `credentials` array rather than in a following reset-password, which is
+	// the shape scopeMappingCallerSteps' comment says was tried and reverted
+	// because Gloak ignored it. See inlineCredentialFixture for why the grant
+	// step is the assertion.
+	"inline-credential": inlineCredentialFixture("gloak-probe-inline",
+		`[{"type":"password","value":"probe-pass"}]`, "probe-pass"),
+	// A temporary inline password, for the requiredActions read. It cannot log
+	// in - "Account is not fully set up" - so this one grants nothing.
+	"inline-credential-temporary": inlineCredentialFixture("gloak-probe-inline-temp",
+		`[{"type":"password","value":"probe-pass","temporary":true}]`, ""),
+	// type "otp" and a userLabel, both of which the array drops: the credential
+	// comes back as a password with no label.
+	"inline-credential-otp": inlineCredentialFixture("gloak-probe-inline-otp",
+		`[{"type":"otp","value":"probe-pass","userLabel":"office laptop"}]`, "probe-pass"),
+	// Two entries. The **second** password is the one that works, which the
+	// grant steps assert in both directions.
+	"inline-credential-twice": inlineCredentialTwiceFixture(),
+	// An empty value, which is a 201 and a credential describing no hash.
+	"inline-credential-empty-value": inlineCredentialFixture("gloak-probe-inline-empty",
+		`[{"type":"password","value":""}]`, ""),
+	// A user with no password, for the update route's own inline array.
+	"inline-credential-update": inlineCredentialUpdateFixture(),
+	// A create that was refused for a valueless credential, so the case after
+	// it can read that the user is not there. The refusal is a fixture step
+	// rather than the case before it, because a golden that needs its
+	// neighbour to have run first is not a measurement.
+	"inline-credential-rollback": {
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/users",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"username":"gloak-probe-rollback","enabled":true,` +
+						`"credentials":[{"type":"password"}]}`),
+				},
+				ExpectStatus: []int{http.StatusInternalServerError},
+			},
+		},
+	},
 }
 
 // The fixed client-scope ids P5's fixtures create their scopes with. They are
@@ -3584,4 +3628,108 @@ func scopeMappingCallerSteps(username string) []Step {
 			Capture: map[string]string{"caller_token": "access_token"},
 		},
 	}
+}
+
+// inlineCredentialFixture creates a user whose password arrives in the
+// `credentials` array of the create itself, captures its id, and - when
+// password is non-empty - logs in as it.
+//
+// **The grant step is what makes this fixture worth having.** F84 is a defect
+// in POST /users that no case for POST /users can see: the create answers 201
+// with an empty body whether the array was honoured or ignored, and the only
+// observable that moves is a login two steps later. It was found exactly that
+// way, by a fixture written this shape recording green against the reference
+// container and then failing the verifier at the grant. A step with no
+// ExpectStatus accepts any 2xx, so an ignored array is a 400 here and the
+// failure is loud.
+//
+// An empty password means the fixture stops after the create: a temporary
+// password answers "Account is not fully set up" and a hashless one is a 500,
+// so neither can be granted, and both are measured that way.
+func inlineCredentialFixture(username, credentials, password string) Fixture {
+	f := Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/users",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"username":"` + username + `","enabled":true,` +
+						`"credentials":` + credentials + `}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/users",
+					Query:   map[string]string{"username": username, "exact": "true"},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"user_id": "0/id"},
+			},
+		},
+	}
+	if password != "" {
+		f.Steps = append(f.Steps, inlineCredentialGrantStep(username, password, nil))
+	}
+	return f
+}
+
+// inlineCredentialGrantStep is a password grant as the user the fixture just
+// made. expect is nil for the grant that must succeed and carries 400 for the
+// one that must not.
+//
+// It captures nothing: what it asserts is its own status, which is the whole
+// reason it is in the fixture. TestFixturesAreWellFormed lets a POST through
+// without a capture; only a GET has to justify itself.
+func inlineCredentialGrantStep(username, password string, expect []int) Step {
+	return Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type": "password", "client_id": "admin-cli",
+				"username": username, "password": password,
+			},
+		},
+		ExpectStatus: expect,
+	}
+}
+
+// inlineCredentialTwiceFixture creates a user with **two** password entries in
+// one array and then proves which one survived.
+//
+// Measured: the array is applied in order and each entry replaces the one
+// before it, so the user ends with a single credential holding the second
+// value. Both grants are here because only the pair says that: the second
+// succeeding alone would also be true of an implementation that stored both.
+func inlineCredentialTwiceFixture() Fixture {
+	f := inlineCredentialFixture("gloak-probe-inline-twice",
+		`[{"type":"password","value":"probe-first"},{"type":"password","value":"probe-second"}]`,
+		"probe-second")
+	return Fixture{
+		State: f.State,
+		Steps: append(f.Steps,
+			inlineCredentialGrantStep("gloak-probe-inline-twice", "probe-first",
+				[]int{http.StatusBadRequest})),
+	}
+}
+
+// inlineCredentialUpdateFixture makes a user with no password and then sets one
+// through PUT /users/{id}'s own inline array, which is the second route F84
+// turned out to be a defect on.
+func inlineCredentialUpdateFixture() Fixture {
+	f := userFixture("gloak-probe-inline-put")
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/master/users/{{user_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`{"credentials":[{"type":"password","value":"probe-pass"}]}`),
+		},
+	}, inlineCredentialGrantStep("gloak-probe-inline-put", "probe-pass", nil))
+	return f
 }
