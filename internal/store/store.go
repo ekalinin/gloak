@@ -54,7 +54,38 @@ type Store interface {
 	Groups() GroupRepo
 	Keys() KeyRepo
 	Sessions() SessionRepo
+	RequiredActions() RequiredActionRepo
 	Close() error
+}
+
+// RequiredActionRepo stores a realm's registered required action providers.
+//
+// It is keyed by a server-minted id rather than by alias, and the reason is
+// measured rather than tidy: PUT /required-actions/{alias} writes the body's
+// alias over the row's, so a PUT with an empty body renames a row to the empty
+// string and leaves it in the listing addressable by nothing. See
+// 0017_required_action.sql.
+type RequiredActionRepo interface {
+	// ListByRealm returns every registered required action, ordered by
+	// priority ascending. That order is the contract: the listing was measured
+	// in priority order on master and on a created realm, and the orphan row a
+	// PUT with `{}` leaves behind - priority 0 - sorted first.
+	//
+	// A tie is broken by id so the two drivers agree with each other. Nothing
+	// measured says what Keycloak does with one, because no measured realm has
+	// two rows at one priority.
+	ListByRealm(ctx context.Context, realmID string) ([]*model.RequiredActionProvider, error)
+	// ByAlias resolves one row. An alias that matches nothing is ErrNotFound,
+	// which the handlers turn into **two** different 404 bodies depending on
+	// the verb - see writeRequiredActionNotFound.
+	ByAlias(ctx context.Context, realmID, alias string) (*model.RequiredActionProvider, error)
+	Create(ctx context.Context, m *model.RequiredActionProvider) error
+	// Update writes alias, name, enabled, defaultAction, priority and config
+	// back. It does **not** write providerId: that field is read off the wire
+	// by PUT /required-actions/{alias} and discarded, measured, so a row's
+	// provider cannot change after registration.
+	Update(ctx context.Context, m *model.RequiredActionProvider) error
+	Delete(ctx context.Context, realmID, id string) error
 }
 
 type RealmRepo interface {

@@ -136,6 +136,10 @@ func (s *Store) Keys() store.KeyRepo     { return &keyRepo{s.pool} }
 
 func (s *Store) Sessions() store.SessionRepo { return &sessionRepo{s.pool} }
 
+func (s *Store) RequiredActions() store.RequiredActionRepo {
+	return &requiredActionRepo{s.pool}
+}
+
 // classify maps driver errors onto the store's sentinels so handlers never
 // inspect driver-specific error text.
 func classify(err error) error {
@@ -1706,6 +1710,89 @@ func collectClientScopes(rows pgx.Rows) ([]*model.ClientScope, error) {
 	out := []*model.ClientScope{}
 	for rows.Next() {
 		m, err := scanClientScope(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+// requiredActionColumns is the row of required_action_provider, in the order
+// the representation serialises them - so a reader comparing this list against
+// the measured body does not have to reorder anything in their head.
+const requiredActionColumns = `id, realm_id, alias, name, provider_id, enabled, default_action, priority, config`
+
+type requiredActionRepo struct{ pool *pgxpool.Pool }
+
+func (r *requiredActionRepo) Create(ctx context.Context, m *model.RequiredActionProvider) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO required_action_provider (`+requiredActionColumns+`)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		m.ID, m.RealmID, m.Alias, m.Name, m.ProviderID, m.Enabled,
+		m.DefaultAction, m.Priority, encode(m.Config))
+	return classify(err)
+}
+
+func (r *requiredActionRepo) ByAlias(ctx context.Context, realmID, alias string) (*model.RequiredActionProvider, error) {
+	return scanRequiredAction(r.pool.QueryRow(ctx,
+		`SELECT `+requiredActionColumns+` FROM required_action_provider
+		 WHERE realm_id = $1 AND alias = $2 ORDER BY priority, id LIMIT 1`,
+		realmID, alias))
+}
+
+func (r *requiredActionRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.RequiredActionProvider, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+requiredActionColumns+` FROM required_action_provider
+		 WHERE realm_id = $1 ORDER BY priority, id`, realmID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return collectRequiredActions(rows)
+}
+
+// Update deliberately omits provider_id. PUT /required-actions/{alias} reads
+// providerId off the wire and discards it, measured, so the column is written
+// once at registration and never again.
+func (r *requiredActionRepo) Update(ctx context.Context, m *model.RequiredActionProvider) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE required_action_provider SET alias = $1, name = $2, enabled = $3,
+		 default_action = $4, priority = $5, config = $6 WHERE realm_id = $7 AND id = $8`,
+		m.Alias, m.Name, m.Enabled, m.DefaultAction, m.Priority,
+		encode(m.Config), m.RealmID, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(tag.RowsAffected())
+}
+
+func (r *requiredActionRepo) Delete(ctx context.Context, realmID, id string) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM required_action_provider WHERE realm_id = $1 AND id = $2`, realmID, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(tag.RowsAffected())
+}
+
+func scanRequiredAction(row scanner) (*model.RequiredActionProvider, error) {
+	m := &model.RequiredActionProvider{}
+	var config string
+	if err := row.Scan(&m.ID, &m.RealmID, &m.Alias, &m.Name, &m.ProviderID,
+		&m.Enabled, &m.DefaultAction, &m.Priority, &config); err != nil {
+		return nil, classify(err)
+	}
+	if err := decode(config, &m.Config); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func collectRequiredActions(rows pgx.Rows) ([]*model.RequiredActionProvider, error) {
+	defer rows.Close()
+	out := []*model.RequiredActionProvider{}
+	for rows.Next() {
+		m, err := scanRequiredAction(rows)
 		if err != nil {
 			return nil, err
 		}

@@ -1,0 +1,1518 @@
+{
+ "authenticators": [
+  {
+   "id": "auth-cookie",
+   "displayName": "Cookie",
+   "description": "Validates the SSO cookie set by the auth server.",
+   "properties": []
+  },
+  {
+   "id": "conditional-client-scope",
+   "displayName": "Condition - client scope",
+   "description": "Condition to evaluate if a configured client scope is present as a client scope of the client requesting authentication",
+   "properties": [
+    {
+     "name": "client_scope",
+     "label": "Client scope name",
+     "helpText": "The name of the client scope, which should be present as a client scope of the client, which is requesting authentication. If requested client scope is default client scope of the client requesting login, the condition will be evaluated to true. If requested client scope is optional client scope of the client requesting login, condition will be evaluated to true if client scope is sent by the client in the login request (EG. by the 'scope' parameter in case of OIDC/OAuth2 client login)",
+     "type": "String",
+     "secret": false,
+     "required": true,
+     "readOnly": false
+    },
+    {
+     "name": "negate",
+     "label": "Negate output",
+     "helpText": "Apply a NOT to the check result. When this is true, then the condition will evaluate to true just if configured client scope is not present",
+     "type": "boolean",
+     "secret": false,
+     "required": true,
+     "readOnly": false
+    }
+   ]
+  },
+  {
+   "id": "reset-credentials-choose-user",
+   "displayName": "Choose User",
+   "description": "Choose a user to reset credentials for",
+   "properties": []
+  },
+  {
+   "id": "webauthn-authenticator",
+   "displayName": "WebAuthn Authenticator",
+   "description": "Authenticator for WebAuthn. Usually used for WebAuthn two-factor authentication",
+   "properties": []
+  },
+  {
+   "id": "direct-grant-validate-password",
+   "displayName": "Password",
+   "description": "Validates the password supplied as a 'password' form parameter in direct grant request",
+   "properties": []
+  },
+  {
+   "id": "auth-spnego",
+   "displayName": "Kerberos",
+   "description": "Initiates the SPNEGO protocol.  Most often used with Kerberos.",
+   "properties": []
+  },
+  {
+   "id": "idp-confirm-override-link",
+   "displayName": "Confirm override existing link",
+   "description": "Confirm override the link if there is an existing broker user linked to the account.",
+   "properties": []
+  },
+  {
+   "id": "reset-password",
+   "displayName": "Reset Password",
+   "description": "Sets the Update Password required action if execution is REQUIRED.  Will also set it if execution is OPTIONAL and the password is currently configured for it.",
+   "properties": []
+  },
+  {
+   "id": "direct-grant-auth-x509-username",
+   "displayName": "X509/Validate Username",
+   "description": "Validates username and password from X509 client certificate received as a part of mutual SSL handshake.",
+   "properties": [
+    {
+     "name": "x509-cert-auth.mapping-source-selection",
+     "label": "User Identity Source",
+     "helpText": "Choose how to extract user identity from X509 certificate or the certificate fields. For example, SubjectDN will match the custom regular expression specified below to the value of certificate's SubjectDN field.",
+     "type": "List",
+     "defaultValue": "Match SubjectDN using regular expression",
+     "options": [
+      "Match SubjectDN using regular expression",
+      "Subject's e-mail",
+      "Subject's Alternative Name E-mail",
+      "Subject's Alternative Name otherName (UPN)",
+      "Subject's Common Name",
+      "Match IssuerDN using regular expression",
+      "Certificate Serial Number",
+      "Certificate Serial Number and IssuerDN",
+      "SHA-256 Thumbprint",
+      "Full Certificate in PEM format"
+     ],
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.canonical-dn-enabled",
+     "label": "Canonical DN representation enabled",
+     "helpText": "Use the canonical format (as defined in the Java Platform) to determine the distinguished name. When enabled, the RFC 2253 conformant string representation is returned, but with some additional normalization rules that alter the original DN in the certificate. This option is relevant for authenticators using a distinguished name.",
+     "type": "boolean",
+     "defaultValue": "false",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.serialnumber-hex-enabled",
+     "label": "Enable Serial Number hexadecimal representation",
+     "helpText": "Use the hex representation of the serial number. This option is relevant for authenticators using serial number.",
+     "type": "boolean",
+     "defaultValue": "false",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.regular-expression",
+     "label": "A regular expression to extract user identity",
+     "helpText": "The regular expression to extract a user identity. The expression must contain a single group. For example, 'uniqueId=(.*?)(?:,|$)' will match 'uniqueId=somebody@company.org, CN=somebody' and give somebody@company.org",
+     "type": "String",
+     "defaultValue": "(.*?)(?:$)",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.mapper-selection",
+     "label": "User mapping method",
+     "helpText": "Choose how to map extracted user identities to users",
+     "type": "List",
+     "defaultValue": "Custom Attribute Mapper",
+     "options": [
+      "Custom Attribute Mapper",
+      "Username or Email"
+     ],
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.mapper-selection.user-attribute-name",
+     "label": "A name of user attribute",
+     "helpText": "A name of user attribute to map the extracted user identity to existing user. The name must be a valid, existing user attribute if User Mapping Method is set to Custom Attribute Mapper. Multiple values are relevant when attribute mapping is related to multiple values, e.g. 'Certificate Serial Number and IssuerDN'",
+     "type": "MultivaluedString",
+     "defaultValue": "usercertificate",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.timestamp-validation-enabled",
+     "label": "Check certificate validity",
+     "helpText": "Will verify that the certificate has not expired yet and is already valid by checking the attributes 'notBefore' and 'notAfter'.",
+     "type": "boolean",
+     "defaultValue": "true",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.crl-checking-enabled",
+     "label": "CRL Checking Enabled",
+     "helpText": "Enable Certificate Revocation Checking using CRL",
+     "type": "boolean",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.crldp-checking-enabled",
+     "label": "Enable CRL Distribution Point to check certificate revocation status",
+     "helpText": "CRL Distribution Point is a starting point for CRL. If this is ON, then CRL checking will be done based on the CRL distribution points included in the checked certificates. CDP is optional, but most PKI authorities include CDP in their certificates.",
+     "type": "boolean",
+     "defaultValue": "false",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.crl-relative-path",
+     "label": "CRL Path",
+     "helpText": "Applied just if CRL checking is ON and CRL Distribution point is OFF. It contains the URL (typically 'http' or 'ldap') where the CRL is available. Alternatively it can contain the path to a CRL file that contains a list of revoked certificates. Paths are assumed to be relative to $jboss.server.config.dir. Multiple CRLs can be included, however it can affect performance as the certificate will be checked against all listed CRLs.",
+     "type": "MultivaluedString",
+     "defaultValue": "crl.pem",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth-crl-abort-if-non-updated",
+     "label": "CRL abort if non updated",
+     "helpText": "A CRL conforming RFC 5280 must include a next update time that marks when the CRL will be updated. If this option is true, the authentication fails when the CRL is outdated and cannot be updated. If false, the authentication continues when the CRL cannot be updated after the next update time.",
+     "type": "boolean",
+     "defaultValue": "true",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.ocsp-checking-enabled",
+     "label": "OCSP Checking Enabled",
+     "helpText": "Enable Certificate Revocation Checking using OCSP",
+     "type": "boolean",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.ocsp-fail-open",
+     "label": "OCSP Fail-Open Behavior",
+     "helpText": "Whether to allow or deny authentication for client certificates that have missing/invalid/inconclusive OCSP endpoints. By default a successful OCSP response is required.",
+     "type": "boolean",
+     "defaultValue": "false",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.ocsp-responder-uri",
+     "label": "OCSP Responder Uri",
+     "helpText": "Clients use OCSP Responder Uri to check certificate revocation status.",
+     "type": "String",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.ocsp-responder-certificate",
+     "label": "OCSP Responder Certificate",
+     "helpText": "Optional certificate used by the responder to sign the responses. The certificate should be in PEM format without BEGIN and END tags. It is only used if the OCSP Responder URI is set. By default, the certificate of the OCSP responder is that of the issuer of the certificate being validated or one with the OCSPSigning extension and also issued by the same CA. This option identifies the certificate of the OCSP responder when the defaults do not apply.",
+     "type": "Text",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.keyusage",
+     "label": "Validate Key Usage",
+     "helpText": "Validates that the purpose of the key contained in the certificate (encipherment, signature, etc.) matches its intended purpose. Leaving the field blank will disable Key Usage validation. For example, 'digitalSignature, keyEncipherment' will check if the digitalSignature and keyEncipherment bits (bit 0 and bit 2 respectively) are set in certificate's X509 Key Usage extension. See RFC 5280 for a detailed definition of X509 Key Usage extension.",
+     "type": "String",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.extendedkeyusage",
+     "label": "Validate Extended Key Usage",
+     "helpText": "Validates the extended purposes of the certificate's key using certificate's Extended Key Usage extension. Leaving the field blank will disable Extended Key Usage validation. See RFC 5280 for a detailed definition of X509 Extended Key Usage extension.",
+     "type": "String",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.confirmation-page-disallowed",
+     "label": "Bypass identity confirmation",
+     "helpText": "By default, the users are prompted to confirm their identity extracted from X509 client certificate. The identity confirmation prompt is skipped if the option is switched on.",
+     "type": "boolean",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.revalidate-certificate-enabled",
+     "label": "Revalidate Client Certificate",
+     "helpText": "Forces revalidation of the client certificate according to the certificates defined in the truststore. This is useful when behind a non-validating proxy or when the number of allowed certificate chains would be too large for mutual SSL negotiation.",
+     "type": "boolean",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.certificate-policy",
+     "label": "Validate Certificate Policy",
+     "helpText": "Validates the certificate policies of the certificate's key using certificate's Policy extension. Leaving the field blank will disable Certificate Policies validation. Multiple policies should be separated using a comma. See RFC 5280 for a detailed definition of X509 Certificate Policy extension.",
+     "type": "String",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.certificate-policy-mode",
+     "label": "Certificate Policy Validation Mode",
+     "helpText": "If Certificate Policy validation is specified, indicates whether it should match all or at least one of the specified policies.",
+     "type": "List",
+     "defaultValue": "All",
+     "options": [
+      "All",
+      "Any"
+     ],
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    }
+   ]
+  },
+  {
+   "id": "idp-add-organization-member",
+   "displayName": "Organization Member Onboard",
+   "description": "Adds a federated user as a member of an organization",
+   "properties": []
+  },
+  {
+   "id": "auth-password-form",
+   "displayName": "Password Form",
+   "description": "Validates a password from login form.",
+   "properties": []
+  },
+  {
+   "id": "docker-http-basic-authenticator",
+   "displayName": "Docker Authenticator",
+   "description": "Uses HTTP Basic authentication to validate docker users, returning a docker error token on auth failure",
+   "properties": []
+  },
+  {
+   "id": "idp-username-password-form",
+   "displayName": "Username Password Form for identity provider reauthentication",
+   "description": "Validates a password from login form. Username may be already known from identity provider authentication",
+   "properties": []
+  },
+  {
+   "id": "allow-access-authenticator",
+   "displayName": "Allow access",
+   "description": "Authenticator will always successfully authenticate. Useful for example in the conditional flows to be used after satisfying the previous conditions",
+   "properties": []
+  },
+  {
+   "id": "idp-email-verification",
+   "displayName": "Verify existing account by Email",
+   "description": "Email verification of existing Keycloak user, that wants to link his user account with identity provider",
+   "properties": []
+  },
+  {
+   "id": "idp-auto-link",
+   "displayName": "Automatically set existing user",
+   "description": "Automatically set existing user to authentication context without any verification",
+   "properties": []
+  },
+  {
+   "id": "auth-x509-client-username-form",
+   "displayName": "X509/Validate Username Form",
+   "description": "Validates username and password from X509 client certificate received as a part of mutual SSL handshake.",
+   "properties": [
+    {
+     "name": "x509-cert-auth.mapping-source-selection",
+     "label": "User Identity Source",
+     "helpText": "Choose how to extract user identity from X509 certificate or the certificate fields. For example, SubjectDN will match the custom regular expression specified below to the value of certificate's SubjectDN field.",
+     "type": "List",
+     "defaultValue": "Match SubjectDN using regular expression",
+     "options": [
+      "Match SubjectDN using regular expression",
+      "Subject's e-mail",
+      "Subject's Alternative Name E-mail",
+      "Subject's Alternative Name otherName (UPN)",
+      "Subject's Common Name",
+      "Match IssuerDN using regular expression",
+      "Certificate Serial Number",
+      "Certificate Serial Number and IssuerDN",
+      "SHA-256 Thumbprint",
+      "Full Certificate in PEM format"
+     ],
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.canonical-dn-enabled",
+     "label": "Canonical DN representation enabled",
+     "helpText": "Use the canonical format (as defined in the Java Platform) to determine the distinguished name. When enabled, the RFC 2253 conformant string representation is returned, but with some additional normalization rules that alter the original DN in the certificate. This option is relevant for authenticators using a distinguished name.",
+     "type": "boolean",
+     "defaultValue": "false",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.serialnumber-hex-enabled",
+     "label": "Enable Serial Number hexadecimal representation",
+     "helpText": "Use the hex representation of the serial number. This option is relevant for authenticators using serial number.",
+     "type": "boolean",
+     "defaultValue": "false",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.regular-expression",
+     "label": "A regular expression to extract user identity",
+     "helpText": "The regular expression to extract a user identity. The expression must contain a single group. For example, 'uniqueId=(.*?)(?:,|$)' will match 'uniqueId=somebody@company.org, CN=somebody' and give somebody@company.org",
+     "type": "String",
+     "defaultValue": "(.*?)(?:$)",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.mapper-selection",
+     "label": "User mapping method",
+     "helpText": "Choose how to map extracted user identities to users",
+     "type": "List",
+     "defaultValue": "Custom Attribute Mapper",
+     "options": [
+      "Custom Attribute Mapper",
+      "Username or Email"
+     ],
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.mapper-selection.user-attribute-name",
+     "label": "A name of user attribute",
+     "helpText": "A name of user attribute to map the extracted user identity to existing user. The name must be a valid, existing user attribute if User Mapping Method is set to Custom Attribute Mapper. Multiple values are relevant when attribute mapping is related to multiple values, e.g. 'Certificate Serial Number and IssuerDN'",
+     "type": "MultivaluedString",
+     "defaultValue": "usercertificate",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.timestamp-validation-enabled",
+     "label": "Check certificate validity",
+     "helpText": "Will verify that the certificate has not expired yet and is already valid by checking the attributes 'notBefore' and 'notAfter'.",
+     "type": "boolean",
+     "defaultValue": "true",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.crl-checking-enabled",
+     "label": "CRL Checking Enabled",
+     "helpText": "Enable Certificate Revocation Checking using CRL",
+     "type": "boolean",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.crldp-checking-enabled",
+     "label": "Enable CRL Distribution Point to check certificate revocation status",
+     "helpText": "CRL Distribution Point is a starting point for CRL. If this is ON, then CRL checking will be done based on the CRL distribution points included in the checked certificates. CDP is optional, but most PKI authorities include CDP in their certificates.",
+     "type": "boolean",
+     "defaultValue": "false",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.crl-relative-path",
+     "label": "CRL Path",
+     "helpText": "Applied just if CRL checking is ON and CRL Distribution point is OFF. It contains the URL (typically 'http' or 'ldap') where the CRL is available. Alternatively it can contain the path to a CRL file that contains a list of revoked certificates. Paths are assumed to be relative to $jboss.server.config.dir. Multiple CRLs can be included, however it can affect performance as the certificate will be checked against all listed CRLs.",
+     "type": "MultivaluedString",
+     "defaultValue": "crl.pem",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth-crl-abort-if-non-updated",
+     "label": "CRL abort if non updated",
+     "helpText": "A CRL conforming RFC 5280 must include a next update time that marks when the CRL will be updated. If this option is true, the authentication fails when the CRL is outdated and cannot be updated. If false, the authentication continues when the CRL cannot be updated after the next update time.",
+     "type": "boolean",
+     "defaultValue": "true",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.ocsp-checking-enabled",
+     "label": "OCSP Checking Enabled",
+     "helpText": "Enable Certificate Revocation Checking using OCSP",
+     "type": "boolean",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.ocsp-fail-open",
+     "label": "OCSP Fail-Open Behavior",
+     "helpText": "Whether to allow or deny authentication for client certificates that have missing/invalid/inconclusive OCSP endpoints. By default a successful OCSP response is required.",
+     "type": "boolean",
+     "defaultValue": "false",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.ocsp-responder-uri",
+     "label": "OCSP Responder Uri",
+     "helpText": "Clients use OCSP Responder Uri to check certificate revocation status.",
+     "type": "String",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.ocsp-responder-certificate",
+     "label": "OCSP Responder Certificate",
+     "helpText": "Optional certificate used by the responder to sign the responses. The certificate should be in PEM format without BEGIN and END tags. It is only used if the OCSP Responder URI is set. By default, the certificate of the OCSP responder is that of the issuer of the certificate being validated or one with the OCSPSigning extension and also issued by the same CA. This option identifies the certificate of the OCSP responder when the defaults do not apply.",
+     "type": "Text",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.keyusage",
+     "label": "Validate Key Usage",
+     "helpText": "Validates that the purpose of the key contained in the certificate (encipherment, signature, etc.) matches its intended purpose. Leaving the field blank will disable Key Usage validation. For example, 'digitalSignature, keyEncipherment' will check if the digitalSignature and keyEncipherment bits (bit 0 and bit 2 respectively) are set in certificate's X509 Key Usage extension. See RFC 5280 for a detailed definition of X509 Key Usage extension.",
+     "type": "String",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.extendedkeyusage",
+     "label": "Validate Extended Key Usage",
+     "helpText": "Validates the extended purposes of the certificate's key using certificate's Extended Key Usage extension. Leaving the field blank will disable Extended Key Usage validation. See RFC 5280 for a detailed definition of X509 Extended Key Usage extension.",
+     "type": "String",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.confirmation-page-disallowed",
+     "label": "Bypass identity confirmation",
+     "helpText": "By default, the users are prompted to confirm their identity extracted from X509 client certificate. The identity confirmation prompt is skipped if the option is switched on.",
+     "type": "boolean",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.revalidate-certificate-enabled",
+     "label": "Revalidate Client Certificate",
+     "helpText": "Forces revalidation of the client certificate according to the certificates defined in the truststore. This is useful when behind a non-validating proxy or when the number of allowed certificate chains would be too large for mutual SSL negotiation.",
+     "type": "boolean",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.certificate-policy",
+     "label": "Validate Certificate Policy",
+     "helpText": "Validates the certificate policies of the certificate's key using certificate's Policy extension. Leaving the field blank will disable Certificate Policies validation. Multiple policies should be separated using a comma. See RFC 5280 for a detailed definition of X509 Certificate Policy extension.",
+     "type": "String",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "x509-cert-auth.certificate-policy-mode",
+     "label": "Certificate Policy Validation Mode",
+     "helpText": "If Certificate Policy validation is specified, indicates whether it should match all or at least one of the specified policies.",
+     "type": "List",
+     "defaultValue": "All",
+     "options": [
+      "All",
+      "Any"
+     ],
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    }
+   ]
+  },
+  {
+   "id": "conditional-sub-flow-executed",
+   "displayName": "Condition - sub-flow executed",
+   "description": "Condition to evaluate if a sub-flow was executed successfully during the authentication process",
+   "properties": [
+    {
+     "name": "flow_to_check",
+     "label": "Flow name",
+     "helpText": "The sub-flow name to check if it was executed.",
+     "type": "String",
+     "secret": false,
+     "required": true,
+     "readOnly": false
+    },
+    {
+     "name": "check_result",
+     "label": "Check result",
+     "helpText": "When the condition evaluates to true.\nIf 'executed' returns true when the configured sub-flow was executed with output success, false otherwise.\nIf 'not-executed' returns false when the sub-flow was executed with output success, true otherwise.\n",
+     "type": "List",
+     "defaultValue": "executed",
+     "options": [
+      "executed",
+      "not-executed"
+     ],
+     "secret": false,
+     "required": true,
+     "readOnly": false
+    }
+   ]
+  },
+  {
+   "id": "conditional-user-role",
+   "displayName": "Condition - user role",
+   "description": "Flow is executed only if user has the given role.",
+   "properties": [
+    {
+     "name": "condUserRole",
+     "label": "User role",
+     "helpText": "Role the user should have to execute this flow. Click 'Select Role' button to browse roles, or just type it in the textbox. To reference a client role the syntax is clientname.clientrole, i.e. myclient.myrole",
+     "type": "Role",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "negate",
+     "label": "Negate output",
+     "helpText": "Apply a NOT to the check result. When this is true, then the condition will evaluate to true just if user does NOT have the specified role. When this is false, the condition will evaluate to true just if user has the specified role",
+     "type": "boolean",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    }
+   ]
+  },
+  {
+   "id": "deny-access-authenticator",
+   "displayName": "Deny access",
+   "description": "Access will be always denied. Useful for example in the conditional flows to be used after satisfying the previous conditions",
+   "properties": [
+    {
+     "name": "denyErrorMessage",
+     "label": "Error message",
+     "helpText": "Error message which will be shown to the user. You can directly define particular message or property, which will be used for mapping the error message f.e `deny-access-role1`. If the field is blank, default property 'access-denied' is used.",
+     "type": "String",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    }
+   ]
+  },
+  {
+   "id": "identity-provider-redirector",
+   "displayName": "Identity Provider Redirector",
+   "description": "Redirects to default Identity Provider or Identity Provider specified with kc_idp_hint query parameter",
+   "properties": [
+    {
+     "name": "defaultProvider",
+     "label": "Default Identity Provider",
+     "helpText": "To automatically redirect to an identity provider set to the alias of the identity provider",
+     "type": "String",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    }
+   ]
+  },
+  {
+   "id": "reset-otp",
+   "displayName": "Reset OTP",
+   "description": "Removes existing OTP configurations (if chosen) and sets the 'Configure OTP' required action.",
+   "properties": [
+    {
+     "name": "action_on_otp_reset_flag",
+     "label": "Action on OTP reset.",
+     "helpText": " If 'Remove none' is chosen, the user will keep all existing OTP configurations (legacy behavior). If 'Remove one' is chosen, the user will be prompted to choose one OTP configuration which will then be removed. If 'Remove all' is chosen, all existing OTP configurations of the user will be removed. The user will always be prompted to configure a new OTP no matter which option is selected.",
+     "type": "List",
+     "defaultValue": "Remove none",
+     "options": [
+      "Remove none",
+      "Remove one",
+      "Remove all"
+     ],
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    }
+   ]
+  },
+  {
+   "id": "direct-grant-validate-username",
+   "displayName": "Username Validation",
+   "description": "Validates the username supplied as a 'username' form parameter in direct grant request",
+   "properties": []
+  },
+  {
+   "id": "conditional-user-configured",
+   "displayName": "Condition - user configured",
+   "description": "Executes the current flow only if authenticators are configured",
+   "properties": []
+  },
+  {
+   "id": "webauthn-authenticator-passwordless",
+   "displayName": "WebAuthn Passwordless Authenticator",
+   "description": "Authenticator for Passwordless WebAuthn authentication",
+   "properties": []
+  },
+  {
+   "id": "idp-review-profile",
+   "displayName": "Review Profile",
+   "description": "User reviews and updates profile data retrieved from Identity Provider in the displayed form",
+   "properties": [
+    {
+     "name": "update.profile.on.first.login",
+     "label": "Update Profile on First Login",
+     "helpText": "Define conditions under which a user has to review and update his profile after first-time login. Value 'On' means that page for reviewing profile will be displayed and user can review and update his profile. Value 'off' means that page won't be displayed. Value 'missing' means that page is displayed just when some required attribute is missing (wasn't downloaded from identity provider). Value 'missing' is the default one. WARN: In case that user clicks 'Review profile info' on link duplications page, the update page will be always displayed. You would need to disable this authenticator to never display the page.",
+     "type": "List",
+     "defaultValue": "missing",
+     "options": [
+      "on",
+      "missing",
+      "off"
+     ],
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    }
+   ]
+  },
+  {
+   "id": "auth-conditional-otp-form",
+   "displayName": "Conditional OTP Form",
+   "description": "Validates a OTP on a separate OTP form. Only shown if required based on the configured conditions.",
+   "properties": [
+    {
+     "name": "otpControlAttribute",
+     "label": "OTP control User Attribute",
+     "helpText": "The name of the user attribute to explicitly control OTP auth. If attribute value is 'force' then OTP is always required. If value is 'skip' the OTP auth is skipped. Otherwise this check is ignored.",
+     "type": "String",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "skipOtpRole",
+     "label": "Skip OTP for Role",
+     "helpText": "OTP is always skipped if user has the given Role.",
+     "type": "Role",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "forceOtpRole",
+     "label": "Force OTP for Role",
+     "helpText": "OTP is always required if user has the given Role.",
+     "type": "Role",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "noOtpRequiredForHeaderPattern",
+     "label": "Skip OTP for Header",
+     "helpText": "OTP is skipped if a HTTP request header does matches the given pattern.Can be used to specify trusted networks via: X-Forwarded-Host: (1.2.3.4|1.2.3.5).In this case requests from 1.2.3.4 and 1.2.3.5 come from a trusted source.",
+     "type": "String",
+     "defaultValue": "",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "forceOtpForHeaderPattern",
+     "label": "Force OTP for Header",
+     "helpText": "OTP required if a HTTP request header matches the given pattern.",
+     "type": "String",
+     "defaultValue": "",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "defaultOtpOutcome",
+     "label": "Fallback OTP handling",
+     "helpText": "What to do in case of every check abstains. Defaults to force OTP authentication.",
+     "type": "List",
+     "options": [
+      "skip",
+      "force"
+     ],
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    }
+   ]
+  },
+  {
+   "id": "idp-confirm-link",
+   "displayName": "Confirm link existing account",
+   "description": "Show the form where user confirms if he wants to link identity provider with existing account or rather edit user profile data retrieved from identity provider to avoid conflict",
+   "properties": []
+  },
+  {
+   "id": "auth-username-password-form",
+   "displayName": "Username Password Form",
+   "description": "Validates a username and password from login form.",
+   "properties": []
+  },
+  {
+   "id": "user-session-limits",
+   "displayName": "User session count limiter",
+   "description": "Configures how many concurrent sessions a single user is allowed to create for this realm and/or client",
+   "properties": [
+    {
+     "name": "userRealmLimit",
+     "label": "Maximum concurrent sessions for each user within this realm.",
+     "helpText": "Provide a zero or negative value to disable this limit.",
+     "type": "String",
+     "defaultValue": "3",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "userClientLimit",
+     "label": "Maximum concurrent sessions for each user per keycloak client.",
+     "helpText": "Provide a zero or negative value to disable this limit. In case a limit for the realm is enabled, specify this value below the total realm limit.",
+     "type": "String",
+     "defaultValue": "0",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "behavior",
+     "label": "Behavior when user session limit is exceeded",
+     "type": "List",
+     "defaultValue": "Deny new session",
+     "options": [
+      "Deny new session",
+      "Terminate oldest session"
+     ],
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "errorMessage",
+     "label": "Optional custom error message",
+     "helpText": "If left empty a default error message is shown",
+     "type": "String",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    }
+   ]
+  },
+  {
+   "id": "reset-credential-email",
+   "displayName": "Send Reset Email",
+   "description": "Send email to user and wait for response.",
+   "properties": [
+    {
+     "name": "force-login",
+     "label": "Force login after reset",
+     "helpText": "If this property is true, the user needs to login again after the reset credentials.\nIf this property is false, the user will be automatically logged in after the succesful\nreset credentials when the same authentication session is used.\nIf this property is only-federated (default), only federated users will be forced to login again,\nusers stored in the internal database will be logged in if using the same authentication session.\n",
+     "type": "List",
+     "defaultValue": "only-federated",
+     "options": [
+      "true",
+      "false",
+      "only-federated"
+     ],
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    }
+   ]
+  },
+  {
+   "id": "conditional-user-attribute",
+   "displayName": "Condition - user attribute",
+   "description": "Flow is executed only if the user attribute exists and has the expected value",
+   "properties": [
+    {
+     "name": "attribute_name",
+     "label": "Attribute name",
+     "helpText": "Name of the attribute to check",
+     "type": "String",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "attribute_expected_value",
+     "label": "Expected attribute value",
+     "helpText": "Expected value in the attribute",
+     "type": "String",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "include_group_attributes",
+     "label": "Include group attributes",
+     "helpText": "If On, the condition checks if any of the joined groups has one attribute matching the configured name and value (this option can affect performance)",
+     "type": "boolean",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "not",
+     "label": "Negate output",
+     "helpText": "Apply a not to the check result",
+     "type": "boolean",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "regex",
+     "label": "regex",
+     "helpText": "Check equality with regex",
+     "type": "boolean",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    }
+   ]
+  },
+  {
+   "id": "auth-username-form",
+   "displayName": "Username Form",
+   "description": "Selects a user from his username.",
+   "properties": []
+  },
+  {
+   "id": "idp-detect-existing-broker-user",
+   "displayName": "Detect existing broker user",
+   "description": "Detect if there is an existing Keycloak account with same email like identity provider. If no, throw an error.",
+   "properties": []
+  },
+  {
+   "id": "http-basic-authenticator",
+   "displayName": "HTTP Basic Authentication",
+   "description": "Validates username and password from Authorization HTTP header",
+   "properties": []
+  },
+  {
+   "id": "organization",
+   "displayName": "Organization Identity-First Login",
+   "description": "If organizations are enabled, automatically redirects users to the corresponding identity provider.",
+   "properties": [
+    {
+     "name": "requiresUserMembership",
+     "label": "Requires user membership",
+     "helpText": "Enforces that users authenticating in the scope of an organization are members. If not a member, the user won't be able to proceed authenticating to the realm",
+     "type": "boolean",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    }
+   ]
+  },
+  {
+   "id": "conditional-level-of-authentication",
+   "displayName": "Condition - Level of Authentication",
+   "description": "Flow is executed only if the configured LOA or a higher one has been requested but not yet satisfied. After the flow is successfully finished, the LOA in the session will be updated to value prescribed by this condition.",
+   "properties": [
+    {
+     "name": "loa-condition-level",
+     "label": "loa-condition-level",
+     "helpText": "loa-condition-level.tooltip",
+     "type": "String",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "loa-max-age",
+     "label": "loa-max-age",
+     "helpText": "loa-max-age.tooltip",
+     "type": "String",
+     "defaultValue": 36000,
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    }
+   ]
+  },
+  {
+   "id": "auth-otp-form",
+   "displayName": "OTP Form",
+   "description": "Validates a OTP on a separate OTP form.",
+   "properties": []
+  },
+  {
+   "id": "conditional-credential",
+   "displayName": "Condition - credential",
+   "description": "Condition to evaluate if a specific credential type has been used (or not used) by the user during the authentication process",
+   "properties": [
+    {
+     "name": "credentials",
+     "label": "Credentials",
+     "helpText": "The list of credentials to be considered by the condition.",
+     "type": "MultivaluedList",
+     "options": [
+      "webauthn",
+      "recovery-authn-codes",
+      "otp",
+      "password",
+      "webauthn-passwordless",
+      "kerberos",
+      "cert",
+      "none"
+     ],
+     "secret": false,
+     "required": true,
+     "readOnly": false
+    },
+    {
+     "name": "included",
+     "label": "Included",
+     "helpText": "If this option is true, the condition will be evaluated to true when any of the credentials specified in the credentials option\nhas been used in the authentication process, false otherwise.\nIf this option is false, the condition is evaluated in the opposite way, it will be true if none of the credentials configured\nhave been used, and false if one or more of them have been used.\n",
+     "type": "boolean",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    }
+   ]
+  },
+  {
+   "id": "direct-grant-validate-otp",
+   "displayName": "OTP",
+   "description": "Validates the one time password supplied as a 'totp' form parameter in direct grant request",
+   "properties": []
+  },
+  {
+   "id": "auth-recovery-authn-code-form",
+   "displayName": "Recovery Authentication Code Form",
+   "description": "Validates a Recovery Authentication Code",
+   "properties": []
+  },
+  {
+   "id": "idp-create-user-if-unique",
+   "displayName": "Create User If Unique",
+   "description": "Detect if there is existing Keycloak account with same email like identity provider. If no, create new user",
+   "properties": [
+    {
+     "name": "require.password.update.after.registration",
+     "label": "Require Password Update After Registration",
+     "helpText": "If this option is true and new user is successfully imported from Identity Provider to Keycloak (there is no duplicated email or username detected in Keycloak DB), then this user is required to update his password",
+     "type": "boolean",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    }
+   ]
+  }
+ ],
+ "formActions": [
+  {
+   "id": "registration-recaptcha-enterprise",
+   "displayName": "reCAPTCHA Enterprise",
+   "description": "Adds Google reCAPTCHA Enterprise to the form.",
+   "properties": [
+    {
+     "name": "project.id",
+     "label": "Project ID",
+     "helpText": "Project ID the site key belongs to.",
+     "type": "String",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "site.key",
+     "label": "reCAPTCHA Site Key",
+     "helpText": "The site key.",
+     "type": "String",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "api.key",
+     "label": "Google API Key",
+     "helpText": "An API key with the reCAPTCHA Enterprise API enabled in the given project ID.",
+     "type": "String",
+     "secret": true,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "score.threshold",
+     "label": "Min. Score Threshold",
+     "helpText": "The minimum score threshold for considering the reCAPTCHA valid (inclusive). Must be a valid double between 0.0 and 1.0.",
+     "type": "String",
+     "defaultValue": "0.7",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "action",
+     "label": "Action Name",
+     "helpText": "A meaningful name for this reCAPTCHA context (e.g. login, register). An action name can only contain alphanumeric characters, slashes and underscores and is not case-sensitive.",
+     "type": "String",
+     "defaultValue": "register",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "useRecaptchaNet",
+     "label": "Use recaptcha.net",
+     "helpText": "Whether to use recaptcha.net instead of google.com, which may have other cookies set.",
+     "type": "boolean",
+     "defaultValue": false,
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "recaptcha.v3",
+     "label": "reCAPTCHA v3",
+     "helpText": "Whether the site key belongs to a v3 (invisible, score-based reCAPTCHA) or v2 site (visible, checkbox-based).",
+     "type": "boolean",
+     "defaultValue": false,
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    }
+   ]
+  },
+  {
+   "id": "registration-recaptcha-action",
+   "displayName": "reCAPTCHA",
+   "description": "Adds Google reCAPTCHA to the form.",
+   "properties": [
+    {
+     "name": "site.key",
+     "label": "reCAPTCHA Site Key",
+     "helpText": "The site key.",
+     "type": "String",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "secret.key",
+     "label": "reCAPTCHA Secret",
+     "helpText": "The secret key.",
+     "type": "String",
+     "secret": true,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "action",
+     "label": "Action Name",
+     "helpText": "A meaningful name for this reCAPTCHA context (e.g. login, register). An action name can only contain alphanumeric characters, slashes and underscores and is not case-sensitive.",
+     "type": "String",
+     "defaultValue": "register",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "useRecaptchaNet",
+     "label": "Use recaptcha.net",
+     "helpText": "Whether to use recaptcha.net instead of google.com, which may have other cookies set.",
+     "type": "boolean",
+     "defaultValue": false,
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    },
+    {
+     "name": "recaptcha.v3",
+     "label": "reCAPTCHA v3",
+     "helpText": "Whether the site key belongs to a v3 (invisible, score-based reCAPTCHA) or v2 site (visible, checkbox-based).",
+     "type": "boolean",
+     "defaultValue": false,
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    }
+   ]
+  },
+  {
+   "id": "registration-user-creation",
+   "displayName": "Registration User Profile Creation",
+   "description": "This action must always be first! Validates the username and user profile of the user in validation phase.  In success phase, this will create the user in the database including his user profile.",
+   "properties": []
+  },
+  {
+   "id": "registration-password-action",
+   "displayName": "Password Validation",
+   "description": "Validates that password matches password confirmation field.  It also will store password in user's credential store.",
+   "properties": [
+    {
+     "name": "always_set_password_on_register_form",
+     "label": "Always set password on register form",
+     "helpText": "When this option is false and 'Verify Email' is enabled for the realm, then the password will not be set by the user on the registration form, but rather in the later stage once  user's email address is successfully verified. This is recommended for security reasons. When true, the password fields will be available directly on the registration form and can be set  by the user before his email is verified. This option is deprecated and might be removed in the future.",
+     "type": "boolean",
+     "secret": false,
+     "required": false,
+     "readOnly": false
+    }
+   ]
+  },
+  {
+   "id": "registration-terms-and-conditions",
+   "displayName": "Terms and conditions",
+   "description": "Asks the user to accept terms and conditions before submitting its registration form.",
+   "properties": []
+  }
+ ],
+ "clientAuthenticators": [
+  {
+   "id": "client-jwt",
+   "displayName": "Signed JWT",
+   "description": "Validates client based on signed JWT issued by client and signed with the Client private key",
+   "supportsSecret": false,
+   "properties": []
+  },
+  {
+   "id": "client-secret",
+   "displayName": "Client Id and Secret",
+   "description": "Validates client based on 'client_id' and 'client_secret' sent either in request parameters or in 'Authorization: Basic' header",
+   "supportsSecret": true,
+   "properties": []
+  },
+  {
+   "id": "federated-jwt",
+   "displayName": "Signed JWT - Federated",
+   "description": "Validates client based on signed JWT issued and signed by an external identity provider",
+   "supportsSecret": false,
+   "properties": []
+  },
+  {
+   "id": "client-x509",
+   "displayName": "X509 Certificate",
+   "description": "Validates client based on a X509 Certificate",
+   "supportsSecret": false,
+   "properties": []
+  },
+  {
+   "id": "client-secret-jwt",
+   "displayName": "Signed JWT with Client Secret",
+   "description": "Validates client based on signed JWT issued by client and signed with the Client Secret",
+   "supportsSecret": true,
+   "properties": []
+  }
+ ],
+ "formProviders": [
+  {
+   "id": "registration-page-form",
+   "displayName": "Registration Page",
+   "description": "This is the controller for the registration page"
+  }
+ ],
+ "requiredActionProperties": {
+  "TERMS_AND_CONDITIONS": [
+   {
+    "name": "max_auth_age",
+    "label": "Maximum Age of Authentication",
+    "helpText": "Configures the duration in seconds this action can be used after the last authentication before the user is required to re-authenticate. This parameter is used just in the context of AIA when the kc_action parameter is available in the request, which is for instance when user himself updates his password in the account console.",
+    "type": "String",
+    "defaultValue": 300,
+    "secret": false,
+    "required": false,
+    "readOnly": false
+   }
+  ],
+  "UPDATE_PROFILE": [
+   {
+    "name": "max_auth_age",
+    "label": "Maximum Age of Authentication",
+    "helpText": "Configures the duration in seconds this action can be used after the last authentication before the user is required to re-authenticate. This parameter is used just in the context of AIA when the kc_action parameter is available in the request, which is for instance when user himself updates his password in the account console.",
+    "type": "String",
+    "defaultValue": 300,
+    "secret": false,
+    "required": false,
+    "readOnly": false
+   }
+  ],
+  "VERIFY_EMAIL": [
+   {
+    "name": "max_auth_age",
+    "label": "Maximum Age of Authentication",
+    "helpText": "Configures the duration in seconds this action can be used after the last authentication before the user is required to re-authenticate. This parameter is used just in the context of AIA when the kc_action parameter is available in the request, which is for instance when user himself updates his password in the account console.",
+    "type": "String",
+    "defaultValue": 300,
+    "secret": false,
+    "required": false,
+    "readOnly": false
+   },
+   {
+    "name": "emailResendCooldownSeconds",
+    "label": "Cooldown Between Email Resend (seconds)",
+    "helpText": "Minimum delay in seconds before another email verification email can be sent.",
+    "type": "String",
+    "defaultValue": "30",
+    "secret": false,
+    "required": false,
+    "readOnly": false
+   }
+  ],
+  "CONFIGURE_TOTP": [
+   {
+    "name": "max_auth_age",
+    "label": "Maximum Age of Authentication",
+    "helpText": "Configures the duration in seconds this action can be used after the last authentication before the user is required to re-authenticate. This parameter is used just in the context of AIA when the kc_action parameter is available in the request, which is for instance when user himself updates his password in the account console.",
+    "type": "String",
+    "defaultValue": 300,
+    "secret": false,
+    "required": false,
+    "readOnly": false
+   },
+   {
+    "name": "add-recovery-codes",
+    "label": "Add Recovery Codes",
+    "helpText": "If this option is enabled, the user will be required to configure recovery codes following the OTP configuration.\nIf the user already has recovery codes configured, Keycloak will not ask for setting them up.\nAs a prerequisite, enable the recovery codes required action and enable recovery codes in your authentication flow.",
+    "type": "boolean",
+    "defaultValue": false,
+    "secret": false,
+    "required": false,
+    "readOnly": false
+   }
+  ],
+  "UPDATE_PASSWORD": [
+   {
+    "name": "max_auth_age",
+    "label": "Maximum Age of Authentication",
+    "helpText": "Configures the duration in seconds this action can be used after the last authentication before the user is required to re-authenticate. This parameter is used just in the context of AIA when the kc_action parameter is available in the request, which is for instance when user himself updates his password in the account console.",
+    "type": "String",
+    "defaultValue": 300,
+    "secret": false,
+    "required": false,
+    "readOnly": false
+   }
+  ],
+  "UPDATE_EMAIL": [
+   {
+    "name": "max_auth_age",
+    "label": "Maximum Age of Authentication",
+    "helpText": "Configures the duration in seconds this action can be used after the last authentication before the user is required to re-authenticate. This parameter is used just in the context of AIA when the kc_action parameter is available in the request, which is for instance when user himself updates his password in the account console.",
+    "type": "String",
+    "defaultValue": 300,
+    "secret": false,
+    "required": false,
+    "readOnly": false
+   },
+   {
+    "name": "verifyEmail",
+    "label": "Force Email Verification",
+    "helpText": "If enabled, the user will be forced to verify the email regardless if email verification is enabled at the realm level or not. Otherwise, verification will be based on the realm level setting.",
+    "type": "boolean",
+    "defaultValue": false,
+    "secret": false,
+    "required": false,
+    "readOnly": false
+   },
+   {
+    "name": "emailResendCooldownSeconds",
+    "label": "Cooldown Between Email Resend (seconds)",
+    "helpText": "Minimum delay in seconds before another email verification email can be sent.",
+    "type": "String",
+    "defaultValue": "30",
+    "secret": false,
+    "required": false,
+    "readOnly": false
+   }
+  ],
+  "webauthn-register": [
+   {
+    "name": "max_auth_age",
+    "label": "Maximum Age of Authentication",
+    "helpText": "Configures the duration in seconds this action can be used after the last authentication before the user is required to re-authenticate. This parameter is used just in the context of AIA when the kc_action parameter is available in the request, which is for instance when user himself updates his password in the account console.",
+    "type": "String",
+    "defaultValue": 300,
+    "secret": false,
+    "required": false,
+    "readOnly": false
+   }
+  ],
+  "webauthn-register-passwordless": [
+   {
+    "name": "max_auth_age",
+    "label": "Maximum Age of Authentication",
+    "helpText": "Configures the duration in seconds this action can be used after the last authentication before the user is required to re-authenticate. This parameter is used just in the context of AIA when the kc_action parameter is available in the request, which is for instance when user himself updates his password in the account console.",
+    "type": "String",
+    "defaultValue": 300,
+    "secret": false,
+    "required": false,
+    "readOnly": false
+   }
+  ],
+  "VERIFY_PROFILE": [
+   {
+    "name": "max_auth_age",
+    "label": "Maximum Age of Authentication",
+    "helpText": "Configures the duration in seconds this action can be used after the last authentication before the user is required to re-authenticate. This parameter is used just in the context of AIA when the kc_action parameter is available in the request, which is for instance when user himself updates his password in the account console.",
+    "type": "String",
+    "defaultValue": 300,
+    "secret": false,
+    "required": false,
+    "readOnly": false
+   }
+  ],
+  "delete_credential": [
+   {
+    "name": "max_auth_age",
+    "label": "Maximum Age of Authentication",
+    "helpText": "Configures the duration in seconds this action can be used after the last authentication before the user is required to re-authenticate. This parameter is used just in the context of AIA when the kc_action parameter is available in the request, which is for instance when user himself updates his password in the account console.",
+    "type": "String",
+    "defaultValue": 300,
+    "secret": false,
+    "required": false,
+    "readOnly": false
+   }
+  ],
+  "idp_link": [
+   {
+    "name": "max_auth_age",
+    "label": "Maximum Age of Authentication",
+    "helpText": "Configures the duration in seconds this action can be used after the last authentication before the user is required to re-authenticate. This parameter is used just in the context of AIA when the kc_action parameter is available in the request, which is for instance when user himself updates his password in the account console.",
+    "type": "String",
+    "defaultValue": 300,
+    "secret": false,
+    "required": false,
+    "readOnly": false
+   }
+  ],
+  "CONFIGURE_RECOVERY_AUTHN_CODES": [
+   {
+    "name": "warning_threshold",
+    "label": "Warning Threshold",
+    "helpText": "When user has smaller amount of remaining recovery codes on his account than the value configured here, account console will show warning to the user, which will recommend him to setup new set of recovery codes.",
+    "type": "Integer",
+    "defaultValue": 4,
+    "secret": false,
+    "required": false,
+    "readOnly": false
+   },
+   {
+    "name": "max_auth_age",
+    "label": "Maximum Age of Authentication",
+    "helpText": "Configures the duration in seconds this action can be used after the last authentication before the user is required to re-authenticate. This parameter is used just in the context of AIA when the kc_action parameter is available in the request, which is for instance when user himself updates his password in the account console.",
+    "type": "String",
+    "defaultValue": 300,
+    "secret": false,
+    "required": false,
+    "readOnly": false
+   }
+  ],
+  "update_user_locale": [
+   {
+    "name": "max_auth_age",
+    "label": "Maximum Age of Authentication",
+    "helpText": "Configures the duration in seconds this action can be used after the last authentication before the user is required to re-authenticate. This parameter is used just in the context of AIA when the kc_action parameter is available in the request, which is for instance when user himself updates his password in the account console.",
+    "type": "String",
+    "defaultValue": 300,
+    "secret": false,
+    "required": false,
+    "readOnly": false
+   }
+  ]
+ },
+ "requiredActions": [
+  {
+   "providerId": "CONFIGURE_TOTP",
+   "name": "Configure OTP"
+  },
+  {
+   "providerId": "webauthn-register-passwordless",
+   "name": "Webauthn Register Passwordless"
+  },
+  {
+   "providerId": "UPDATE_PASSWORD",
+   "name": "Update Password"
+  },
+  {
+   "providerId": "update_user_locale",
+   "name": "Update User Locale"
+  },
+  {
+   "providerId": "TERMS_AND_CONDITIONS",
+   "name": "Terms and Conditions"
+  },
+  {
+   "providerId": "idp_link",
+   "name": "Linking Identity Provider"
+  },
+  {
+   "providerId": "delete_account",
+   "name": "Delete Account"
+  },
+  {
+   "providerId": "VERIFY_EMAIL",
+   "name": "Verify Email"
+  },
+  {
+   "providerId": "UPDATE_EMAIL",
+   "name": "Update Email"
+  },
+  {
+   "providerId": "webauthn-register",
+   "name": "Webauthn Register"
+  },
+  {
+   "providerId": "VERIFY_PROFILE",
+   "name": "Verify Profile"
+  },
+  {
+   "providerId": "delete_credential",
+   "name": "Delete Credential"
+  },
+  {
+   "providerId": "CONFIGURE_RECOVERY_AUTHN_CODES",
+   "name": "Recovery Authentication Codes"
+  },
+  {
+   "providerId": "UPDATE_PROFILE",
+   "name": "Update Profile"
+  }
+ ]
+}

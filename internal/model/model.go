@@ -442,3 +442,31 @@ type ClientScope struct {
 	// other scope's has six.
 	ProtocolMappers []ProtocolMapper
 }
+
+// RequiredActionProvider is one row of a realm's registered required actions -
+// what the user must do at the next login, and in which order.
+//
+// Field order is the measured serialisation order:
+// `alias, name, providerId, enabled, defaultAction, priority, config`.
+type RequiredActionProvider struct {
+	// ID is server-minted and is the row's identity, because Alias is not.
+	// PUT /required-actions/{alias} writes the body's alias over the row's, so
+	// a PUT with `{}` leaves a row whose alias is the empty string, addressable
+	// by nothing and still in the listing. See 0017_required_action.sql.
+	ID      string
+	RealmID string
+	Alias   string
+	// Name is a pointer because absent and empty are two measured answers. A
+	// row registered with no `name` reads back with six keys; one registered
+	// with `""` reads back carrying `"name":""`. A string with omitempty
+	// collapses the two.
+	Name          *string
+	ProviderID    string
+	Enabled       bool
+	DefaultAction bool
+	Priority      int
+	// Config is always serialised, `{}` when empty - like ClientScope's
+	// Attributes and unlike its ProtocolMappers. DELETE .../config was measured
+	// leaving `{"config":{}}` rather than removing the key.
+	Config StringMap
+}
