@@ -341,12 +341,12 @@ var Fixtures = map[string]Fixture{
 	// One fixture per case, and here that is not only the usual isolation rule:
 	// a failed code exchange spends the code, so two cases sharing one login
 	// would measure the second one's replay. See browserCodeFixture.
-	"browser-client":        browserClientFixture("gloak-probe-browser", ""),
-	"browser-login":         browserFormFixture("gloak-probe-browser", "", nil),
-	"browser-login-s256":    browserFormFixture("gloak-probe-browser", "", pkceS256Query),
-	"browser-login-plain":   browserFormFixture("gloak-probe-browser", "", pkcePlainQuery),
-	"browser-login-frag":    browserFormFixture("gloak-probe-browser", "", map[string]string{"response_mode": "fragment"}),
-	"browser-login-form":    browserFormFixture("gloak-probe-browser", "", map[string]string{"response_mode": "form_post"}),
+	"browser-client":      browserClientFixture("gloak-probe-browser", ""),
+	"browser-login":       browserFormFixture("gloak-probe-browser", "", nil),
+	"browser-login-s256":  browserFormFixture("gloak-probe-browser", "", pkceS256Query),
+	"browser-login-plain": browserFormFixture("gloak-probe-browser", "", pkcePlainQuery),
+	"browser-login-frag":  browserFormFixture("gloak-probe-browser", "", map[string]string{"response_mode": "fragment"}),
+	"browser-login-form":  browserFormFixture("gloak-probe-browser", "", map[string]string{"response_mode": "form_post"}),
 	// A login that has already completed, so the case's own request is the
 	// **replay** of its credential POST.
 	//
@@ -622,6 +622,54 @@ var Fixtures = map[string]Fixture{
 	"admin-token-mapper-created":        createdMapperFixture(),
 	"admin-token-mapper-updated":        updatedMapperFixture(),
 	"admin-token-mapper-batch-conflict": batchConflictMapperFixture(),
+
+	// ---------------------------------------------------------------------
+	// P5 cut C: scope mappings. Appended at the very end for cut B's reason -
+	// this file belongs to another stream this session and the end of the map
+	// is the one place two branches cannot both edit.
+	//
+	// Every container carries a fixed id, which the body's id is measured to
+	// win on for both `POST /client-scopes` and `POST /clients`, so no case has
+	// to capture one. The **roles** are the exception: a role's id is minted by
+	// the server whatever the body says - `POST .../roles` answers a `Location`
+	// ending in the role's *name* - so each fixture reads its realm role back
+	// to capture the id the realm write needs. The client write needs no id at
+	// all: it resolves by name.
+	"scope-mappings-scope":           scopeMappingScopeFixture(smScopeID, "gloak-probe-sm-read", smRoleClientID, "gloak-probe-sm-rc", true, true),
+	"scope-mappings-scope-add":       scopeMappingScopeFixture(smScopeAddID, "gloak-probe-sm-add", smRoleClientAddID, "gloak-probe-sm-rc-add", false, false),
+	"scope-mappings-scope-drop":      scopeMappingScopeFixture(smScopeDropID, "gloak-probe-sm-drop", smRoleClientDropID, "gloak-probe-sm-rc-drop", true, false),
+	"scope-mappings-scope-add-role":  scopeMappingScopeFixture(smScopeAddRoleID, "gloak-probe-sm-add-role", smRoleClientAddRoleID, "gloak-probe-sm-rc-add-role", false, false),
+	"scope-mappings-scope-drop-role": scopeMappingScopeFixture(smScopeDropRoleID, "gloak-probe-sm-drop-role", smRoleClientDropRoleID, "gloak-probe-sm-rc-drop-role", false, true),
+
+	"scope-mappings-template-add":       scopeMappingScopeFixture(smTemplateAddID, "gloak-probe-sm-t-add", smRoleClientTAddID, "gloak-probe-sm-rc-t-add", false, false),
+	"scope-mappings-template-drop":      scopeMappingScopeFixture(smTemplateDropID, "gloak-probe-sm-t-drop", smRoleClientTDropID, "gloak-probe-sm-rc-t-drop", true, false),
+	"scope-mappings-template-add-role":  scopeMappingScopeFixture(smTemplateAddRoleID, "gloak-probe-sm-t-add-role", smRoleClientTAddRoleID, "gloak-probe-sm-rc-t-add-role", false, false),
+	"scope-mappings-template-drop-role": scopeMappingScopeFixture(smTemplateDropRoleID, "gloak-probe-sm-t-drop-role", smRoleClientTDropRoleID, "gloak-probe-sm-rc-t-drop-role", false, true),
+
+	"scope-mappings-client":           scopeMappingClientFixture(smOwnerID, "gloak-probe-sm-owner", smRoleClientOwnerID, "gloak-probe-sm-rc-owner", true, true),
+	"scope-mappings-client-add":       scopeMappingClientFixture(smOwnerAddID, "gloak-probe-sm-owner-add", smRoleClientOAddID, "gloak-probe-sm-rc-o-add", false, false),
+	"scope-mappings-client-drop":      scopeMappingClientFixture(smOwnerDropID, "gloak-probe-sm-owner-drop", smRoleClientODropID, "gloak-probe-sm-rc-o-drop", true, false),
+	"scope-mappings-client-add-role":  scopeMappingClientFixture(smOwnerAddRoleID, "gloak-probe-sm-owner-add-role", smRoleClientOAddRoleID, "gloak-probe-sm-rc-o-add-role", false, false),
+	"scope-mappings-client-drop-role": scopeMappingClientFixture(smOwnerDropRoleID, "gloak-probe-sm-owner-drop-role", smRoleClientODropRoleID, "gloak-probe-sm-rc-o-drop-role", false, true),
+
+	// A client with fullScopeAllowed **set**, so its composite reads answer
+	// every role in the realm rather than what it has mapped.
+	"scope-mappings-full-scope": scopeMappingFullScopeFixture(),
+	// A client scope with a **composite** realm role mapped, for the two reads
+	// that disagree about it: composite expands it and available does not.
+	"scope-mappings-composite": scopeMappingCompositeFixture(),
+	// What a 204 cannot show: the realm write took a **client** role, by id,
+	// with no name, and the combined read afterwards is where it landed.
+	"scope-mappings-written": scopeMappingWrittenFixture(),
+	// What a 403 cannot show: a batch of one allowed role and one refused one
+	// wrote neither.
+	"scope-mappings-batch-refused": scopeMappingBatchRefusedFixture(),
+
+	// A caller holding manage-clients and nothing else, which is what makes the
+	// per-role check visible: it may map a client role and not a realm one.
+	"narrow-caller-manage-clients": callerFixture("gloak-probe-caller-manage-clients", "manage-clients"),
+	// The same caller, with a scope and a realm role to aim at.
+	"scope-mappings-narrow-caller": scopeMappingNarrowCallerFixture(),
 }
 
 // The fixed client-scope ids P5's fixtures create their scopes with. They are
@@ -3096,4 +3144,409 @@ func batchConflictMapperFixture() Fixture {
 		ExpectStatus: []int{http.StatusConflict},
 	})
 	return f
+}
+
+// ---------------------------------------------------------------------------
+// P5 cut C: scope mappings.
+//
+// These sit after the last existing helper for the reason the fixtures do: the
+// file belongs to another stream this session, and the end of it is the one
+// place two branches cannot both edit.
+// ---------------------------------------------------------------------------
+
+// The fixed ids the scope-mapping fixtures use. Client scopes continue the
+// a5c09e00 series and clients the c11e0000 one, both from the 0x21 block so
+// they cannot collide with cut A's or cut B's.
+const (
+	smScopeID         = "a5c09e00-0000-4000-8000-000000000021"
+	smScopeAddID      = "a5c09e00-0000-4000-8000-000000000022"
+	smScopeDropID     = "a5c09e00-0000-4000-8000-000000000023"
+	smScopeAddRoleID  = "a5c09e00-0000-4000-8000-000000000024"
+	smScopeDropRoleID = "a5c09e00-0000-4000-8000-000000000025"
+
+	smTemplateAddID      = "a5c09e00-0000-4000-8000-000000000026"
+	smTemplateDropID     = "a5c09e00-0000-4000-8000-000000000027"
+	smTemplateAddRoleID  = "a5c09e00-0000-4000-8000-000000000028"
+	smTemplateDropRoleID = "a5c09e00-0000-4000-8000-000000000029"
+
+	smCompositeScopeID = "a5c09e00-0000-4000-8000-00000000002a"
+	smWrittenScopeID   = "a5c09e00-0000-4000-8000-00000000002b"
+	smBatchScopeID     = "a5c09e00-0000-4000-8000-00000000002c"
+	smNarrowScopeID    = "a5c09e00-0000-4000-8000-00000000002d"
+
+	// The container clients - the thing whose scope mappings are read.
+	smOwnerID         = "c11e0000-0000-4000-8000-000000000021"
+	smOwnerAddID      = "c11e0000-0000-4000-8000-000000000022"
+	smOwnerDropID     = "c11e0000-0000-4000-8000-000000000023"
+	smOwnerAddRoleID  = "c11e0000-0000-4000-8000-000000000024"
+	smOwnerDropRoleID = "c11e0000-0000-4000-8000-000000000025"
+	smFullScopeID     = "c11e0000-0000-4000-8000-000000000026"
+
+	// The role clients - the client whose roles are mapped. A second client
+	// rather than the container itself, because **a client's own roles are in
+	// its own scope** without ever being mapped: pointing the two at one client
+	// would make every `available` read on this family answer `[]` for a reason
+	// that has nothing to do with the mapping under test.
+	smRoleClientID          = "c11e0000-0000-4000-8000-000000000031"
+	smRoleClientAddID       = "c11e0000-0000-4000-8000-000000000032"
+	smRoleClientDropID      = "c11e0000-0000-4000-8000-000000000033"
+	smRoleClientAddRoleID   = "c11e0000-0000-4000-8000-000000000034"
+	smRoleClientDropRoleID  = "c11e0000-0000-4000-8000-000000000035"
+	smRoleClientTAddID      = "c11e0000-0000-4000-8000-000000000036"
+	smRoleClientTDropID     = "c11e0000-0000-4000-8000-000000000037"
+	smRoleClientTAddRoleID  = "c11e0000-0000-4000-8000-000000000038"
+	smRoleClientTDropRoleID = "c11e0000-0000-4000-8000-000000000039"
+	smRoleClientOwnerID     = "c11e0000-0000-4000-8000-00000000003a"
+	smRoleClientOAddID      = "c11e0000-0000-4000-8000-00000000003b"
+	smRoleClientODropID     = "c11e0000-0000-4000-8000-00000000003c"
+	smRoleClientOAddRoleID  = "c11e0000-0000-4000-8000-00000000003d"
+	smRoleClientODropRoleID = "c11e0000-0000-4000-8000-00000000003e"
+	smRoleClientWrittenID   = "c11e0000-0000-4000-8000-00000000003f"
+	smRoleClientBatchID     = "c11e0000-0000-4000-8000-000000000040"
+
+	// One realm role name for every fixture in this family. A realm role is
+	// realm-wide, so a second name would only add rows to the two
+	// `realm/available` goldens without adding an assertion; every fixture
+	// creates it idempotently and the scope mappings themselves are per
+	// container, so sharing it cannot make two fixtures interfere.
+	smRealmRole = "gloak-probe-sm-realm-role"
+	// The composite realm role, which only one fixture needs.
+	smCompositeRole = "gloak-probe-sm-composite"
+	// Two roles per role client: one the fixture may map and one it never
+	// does, so `available` has something to answer.
+	smClientRole = "gloak-probe-sm-client-role"
+	smSpareRole  = "gloak-probe-sm-client-spare"
+)
+
+// scopeMappingRoleSteps creates the realm role and the role client this family
+// maps, captures the realm role's id, and optionally maps either.
+//
+// The realm role's id is read back rather than declared: `POST .../roles`
+// answers a `Location` ending in the role's **name**, so nothing about a role
+// create lets a fixture choose its id - which is the difference between this
+// family's setup and cut A's and cut B's.
+func scopeMappingRoleSteps(prefix, roleClientUUID, roleClientID string, mapRealm, mapClient bool) []Step {
+	steps := []Step{
+		{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/roles",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"name":"` + smRealmRole + `"}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/roles/" + smRealmRole,
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"sm_realm_role_id": "id"},
+		},
+		{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "/admin/realms/master/clients",
+				Headers: map[string]string{
+					"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json",
+				},
+				// defaultClientScopes suppresses inheritance on **both** lists,
+				// measured, which keeps this client out of the client-scope
+				// goldens' way.
+				Body: []byte(`{"id":"` + roleClientUUID + `","clientId":"` + roleClientID +
+					`","defaultClientScopes":[]}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+	}
+	for _, name := range []string{smClientRole, smSpareRole} {
+		steps = append(steps, Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "/admin/realms/master/clients/" + roleClientUUID + "/roles",
+				Headers: map[string]string{
+					"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json",
+				},
+				Body: []byte(`{"name":"` + name + `"}`),
+			},
+			ExpectStatus: idempotentCreate,
+		})
+	}
+	if mapRealm {
+		steps = append(steps, Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   prefix + "/scope-mappings/realm",
+				Headers: map[string]string{
+					"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json",
+				},
+				Body: []byte(`[{"id":"{{sm_realm_role_id}}"}]`),
+			},
+		})
+	}
+	if mapClient {
+		steps = append(steps, Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   prefix + "/scope-mappings/clients/" + roleClientUUID,
+				Headers: map[string]string{
+					"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json",
+				},
+				// **By name, with no id.** The client write resolves by name
+				// and ignores the id; the realm write above does the opposite.
+				Body: []byte(`[{"name":"` + smClientRole + `"}]`),
+			},
+		})
+	}
+	return steps
+}
+
+// scopeMappingScopeFixture is the client-scope container: a scope, a role
+// client with two roles, a realm role, and whichever mappings the case needs.
+func scopeMappingScopeFixture(scopeID, scopeName, roleClientUUID, roleClientID string, mapRealm, mapClient bool) Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: append([]Step{adminTokenStep(), clientScopeStep(scopeID, scopeName)},
+			scopeMappingRoleSteps("/admin/realms/master/client-scopes/"+scopeID,
+				roleClientUUID, roleClientID, mapRealm, mapClient)...),
+	}
+}
+
+// scopeMappingClientFixture is the same over a client container.
+//
+// **fullScopeAllowed is off**, which is the whole reason the container's
+// mappings are observable: a client with the flag set has every role in scope
+// already, so its `composite` reads answer the realm rather than what it
+// mapped. Four of the six bootstrapped clients have it off and two have it on,
+// and scope-mappings-full-scope is the other side of that.
+func scopeMappingClientFixture(ownerUUID, ownerID, roleClientUUID, roleClientID string, mapRealm, mapClient bool) Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: append([]Step{adminTokenStep(), scopeMappingOwnerStep(ownerUUID, ownerID, false)},
+			scopeMappingRoleSteps("/admin/realms/master/clients/"+ownerUUID,
+				roleClientUUID, roleClientID, mapRealm, mapClient)...),
+	}
+}
+
+func scopeMappingOwnerStep(uuid, clientID string, fullScope bool) Step {
+	full := "false"
+	if fullScope {
+		full = "true"
+	}
+	return Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/clients",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body: []byte(`{"id":"` + uuid + `","clientId":"` + clientID +
+				`","fullScopeAllowed":` + full + `,"defaultClientScopes":[]}`),
+		},
+		ExpectStatus: idempotentCreate,
+	}
+}
+
+// scopeMappingFullScopeFixture creates a client with fullScopeAllowed set and
+// **maps nothing**, so the case reading its composite is reading the flag
+// rather than a mapping.
+func scopeMappingFullScopeFixture() Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{adminTokenStep(), scopeMappingOwnerStep(smFullScopeID, "gloak-probe-sm-full", true)},
+	}
+}
+
+// scopeMappingCompositeFixture maps a **composite** realm role and nothing
+// else, which is what makes `composite` and `available` disagree: the child is
+// in the expansion and still in the available list, because available
+// subtracts what is mapped **directly**.
+func scopeMappingCompositeFixture() Fixture {
+	f := scopeMappingScopeFixture(smCompositeScopeID, "gloak-probe-sm-comp",
+		smRoleClientID, "gloak-probe-sm-rc", false, false)
+	f.Steps = append(f.Steps,
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/roles",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"name":"` + smCompositeRole + `"}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/roles/" + smCompositeRole,
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"sm_composite_role_id": "id"},
+		},
+		Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "/admin/realms/master/roles-by-id/{{sm_composite_role_id}}/composites",
+				Headers: map[string]string{
+					"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json",
+				},
+				Body: []byte(`[{"id":"{{sm_realm_role_id}}","name":"` + smRealmRole + `"}]`),
+			},
+		},
+		Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "/admin/realms/master/client-scopes/" + smCompositeScopeID + "/scope-mappings/realm",
+				Headers: map[string]string{
+					"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json",
+				},
+				Body: []byte(`[{"id":"{{sm_composite_role_id}}"}]`),
+			},
+		},
+	)
+	return f
+}
+
+// scopeMappingWrittenFixture posts a **client** role to
+// `.../scope-mappings/realm` by id, with no name at all, so the case that reads
+// the combined view afterwards is what says where it landed.
+//
+// The write's own 204 says nothing. Three implementations answer it: one that
+// refuses a client role on the realm path, one that stores it under the realm
+// half, and the measured one that stores it under the client's. Only this read
+// tells them apart.
+func scopeMappingWrittenFixture() Fixture {
+	f := scopeMappingScopeFixture(smWrittenScopeID, "gloak-probe-sm-written",
+		smRoleClientWrittenID, "gloak-probe-sm-rc-written", false, false)
+	f.Steps = append(f.Steps,
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/clients/" + smRoleClientWrittenID + "/roles/" + smClientRole,
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"sm_client_role_id": "id"},
+		},
+		Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "/admin/realms/master/client-scopes/" + smWrittenScopeID + "/scope-mappings/realm",
+				Headers: map[string]string{
+					"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json",
+				},
+				Body: []byte(`[{"id":"{{sm_client_role_id}}"}]`),
+			},
+		},
+	)
+	return f
+}
+
+// scopeMappingBatchRefusedFixture sends a batch of one role the caller may map
+// and one it may not, as a manage-clients caller, so the case reading the
+// container afterwards can say **neither** was written.
+//
+// The 403 alone cannot tell a rejected batch from a half-applied one, which is
+// the same thing the protocol mappers' add-models conflict case pins.
+func scopeMappingBatchRefusedFixture() Fixture {
+	f := scopeMappingScopeFixture(smBatchScopeID, "gloak-probe-sm-batch",
+		smRoleClientBatchID, "gloak-probe-sm-rc-batch", false, false)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/" + smRoleClientBatchID + "/roles/" + smClientRole,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		Capture: map[string]string{"sm_client_role_id": "id"},
+	})
+	f.Steps = append(f.Steps, scopeMappingCallerSteps("gloak-probe-caller-sm-batch")...)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/client-scopes/" + smBatchScopeID + "/scope-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{caller_token}}", "Content-Type": "application/json",
+			},
+			// The allowed one **first**. A loop that applied as it validated
+			// would write it and then refuse, which is exactly what the case
+			// reading the container afterwards rules out.
+			Body: []byte(`[{"id":"{{sm_client_role_id}}"},{"id":"{{sm_realm_role_id}}"}]`),
+		},
+		ExpectStatus: []int{http.StatusForbidden},
+	})
+	return f
+}
+
+// scopeMappingNarrowCallerFixture is a scope, a realm role and a
+// manage-clients caller in one fixture, for the cases that need all three.
+func scopeMappingNarrowCallerFixture() Fixture {
+	f := scopeMappingScopeFixture(smNarrowScopeID, "gloak-probe-sm-narrow",
+		smRoleClientID, "gloak-probe-sm-rc", false, false)
+	f.Steps = append(f.Steps, scopeMappingCallerSteps("gloak-probe-caller-sm-narrow")...)
+	return f
+}
+
+// scopeMappingCallerSteps adds a user holding manage-clients and nothing else,
+// and captures its token as {{caller_token}}.
+//
+// callerFixture next door builds the whole fixture rather than a step list, and
+// these cases need the caller **and** a container, so the steps are rebuilt
+// here.
+func scopeMappingCallerSteps(username string) []Step {
+	return []Step{
+		{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/users",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"username":"` + username + `","enabled":true,` +
+					`"credentials":[{"type":"password","value":"probe-pass","temporary":false}]}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/users",
+				Query:   map[string]string{"username": username, "exact": "true"},
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"caller_user_id": "0/id"},
+		},
+		{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/clients",
+				Query:   map[string]string{"clientId": "master-realm"},
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"admin_client_uuid": "0/id"},
+		},
+		{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/clients/{{admin_client_uuid}}/roles/manage-clients",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"caller_role_id": "id"},
+		},
+		{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "/admin/realms/master/users/{{caller_user_id}}/role-mappings/clients/{{admin_client_uuid}}",
+				Headers: map[string]string{
+					"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json",
+				},
+				Body: []byte(`[{"id":"{{caller_role_id}}","name":"manage-clients"}]`),
+			},
+		},
+		{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "/realms/master/protocol/openid-connect/token",
+				Form: map[string]string{
+					"grant_type": "password", "client_id": "admin-cli",
+					"username": username, "password": "probe-pass",
+				},
+			},
+			Capture: map[string]string{"caller_token": "access_token"},
+		},
+	}
 }
