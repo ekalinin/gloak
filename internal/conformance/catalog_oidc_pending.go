@@ -605,7 +605,7 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-20",
 		},
 		Status:  Pending,
-		Reason:  "the token endpoint is not implemented",
+		Reason:  "the token-exchange grant is not implemented",
 		Fixture: "", // token exchange needs a previously issued token and is a feature that must be explicitly enabled
 		Request: Request{
 			Method: http.MethodPost,
@@ -627,7 +627,7 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-20",
 		},
 		Status:  Pending,
-		Reason:  "the token endpoint is not implemented",
+		Reason:  "the jwt-bearer grant is not implemented",
 		Fixture: "", // needs a client configured to trust a signed JWT assertion, which no bootstrapped client has
 		Request: Request{
 			Method: http.MethodPost,
@@ -648,7 +648,7 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-20",
 		},
 		Status:  Pending,
-		Reason:  "the token endpoint is not implemented",
+		Reason:  "DPoP is not implemented",
 		Fixture: "", // needs a client configured to require DPoP, which no bootstrapped client has, and a proof JWT bound to the request
 		Request: Request{
 			Method: http.MethodPost,

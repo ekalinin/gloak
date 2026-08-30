@@ -338,13 +338,28 @@ Six, and one of them is about surface Gloak already ships.
    and "master has six" is true of a *pristine* master only. That matters to
    anybody who reaches for the realm knob to shorten a device code: it moves a
    104-key representation that admin goldens read.
+   It also touches work that landed on main the same day.
+   `docs/superpowers/handover/harness-claims.md` restates the claim as
+   "`master`: the same, minus the two `oauth2Device*` keys" and computes
+   `KeyOrder`'s buckets for both sets. Both computations stand; what moves is
+   which of them describes master, and the answer is "whichever was last written
+   to it". This is not a correction of that handover - it is measured on a realm
+   that handover would have had no reason to touch.
 
-4. **Two catalogue `Reason` strings said "the token endpoint is not
-   implemented"** - `oidc/token/device-code-grant` and `oidc/token/ciba-grant` -
-   and that had been false since P1. Both also named `admin-cli`, which has both
-   grants disabled and so could never have reached the body either case claimed
-   to measure. **Fixed on the branch**, with reasons that say what is actually
-   missing.
+4. **Five catalogue `Reason` strings said "the token endpoint is not
+   implemented"**, false since P1. Found here independently of
+   `TestNoReasonClaimsAServedEndpointIsUnserved`, which landed on main hours
+   later and found the same five; this branch merged that guard and **fixed all
+   five and emptied `staleReasonsOwnedElsewhere`**, which is what the guard's
+   own doc comment asks the owning stream to do.
+   Two of the five did **not** take the replacement text the hand-off suggested.
+   "the `device_code` grant is not implemented" and "the CIBA grant is not
+   implemented" were already stale when they were written, because both grants
+   landed the same day; what is actually missing is the consent pages for one
+   and an authentication channel for the other. A hand-off's suggested text is a
+   hand-off, not a measurement, and the note is now on the emptied map.
+   All five also named `admin-cli`, which has both grants disabled and so could
+   never have reached the body two of them claimed to measure.
 
 5. **AGENTS.md: "A repeated parameter is an error at `/auth` and at neither of
    its neighbours … `/auth` is the odd one of the three, not the rule."** True
@@ -358,7 +373,15 @@ Six, and one of them is about surface Gloak already ships.
    answers 400".** Correct, and it is now a compared contract rather than a
    parked measurement, so the entry is gone rather than moved. Same for the
    device one, whose *request* moved as well: it measured the refusal on
-   `admin-cli`, which is now `oidc/device/grant-disabled`'s.
+   `admin-cli`, which is now `oidc/device/grant-disabled`'s. Seven parked
+   goldens are five.
+
+7. **`docs/superpowers/handover/harness-claims.md`, merged mid-flight, lists
+   "the five device cases, the three CIBA cases" as checked and accurate, and
+   says Gloak "answers `/auth/device`, `/ext/ciba/auth` … with the
+   unmatched-path 404".** Both were true when written and both stop being true
+   with this branch. Recorded because the brief asks for every claim re-checked
+   against a mid-flight merge, and this is the one that moved.
 
 ## 4. Follow-up dispositions
 
@@ -407,6 +430,9 @@ Six, and one of them is about surface Gloak already ships.
 
 ## 5. Parity, before and after
 
+Measured with `TestCoverage` on the branch point (`db9f4f3`) and on the branch
+after merging `500248d`:
+
 ```
                                         before            after
 oidc/device                              0 of 5          11 of 12
@@ -420,8 +446,16 @@ for reasons that are now measurements rather than to-do notes:
 `oidc/ciba/poll-pending` and `oidc/ciba/poll-complete` need an authentication
 channel a default 26.7.1 does not have.
 
-Two cases outside these chapters had their `Reason` corrected without changing
-status: `oidc/token/device-code-grant` and `oidc/token/ciba-grant`.
+Five cases outside these chapters had their `Reason` corrected without changing
+status: `oidc/token/device-code-grant`, `ciba-grant`, `token-exchange`,
+`jwt-authorization-grant` and `dpop-bound-token`. None moves a number.
+
+**`internal/conformance/catalog_test.go` is edited on this branch**, which is
+outside the files this cut owns. The edit is emptying
+`staleReasonsOwnedElsewhere`, which is exactly what that map's own doc comment
+asks the owning stream to do once it has corrected the five Reasons - and the
+guard fails if an entry stops being stale and stays listed, so leaving it would
+have been red. Nothing else in that file is touched.
 
 ## 6. Mutation testing
 
