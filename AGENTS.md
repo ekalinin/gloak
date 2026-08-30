@@ -56,7 +56,7 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   find matching target resource method"}`, a wrong method on a known path
   answers `{"error":"HTTP 404 Not Found"}`. That is why `withKeycloakFallbacks`
   still tells the two cases apart even though both return the same status.
-- **That rule is measured too broad, three times now.** On the role-mapping
+- **That rule is measured too broad, six times now.** On the role-mapping
   paths `PUT` and `PATCH` answer a real 405 while `POST` and `DELETE` answer the
   404 above - same path, four verbs, two statuses. `/admin/realms` answers
   `DELETE` with a 405, refuting "the verb decides". And on
@@ -66,7 +66,11 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   answers the same three verbs 405 and `OPTIONS` 200 with **no `Allow` at
   all**. And a whole Admin API route family - the client-scope attachments -
   answers a real 405 too, which is the first one outside the protocol side.
-  Gloak sends 404 to all of them. **Five data points that disagree still do not
+  And **`HEAD` is 200 on `/auth` and 404 on `/login-actions/authenticate`**,
+  which answers the other four verbs identically to `/auth` - the sharpest data
+  point yet, because both endpoints are in one flow on one container and agree
+  on four verbs and disagree on the fifth.
+  Gloak sends 404 to all of them. **Six data points that disagree still do not
   say what the rule is**, which is exactly why nothing has been changed on the
   strength of any of them. The 405 body is
   `{"error":"HTTP 405 Method Not Allowed"}`, measured independently on the
@@ -113,7 +117,10 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   compare.** It is a Java `Map` in hash order and Go sorts map keys; matching it
   would mean emulating `java.util.HashMap` in Go. `Case.UnorderedKeys` sorts
   both sides, so membership and values are still asserted. This is the only
-  such retreat - do not add a second without writing down why.
+  such retreat - do not add a second without writing down why. Not every Java
+  map in this API needs it: a protocol mapper's `config` is one and its key
+  order is reproduced exactly, asserted by `admin/client-scopes/list` since
+  2026-08-30.
 - **Gloak deletes the `Date` header on every response.** Keycloak sends none;
   Go's `net/http` adds one automatically, so `internal/httpx` suppresses it with
   `w.Header()["Date"] = nil`. The conformance verifier cannot catch its removal:
@@ -682,7 +689,96 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   disagree the same way: `/logout`'s 400 page carries `Cache-Control: no-cache`
   where `/auth`'s 400 and 403 pages carry none, measured side by side on one
   container. `httpx.WriteThemeErrorPage` takes the value as an argument for
-  exactly this reason. Two endpoints that look like one endpoint twice.
+  exactly this reason, and there are **three** values, not two:
+
+  ```
+  GET  /auth                        400 and 403 pages   no Cache-Control at all
+  GET  /logout                      400 page            no-cache
+  POST /login-actions/authenticate  400 pages           no-store, must-revalidate, max-age=0
+  ```
+
+  Three endpoints that look like one endpoint three times.
+- **`session_state` is minted by the login page, not by the login.** The
+  authentication session's root id is created at `GET /auth`, goes out inside
+  `AUTH_SESSION_ID`, and is then the redirect's `session_state`, the
+  `KEYCLOAK_IDENTITY` cookie's `sid` **and** the authorization code's second
+  part - four observables carrying one 24-character value decided before any
+  credential was seen. Minting it when the password verifies is the obvious
+  implementation and gets all four wrong at once, and **no conformance case
+  would see it**: every case in this flow masks `Location` and `Set-Cookie` as
+  volatile. `internal/oidc`'s own tests are the only guard.
+- **`client_data` is parsed and then ignored.** The login form's fifth
+  parameter carries the redirect URI, the response type, the response mode and
+  the state, and none of them is used: one naming another redirect URI still
+  redirects to the registered one, one naming another state still echoes the
+  original, one adding `rm=fragment` still answers in the query, and dropping it
+  entirely succeeds. But `client_data=!!!!` is a 400, so it **is** parsed. It is
+  a restart hint the browser carries, never an authority. Reading the redirect
+  URI out of it is the tidy-up that lets a forged one steer a browser - and the
+  one place Gloak does read it, the expired-session restart, validates it
+  against the client's registered patterns first.
+- **A replayed `session_code` has three answers and the cookies pick.**
+  `KC_RESTART` present is a 302 **restart** with a fresh `tab_id` and no
+  `session_code`; otherwise `KEYCLOAK_IDENTITY` present is a 302 to the client
+  carrying `temporarily_unavailable` / `authentication_expired`; otherwise a 400
+  page, `Restart login cookie not found`. Measured as an eight-cell grid. **An
+  empty `KC_RESTART` counts as absent**, which is what a successful login leaves
+  behind, so a real browser gets the middle branch. An **expired** session code
+  takes the identical branch, so expiry and replay are one case.
+- **`/login-actions/authenticate` reads its parameters from the query and its
+  credentials from the body, and `/auth` does the opposite.** Two endpoints in
+  one flow with mirror-image rules, and `r.Form` merges the two and hides both.
+- **A repeated parameter is an error at `/auth` and at neither of its
+  neighbours.** `/logout` takes the first value and so does
+  `/login-actions/authenticate` - `zz` twice, `tab_id` twice, even
+  `session_code` twice with the second value garbage all log in. `/auth` is the
+  odd one of the three, not the rule.
+- **`GET /login-actions/authenticate` is not a read.** It attempts the login
+  with whatever credentials the body carries - none, for a GET - and answers 200
+  with the page re-served, `Invalid username or password.`, and the
+  `session_code` **rotated**. A handler that made GET serve the form without
+  spending the code would look more correct and would diverge.
+- **A failed credential rotates the `session_code` and nothing else.**
+  `execution`, `tab_id` and `client_data` are unchanged, the username is echoed
+  back into the input, the retry with the rotated code succeeds, and the old one
+  takes the restart branch.
+- **The disabled-account message is checked after the password.** A disabled
+  user with the right password gets `Account is disabled, contact your
+  administrator.`; the same user with a wrong password gets `Invalid username or
+  password.` like everybody else. Checking `enabled` first is the obvious order
+  and it turns the login form into an account-enumeration oracle.
+- **A second `GET /auth` on one browser sets one cookie, not three.** The
+  authentication session is reused and only `KC_RESTART` moves, so two tabs
+  share one root id and both log in reporting the **same** `session_state`. The
+  restart 302 sets *no* cookie when the browser still has a live authentication
+  session and two when it does not.
+
+- **`PUT .../protocol-mappers/models/{id}` writes the mapper the *body's* `id`
+  names, not the path's.** A PUT addressed to one mapper and carrying another's
+  id answers 204 and changes the other one; the path segment only decides
+  whether the request is a 404 at all. **And it writes two fields** -
+  `protocolMapper` and `config`, replacing the config outright - while `name`,
+  `protocol` and `consentRequired` are read off the wire and discarded. Writing
+  the whole representation back is the obvious implementation and it is wrong on
+  three fields. Both are Keycloak's own defects, reproduced.
+- **A protocol mapper's `config` key order is a Java `HashMap` sized to its
+  entry count**, which is a different table size from the one `internal/javamap`
+  models - `javamap.KeyOrder` gets six of fourteen measured vectors wrong. The
+  cases avoid the problem by using config key sets measured to be order-stable,
+  so the goldens assert real config bytes with **no** `UnorderedKeys` retreat.
+  Not every Java map in this API needs one.
+- **One mapper serialises two ways.** `account-console`'s `audience resolve` is
+  `"config":{}` from `GET /clients` and populated from the dedicated mapper
+  route, on one container minutes apart, while a client *scope*'s copy is
+  populated in both of its views. Neither obvious explanation holds.
+- **The "cannot parse the JSON" code is per body *shape*, not per endpoint.**
+  An earlier bullet asserted the opposite and explained its own error; all
+  eleven of its probes sent `{`, which is the right shape for the one object
+  endpoint and the wrong shape for the ten array ones. `POST /users` answers
+  `unknown_error` for `[`, the role-array endpoints answer `invalid_request` for
+  it, and a truncated array *element* answers a third code,
+  `HTTP 400 Bad Request`.
+
 - **The logout endpoint forgives four things the authorization endpoint does
   not.** An **expired** `id_token_hint` still logs out and still redirects; a
   hint naming a session that has already ended answers the same 302 rather than
@@ -844,6 +940,36 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
   them on one handler produced 22 failures, nine in the pollution pass itself,
   and none of them order-dependence. The flag stays a declaration and the sweep
   that checks it is a person reading the catalogue. See F53.
+- **`make record` leaves a `Pending` golden exactly as it found it.**
+  `TestConformance` skips a Pending case whether or not a golden exists, so
+  nothing compares one, and rewriting it can only add noise to the diff this
+  project asks people to read carefully. Four login-theme pages did that on
+  every run, and the count went from three to four inside two days - added by
+  the cut that filed the follow-up. `GoldenIsAsserted` in `case.go` is the one
+  predicate the recorder and the verifier both read, so the two cannot drift.
+  **The way to ask for a Pending golden back is to promote the case to
+  `Recorded`**, which is what `Recorded` already means and which a reviewer sees
+  in the diff; there is no flag.
+- **Every object a fixture or a case creates is named `gloak-probe-*`, and
+  `TestEveryCreatedObjectCarriesTheProbePrefix` is what says so.** Six goldens'
+  windows rest on that convention and nothing enforced it:
+  `admin/roles/list-realm-page-no-search` sends `first=1&max=2` and holds
+  `create-realm` and `default-roles-master` only because no probe role sorts
+  before them. Seven objects are outside the convention and each is declared in
+  `namedOutsideTheConvention` with the reason it stands - including three group
+  names whose sort positions **are** `admin/groups/search-pages-the-matches`'s
+  measurement, so renaming them would change a measurement. An entry that stops
+  matching anything fails too.
+- **The pollution guard reads one object per JSON *object*, not per body.** A
+  create can carry objects nested inside it - `POST /clients` with
+  `{"clientId":"...","protocolMappers":[{"name":"..."}]}` creates a client *and*
+  two mappers, and they outlive the request the same way. Applied per body the
+  client's `clientId` won and the nested mappers were never recorded, which both
+  lost them from the guard and made it report a false positive on the case whose
+  own fixture created them, since the exemption reads the same set. Two cuts
+  landed green alone and failed together on exactly that. A body that does not
+  parse and an empty name are skipped on purpose: both are measured creates that
+  create nothing.
 - **A case can send one query key twice.** `Request.RawQuery` is the query
   string verbatim, which is the only way to express the authorization
   endpoint's `duplicated parameter`. It replaces `Query` rather than adding to

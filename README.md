@@ -59,20 +59,25 @@ Working today:
 - RP-initiated logout: the redirect, the session end, and
   `post.logout.redirect.uris` - which turned out to be a filter over
   `redirectUris` rather than a separate registration
+- the browser login: the authentication session, the login form,
+  `/login-actions/authenticate`, and an authorization code carrying the
+  `session_state` that was minted before the password was seen
+- protocol mappers: the tag in full, on client scopes and on clients - 21
+  operations
 - client secrets, service accounts, user credentials and user logout
 - a documentation-derived conformance suite (`internal/conformance`) that checks
   Gloak's responses byte-for-byte against bytes recorded from a live
   Keycloak 26.7.1
 - a parity meter whose denominator comes from Keycloak's own OpenAPI description
-  rather than from a hand-kept list: **179 of 498 enumerated behaviours served**,
+  rather than from a hand-kept list: **205 of 499 enumerated behaviours served**,
   plus four chapters whose surface has not been counted
 - an external oracle: `make oracle` drives Gloak with `kcadm.sh`, Keycloak's own
   admin CLI, which asks for things no recorded case asks for
 
-Not implemented yet: the login page and the authorization code grant itself,
-back-channel and front-channel logout, protocol mappers and scope mappings,
-SAML, user federation, identity brokering, authorization services, the admin
-console.
+Not implemented yet: exchanging an authorization code at the token endpoint,
+the login page's own markup (the flow is served, the theme is not), SSO
+recognition, back-channel and front-channel logout, scope mappings, SAML, user
+federation, identity brokering, authorization services, the admin console.
 
 Where this is going is `docs/superpowers/specs/2026-08-21-gloak-parity-roadmap.md`:
 fourteen sub-projects with their dependencies and what each closes.
@@ -126,8 +131,12 @@ discovery document is derived from it.
 | `GET POST /realms/{realm}/protocol/openid-connect/userinfo` | claims about the subject |
 | `POST /realms/{realm}/protocol/openid-connect/token/introspect` | token introspection |
 | `POST /realms/{realm}/protocol/openid-connect/revoke` | token revocation |
+| `GET POST /realms/{realm}/protocol/openid-connect/auth` | authorization: validation, the login form, and the code |
+| `POST /realms/{realm}/login-actions/authenticate` | the credential check |
+| `GET POST /realms/{realm}/protocol/openid-connect/logout` | RP-initiated logout |
 
-There is no `/auth` prefix. Keycloak dropped it in version 17.
+There is no `/auth` **prefix** - Keycloak dropped it in version 17 - which is a
+different thing from the `/protocol/openid-connect/auth` endpoint above.
 
 ## How compatibility is established
 
@@ -183,15 +192,15 @@ and stay out of the total rather than being dropped from it silently, which
 would inflate the percentage by hiding the parts nobody has counted. It reads:
 
 ```
-total: 179 of 498 enumerated behaviours served; 4 chapters not enumerated
+total: 205 of 499 enumerated behaviours served; 4 chapters not enumerated
 ```
 
-The denominator is 498 rather than 413 plus a fixed number because the protocol
+The denominator is 499 rather than 413 plus a fixed number because the protocol
 chapters have no OpenAPI source and are counted case by case, so they grow as
 measurements find behaviours nobody had named. It moved from 485 on 2026-08-29
-for the first time since it was set, and to 498 the next day when the logout
+for the first time since it was set, and again the next day when the logout
 endpoint turned out to have fourteen measurable behaviours where the catalogue
-had five.
+had five. The Admin API chapters cannot move this way and none has.
 
 CI reruns this meter on every pull request and posts the parity increment as
 a comment, failing the pull request when the total falls. A flat total is
@@ -246,18 +255,15 @@ deliberate - it is how "measured, never remembered" stops being a convention.
 JWKS keys and Gloak generated one; realm keys are now modelled and persisted, so
 that case passes.
 
-`make record` is not silent on a clean checkout: four of the goldens it writes
-churn on every run and will show a diff even when nothing has changed.
-`oidc/authorization/invalid-redirect-uri`, `oidc/authorization/unknown-client-id`,
-`oidc/logout/invalid-post-logout-redirect-uri` and
-`oidc/logout/invalid-id-token-hint` capture login-theme HTML that carries a
-resource cache-busting hash generated fresh per container start.
+**`make record` is silent on a clean checkout.** It rewrites 290 goldens with
+identical bytes and moves none, so any diff at all is one to read carefully.
 
-All four are `Pending`, so nothing compares them yet, but their diffs are
-expected and can be skipped when reviewing a `make record` run; a diff on any
-other golden is the one to read carefully. The count went from three to four on
-2026-08-30, which is the argument for F69: a recorder that left a `Pending`
-golden alone unless asked would make this paragraph unnecessary.
+That was not always so. Four login-theme pages churned their whole body on every
+run, because the `/resources/<hash>/` segment is regenerated per container start,
+and the count went from three to four inside two days. All four are `Pending`, so
+nothing compared them and the churn bought nothing. The recorder now leaves a
+`Pending` golden exactly as it found it; the way to ask for one back is to
+promote the case to `Recorded`, which is what `Recorded` already means.
 
 A fourth used to churn - `oidc/token/password-grant-admin-cli`'s `scope`, whose
 word order is not stable across container starts. `UnorderedWords` sorts the
