@@ -402,8 +402,9 @@ and +334 are goldens.
 
 Every claim that a case now catches something was checked by breaking the
 implementation one way at a time, confirming the **named** case fails, and
-reverting. A different mutation per claim; twenty-five in all, no survivors
-except one that was a bad mutation and is recorded as such.
+reverting. A different mutation per claim; **thirty-two** in all, counted from
+the three tables rather than incremented, no survivors except one that was a bad
+mutation and is recorded as such.
 
 ### F84
 
