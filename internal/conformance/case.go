@@ -45,6 +45,31 @@ const (
 	Recorded
 )
 
+// GoldenIsAsserted reports whether anything compares c's golden, and therefore
+// whether `make record` may rewrite it.
+//
+// One predicate, two callers, because the two answers have to be the same one.
+// TestConformance skips a Pending case whether or not a golden exists, so a
+// Pending golden is compared by nothing; a recorder that rewrote it anyway
+// produces a diff that says nothing and has to be reverted by hand. Four of
+// them did, every run: the login-theme pages carry a /resources/<hash>/ segment
+// regenerated per container start, so their whole body churned. The count went
+// from three to four inside two days, which is what made the hand-reverting
+// stop being a habit anybody could keep (F23, F69).
+//
+// The "unless asked" is a status change rather than a flag. A golden worth
+// re-recording is one worth comparing, and the catalogue already spells that:
+// Recorded means measured but not served yet, and a Recorded case is recorded.
+// Promoting a case is a one-word edit a reviewer sees in the diff, where an
+// environment variable is a thing nobody sets and nobody reads.
+//
+// What this does not do is keep a parked golden honest. Nothing compares it, so
+// nothing notices when Keycloak's answer moves underneath it - which was
+// already true before the recorder stopped rewriting it, since the rewrite was
+// compared by nothing either. See the handover's F69 disposition for the
+// question of whether a Pending case should carry a golden at all.
+func GoldenIsAsserted(c Case) bool { return c.Status != Pending }
+
 // Doc cites where a behaviour was read. The Securing Applications guide has
 // no version-pinned URL - https://www.keycloak.org/docs/26.7.1/securing_apps/
 // returns 404 - so its pages track latest and Retrieved is what dates them.

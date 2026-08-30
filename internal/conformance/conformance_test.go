@@ -34,8 +34,8 @@ func TestConformance(t *testing.T) {
 				t.Skipf("pending, no golden recorded yet: %s", c.Reason)
 			case err != nil:
 				t.Fatalf("read golden: %v", err)
-			case c.Status == Pending:
-				t.Skipf("pending, golden recorded and waiting: %s", c.Reason)
+			case !GoldenIsAsserted(c):
+				t.Skipf("pending, golden parked and waiting: %s", c.Reason)
 			}
 
 			want, err := ParseGolden(raw)
