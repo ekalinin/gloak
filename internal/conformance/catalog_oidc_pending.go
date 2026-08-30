@@ -543,16 +543,24 @@ var oidcPending = []Case{
 			Section:   "Grant types: device authorization grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the token endpoint is not implemented",
-		Fixture: "", // needs a device_code from a completed device authorization request
+		Status: Pending,
+		// **This reason said "the token endpoint is not implemented" until
+		// 2026-08-30, and that had been false since P1.** The token endpoint
+		// has served four grants for days and now dispatches this one too;
+		// what is missing is an *approved* device code, which needs the
+		// verification and consent pages. Same reason as
+		// oidc/device/poll-access-denied, and the client_id was admin-cli,
+		// which has the grant disabled and so could never have reached this
+		// body at all.
+		Reason:  "a completed device authorization needs the device verification and consent pages, which are not implemented",
+		Fixture: "", // needs a device_code a user approved through the browser
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
 			Form: map[string]string{
 				"grant_type":  "urn:ietf:params:oauth:grant-type:device_code",
-				"client_id":   "admin-cli",
-				"device_code": "REPLACE-WITH-A-REAL-DEVICE-CODE",
+				"client_id":   "gloak-probe-device",
+				"device_code": "REPLACE-WITH-A-REAL-APPROVED-DEVICE-CODE",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
@@ -567,15 +575,20 @@ var oidcPending = []Case{
 			Section:   "Grant types: client initiated backchannel authentication",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the token endpoint is not implemented",
-		Fixture: "", // needs an auth_req_id from a completed CIBA authentication request
+		Status: Pending,
+		// The same correction: the token endpoint is implemented and dispatches
+		// this grant. What is missing is an auth_req_id, and a default 26.7.1
+		// mints none - see the CIBA block further down. The client_id was
+		// admin-cli, which has the CIBA grant disabled and so could never have
+		// reached this body either.
+		Reason:  "a default 26.7.1 has no CIBA authentication channel, so no auth_req_id can be obtained to redeem",
+		Fixture: "", // needs an auth_req_id, which needs an external authentication channel endpoint
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
 			Form: map[string]string{
 				"grant_type":  "urn:openid:params:grant-type:ciba",
-				"client_id":   "admin-cli",
+				"client_id":   "gloak-probe-ciba",
 				"auth_req_id": "REPLACE-WITH-A-REAL-AUTH-REQ-ID",
 			},
 		},
