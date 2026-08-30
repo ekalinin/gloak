@@ -1,0 +1,12 @@
+# GET /admin/realms/master/authentication/required-actions/CONFIGURE_TOTP/config-description
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"properties":[{"name":"max_auth_age","label":"Maximum Age of Authentication","helpText":"Configures the duration in seconds this action can be used after the last authentication before the user is required to re-authenticate. This parameter is used just in the context of AIA when the kc_action parameter is available in the request, which is for instance when user himself updates his password in the account console.","type":"String","defaultValue":300,"secret":false,"required":false,"readOnly":false},{"name":"add-recovery-codes","label":"Add Recovery Codes","helpText":"If this option is enabled, the user will be required to configure recovery codes following the OTP configuration.\nIf the user already has recovery codes configured, Keycloak will not ask for setting them up.\nAs a prerequisite, enable the recovery codes required action and enable recovery codes in your authentication flow.","type":"boolean","defaultValue":false,"secret":false,"required":false,"readOnly":false}]}

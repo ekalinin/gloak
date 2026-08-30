@@ -787,7 +787,6 @@ var Fixtures = map[string]Fixture{
 	// because the alias the second run addresses is already gone.
 	"auth-actions":            authActionRealmFixture("gloak-probe-auth-put"),
 	"auth-actions-delete":     authActionRealmFixture("gloak-probe-auth-del"),
-	"auth-actions-register":   authActionRealmFixture("gloak-probe-auth-reg"),
 	"auth-actions-raise":      authActionRealmFixture("gloak-probe-auth-raise"),
 	"auth-actions-lower":      authActionRealmFixture("gloak-probe-auth-lower"),
 	"auth-actions-config":     authActionRealmFixture("gloak-probe-auth-cfg"),
@@ -807,9 +806,16 @@ var Fixtures = map[string]Fixture{
 	"auth-action-orphan": authActionWriteFixture("gloak-probe-auth-orphan",
 		http.MethodPut, "/required-actions/UPDATE_PROFILE", `{}`),
 
-	// A realm with idp_link unregistered, for the unregistered listing's real
-	// shape - a pristine realm answers `[]`, so nothing else can show it.
+	// Two realms with idp_link unregistered, one per case, and the duplication
+	// is the point. A fixture step that deletes is **not idempotent**, so two
+	// cases sharing one of these would leave the second one's fixture asking
+	// the server to delete a row the first case's fixture had already taken
+	// away - which is a 404 and a failed recording. It failed exactly that way
+	// once before this comment existed, and the recorder is the only place it
+	// shows: each case passes on its own.
 	"auth-action-unregistered": authActionWriteFixture("gloak-probe-auth-unreg",
+		http.MethodDelete, "/required-actions/idp_link", ""),
+	"auth-action-to-register": authActionWriteFixture("gloak-probe-auth-reg",
 		http.MethodDelete, "/required-actions/idp_link", ""),
 
 	// A realm whose UPDATE_PASSWORD row has been raised over CONFIGURE_TOTP, so

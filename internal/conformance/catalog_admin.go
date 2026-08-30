@@ -8372,7 +8372,8 @@ var adminCases = []Case{
 			Path:    "/admin/realms/master/authentication/config-description/gloak-probe-nope",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
-		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
 		// PristineRealm: the body is the realm's whole set of required actions,
@@ -8453,7 +8454,8 @@ var adminCases = []Case{
 			Path:    "/admin/realms/master/authentication/required-actions/gloak-probe-nope",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
-		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
 		// `Failed to find required action.` **with** the full stop, for the
@@ -8472,7 +8474,8 @@ var adminCases = []Case{
 			Path:    "/admin/realms/master/authentication/required-actions/gloak-probe-nope",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
-		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
 		// `{"config":{}}`, a one-key wrapper rather than the map itself.
@@ -8534,7 +8537,8 @@ var adminCases = []Case{
 			Path:    "/admin/realms/master/authentication/required-actions/delete_account/config",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
-		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
 		// The same row through the neighbouring route answers **404** with a
@@ -8552,7 +8556,8 @@ var adminCases = []Case{
 			Path:    "/admin/realms/master/authentication/required-actions/delete_account/config-description",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
-		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
 		// The strict decoder, which is the first one measured in this API.
@@ -8579,7 +8584,8 @@ var adminCases = []Case{
 			},
 			Body: []byte(`{"zz":1,"alias":"CONFIGURE_TOTP"}`),
 		},
-		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
 		// The config route's own decoder, which is strict too and names a
@@ -8601,7 +8607,8 @@ var adminCases = []Case{
 			},
 			Body: []byte(`{"alias":"x","config":{}}`),
 		},
-		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
 		// The 204 that has **no Cache-Control**. Its DELETE sibling is the only
@@ -8628,7 +8635,8 @@ var adminCases = []Case{
 				`"providerId":"TERMS_AND_CONDITIONS","enabled":true,"defaultAction":true,` +
 				`"priority":20,"config":{}}`),
 		},
-		AssertHeaders: []string{"Cache-Control", "X-Frame-Options"},
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
 		// The rename, read back. The body's alias won and the body's
@@ -8693,8 +8701,7 @@ var adminCases = []Case{
 			Path:    "/admin/realms/gloak-probe-auth-del/authentication/required-actions/idp_link",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
-		AssertHeaders:       []string{"Cache-Control"},
-		AssertAbsentHeaders: []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control", "X-Frame-Options"},
 	},
 	{
 		// The unregistered listing with something in it, which a pristine realm
@@ -8741,7 +8748,8 @@ var adminCases = []Case{
 			},
 			Body: []byte(`{"providerId":"CONFIGURE_TOTP"}`),
 		},
-		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
 		// A providerId that names nothing: 400, and its own sentence again.
@@ -8762,7 +8770,8 @@ var adminCases = []Case{
 			},
 			Body: []byte(`{"providerId":"gloak-probe-nope"}`),
 		},
-		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
 		// The successful registration, in a realm whose idp_link was
@@ -8776,10 +8785,10 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "POST /admin/realms/{realm}/authentication/register-required-action",
-		Fixture:   "auth-action-unregistered",
+		Fixture:   "auth-action-to-register",
 		Request: Request{
 			Method: http.MethodPost,
-			Path: "/admin/realms/gloak-probe-auth-unreg/authentication/" +
+			Path: "/admin/realms/gloak-probe-auth-reg/authentication/" +
 				"register-required-action",
 			Headers: map[string]string{
 				"Authorization": "Bearer {{access_token}}",

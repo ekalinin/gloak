@@ -1,0 +1,12 @@
+# GET /admin/realms/master/authentication/client-authenticator-providers
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"supportsSecret":false,"displayName":"Signed JWT","description":"Validates client based on signed JWT issued by client and signed with the Client private key","id":"client-jwt"},{"supportsSecret":true,"displayName":"Client Id and Secret","description":"Validates client based on 'client_id' and 'client_secret' sent either in request parameters or in 'Authorization: Basic' header","id":"client-secret"},{"supportsSecret":false,"displayName":"Signed JWT - Federated","description":"Validates client based on signed JWT issued and signed by an external identity provider","id":"federated-jwt"},{"supportsSecret":false,"displayName":"X509 Certificate","description":"Validates client based on a X509 Certificate","id":"client-x509"},{"supportsSecret":true,"displayName":"Signed JWT with Client Secret","description":"Validates client based on signed JWT issued by client and signed with the Client Secret","id":"client-secret-jwt"}]
