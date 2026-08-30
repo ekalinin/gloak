@@ -344,6 +344,31 @@ func (h *handler) register(mux *http.ServeMux) {
 		mux.HandleFunc("POST "+prefix+"/add-models", h.guardClientMappers(true, h.addProtocolMappers))
 	}
 
+	// Scope mappings, thirty-three operations over two containers and three
+	// path spellings. Measured 2026-08-30: `client-templates` serves what
+	// `client-scopes` serves byte for byte on all eleven, headers included -
+	// **with no exception at all**, where the parent family and the protocol
+	// mappers each had one. Both exceptions were `POST` echoing its own path
+	// into `Location`, and nothing on this tag mints a `Location`: the two
+	// writes are 204 with no body.
+	//
+	// The gate and the fine check are the protocol-mapper family's, reused
+	// after measuring them here. The per-role check inside the handlers is
+	// **not** the user family's - see mayMapRole.
+	//
+	// The `{client}` segment is named roleClientUUID rather than clientUUID so
+	// the client-owner family below can carry both: on
+	// /clients/{clientUUID}/scope-mappings/clients/{roleClientUUID} the two are
+	// different clients, and one name for both would silently resolve the
+	// container where the role container was meant.
+	for _, base := range []string{"client-scopes", "client-templates"} {
+		prefix := "/admin/realms/{realm}/" + base + "/{clientScopeID}/scope-mappings"
+		h.registerScopeMappings(mux, prefix, h.guardScopeScopeMappings)
+	}
+	h.registerScopeMappings(mux,
+		"/admin/realms/{realm}/clients/{clientUUID}/scope-mappings",
+		h.guardClientScopeMappings)
+
 	// The realm's own two default sets. Tagged `Realms Admin` and guarded like
 	// a client: manage-clients writes them and view-realm cannot read them.
 	//
@@ -482,6 +507,28 @@ func (h *handler) register(mux *http.ServeMux) {
 		h.guardByRoleContainer([]string{"manage-realm"}, []string{"manage-clients"}, h.addCompositesByID))
 	mux.HandleFunc("DELETE /admin/realms/{realm}/roles-by-id/{roleID}/composites",
 		h.guardByRoleContainer([]string{"manage-realm"}, []string{"manage-clients"}, h.removeCompositesByID))
+}
+
+// registerScopeMappings declares one container's eleven scope-mapping routes.
+//
+// A function rather than a third copy of the eleven lines, because the three
+// families are measured byte-identical and the only thing that differs is the
+// guard - which is exactly what a divergence between two copies would hide.
+// The two protocol-mapper loops next door are seven lines each and were written
+// out; eleven times three is where that stops being the smaller diff.
+func (h *handler) registerScopeMappings(mux *http.ServeMux, prefix string,
+	guard func(bool, func(http.ResponseWriter, *http.Request, *reqContext, scopeContainer)) http.HandlerFunc) {
+	mux.HandleFunc("GET "+prefix, guard(false, h.allScopeMappings))
+	mux.HandleFunc("GET "+prefix+"/realm", guard(false, h.listRealmScopeMappings))
+	mux.HandleFunc("GET "+prefix+"/realm/available", guard(false, h.availableRealmScopeMappings))
+	mux.HandleFunc("GET "+prefix+"/realm/composite", guard(false, h.compositeRealmScopeMappings))
+	mux.HandleFunc("POST "+prefix+"/realm", guard(true, h.addRealmScopeMappings))
+	mux.HandleFunc("DELETE "+prefix+"/realm", guard(true, h.removeRealmScopeMappings))
+	mux.HandleFunc("GET "+prefix+"/clients/{roleClientUUID}", guard(false, h.listClientRoleScopeMappings))
+	mux.HandleFunc("GET "+prefix+"/clients/{roleClientUUID}/available", guard(false, h.availableClientRoleScopeMappings))
+	mux.HandleFunc("GET "+prefix+"/clients/{roleClientUUID}/composite", guard(false, h.compositeClientRoleScopeMappings))
+	mux.HandleFunc("POST "+prefix+"/clients/{roleClientUUID}", guard(true, h.addClientRoleScopeMappings))
+	mux.HandleFunc("DELETE "+prefix+"/clients/{roleClientUUID}", guard(true, h.removeClientRoleScopeMappings))
 }
 
 // guard is the authorization filter every admin route goes through: resolve
