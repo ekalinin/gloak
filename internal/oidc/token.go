@@ -129,7 +129,8 @@ func (h *handler) token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch grantType {
-	case grantPassword, grantRefreshToken, grantClientCredentials, grantAuthorizationCode:
+	case grantPassword, grantRefreshToken, grantClientCredentials, grantAuthorizationCode,
+		grantDeviceCode, grantCIBA:
 	default:
 		httpx.WriteOAuthError(w, http.StatusBadRequest,
 			"unsupported_grant_type", "Unsupported grant_type")
@@ -169,6 +170,12 @@ func (h *handler) token(w http.ResponseWriter, r *http.Request) {
 		h.clientCredentialsGrant(w, r, realm, client, k)
 	case grantAuthorizationCode:
 		h.authorizationCodeGrant(w, r, realm, client, k)
+	case grantDeviceCode:
+		h.deviceCodeGrant(w, r, realm, client, k)
+	case grantCIBA:
+		// No keys are needed: every answer a default deployment can give to
+		// this grant is a refusal. See internal/oidc/ciba.go.
+		h.cibaGrant(w, r, client)
 	}
 }
 
