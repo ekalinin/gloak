@@ -66,8 +66,13 @@ const (
 // What this does not do is keep a parked golden honest. Nothing compares it, so
 // nothing notices when Keycloak's answer moves underneath it - which was
 // already true before the recorder stopped rewriting it, since the rewrite was
-// compared by nothing either. See the handover's F69 disposition for the
-// question of whether a Pending case should carry a golden at all.
+// compared by nothing either.
+//
+// F72 asked whether a Pending case should carry a golden at all, and the answer
+// is that it may, and must be declared: parkedGoldens in case_test.go names
+// every one of them and says what a reader is to do with it, which is to read
+// it as a measurement and never as a contract. A Pending golden that is not
+// declared fails, so the next one cannot arrive by accident.
 func GoldenIsAsserted(c Case) bool { return c.Status != Pending }
 
 // Doc cites where a behaviour was read. The Securing Applications guide has

@@ -34,7 +34,8 @@ func TestGoldenIsAssertedFollowsTheStatus(t *testing.T) {
 // Seven Pending cases carry a golden today. Four of them are the login-theme
 // pages whose whole body churns per container start; the other three are stable
 // bodies that were measured and parked. Every one of them has to come back
-// false, or `make record` is rewriting a file no test reads.
+// false, or `make record` is rewriting a file no test reads. Which seven, and
+// why each is kept, is parkedGoldens.
 func TestNoPendingGoldenIsCompared(t *testing.T) {
 	parked := 0
 	for _, c := range Catalog {
@@ -54,6 +55,85 @@ func TestNoPendingGoldenIsCompared(t *testing.T) {
 	if parked == 0 {
 		t.Fatal("no Pending case has a golden, so this test has stopped checking anything; " +
 			"either they were all promoted or the goldens were removed, and both are worth reading about")
+	}
+}
+
+// parkedGoldens is F72's answer: a Pending case **may** carry a golden, and it
+// has to say so here.
+//
+// The file is a measurement, not a contract. Nothing compares it - a Pending
+// case is skipped whether or not a golden exists - so it does not say what
+// Gloak must serve, and nothing notices when Keycloak's answer moves underneath
+// it. What it is for is reading: the measured status, headers and body of an
+// endpoint this project has not built yet, without a container and without
+// Docker. That is worth keeping and worth being unable to mistake for a
+// contract, which is what a declared list buys that a bare file does not.
+//
+// The way to make one a contract is to promote the case to Recorded. That is
+// what Recorded already means - measured, committed, not served yet, and the
+// verifier requires it *not* to match - and it is a one-word edit a reviewer
+// sees in the diff. There is no flag, here or in the recorder (F69).
+//
+// An eighth cannot appear by accident: a Pending case that grows a golden file
+// without an entry here fails, and an entry naming a case that is no longer
+// Pending, or whose file has gone, fails too. So the list can only be changed
+// on purpose, and changing it is where the reason gets written down.
+var parkedGoldens = map[string]string{
+	"oidc/authorization/invalid-redirect-uri": "the keycloak.v2 theme's 400 error page; the /resources/<hash>/ " +
+		"segment in the body is minted per container start, so these bytes are one container's rather than " +
+		"a reproducible value - read the page's shape, its status and its headers, not that segment",
+	"oidc/authorization/unknown-client-id": "the same theme page for the other half of the page family, " +
+		"kept because the two differ in their instruction and nothing else",
+	"oidc/logout/invalid-post-logout-redirect-uri": "the logout endpoint's copy of that page, which is the " +
+		"only record in the repository that it carries Cache-Control: no-cache where the authorization " +
+		"endpoint's carries none",
+	"oidc/logout/invalid-id-token-hint": "the third instruction the 400 page serves, and the one that pins " +
+		"the hint being judged before the redirect URI",
+	"oidc/device/authorization-request": "a reproducible four-line body: the device grant's refusal on a " +
+		"client that has the grant disabled, which is every client on a default 26.7.1",
+	"oidc/ciba/authentication-request": "a reproducible two-key body, and the one record of CIBA answering " +
+		"401 where the device endpoint beside it answers 400",
+	"oidc/registration/without-initial-access-token": "a reproducible body naming the 'Trusted Hosts' policy, " +
+		"which is why anonymous registration is 403 rather than 401 on a default 26.7.1",
+}
+
+// TestEveryParkedGoldenIsDeclared enforces F72 in both directions.
+//
+// It is not a ratchet. Every Pending golden in the tree is declared today, and
+// the test fails on the first one that is not - which is the run that adds it,
+// rather than some later run that wonders where it came from.
+func TestEveryParkedGoldenIsDeclared(t *testing.T) {
+	declared := make(map[string]bool, len(parkedGoldens))
+	for id, reason := range parkedGoldens {
+		if strings.TrimSpace(reason) == "" {
+			t.Errorf("%q: declared with no reason, which is the whole of what the list is for", id)
+		}
+		declared[id] = true
+	}
+
+	seen := make(map[string]bool, len(parkedGoldens))
+	for _, c := range Catalog {
+		_, err := os.Stat(GoldenPath(goldenDir, c.ID))
+		hasGolden := err == nil
+		switch {
+		case c.Status == Pending && hasGolden && !declared[c.ID]:
+			t.Errorf("%q: Pending and carrying a golden nothing compares, "+
+				"and not in parkedGoldens - declare it with the reason a reader should keep it, "+
+				"or promote the case to Recorded so the golden is compared", c.ID)
+		case c.Status == Pending && !hasGolden && declared[c.ID]:
+			t.Errorf("%q: declared in parkedGoldens, but there is no golden at %s",
+				c.ID, GoldenPath(goldenDir, c.ID))
+		case c.Status != Pending && declared[c.ID]:
+			t.Errorf("%q: declared in parkedGoldens and is not Pending, so its golden "+
+				"*is* compared - drop the entry", c.ID)
+		}
+		seen[c.ID] = true
+	}
+
+	for id := range parkedGoldens {
+		if !seen[id] {
+			t.Errorf("%q: declared in parkedGoldens and is not in the catalogue at all", id)
+		}
 	}
 }
 
