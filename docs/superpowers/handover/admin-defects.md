@@ -348,6 +348,16 @@ empty value counts towards the size. See §1.3.
   already so before this branch; `make lint` runs `vet` and not `gofmt`, so
   nothing catches it.
 
+### `internal/conformance/fixture.go` was shared with the device-grant stream
+
+Flagged as asked. This branch appended six fixtures to the very end of
+`Fixtures` and its helpers after the last one, and the device grant's cut did
+the same to the same file. `git merge origin/main` took both with no conflict
+and both streams' fixtures are present afterwards - fifteen references to this
+branch's and fifty to the device grant's - but the two cuts were one edit
+position apart from colliding, and the next pair to share this file should
+expect to resolve it by hand.
+
 ### The observed document's Shape 4 section is stale
 
 `docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md` still says the
@@ -361,11 +371,13 @@ each other and both are behind the measurements.
 
 ## 4. Parity
 
-Measured by hand exactly the way CI does it, against the merge base `db9f4f3`:
+Measured by hand exactly the way CI does it. Twice, because `main` moved under
+the branch while it was in flight and the device grant landed sixteen
+operations:
 
 ```
-before   242 of 500
-after    242 of 500        no change
+against db9f4f3   before 242 of 500   after 242 of 500   no change
+against b3e3b24   before 263 of 516   after 263 of 516   no change
 ```
 
 **Nothing moved, and that is the right answer.** Every one of the thirty-two
