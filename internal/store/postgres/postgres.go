@@ -1729,8 +1729,8 @@ func (r *requiredActionRepo) Create(ctx context.Context, m *model.RequiredAction
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO required_action_provider (`+requiredActionColumns+`)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		m.ID, m.RealmID, m.Alias, m.Name, m.ProviderID, m.Enabled,
-		m.DefaultAction, m.Priority, encode(m.Config))
+		m.ID, m.RealmID, m.Alias, m.Name, m.ProviderID, boolToInt(m.Enabled),
+		boolToInt(m.DefaultAction), m.Priority, encode(m.Config))
 	return classify(err)
 }
 
@@ -1759,8 +1759,8 @@ func (r *requiredActionRepo) Update(ctx context.Context, m *model.RequiredAction
 		`UPDATE required_action_provider SET alias = $1, name = $2, provider_id = $3,
 		 enabled = $4, default_action = $5, priority = $6, config = $7
 		 WHERE realm_id = $8 AND id = $9`,
-		m.Alias, m.Name, m.ProviderID, m.Enabled, m.DefaultAction, m.Priority,
-		encode(m.Config), m.RealmID, m.ID)
+		m.Alias, m.Name, m.ProviderID, boolToInt(m.Enabled),
+		boolToInt(m.DefaultAction), m.Priority, encode(m.Config), m.RealmID, m.ID)
 	if err != nil {
 		return classify(err)
 	}
@@ -1776,13 +1776,20 @@ func (r *requiredActionRepo) Delete(ctx context.Context, realmID, id string) err
 	return affectedOne(tag.RowsAffected())
 }
 
+// scanRequiredAction reads enabled and default_action through ints, because
+// the migration declares them INTEGER in both drivers - see boolToInt - and
+// pgx will not encode a Go bool into an int4 or decode one back. SQLite's
+// driver converts either way and hid this until the shared driver conformance
+// covered the table.
 func scanRequiredAction(row scanner) (*model.RequiredActionProvider, error) {
 	m := &model.RequiredActionProvider{}
 	var config string
+	var enabled, defaultAction int
 	if err := row.Scan(&m.ID, &m.RealmID, &m.Alias, &m.Name, &m.ProviderID,
-		&m.Enabled, &m.DefaultAction, &m.Priority, &config); err != nil {
+		&enabled, &defaultAction, &m.Priority, &config); err != nil {
 		return nil, classify(err)
 	}
+	m.Enabled, m.DefaultAction = enabled != 0, defaultAction != 0
 	if err := decode(config, &m.Config); err != nil {
 		return nil, err
 	}
