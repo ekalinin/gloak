@@ -212,21 +212,23 @@ operations is allocated below; none is left unassigned.
 | **P7** | Advanced grants, **first cut done 2026-08-30** | P1, P5 | `device` 5, `ciba` 3, `registration` 6, token exchange, JWT bearer, DPoP, PAR | ~20 cases |
 | P7 first cut | The device grant's flow, CIBA's refusals | P5 | `oidc/device` 0->11 of 12, `oidc/ciba` 0->10 of 12. The eight cases the catalogue held all measured the grant **disabled**, which is its state on every client of a default install; the two endpoints have twenty-two distinct answers. CIBA cannot complete on a default container at all, which is a measurement rather than a gap | 0 ops |
 | **P8** | Authentication flow engine, **first cut done 2026-08-30** | P3 | Authentication Management 39, required actions, OTP, WebAuthn, brute force | 39 ops |
+| P8 second cut | Required actions enforced at login, **done 2026-08-31** | P8 first cut, P13 | no operations. F104 closed, and it named the smaller half: `internal/oidc` read a user's `requiredActions` on **no** endpoint, so the password grant was handing out tokens too. A temporary password is now temporary | 0 ops |
 | P8 first cut | The SPI registry and required actions | P3 | `admin/authentication-management` 0->18 of 39. The other 21 - `flows`, `executions`, `config` - are **deliberately deferred**: Gloak walks a hard-coded flow, so they would edit a description nothing reads. Named individually in F103 | 18 ops |
 | **P9** | Federation and brokering | P4, P8 | Identity Providers 17, Component 6 | 23 ops |
 | **P10** | Authorization services (UMA 2.0) | P5 | `authz/resource-server/*` | 31 ops |
 | **P11** | SAML 2.0 | P4 | descriptors, SSO and SLO bindings | not in OpenAPI |
-| **P12** | Organizations and Workflows | P4 | Organizations 36, Workflows 9 | 45 ops |
+| **P12** | Organizations and Workflows, **first cut done 2026-08-31** | P4 | Organizations 36, Workflows 9. **The row's 45 is 56**: eleven more operations live under `/organizations/{org-id}/groups/.../role-mappings` and are counted under `Role Mapper` and `Client Role Mappings`, so building this unlocks them. 47 operations live under `/organizations` in all | 56 ops |
+| P12 first cut | The organization as a resource | P4 | `admin/organizations` 0->6. `ORGANIZATION` is **not** a preview feature: what is off is the realm's `organizationsEnabled`, and the refusal sits **after** the caller's roles - the opposite of `client-types` | 6 ops |
 | **P13** | Themes, i18n, account console, admin console, **first cut done 2026-08-30** | P5 | - | not in OpenAPI |
 | P3 third cut | The `authorization_code` grant, **done 2026-08-30** | P13 first cut | `oidc/token` 10->14 and its `recorded` column to **zero**. With P13's cut this is the first time Gloak can complete a browser OAuth flow. The measured contract said "Every rejection" over eight rows and there are twelve | 0 ops |
 | P13 second cut | SSO and the consent pages, **done 2026-08-30** | P13 first cut, P7 first cut | no operations: F65, F77 and F101 close, so a browser that has signed in once gets a code without a form and a user can finish a device login. `oidc/authorization` 12->14, `oidc/device` 11->13 | 0 ops |
 | P13 first cut | The browser login, end to end | P3, P5 | no operations, and the column that matters is `oidc/authorization`'s `recorded` going **4 -> 0**: the chapter no longer holds a case waiting on an endpoint nobody built. The flow is served - authentication session, login form, `/login-actions/authenticate`, authorization code - and the theme's markup is not | 0 ops |
 | **P14** | Operational parity | P4 | events and audit, SMTP, health and metrics, clustering | not in OpenAPI |
 
-Denominator today: **413 Admin API operations plus 110 protocol behaviours, 523
+Denominator today: **413 Admin API operations plus 113 protocol behaviours, 526
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **285** after
-P8's first cut, and **P2, P4 and P5 are complete** - up from 8 before P1, 25 after it, 89 after the second cut's
+surface is not counted and which the report says so about. Served: **294** after
+P12's first cut, and **P2, P4 and P5 are complete** - up from 8 before P1, 25 after it, 89 after the second cut's
 roles half, 100 after that cut was complete, 109 after the group tree and 113
 after the membership.
 
@@ -251,7 +253,32 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-08-30 (fifth fold).** `make conformance` reports **285 of 523**,
+**Updated 2026-08-31 (sixth fold).** `make conformance` reports **294 of 526**,
+and **a temporary password is now actually temporary** - `internal/oidc` had
+read a user's `requiredActions` on no endpoint at all, so the password grant was
+handing out tokens as well as the browser flow.
+
+Two things about the round are worth more than the number.
+
+**Two follow-up entries named the smaller half of their own subject**, and both
+understatements propagated into a briefing before a measurement caught them. One
+described an admin field as unconsumed when the divergence was on the token
+endpoint; the other gave a count whose base the package's own tests already
+contradicted.
+
+**A wrong explanation attached to a correct observation is the most expensive
+thing these documents carry.** The observed spec explained an incomplete-profile
+refusal by an attribute that exempts nothing; a cut implemented the exemption
+from that paragraph, broke two fixtures, and reverted it after measuring. The
+observation had been right all along, which is what kept the explanation looking
+checked - and without the fabrication the same code locks the administrator out
+on first start.
+
+The gate also lied twice, and both are fixed: CI was being killed inside `fsync`
+rather than being slow (F114), and four goldens promoted to `Recorded` walked
+back through the door F69's fix leaves open (F113).
+
+**Earlier on 2026-08-30 (fifth fold).** `make conformance` reported **285 of 523**,
 and the **browser flow is complete**: a browser that has signed in once gets a
 code without a form, and a user can finish a device login through the
 verification and consent pages.
