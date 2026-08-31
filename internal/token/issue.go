@@ -204,6 +204,53 @@ func (i *Issuer) refreshClaims(r Request, iat, exp int64) refreshClaims {
 	}
 }
 
+// LogoutLife is how long a back-channel logout token is valid for. Measured
+// 2026-08-31 across every logout token a sweep produced: exp - iat is 120
+// seconds, and it does not follow the access token's lifespan.
+const LogoutLife = 120 * time.Second
+
+// LogoutRequest is one back-channel logout notification: the client that will
+// receive it, the subject and, when that client asked for it, the session.
+//
+// SessionID is emitted only when SessionRequired, which is the client's own
+// backchannel.logout.session.required attribute. Passing the flag rather than
+// letting an empty SessionID mean "omit" keeps the two questions apart: a
+// session always has an id, and whether the client is told it is the client's
+// choice.
+type LogoutRequest struct {
+	ClientID        string
+	UserID          string
+	SessionID       string
+	SessionRequired bool
+}
+
+// IssueLogout mints the back-channel logout token a client's registered
+// backchannel.logout.url receives. It is signed RS256 with the realm's active
+// signing key - the same kid the ID token carries, so a client that has already
+// fetched the JWKS needs nothing new - and its JOSE header's typ is
+// LogoutHeaderType rather than "JWT".
+func (i *Issuer) IssueLogout(r LogoutRequest) (string, error) {
+	now := i.now().UTC()
+	claims := logoutClaims{
+		Exp:    now.Add(LogoutLife).Unix(),
+		Iat:    now.Unix(),
+		Jti:    model.NewID(),
+		Iss:    i.Issuer,
+		Aud:    r.ClientID,
+		Sub:    r.UserID,
+		Typ:    TypeLogout,
+		Events: map[string]struct{}{BackchannelLogoutEvent: {}},
+	}
+	if r.SessionRequired {
+		claims.Sid = r.SessionID
+	}
+	signer, err := i.Keys.RSASignerTyped(LogoutHeaderType)
+	if err != nil {
+		return "", err
+	}
+	return sign(signer, claims)
+}
+
 // IsLightweight reports whether a client's access tokens carry the reduced
 // claim set.
 func IsLightweight(c *model.Client) bool {

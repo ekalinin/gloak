@@ -32,6 +32,12 @@ type handler struct {
 	// revoke it through the Admin API, so this one is a divergence rather than
 	// the faithful model. See internal/oidc/authsession.go.
 	consents *consentStore
+	// httpClient is the one place this package calls *out*, and it exists for
+	// back-channel logout alone. Nil means the default in
+	// backchannelClient, whose timeout is measured; a test stands up an
+	// httptest.NewServer and sets this so `go test` never touches a network it
+	// did not create. See internal/oidc/channellogout.go.
+	httpClient *http.Client
 }
 
 // realmBase is the URL every realm-scoped path hangs off, which the login
