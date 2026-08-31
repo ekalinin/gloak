@@ -207,6 +207,7 @@ operations is allocated below; none is left unassigned.
 | P5 first cut | Client scopes, the two attachment families, and F49 | P2 | `admin/client-scopes` 0->10, `admin/clients` 10->16, `admin/realms-admin` 15->21. Protocol Mappers and Scope Mappings are cuts B and C | 22 ops |
 | P5 third cut | Scope mappings, **done 2026-08-30 - P5 complete** | P5 second cut | `admin/scope-mappings` 0->33, the tag closed outright. The `client-templates` alias is byte-identical on all eleven with **no** exception here, because nothing on this tag mints a `Location` | 33 ops |
 | P5 second cut | Protocol mappers, **done 2026-08-30** | P5 first cut | `admin/protocol-mappers` 0->21, the tag closed outright. Seven of its 21 are the `client-templates` alias again, verified byte-identical against the server rather than inferred from the first cut. Scope Mappings is cut C | 21 ops |
+| P6 second cut | Back-channel and front-channel logout, **done 2026-08-31** | P6 first cut, P13 | no operations, and none available: back-channel logout is a request **Keycloak** makes and a `Case` holds one request and one response. Fifteen tests instead. `oidc/logout/frontchannel` becomes promotable when P13 lands | 0 ops |
 | **P6** | Sessions and logout in full, **first cut done 2026-08-30** | P3 | back-channel, front-channel, session iframe, offline sessions, Attack Detection 3 | 3 ops + cases |
 | P6 first cut | The RP-initiated logout endpoint | P3 | `oidc/logout` 0->10, and the chapter's denominator 5->14. The estimate before the cut was **+1**, from counting the five cases already in the catalogue; the endpoint has two verbs, two request families per verb and six response shapes | 0 ops |
 | **P7** | Advanced grants, **first cut done 2026-08-30** | P1, P5 | `device` 5, `ciba` 3, `registration` 6, token exchange, JWT bearer, DPoP, PAR | ~20 cases |
@@ -215,7 +216,8 @@ operations is allocated below; none is left unassigned.
 | P8 second cut | Required actions enforced at login, **done 2026-08-31** | P8 first cut, P13 | no operations. F104 closed, and it named the smaller half: `internal/oidc` read a user's `requiredActions` on **no** endpoint, so the password grant was handing out tokens too. A temporary password is now temporary | 0 ops |
 | P8 first cut | The SPI registry and required actions | P3 | `admin/authentication-management` 0->18 of 39. The other 21 - `flows`, `executions`, `config` - are **deliberately deferred**: Gloak walks a hard-coded flow, so they would edit a description nothing reads. Named individually in F103 | 18 ops |
 | **P9** | Federation and brokering | P4, P8 | Identity Providers 17, Component 6 | 23 ops |
-| **P10** | Authorization services (UMA 2.0) | P5 | `authz/resource-server/*` | 31 ops |
+| **P10** | Authorization services (UMA 2.0), **first cut done 2026-08-31** | P5 | `authz/resource-server/*` 31, plus **twelve** `management/permissions` operations counted under five other tags - the brief said eight, which was right only for the three chapters that had no other unserved operations | 43 ops |
+| P10 first cut | The resource server and the twelve refusals | P5 | `admin/authz-resource-server` 0->5, and **three chapters closed outright**: `admin/roles` 28/28, `admin/roles-by-id` 10/10, `admin/groups` 11/11. The gate is the **client's** `authorizationServicesEnabled` and it runs **before** authorization - a fourth gate shape in four families | 17 ops |
 | **P11** | SAML 2.0 | P4 | descriptors, SSO and SLO bindings | not in OpenAPI |
 | **P12** | Organizations and Workflows, **first cut done 2026-08-31** | P4 | Organizations 36, Workflows 9. **The row's 45 is 56**: eleven more operations live under `/organizations/{org-id}/groups/.../role-mappings` and are counted under `Role Mapper` and `Client Role Mappings`, so building this unlocks them. 47 operations live under `/organizations` in all | 56 ops |
 | P12 first cut | The organization as a resource | P4 | `admin/organizations` 0->6. `ORGANIZATION` is **not** a preview feature: what is off is the realm's `organizationsEnabled`, and the refusal sits **after** the caller's roles - the opposite of `client-types` | 6 ops |
@@ -227,8 +229,10 @@ operations is allocated below; none is left unassigned.
 
 Denominator today: **413 Admin API operations plus 113 protocol behaviours, 526
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **294** after
-P12's first cut, and **P2, P4 and P5 are complete** - up from 8 before P1, 25 after it, 89 after the second cut's
+surface is not counted and which the report says so about. Served: **311** after
+P10's first cut, and **P2, P4 and P5 are complete** - as are the `Roles`,
+`Roles (by ID)` and `Groups` chapters, which P10 closed by measuring what their
+last operations refuse - up from 8 before P1, 25 after it, 89 after the second cut's
 roles half, 100 after that cut was complete, 109 after the group tree and 113
 after the membership.
 
@@ -253,7 +257,27 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-08-31 (sixth fold).** `make conformance` reports **294 of 526**,
+**Updated 2026-08-31 (seventh fold).** `make conformance` reports **311 of 526**,
+and three chapters are closed outright - `admin/roles` 28/28,
+`admin/roles-by-id` 10/10, `admin/groups` 11/11 - by measuring what their last
+operations *refuse* rather than by building anything.
+
+**Four families, four gate shapes, and no two share an implementation.**
+`client-types` refuses before authorization with a 501; organizations refuse
+after it with a 404 on a *realm* flag; authorization services refuse before it
+with a 404 on a *client* flag; required actions are not a gate at all. Each was
+measured only because the cut was told not to assume which shape it was, and
+each would have been got wrong by reusing the last. That is worth stating as a
+rule: **this API's gates are not a family, and the description's tag does not
+predict them.**
+
+A wrong explanation was killed **before** it shipped for the first time rather
+than after - the `PUT .../authz/resource-server` rule was first read as "a body
+with no name is a 409" and the distinguishing probe arrived by accident, from a
+role sweep that happened to use it. The pattern this project has twice recorded
+as its most expensive was caught by luck, which is not a method.
+
+**Earlier on 2026-08-31 (sixth fold).** `make conformance` reported **294 of 526**,
 and **a temporary password is now actually temporary** - `internal/oidc` had
 read a user's `requiredActions` on no endpoint at all, so the password grant was
 handing out tokens as well as the browser flow.

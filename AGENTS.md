@@ -68,6 +68,11 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   find matching target resource method"}`, a wrong method on a known path
   answers `{"error":"HTTP 404 Not Found"}`. That is why `withKeycloakFallbacks`
   still tells the two cases apart even though both return the same status.
+  **There are three producers of that second body, not two**: a correct method
+  on a correct path whose *resource is switched off* sends it too - every route
+  under `authz/resource-server` on a client without `authorizationServicesEnabled`,
+  to every caller including one holding no admin role. So the body does not mean
+  "wrong method"; it means "the router found nothing to run".
 - **That rule is measured too broad, seven times now, and the Admin API alone
   now answers it in three different shapes** - the client scopes answer all four
   wrong verbs 405, the protocol mappers answer `PATCH` alone 405, and the scope
@@ -93,7 +98,7 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `{"error":"HTTP 405 Method Not Allowed"}`, measured independently on the
   protocol and admin sides on the same day, so the fallback family has five
   bodies rather than four. See F31 before adding a 405 or defending the 404.
-- **The five security headers have four exceptions, and the fourth is decided by the verb.** A route match
+- **The five security headers have five exceptions, and no two are decided by the same thing.** A route match
   and a known path hit with the wrong method both get `Referrer-Policy`,
   `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`
   and `X-Robots-Tag`. A path matching no route at all gets none of them,
@@ -117,6 +122,10 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `WithKeycloakFallbacks`, so nothing was changed on the strength of it; the
   same sweep also found that **`/auth` is the only one of the four whose
   `OPTIONS` carries an `Allow` header**. See F31.
+  **The fifth, added 2026-08-31: a 409 `Duplicate resource error` sends none of
+  the five.** So the exceptions are decided by the path, the endpoint, the
+  request's `Content-Type`, the method and now the status - five rules, no two
+  alike, and a sixth is likelier than a unifying one.
 - **That rule was wrong once already.** P2's Task 11 recorded it as "a
   successful `DELETE`'s 204 omits it", from four deletes that all happened to
   send no `Content-Type`. When a new 204 disagrees with a header rule, measure
@@ -323,10 +332,22 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   whatever it is told, replacing the credential in place: same id, refreshed
   `createdDate`, `userLabel` cleared.
 - **`PUT .../userLabel` consumes `text/plain`.** Sending JSON answers 415.
-- **`PUT` on a role replaces; `PUT` on a client or a user merges.** A role
-  updated with a body carrying only `name` loses its description. A role can
-  also be renamed through it, where a username cannot. Copying `updateClient`'s
-  shape into `updateRealmRole` is the mistake this warns about.
+- **`PUT` on a role replaces; `PUT` on a client or a user merges - except for
+  one field.** A role updated with a body carrying only `name` loses its
+  description. A role can also be renamed through it, where a username cannot.
+  Copying `updateClient`'s shape into `updateRealmRole` is the mistake this
+  warns about.
+  **The exception is `authorizationServicesEnabled`**, measured 2026-08-31: a
+  `PUT {"description":"touched"}` on a client carrying six non-default values
+  left seven fields exactly as they were and **turned that one flag off**,
+  destroying the resource server with it. An omitted value means `false` there
+  and "unchanged" everywhere else on the same body, because the flag is not a
+  field at all - it is whether the client has a resource server. And **naming it
+  `true` is not the same as leaving it alone**: on a client that already has one
+  it *preserves* the three settings, where off-then-on resets them. Three states
+  on one verb, and an implementation that upserts the defaults whenever the flag
+  is on is right on two of them and silently resets a caller's settings on the
+  third.
 - **`briefRepresentation` defaults to true on a role listing and false on the
   user listing.** Same parameter, two endpoints, opposite defaults, both
   measured. One shared helper would get one of them wrong.
@@ -342,6 +363,12 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `manage-realm` for realm roles, `view-clients` or `manage-clients` for
   client roles, on the plain reads and the composite listings alike. The plan
   assumed single-role guards four separate times and was wrong every time.
+  **A read that refuses the *view* role exists**, one path segment away:
+  `GET .../authz/resource-server/settings` needs `manage-authorization` or
+  `manage-clients`, while `view-authorization` and `view-clients` read
+  `GET .../authz/resource-server` immediately beside it. Sharing a role list
+  between the two is the tidy-up that opens a settings export to a read-only
+  caller.
 - **`roles-by-id`'s required role comes from the resolved role's container**,
   and its 404 precedes its 403 - which does leak which role ids exist. That is
   Keycloak's measured order, and the reason previously written down for it was
@@ -912,6 +939,40 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   alias is distinguishable only through a `Location`.**
 - **A 415 exists on this API**, and the scope mappings are where it is
   reachable, because they are the first routes whose `DELETE` carries a body.
+
+- **A logout that ends a session and a session that ends are two different
+  things.** Four paths fire the back-channel notification - `GET /logout` with a
+  hint, `POST /logout` with a refresh token, `POST /users/{id}/logout` and
+  `DELETE /sessions/{sid}` - and two end sessions and notify **nobody**:
+  `POST .../logout-all` ended two sessions and made zero calls, and
+  `POST /revoke` with a refresh token ended one and made zero. Hanging the
+  notification off session removal is the obvious implementation and it fires on
+  two paths Keycloak does not.
+- **The two `session.required` attributes have opposite defaults.**
+  `backchannel.logout.session.required` absent behaves as `"false"` - the logout
+  token carries no `sid`; `frontchannel.logout.session.required` absent behaves
+  as `"true"` - the iframe's `src` does gain `?sid=&iss=`. One helper reading
+  both names gets one of them wrong. The admin console's default for the
+  back-channel one is **on**, so a client created there looks like the opposite
+  measurement.
+- **Front-channel logout is not an outbound call.** The browser makes the calls;
+  the response is an ordinary page and exactly the shape the harness records.
+  The case's old `Reason` said "the calls it makes are unobservable" and was
+  wrong in precisely its interesting half. **A front-channel client turns the
+  302 into a 200** on identical inputs, and its `Content-Security-Policy` is the
+  one computed theme-page policy in the project - hosts repeated per client
+  rather than de-duplicated, with a space before the semicolon.
+- **The back-channel logout token says its own kind twice, in two spellings**:
+  `logout+jwt` in the JOSE header and `Logout` in the payload's `typ`. Its
+  `exp - iat` is **120**, and every claim in it is per client - `aud`, `sub` and
+  `sid` name the client and session being told, so a test that compares outbound
+  *paths* and not the token at each path passes a server that tells every client
+  somebody else was logged out. That mutation survived a whole package once.
+- **The notification goes out while the session is still alive.** With a hanging
+  client holding the socket, the Admin API still listed the session - so the
+  send is deliberately before the removal and deliberately synchronous, which is
+  what the five-second block says.
+- **The logout endpoint has seven response shapes, not six.**
 
 - **A required action is enforced on two endpoints and they disagree about one
   user.** The browser login asks whether an **enabled** provider has anything to

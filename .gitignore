@@ -6,3 +6,7 @@
 *.db-shm
 *.db-wal
 /parity-*.tsv
+
+# Agent worktrees: scratch checkouts created per background task, never tracked.
+# git add -A picked one up as an embedded repository on 2026-08-31.
+.claude/worktrees/

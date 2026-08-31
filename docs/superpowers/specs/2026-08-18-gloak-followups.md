@@ -184,6 +184,26 @@ exactly what kept the explanation looking checked.
 **Three independent cuts refuted the same line**, "`make record` is silent on a
 clean checkout". None was looking for it. See F113.
 
+**Status, 2026-08-31 (seventh fold).** Two cuts took parity to **311 of 526**
+and **closed three chapters outright** - `admin/roles` 28/28, `admin/roles-by-id`
+10/10, `admin/groups` 11/11. **F122 through F130** are opened.
+
+Two things about the round.
+
+**A fourth gate shape, in four families, and no two share an implementation.**
+`client-types` refuses before authorization with a 501; organizations refuse
+after it with a 404 on a realm flag; authorization services refuse before it
+with a 404 on a *client* flag; and required actions are not a gate at all. Every
+one of the four was measured because the cut was told not to assume which shape
+it was, and every one would have been got wrong by reusing the last.
+
+**A wrong explanation was killed before it shipped**, for the first time rather
+than after. The `PUT .../authz/resource-server` rule was first read as "a body
+with no name is a 409", from `{}` and `{"name":"x"}` - and the second of those
+is a 409 *with* a name. The distinguishing probe was sent by accident, by a role
+sweep that happened to use that body. The pattern this list has recorded twice
+as expensive was caught by luck this time, which is not a method.
+
 One thing that is deliberately **not** filed. P4's handover proposes an entry
 for "a golden that enumerates a realm-wide set without `PristineRealm`", naming
 `admin/role-mapper/group-realm-available`. That case gained the flag in
@@ -3607,3 +3627,79 @@ understanding it.
 Nine operations answering `application/yaml`, chunked. `internal/httpx` owns
 every response body this project writes and has no YAML path, so this is a
 decision about that package before it is nine handlers.
+
+## F122: the two admin logout triggers notify nobody
+
+`POST /users/{id}/logout` and `DELETE /sessions/{sid}` fire the back-channel
+notification on Keycloak. Gloak serves the two protocol paths and not these two,
+because `internal/admin` was not the channel-logout cut's to change.
+
+Until they land, an administrator ending a session leaves every other client
+believing the user is still signed in - which is the failure mode back-channel
+logout exists to prevent.
+
+## F123: the logout responses' cookie clears are unserved and unseeable
+
+Keycloak's logout responses carry cookie clears Gloak does not send. Three
+goldens mask `Set-Cookie`, so **no conformance case can see the difference** -
+the gap is real and the suite is structurally blind to it.
+
+It belongs with the SSO machinery rather than with the channel logout, and it is
+filed here so that "the goldens are green" is not read as "the cookies agree".
+
+## F124: Jackson's ` : ` spacing in every Keycloak JOSE header
+
+Keycloak's JOSE headers are serialised with a space on both sides of the colon.
+Gloak's `go-jose` does not reproduce it. **This affects every token this project
+issues**, was found while measuring the logout token, and is not caused by that
+cut.
+
+Whether it is observable to a client is the first question: a JOSE header is
+base64url-encoded, so the bytes differ while the parsed object does not. A
+client comparing the encoded header - or a signature over it - would see it.
+
+## F125: `frontchannel.logout.session.required` is measured and unread
+
+What it decides lives in the page body, which is P13's, so Gloak reads the
+attribute and does nothing with it. Filed rather than left as an attribute that
+looks honoured.
+
+## F126: `permission/providers` is not filtered to permission providers
+
+It is byte-identical to `policy/providers` - `cmp`-verified. Reproduced as
+measured. Filed because the next reader will assume the two endpoints differ,
+and the only thing that says otherwise is a comment.
+
+## F127: `javamap.KeyOrder` is wrong where `SizedKeyOrder` is right, on a served body
+
+The provider catalogues' key order is placed exactly by `SizedKeyOrder` and got
+wrong by `KeyOrder`. That is the documented difference between the two
+constructors and it is now visible on a body Gloak serves, rather than only in
+the package's tests.
+
+Nothing is broken - the cases assert the bytes that are served - but a caller
+reaching for `KeyOrder` here would be wrong, and the call site is the only thing
+that says which to use.
+
+## F128: `CONSENSUS` is a documented `decisionStrategy` and a 500
+
+Keycloak's own defect, reproduced, the same way `POST /users` with an empty body
+is reproduced. Filed so that a later cut does not "fix" it into the 400 an
+unknown value gets.
+
+## F129: the other twenty-six authorization-services operations
+
+The resource server, its two provider catalogues and the twelve refusals are the
+first cut. The scope family was swept in full anyway and its measurements are in
+`docs/superpowers/handover/p10-authz-services.md` §1.9, so the second cut starts
+from measurements rather than from the tag.
+
+## F130: `internal/store`'s `SessionRepo` cannot list a realm's sessions
+
+`channelLogoutTargets` enumerates clients through `ListByRealm` plus
+`ClientSession` because `SessionRepo` has no listing method. It works and it is
+the wrong shape - a second instance of F110's, where a cut could not reach the
+store it needed.
+
+Two cuts have now routed around this repository's missing listing methods. The
+third should add them rather than route again.
