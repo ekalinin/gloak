@@ -237,26 +237,71 @@ func TestTheConsentFollowsTheRequiredActions(t *testing.T) {
 	}
 }
 
-// TestADisabledProviderIsSkippedAndLeftOnTheUser. TERMS_AND_CONDITIONS is
-// registered and disabled on every default realm.
+// TestADisabledProviderIsSkippedAndLeftOnTheUser.
 //
-// **Both halves matter and they pull opposite ways.** The login completes,
-// which is what `enabled` decides; and the alias is still on the user
-// afterwards, which is what says `enabled` is not a delete. A handler that
-// cleared what it skipped would pass the first assertion.
+// **The two subtests are not one test written twice, and the first version had
+// only the second of them.** Deleting the `!provider.Enabled` clause from
+// nextRequiredAction survived a suite that used TERMS_AND_CONDITIONS alone,
+// because that alias has no row in requiredActionTable and an absent row reads
+// as actionSkipped - so the alias was skipped for the wrong reason and the
+// answer never moved. The enabled filter can only be pinned by disabling a
+// provider Gloak would otherwise **serve**, which is what the first subtest
+// does. A survivor is a finding about the test.
+//
+// The second subtest is still worth its keep for the other half: `enabled` is
+// not a delete, and the alias is measured still on the user after a login that
+// skipped it.
 func TestADisabledProviderIsSkippedAndLeftOnTheUser(t *testing.T) {
-	h, s := authServerAndStore(t)
-	b := &browser{h: h, t: t, jar: map[string]string{}}
-	setActions(t, s, "TERMS_AND_CONDITIONS")
+	t.Run("a provider Gloak would otherwise serve", func(t *testing.T) {
+		h, s := authServerAndStore(t)
+		b := &browser{h: h, t: t, jar: map[string]string{}}
+		setActions(t, s, "UPDATE_PASSWORD")
+		disableProvider(t, s, "UPDATE_PASSWORD")
 
-	action, _ := actionParams(t, b.login(nil))
-	w := b.do(http.MethodPost, action, credentials("admin", "admin"))
-	if w.Code != http.StatusFound || !strings.Contains(w.Header().Get("Location"), "code=") {
-		t.Fatalf("a disabled action should not stop the login, got %d %s",
-			w.Code, w.Header().Get("Location"))
+		action, _ := actionParams(t, b.login(nil))
+		w := b.do(http.MethodPost, action, credentials("admin", "admin"))
+		if w.Code != http.StatusFound || !strings.Contains(w.Header().Get("Location"), "code=") {
+			t.Fatalf("a disabled provider should not stop the login, got %d %s",
+				w.Code, w.Header().Get("Location"))
+		}
+		if got := storedActions(t, s); len(got) != 1 || got[0] != "UPDATE_PASSWORD" {
+			t.Errorf("a skipped action stays on the user, got %v", got)
+		}
+	})
+
+	t.Run("TERMS_AND_CONDITIONS, disabled on every default realm", func(t *testing.T) {
+		h, s := authServerAndStore(t)
+		b := &browser{h: h, t: t, jar: map[string]string{}}
+		setActions(t, s, "TERMS_AND_CONDITIONS")
+
+		action, _ := actionParams(t, b.login(nil))
+		w := b.do(http.MethodPost, action, credentials("admin", "admin"))
+		if w.Code != http.StatusFound || !strings.Contains(w.Header().Get("Location"), "code=") {
+			t.Fatalf("a disabled action should not stop the login, got %d %s",
+				w.Code, w.Header().Get("Location"))
+		}
+		if got := storedActions(t, s); len(got) != 1 || got[0] != "TERMS_AND_CONDITIONS" {
+			t.Errorf("a skipped action stays on the user, got %v", got)
+		}
+	})
+}
+
+// disableProvider turns one of master's registered required actions off, the
+// way PUT /admin/realms/{realm}/authentication/required-actions/{alias} does.
+func disableProvider(t *testing.T, s store.Store, alias string) {
+	t.Helper()
+	ctx := context.Background()
+	realm, err := s.Realms().ByName(ctx, "master")
+	if err != nil {
+		t.Fatalf("ByName: %v", err)
 	}
-	if got := storedActions(t, s); len(got) != 1 || got[0] != "TERMS_AND_CONDITIONS" {
-		t.Errorf("a skipped action stays on the user, got %v", got)
+	provider, err := s.RequiredActions().ByAlias(ctx, realm.ID, alias)
+	if err != nil {
+		t.Fatalf("ByAlias %s: %v", alias, err)
+	}
+	provider.Enabled = false
+	if err := s.RequiredActions().Update(ctx, provider); err != nil {
+		t.Fatalf("Update: %v", err)
 	}
 }
 
