@@ -15,9 +15,20 @@ import (
 // decodeStrict decodes a body that Keycloak decodes with Jackson's
 // FAIL_ON_UNKNOWN_PROPERTIES turned on.
 //
-// **This is the first strict decoder measured in this API.** Every other
-// endpoint recorded here ignores a field it does not know; the two PUTs on the
-// Authentication Management tag answer
+// **Four endpoints are strict, not two.** The two PUTs on the Authentication
+// Management tag were the first measured; `POST` and `PUT` on
+// `/admin/realms/{realm}/organizations` are the third and fourth, measured
+// 2026-08-31, and they name their own class:
+//
+//	400 {"error":"Invalid json representation for OrganizationRepresentation.
+//	     Unrecognized field \"bogusField\" at line 1 column 31."}
+//
+// The column is this function's own convention and it agrees with the server on
+// three bodies of different lengths, so the arithmetic generalised rather than
+// having been fitted to one endpoint.
+//
+// Most endpoints recorded here still ignore a field they do not know; the two
+// PUTs on the Authentication Management tag answer
 //
 //	400 {"error":"Invalid json representation for RequiredActionProviderRepresentation.
 //	     Unrecognized field \"bogusField\" at line 1 column 118."}
@@ -25,12 +36,15 @@ import (
 // naming the Java class, the field, the line and the column. The third write on
 // the same tag - POST /register-required-action - is **not** strict: an unknown
 // field beside a good providerId answered 204. So the strictness is per
-// endpoint and this helper is applied at two call sites rather than to
+// endpoint and this helper is applied at four call sites rather than to
 // everything.
 //
-// The decode runs **before** the path's alias is resolved: a PUT to an alias
-// that does not exist carrying an unknown field answers this 400 rather than
-// the 404.
+// **Where the decode sits in the order is per family too, and the two disagree.**
+// On the required-action PUT it runs **before** the path's alias is resolved: a
+// PUT to an alias that does not exist carrying an unknown field answers this
+// 400 rather than the 404. On the organization PUT it runs **after**: the same
+// pair of faults answers `Organization not found.`, and so does a body that is
+// not JSON at all. Measured on both, on 2026-08-30 and 2026-08-31.
 //
 // A body that is not JSON at all falls through to the ordinary "Cannot parse
 // the JSON" family, whose code is decided by the body's **shape** and not by
