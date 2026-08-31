@@ -8,6 +8,15 @@ log said `Keycloak 26.7.1 on JVM`. Removed afterwards.
 The plan, with the full state machine, is
 `docs/superpowers/plans/2026-08-31-p8-required-actions-at-login.md`.
 
+`main` was merged mid-flight, after the javamap-vectors-and-prefix-masks round
+landed. It merged clean and touched `internal/javamap`, `catalog_test.go` and one
+handover. Every finding below was re-checked against the merged tree: findings 3
+and 4 still hold - `oidc/authorization/max-age-invalid` is still `Recorded` and
+its committed golden still holds the `ynxld` hash a fresh `make record`
+overwrites - and the parity delta is the same +3 against the new merge base.
+`catalog_test.go`'s new prefix-mask ratchet passes on this branch's one new
+`VolatileHeaders` entry.
+
 ## Measurements
 
 ### The queue
