@@ -56,19 +56,22 @@ jobs:
       # suite, not make oracle, not make record. A green run does NOT mean the
       # two store drivers agree; that evidence still comes from running the
       # Postgres suite by hand, as AGENTS.md requires.
-      # -timeout is set because Go's default is 10 minutes **per package** and
-      # internal/conformance is already past two on this machine and past five
-      # on a runner. That is not a hypothetical margin: the identical tree
-      # passed, failed and passed again on a bare re-run on 2026-08-31, the
-      # failure being a package-level timeout rather than an assertion.
+      # -timeout is a backstop, not the fix. The cause was fsync: every
+      # conformance case opens a fresh SQLite file and bootstraps it, and with
+      # the default synchronous=full each of hundreds of writes waits on the
+      # disk. On 2026-08-31 this step spent thirty minutes inside
+      # modernc.org/libc.Xfsync and was killed there, having reported the same
+      # tree green twice before - the runner's disk was the variable and
+      # nothing in the output said so. The tests now open with
+      # synchronous(off), which is what actually fixed it.
       #
-      # A red build that means "the runner was slow" is worse than no build,
-      # because AGENTS.md tells the reader that any failure is a real
-      # regression - true of the local suite, and it was not true here. The
-      # job's own limit is what stops a genuine hang; this only stops the
-      # per-package clock from being the thing that decides.
+      # The flag stays because Go's default is 10 minutes **per package** and
+      # a package-level timeout reads as a failed assertion. AGENTS.md tells
+      # the reader that any failure is a real regression - true of the local
+      # suite, and it was not true here. Twenty minutes is far above a healthy
+      # run and low enough that a genuine hang does not cost half an hour.
       - name: Test
-        run: CGO_ENABLED=0 go test -timeout 30m ./...
+        run: CGO_ENABLED=0 go test -timeout 20m ./...
 
       # -count=1 forces a fresh run. go test's result cache keys on the
       # GLOAK_PARITY_REPORT value read through os.Getenv, but RUNNER_TEMP is a

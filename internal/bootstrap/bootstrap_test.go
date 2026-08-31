@@ -17,7 +17,10 @@ import (
 
 func newStore(t *testing.T) store.Store {
 	t.Helper()
-	s, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "gloak.db"))
+	// synchronous(off): a throwaway database in t.TempDir() has nothing to be
+	// durable against, and the fsync it saves is what took CI past its
+	// timeout on 2026-08-31. See conformance.testDSN for the measurement.
+	s, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "gloak.db")+"?_pragma=synchronous(off)")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

@@ -1,11 +1,11 @@
 .PHONY: test build lint conformance record oracle kcsrc
 
-# -timeout, because Go's default is 10 minutes per package and
-# internal/conformance is already past two minutes here. CI runs the same flag
-# for the same reason: a package-level timeout reads as a failed assertion and
-# is not one. See the workflow's Test step.
+# -timeout is a backstop. Go's default is 10 minutes per package, and a
+# package-level timeout reads as a failed assertion rather than as the clock
+# running out. What actually made CI hit it was fsync, not the suite's size -
+# see conformance.testDSN. CI runs the same flag for the same reason.
 test:
-	CGO_ENABLED=0 go test -timeout 30m ./...
+	CGO_ENABLED=0 go test -timeout 20m ./...
 
 build:
 	CGO_ENABLED=0 go build -o gloak ./cmd/gloak
