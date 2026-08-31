@@ -908,6 +908,111 @@ var oidcPending = []Case{
 		AssertHeaders: []string{"Content-Type"},
 	},
 	{
+		// **The token endpoint refuses an account that has not done what an
+		// administrator told it to.** A temporary password is the ordinary way
+		// to arrive here: the inline `credentials` entry that creates this
+		// fixture's user carries `temporary: true`, which puts UPDATE_PASSWORD
+		// on the representation, and this is what the direct grant then answers.
+		//
+		// It sits beside oidc/token/wrong-password on purpose. The two are the
+		// pair that says the check runs **after** the password: the same user
+		// with a wrong password answers "Invalid user credentials" and would go
+		// on doing so if this check were moved in front of the credential, which
+		// is where a reader would put it and where it would be an
+		// account-enumeration oracle.
+		ID: "oidc/token/required-action-pending",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Token endpoint: Resource Owner Password Credentials grant",
+			Retrieved: "2026-08-31",
+		},
+		Status:  Implemented,
+		Fixture: "temporary-password",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type": "password",
+				"client_id":  "admin-cli",
+				"username":   "gloak-probe-temp-password",
+				"password":   requiredActionPassword,
+			},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// A disabled user is its **own** description, and it is not the one
+		// Gloak served until 2026-08-31: `enabled` was checked before the
+		// password and answered "Invalid user credentials". Measured, the right
+		// password answers "Account disabled" and the wrong one answers
+		// "Invalid user credentials", so the check is after the credential here
+		// too - and this case and oidc/token/wrong-password together are what
+		// say so.
+		ID: "oidc/token/disabled-user",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Token endpoint: Resource Owner Password Credentials grant",
+			Retrieved: "2026-08-31",
+		},
+		Status:  Implemented,
+		Fixture: "disabled-user",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type": "password",
+				"client_id":  "admin-cli",
+				"username":   "gloak-probe-disabled-user",
+				"password":   requiredActionPassword,
+			},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The browser half of the same rule: a user carrying UPDATE_PASSWORD is
+		// answered a **302 to /login-actions/required-action** rather than one
+		// carrying a code.
+		//
+		// Its header set is asserted rather than only its status, because the
+		// point of the case is that this is the *login action's* redirect and
+		// not the authorization endpoint's: it carries Content-Security-Policy
+		// and X-Frame-Options where GET /auth's 302, to a different URI with the
+		// same status, carries neither.
+		//
+		// **Set-Cookie is asserted for its absence.** The redirect to an action
+		// sets no cookies at all - the session cookies come from whatever
+		// finishes the flow - and a handler that established the session here
+		// would leave a signed-in browser behind an action never done. The
+		// verifier compares an absent header with an absent one, so naming it
+		// here is what makes that absence a contract rather than an accident.
+		//
+		// Location is masked whole because it carries a per-request tab_id, the
+		// same reason oidc/authorization/code-flow-redirect masks its own.
+		ID: "oidc/authorization/required-action-redirect",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authorization endpoint: required action at login",
+			Retrieved: "2026-08-31",
+		},
+		Status:  Implemented,
+		Fixture: "browser-required-action",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "{{login_action}}",
+			Form: map[string]string{
+				"username":     "gloak-probe-reqaction-user",
+				"password":     requiredActionPassword,
+				"credentialId": "",
+			},
+		},
+		AssertHeaders: []string{
+			"Location", "Cache-Control", "Content-Security-Policy",
+			"X-Frame-Options", "Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Robots-Tag", "Set-Cookie",
+		},
+		VolatileHeaders: []string{"Location"},
+	},
+	{
 		ID: "oidc/token/wrong-client-secret",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
