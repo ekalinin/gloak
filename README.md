@@ -67,24 +67,31 @@ Working today:
 - protocol mappers and scope mappings: both tags in full - 54 operations, where
   the scope-mapping guard turned out **not** to be the role-mapping guard, in
   both directions at once
-- the device authorization grant, including that `expired_token` is a
-  fifteen-second window rather than a state - and CIBA's refusals, whose flow
-  **cannot** be measured on a default 26.7.1 because its authentication channel
-  needs an endpoint the container does not configure
+- the device authorization grant **end to end**, including the verification
+  page, the consent page and a login a user can actually complete - and that
+  `expired_token` is a fifteen-second window rather than a state. CIBA's
+  refusals too, whose flow **cannot** be measured on a default 26.7.1 because
+  its authentication channel needs an endpoint the container does not configure
+- SSO: a browser that has signed in once gets a code without a form, and
+  `prompt` turns out to be a set of tokens rather than a value
+- required actions and the authentication SPI registry - 18 operations. The
+  flow model is deliberately **not** built: Gloak walks a hard-coded
+  authentication flow, and serving twenty-one endpoints that edit a description
+  nothing reads would look like more than it is
 - client secrets, service accounts, user credentials and user logout
 - a documentation-derived conformance suite (`internal/conformance`) that checks
   Gloak's responses byte-for-byte against bytes recorded from a live
   Keycloak 26.7.1
 - a parity meter whose denominator comes from Keycloak's own OpenAPI description
-  rather than from a hand-kept list: **263 of 516 enumerated behaviours served**,
+  rather than from a hand-kept list: **285 of 523 enumerated behaviours served**,
   plus four chapters whose surface has not been counted
 - an external oracle: `make oracle` drives Gloak with `kcadm.sh`, Keycloak's own
   admin CLI, which asks for things no recorded case asks for
 
 Not implemented yet: the login page's own markup (the flow is served, the theme
-is not), SSO recognition - a second visit serves the form where Keycloak
-redirects straight through - back-channel and front-channel logout, SAML, user
-federation, identity brokering, authorization services, the admin console.
+is not), the authentication flow engine - Gloak walks a hard-coded flow -
+back-channel and front-channel logout, organizations, SAML, user federation,
+identity brokering, authorization services, the admin console.
 
 Where this is going is `docs/superpowers/specs/2026-08-21-gloak-parity-roadmap.md`:
 fourteen sub-projects with their dependencies and what each closes.
@@ -141,6 +148,9 @@ discovery document is derived from it.
 | `GET POST /realms/{realm}/protocol/openid-connect/auth` | authorization: validation, the login form, and the code |
 | `POST /realms/{realm}/login-actions/authenticate` | the credential check |
 | `GET POST /realms/{realm}/protocol/openid-connect/logout` | RP-initiated logout |
+| `POST /realms/{realm}/protocol/openid-connect/auth/device` | device authorization |
+| `GET /realms/{realm}/device` | the device verification page |
+| `POST /realms/{realm}/login-actions/consent` | the consent decision |
 
 There is no `/auth` **prefix** - Keycloak dropped it in version 17 - which is a
 different thing from the `/protocol/openid-connect/auth` endpoint above.
@@ -203,10 +213,10 @@ and stay out of the total rather than being dropped from it silently, which
 would inflate the percentage by hiding the parts nobody has counted. It reads:
 
 ```
-total: 263 of 516 enumerated behaviours served; 4 chapters not enumerated
+total: 285 of 523 enumerated behaviours served; 4 chapters not enumerated
 ```
 
-The denominator is 516 rather than 413 plus a fixed number because the protocol
+The denominator is 523 rather than 413 plus a fixed number because the protocol
 chapters have no OpenAPI source and are counted case by case, so they grow as
 measurements find behaviours nobody had named. It moved from 485 on 2026-08-29
 for the first time since it was set, and again the next day when the logout
@@ -266,7 +276,7 @@ deliberate - it is how "measured, never remembered" stops being a convention.
 JWKS keys and Gloak generated one; realm keys are now modelled and persisted, so
 that case passes.
 
-**`make record` is silent on a clean checkout.** It rewrites 380 goldens with
+**`make record` is silent on a clean checkout.** It rewrites 433 goldens with
 identical bytes and moves none, so any diff at all is one to read carefully.
 
 That was not always so. Four login-theme pages churned their whole body on every

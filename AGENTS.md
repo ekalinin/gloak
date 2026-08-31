@@ -45,10 +45,22 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `unauthorized_client`** with identical descriptions.
 - **"Realm not found." has a trailing period on the admin API and none on the
   protocol endpoint.**
-- **`GET /realms/{realm}` sends `Content-Type: application/json;charset=UTF-8` on
-  its 200, and plain `application/json` on its own 404.** Every other endpoint
-  measured so far, success or error, sends plain `application/json`. The
-  inconsistency is real and it is only on this one endpoint.
+- **The charset on `Content-Type` splits by API surface and status class, not by
+  endpoint.** On the **Admin API** every 2xx with a body carries
+  `;charset=UTF-8` and every error carries plain `application/json` - 158
+  goldens to 151, with one counterexample this file records separately
+  (`POST /groups/{id}/children`'s 201). On the **protocol side** every 200
+  carries plain `application/json`: token, userinfo, certs, discovery,
+  introspection, revocation, device. `Accept` is not the variable - five
+  spellings including none at all give the same answer.
+  (This bullet said the split was "only on this one endpoint",
+  `GET /realms/{realm}`, until 2026-08-30. It was simply the one endpoint of
+  that family that had been measured when the line was written, and **the
+  repository's own 438 goldens had contradicted it since P2** - as had
+  `writeAdminJSON`'s doc comment, which states the rule correctly. The code
+  knew and the contract document did not, which is the failure mode this
+  document exists to prevent and the one it is least able to catch in itself.
+  `httpx.WriteJSONCharset`'s doc comment still repeats the old reason.)
 - **A wrong method on a known path returns 404, not 405, with no `Allow`
   header.** Gloak once invented a 405 that does not exist; Keycloak answers with
   the same generic 404 it uses for everything else it cannot route. The two 404s
@@ -127,6 +139,35 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `CLIENT_SECRET_ROTATION` is a disabled preview feature and `secret-rotation`
   is not a registered executor, so `GET .../client-secret/rotated` is always
   404 and `DELETE` always 204. Those constants are the contract, not stubs.
+- **A mask is a path, and a mask that changes nothing is worse than none.** The
+  catalogue held 293 across six fields and **116 were removed on 2026-08-30
+  because they changed no byte of any golden**: forty `Unordered` on arrays of
+  one element or none, where sorting is the identity; ten `Volatile` naming rows
+  an empty listing does not have; and sixty-six masking a value
+  `ReplaceCaptured` had already rewritten to `{{group_id}}` or
+  `{{client_uuid}}`. All three read as "this varies", which is a claim about
+  Keycloak that the next person believes and does not go behind.
+  `TestNoMaskIsInertOnItsGolden` and `TestNoVolatileMaskCoversACapturedValue`
+  are the ratchets, and both fail on the catalogue as it stands rather than only
+  on what a diff touched.
+  **F46's question has a second half in the body and it was answered the same
+  way.** Masking a whole `Location` asserted presence and nothing else; masking a
+  whole body value asserted its type and nothing else.
+  `admin/groups/children-list` masked `*/id` and `*/parentId` alike, so a
+  handler answering with the child's own id in `parentId` compared equal to one
+  answering with the parent's - measured doing so. A path only **partly**
+  captured keeps its mask, and nine do.
+  Three of the removed masks **contradicted a measurement outright**: the paged
+  role listings declared `Unordered` while the case beside them deliberately
+  does not, with a comment saying the paged path was measured sorted. All three
+  were inert, so the contradiction had no effect and no way of being noticed.
+- **Two recordings agreeing is never evidence of stability.** A client's
+  `defaultClientScopes` came back identical on both of two container starts, on
+  all six bootstrapped clients, while `optionalClientScopes` swapped two names
+  between the same pair. What decides it is the existing measurement - the two
+  lists swapping `roles` and `profile` between two clients created minutes
+  apart. **No mask in this repository may be removed on the strength of two
+  agreeing recordings**; the 116 that were removed rest on arithmetic instead.
 - **`attributes` key order is masked on seven cases and the reason is different
   on each half.** `Case.UnorderedKeys` sorts both sides, so membership and
   values stay asserted. This is the only such retreat - do not add a second
@@ -370,9 +411,9 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **Role listings have no stable order across container starts.** Every one of
   them is a bare array at the root of the body, which is why `Case.Unordered`
   learned the root path spelling `"."`.
-- **Fourteen spellings of not-found in the admin API now**, including four for
-  one resource and three for a missing group. Counted from the list, not
-  incremented: (1) `Could not find client`, (2) `Client not found`,
+- **Nineteen spellings of not-found in the admin API now**, including four for
+  one resource, three for a missing group, and three *pairs* that differ only in
+  a full stop. Counted from the list, not incremented: (1) `Could not find client`, (2) `Client not found`,
   (3) `User not found`, (4) `Realm not found.` with its full stop,
   (5) `Credential not found`, (6) `Could not find role`, (7) `Role not found`,
   (8) `Could not find role with id`, (9) `Could not find composite role`,
@@ -380,19 +421,17 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   missing group from the membership route **and** from the default-groups
   writes, (12) `Group path does not exist` from `group-by-path`,
   (13) `Could not find client scope` from `/client-scopes/{id}`, and
-  (14) `Client scope not found` for that same missing scope from the two
-  default-scope families. One missing group, three answers; one missing client
-  scope, two; each decided by which route went looking.
-  (This count said nine while the list held eleven, so it is now written with
-  the list numbered and is re-counted rather than incremented whenever it
-  moves.) `Could not find client` and `Client not found` are the
-  same resource by the same key: the role-mapping routes answer the second for
-  an unknown client UUID where the client and role endpoints answer the first
-  for that very UUID. The qualifier matters: the protocol side spells a
-  fifteenth, `Realm does not exist` (`internal/oidc/router.go:145`), against the
-  admin API's `Realm not found.` for the same missing realm - which is written
-  once, in `writeRealmNotFound`, because it was written twice and a measured
-  string in two places can drift.
+    (14) `Client scope not found` for that same missing client scope from the two
+  default-scope families, (15) `Failed to find required action` from `GET` and
+  `PUT /required-actions/{alias}`, (16) `Failed to find required action.` from
+  its `DELETE` and the two priority posts, (17) `Could not find RequiredAction
+  config`, (18) `Could not find configurable RequiredAction provider` and
+  (19) `Could not find authenticator provider`.
+  One missing group, three answers; one missing client scope, two; one missing
+  required action, two - each decided by which route or which verb went looking.
+  **(15) and (16) are the third pair in this list separated only by a full
+  stop**, after `Realm not found.` and the group family's, and this one is split
+  by *verb* on one resource.
 
 - **The group tree disagrees with itself in six places, and with the user
   routes in three more.** `POST /groups` answers 201 with an empty body and
@@ -731,15 +770,44 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   disagree the same way: `/logout`'s 400 page carries `Cache-Control: no-cache`
   where `/auth`'s 400 and 403 pages carry none, measured side by side on one
   container. `httpx.WriteThemeErrorPage` takes the value as an argument for
-  exactly this reason, and there are **three** values, not two:
+  exactly this reason, and there are **three** values across four rows:
 
   ```
   GET  /auth                        400 and 403 pages   no Cache-Control at all
+  GET  /auth  prompt=create         400 page            no-store, must-revalidate, max-age=0
   GET  /logout                      400 page            no-cache
   POST /login-actions/authenticate  400 pages           no-store, must-revalidate, max-age=0
   ```
 
-  Three endpoints that look like one endpoint three times.
+  Three endpoints that look like one endpoint three times - **and one of them
+  disagrees with itself.** The second row was added on 2026-08-30: `/auth`'s own
+  page family is not uniform, and `max_age=abc`'s 400 page beside it sends none,
+  so the variable is the rejection rather than the endpoint. Anything that reads
+  "the page family sends X" is a claim about the rejections that were measured.
+- **The device verification page cannot be submitted, and that is measured.**
+  `/realms/{realm}/device` and `/protocol/openid-connect/auth/device` are **one
+  endpoint at two paths**, so the theme's own verification form posts
+  `device_user_code` into the *device authorization request* and gets 401
+  `invalid_client`. A user can only complete a device login through
+  `verification_uri_complete`. Gloak reproduces the broken form, because the
+  form is the contract.
+- **A response can set one cookie twice, in opposite directions.** A presented
+  `KC_RESTART` is cleared on the way out and the clear is last, so a browser
+  arriving with one leaves without it. Found by **recording a golden, not by
+  probing**: `curl` drops a `Max-Age=0` cookie from its jar and the harness
+  keeps it as an empty value, so every hand probe showed five cookies and the
+  recorder showed six. When a cookie count disagrees between a probe and a
+  golden, the golden is the one that saw everything.
+- **`prompt` is a set of space-separated tokens, an unknown one is ignored, and
+  it is case-sensitive.** `create` fires only as the sole token.
+- **The consent endpoint reads `cancel` and nothing else.** No buttons at all is
+  an **approval**; `accept` and `cancel` together is a denial, cancel winning;
+  and the hidden `code` is not checked - `code=BOGUS` with `accept` granted a
+  consent that had just been revoked. Requiring `accept` is the obvious
+  implementation and it is wrong on two of the six measured bodies.
+- **The device grant asks for consent every time and the browser flow remembers
+  one.** The device path records a grant it then ignores.
+
 - **`expired_token` is a window, not a state.** A device code past its expiry
   answers `expired_token` for about fifteen seconds and then answers
   `Device code not valid` - the same answer a code that never existed gets.
@@ -1059,7 +1127,9 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
   hold.** The pristine group pollutes itself: `admin/groups/list` creates a
   group, `admin/groups/count` counts the realm three cases later, and that
   case's number is masked to this day because the recorder said 3 where a
-  pristine replay says 2. **Ordering also cannot be checked afterwards** -
+  pristine replay says 2 - and its number **was masked for exactly that** until
+  F47, when the per-case container made the count deterministic and the
+  measurement came back. **Ordering also cannot be checked afterwards** -
   `admin/users/count`'s entire body is the byte `1`, and no guard **that reads
   the recorded bytes** can tell a polluted count from a clean one. So the
   container is what resets, not the position. See F40. (The qualifier is
