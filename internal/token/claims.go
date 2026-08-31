@@ -203,7 +203,53 @@ const (
 	TypeAccess  = "Bearer"
 	TypeID      = "ID"
 	TypeRefresh = "Refresh"
+	// TypeLogout is the back-channel logout token's payload typ. The JOSE
+	// header of the same token says LogoutHeaderType instead - measured
+	// 2026-08-31, and the two are not the same string.
+	TypeLogout = "Logout"
 )
+
+const (
+	// LogoutHeaderType is the back-channel logout token's JOSE header typ,
+	// which OpenID Connect Back-Channel Logout 1.0 requires and which no other
+	// token Keycloak signs carries.
+	LogoutHeaderType = "logout+jwt"
+	// BackchannelLogoutEvent is the single key of the logout token's events
+	// object, whose value is an empty object. Measured verbatim; it is a URL
+	// under schemas.openid.net and not under the realm's issuer.
+	BackchannelLogoutEvent = "http://schemas.openid.net/event/backchannel-logout"
+)
+
+// logoutClaims is the back-channel logout token's claim set, in the measured
+// key order. Read off the wire 2026-08-31 from a listener the container could
+// reach:
+//
+//	{"exp":…,"iat":…,"jti":"…","iss":"…","aud":"<clientId>","sub":"<user uuid>",
+//	 "typ":"Logout","sid":"…",
+//	 "events":{"http://schemas.openid.net/event/backchannel-logout":{}}}
+//
+// Three things about it are not what a reader would guess:
+//
+//   - aud is the client's clientId as a **bare string**, always one client, so
+//     it does not take audienceClaim's absent/string/array rule.
+//   - There is no azp, no scope and no acr. The token names the session and the
+//     subject and nothing about the grant.
+//   - **sid is absent unless the client asked for it**, through
+//     backchannel.logout.session.required. Measured on three clients differing
+//     only in that attribute: "true" emits it, "false" omits it, and an absent
+//     attribute behaves as "false". Emitting it always is the obvious
+//     implementation and it is wrong on two of the three.
+type logoutClaims struct {
+	Exp    int64               `json:"exp"`
+	Iat    int64               `json:"iat"`
+	Jti    string              `json:"jti"`
+	Iss    string              `json:"iss"`
+	Aud    string              `json:"aud"`
+	Sub    string              `json:"sub"`
+	Typ    string              `json:"typ"`
+	Sid    string              `json:"sid,omitempty"`
+	Events map[string]struct{} `json:"events"`
+}
 
 // audienceClaim renders a list of audiences the way Keycloak does: absent when
 // there are none, a bare string when there is one, an array when there are

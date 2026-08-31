@@ -202,9 +202,20 @@ func (k *RealmKeys) JWKS() jose.JSONWebKeySet {
 
 // RSASigner signs access and ID tokens.
 func (k *RealmKeys) RSASigner() (jose.Signer, error) {
+	return k.RSASignerTyped("JWT")
+}
+
+// RSASignerTyped is RSASigner with the JOSE header's typ chosen by the caller.
+//
+// It exists because the back-channel logout token is the one RS256 token
+// Keycloak signs whose header says something other than "JWT": measured
+// 2026-08-31, `{"alg":"RS256","typ" : "logout+jwt","kid" : ...}`, over a
+// payload whose own typ claim says "Logout". Two spellings of the token's kind
+// in one token, so the header's cannot be derived from the payload's.
+func (k *RealmKeys) RSASignerTyped(typ string) (jose.Signer, error) {
 	return jose.NewSigner(
 		jose.SigningKey{Algorithm: jose.RS256, Key: k.rsaKey},
-		(&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", k.RSAKeyID),
+		(&jose.SignerOptions{}).WithType(jose.ContentType(typ)).WithHeader("kid", k.RSAKeyID),
 	)
 }
 

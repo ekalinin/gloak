@@ -14,18 +14,26 @@ import (
 	"github.com/ekalinin/gloak/internal/token"
 )
 
-// The logout endpoint's six response shapes, and which request reaches each.
+// The logout endpoint's seven response shapes, and which request reaches each.
 //
 // Measured 2026-08-29 against a live 26.7.1, container kc-p6 on 8092, across
-// sixty-odd probes. See docs/superpowers/plans/2026-08-29-p6-logout.md
-// section 2.
+// sixty-odd probes, and extended 2026-08-31 on container kc-logout on 8132. See
+// docs/superpowers/plans/2026-08-29-p6-logout.md section 2 and
+// docs/superpowers/plans/2026-08-31-p6-channel-logout.md section 1.8.
 //
 //	302 to post_logout_redirect_uri   a validated logout with a target
 //	400 theme error page              three distinct rejections
 //	200 theme "Logging out" page      no hint and no target
 //	200 theme "You are logged out"    a valid hint and no target
+//	200 theme front-channel page      a session holding a front-channel client
 //	204 empty                         POST carrying a refresh_token
 //	400/401 JSON                      the POST family's rejections
+//
+// **It read "six response shapes" until 2026-08-31**, here and in the observed
+// document, and the front-channel page is the seventh. It is not a new branch
+// of an old one: it takes the 302's inputs - a valid hint, a registered target,
+// a state - and answers 200. Counted from the list above rather than
+// incremented.
 //
 // Three of these differ from the authorization endpoint in a way that a reader
 // comparing the two would assume away:
@@ -153,9 +161,33 @@ func (h *handler) logoutFrontChannel(w http.ResponseWriter, r *http.Request, rea
 	}
 
 	// Validated. Only now is anything destroyed: measured, every rejection
-	// above leaves the session alive, so a failed logout is not a partial one.
+	// above leaves the session alive, so a failed logout is not a partial one -
+	// and no back-channel call is made either, measured on a valid hint with an
+	// unregistered target.
+	var targets channelLogoutTargets
 	if hint != nil {
+		targets = h.channelLogoutTargets(r.Context(), realm.ID, hint.SessionID)
+		h.notifyBackchannel(r.Context(), k, realm, hint.SessionID, hint.Subject, targets.back)
 		h.endSession(r, realm, hint.SessionID)
+	}
+
+	// Step 5. A session holding a front-channel client answers a **page**, not
+	// the redirect it asked for. Measured 2026-08-31: the same request that
+	// answers 302 on a plain client answers 200 with the theme's
+	// `login-frontchannel-logout` page - one hidden iframe per client, then a
+	// script that redirects the browser to the target the 302 would have used.
+	//
+	// It replaces both of the answers below, not just the redirect: a
+	// front-channel client with no post_logout_redirect_uri is still this page
+	// rather than "You are logged out".
+	//
+	// Its title is "Logging out", which is **also the confirmation page's**, so
+	// the title does not tell the two apart and the Content-Security-Policy
+	// does. That is why the policy is computed here rather than shared.
+	if len(targets.front) > 0 {
+		httpx.WriteThemePagePolicy(w, http.StatusOK, logoutCacheControl,
+			frontchannelLogoutPageTitle, httpx.FrameSrcPolicy(frontchannelHosts(targets.front)))
+		return
 	}
 
 	if !hasTarget {
@@ -187,6 +219,14 @@ func (h *handler) logoutFrontChannel(w http.ResponseWriter, r *http.Request, rea
 //	none     no    no       200 Logging out
 //	none     no    yes      302
 //	none     yes   no       200 You are logged out
+//
+// **The grid holds only while no client in the session is a front-channel
+// client**, measured 2026-08-31. One such client turns the last four rows'
+// answers into the front-channel page - both the 302 and "You are logged out" -
+// while leaving the first two alone, because the confirmation page is decided
+// before the logout is authorised. So the grid has a third input that was not
+// in it, and the row this function exists to serve is not one of the changed
+// ones.
 //
 // So this is not "a live session means the page": a valid `id_token_hint` still
 // redirects on a signed-in browser, which is why the caller asks only when there
@@ -319,6 +359,12 @@ func (h *handler) logoutByRefreshToken(w http.ResponseWriter, r *http.Request, r
 		httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_grant", descRefreshTokenClient)
 		return
 	}
+	// The POST family notifies **every** back-channel client in the session,
+	// not only the one that authenticated. Measured on a two-client SSO
+	// session logged out through this endpoint: two outbound calls, one of
+	// them to the client that did not ask.
+	targets := h.channelLogoutTargets(r.Context(), realm.ID, parsed.SessionID)
+	h.notifyBackchannel(r.Context(), k, realm, parsed.SessionID, parsed.Subject, targets.back)
 	if err := h.store.Sessions().DeleteUserSession(r.Context(), realm.ID, parsed.SessionID); err != nil &&
 		!errors.Is(err, store.ErrNotFound) {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
