@@ -44,7 +44,10 @@ func newServer(t *testing.T) (http.Handler, store.Store, *model.Realm) {
 func newServerWrapping(t *testing.T, wrap func(store.Store) store.Store) (http.Handler, store.Store, *model.Realm) {
 	t.Helper()
 	ctx := context.Background()
-	s, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "gloak.db"))
+	// synchronous(off): a throwaway database in t.TempDir() has nothing to be
+	// durable against, and the fsync it saves is what took CI past its
+	// timeout on 2026-08-31. See conformance.testDSN for the measurement.
+	s, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "gloak.db")+"?_pragma=synchronous(off)")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

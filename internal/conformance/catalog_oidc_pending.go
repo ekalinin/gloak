@@ -328,9 +328,9 @@ var oidcPending = []Case{
 			Section:   "Device authorization grant: the verification page",
 			Retrieved: "2026-08-30",
 		},
-		Status: Recorded,
+		Status: Pending,
 		Reason: "the keycloak.v2 device verification page; Gloak serves the measured " +
-			"envelope with a placeholder body, so the bytes cannot match",
+			"envelope with a placeholder body, so the bytes cannot match. Parked rather than Recorded: the page also carries three per-request values - the /resources/<hash>/ segment, the login session cookies and the tab_id inside the markup - so every re-record moves it, which is what F69 stopped for Pending goldens and what promoting it undid",
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodGet,
@@ -347,9 +347,9 @@ var oidcPending = []Case{
 			Section:   "Device authorization grant: the status page",
 			Retrieved: "2026-08-30",
 		},
-		Status: Recorded,
+		Status: Pending,
 		Reason: "the keycloak.v2 login-info page; Gloak serves the measured envelope " +
-			"with a placeholder body, so the bytes cannot match",
+			"with a placeholder body, so the bytes cannot match. Parked rather than Recorded: the page also carries three per-request values - the /resources/<hash>/ segment, the login session cookies and the tab_id inside the markup - so every re-record moves it, which is what F69 stopped for Pending goldens and what promoting it undid",
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodGet,
@@ -367,9 +367,9 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: prompt=create on a realm with registration off",
 			Retrieved: "2026-08-30",
 		},
-		Status: Recorded,
+		Status: Pending,
 		Reason: "the keycloak.v2 error page; Gloak serves the measured envelope with a " +
-			"placeholder body, so the bytes cannot match",
+			"placeholder body, so the bytes cannot match. Parked rather than Recorded: the page also carries three per-request values - the /resources/<hash>/ segment, the login session cookies and the tab_id inside the markup - so every re-record moves it, which is what F69 stopped for Pending goldens and what promoting it undid",
 		Fixture: "browser-client",
 		Request: Request{
 			Method: http.MethodGet,
@@ -396,9 +396,9 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: a non-numeric max_age",
 			Retrieved: "2026-08-30",
 		},
-		Status: Recorded,
+		Status: Pending,
 		Reason: "the keycloak.v2 error page; Gloak serves the measured envelope with a " +
-			"placeholder body, so the bytes cannot match",
+			"placeholder body, so the bytes cannot match. Parked rather than Recorded: the page also carries three per-request values - the /resources/<hash>/ segment, the login session cookies and the tab_id inside the markup - so every re-record moves it, which is what F69 stopped for Pending goldens and what promoting it undid",
 		Fixture: "browser-client",
 		Request: Request{
 			Method: http.MethodGet,

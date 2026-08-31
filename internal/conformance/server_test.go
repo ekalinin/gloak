@@ -25,13 +25,32 @@ const testIssuer = "http://localhost:8080"
 //
 // It handles only the state. Whatever requests a fixture runs on top of it to
 // reach the state a case measures are Fixture.Steps, executed by RunFixture
+// testDSN is a throwaway SQLite file with fsync turned off.
+//
+// **This is not a performance tweak, it is the difference between a suite that
+// finishes and one that does not.** Every case gets a fresh database and
+// bootstraps it, and a bootstrap is hundreds of writes; with the default
+// synchronous=full each one waits on fsync. On 2026-08-31 CI spent thirty
+// minutes inside modernc.org/libc.Xfsync and was killed there, having reported
+// the same tree green twice before - the runner's disk was the variable and
+// nothing in the output said so.
+//
+// Durability is meaningless here: the file lives in t.TempDir() for the length
+// of one subtest and a crash mid-run loses the whole run anyway. Production is
+// untouched; sqlite.Open's own default still applies to everything that is not
+// a test.
+func testDSN(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "gloak.db") + "?_pragma=synchronous(off)"
+}
+
 // against the handler this returns.
 func newFixture(t *testing.T, state string) http.Handler {
 	t.Helper()
 	switch state {
 	case "bootstrap":
 		ctx := context.Background()
-		s, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "gloak.db"))
+		s, err := sqlite.Open(ctx, testDSN(t))
 		if err != nil {
 			t.Fatalf("Open: %v", err)
 		}
