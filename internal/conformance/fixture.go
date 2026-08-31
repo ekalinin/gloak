@@ -856,6 +856,30 @@ var Fixtures = map[string]Fixture{
 	"auth-action-config-filtered": authActionWriteFixture("gloak-probe-auth-cfgf",
 		http.MethodPut, "/required-actions/CONFIGURE_TOTP/config",
 		`{"config":{"max_auth_age":"600","gloak-probe-undeclared":"nope"}}`),
+
+	// Organizations. **Every one of these builds a realm of its own**, and the
+	// reason is the flag rather than tidiness: master's organizationsEnabled is
+	// false on a default 26.7.1 and turning it on would be a realm-wide change
+	// under eight PristineRealm goldens. A realm created with the flag in its
+	// own creation body costs one step and touches nothing else.
+	//
+	// The realms are one per concern for defaultGroupsFixture's reason: the
+	// recorder shares one container and runs fixtures in catalogue order, so a
+	// case whose golden depends on what another case created is a golden that
+	// holds only while the order holds.
+	"org-realm-off": realmFixture("gloak-probe-org-off"),
+	"org-realm":     organizationRealmFixture("gloak-probe-org-empty"),
+	"org-realm-new": organizationRealmFixture("gloak-probe-org-mk"),
+	"org-realm-del": organizationFixture("gloak-probe-org-rm", ""),
+	"org-one":       organizationFixture("gloak-probe-org-one", ""),
+	"org-taken":     organizationFixture("gloak-probe-org-dup", ""),
+	"org-put":       organizationFixture("gloak-probe-org-put", ""),
+	// The realm whose organization has already been through the PUT, so a case
+	// can read what the 204 cannot show: the rename landed, description,
+	// redirectUrl and domains are gone, and **attributes survived** although
+	// the body named none.
+	"org-updated": organizationFixture("gloak-probe-org-upd",
+		`{"name":"gloak-probe-org-renamed","alias":"gloak-probe-org-alias"}`),
 }
 
 // The fixed client-scope ids P5's fixtures create their scopes with. They are
@@ -4466,4 +4490,87 @@ func deviceDeniedFixture() Fixture {
 			ExpectStatus: []int{http.StatusFound},
 		},
 	)}
+}
+
+// organizationRealmFixture is realmFixture with the organizations flag in the
+// creation body.
+//
+// **One step, not two.** `POST /admin/realms` carrying
+// `"organizationsEnabled":true` was measured producing a realm whose
+// organizations listing answers 200 immediately, so the create-then-PUT the
+// obvious reading of the flag suggests is not needed. Master's own flag is left
+// alone: it is false on a default install and eight PristineRealm goldens read
+// that realm.
+func organizationRealmFixture(name string) Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"realm":"` + name + `","enabled":true,"organizationsEnabled":true}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+		},
+	}
+}
+
+// organizationFixture builds a realm with organizations on and one
+// organization in it, capturing its id as org_id. When update is non-empty it
+// is then PUT over that organization, so a case can read the state a 204 hides.
+//
+// The organization carries a description, a redirectUrl, one attribute and one
+// domain, because those four are exactly the fields whose presence rules
+// disagree with each other: description survives an empty string where
+// redirectUrl does not, attributes is `{}` where absent and domains is omitted.
+//
+// The domain is `gloak-probe-domain.example.com` rather than anything realistic
+// because TestEveryCreatedObjectCarriesTheProbePrefix reads one object per JSON
+// **object**, and a domain entry is a JSON object with a `name` key - so an
+// ordinary-looking domain reads to that guard as a created object breaking the
+// convention.
+//
+// The id is read back with a second request rather than out of the create's
+// Location, for groupInRealmSteps' reason: a create the recorder runs twice
+// answers 409 the second time and leaves nothing to capture.
+func organizationFixture(realm, update string) Fixture {
+	f := organizationRealmFixture(realm)
+	f.Steps = append(f.Steps,
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/" + realm + "/organizations",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"name":"gloak-probe-org-named","alias":"gloak-probe-org-alias",` +
+					`"description":"a description","redirectUrl":"http://gloak-probe-domain.example.com/",` +
+					`"attributes":{"k":["v1","v2"],"z":["w"]},` +
+					`"domains":[{"name":"gloak-probe-domain.example.com"}]}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/" + realm + "/organizations",
+				Query:   map[string]string{"search": "gloak-probe-org-named", "exact": "true"},
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"org_id": "0/id"},
+		},
+	)
+	if update != "" {
+		f.Steps = append(f.Steps, Step{
+			Request: Request{
+				Method:  http.MethodPut,
+				Path:    "/admin/realms/" + realm + "/organizations/{{org_id}}",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(update),
+			},
+		})
+	}
+	return f
 }
