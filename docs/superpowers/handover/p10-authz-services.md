@@ -284,6 +284,15 @@ here so the next one does not have to re-measure.
   the same body. The reason is that the flag is not a field at all: it is whether
   the client has a resource server. Leaving it in the merge is the obvious
   implementation and it makes the flag impossible to turn off.
+  **Naming it `true` is not the same as leaving it alone, though**, and the
+  difference is the settings: a `PUT` naming the flag `true` on a client that
+  already has a resource server **preserves** its three settings, where turning
+  the flag off and on again resets them. Measured on two body shapes. So the
+  field has three states on one verb - absent destroys, `true` on an existing
+  resource server preserves, `true` on a client without one creates the defaults -
+  and an implementation that upserts the defaults whenever the flag is on is
+  right on two of the three and silently resets a caller's settings on the
+  third. That last one survived every test in `internal/admin`; see §3a.
 - **`authorizationServicesEnabled` is absent rather than `false`**, on all six
   bootstrapped clients - the same rule `protocolMappers` follows and the opposite
   of every boolean around it, which all appear as `false`. Emitting it for
@@ -361,6 +370,58 @@ here so the next one does not have to re-measure.
 - **New, worth filing: `CONSENSUS`'s 500 is reproduced from three probes and no
   mechanism.** It behaves like a persister that cannot store the third enum
   value, and nothing was found that says so. It is pinned as a measurement.
+
+## 3a. The mutation pass, and the one survivor
+
+Twenty mutations, one per claim, each run against the **named** test and
+reverted. Nineteen were killed. One survived, and it was the most useful thing
+the pass produced.
+
+**Survivor: `syncResourceServer` upserting the defaults unconditionally.**
+Replacing the read-before-write with a bare `Upsert(DefaultAuthzResourceServer)`
+- so that any client write with the flag on resets the settings - passed
+`TestTheFlagIsTheResourceServersExistence`, and then passed **every test in
+`internal/admin`** when the mutation was re-run against the whole package.
+
+Why it survived: every path in the suite that turned the flag on turned it on
+from **off**, where "reset to the defaults" and "leave the existing row alone"
+are the same answer. The two only differ on a client that already has a resource
+server with non-default settings, and no test put one there before a client
+write. It is the same shape as the survivors the channel-logout cut reported -
+a suite that varies one thing and never the thing beside it.
+
+The behaviour under it turned out to be **right**, which is the other half of the
+finding: the cell was unmeasured as well as untested. Measured afterwards on the
+reference container, on two body shapes -
+`{"authorizationServicesEnabled":true}` alone, and the flag beside `clientId`,
+`serviceAccountsEnabled` and a `description` - and both left
+`false / PERMISSIVE / AFFIRMATIVE` exactly as it was. So a client `PUT` that
+**names** the flag `true` preserves the settings, while one that **omits** it
+destroys them. Two spellings of one field on one verb, opposite effects, and the
+suite could see neither.
+
+The assertion is in the test now and the mutation dies. Both directions are
+pinned: the preserve on the naming PUT, and the destroy-and-reset on the omitting
+one.
+
+The nineteen killed, in full: the gate moved after the role check; the unknown
+client always answering 404 rather than the phishing branch; the `PUT` gated on
+`name` instead of `decisionStrategy` (the wrong explanation this cut nearly
+shipped, now pinned in both directions); the `PUT` merging instead of replacing;
+the `PUT` replacing with Go zero values; `CONSENSUS` accepted as a valid
+strategy; `GET .../settings` taking the read role set; `query-clients` added to
+the read set; `settings` serving the full body; `clientId` filled from
+`model.Client.ClientID`; a `Cache-Control` added to the resource-server read;
+the client `PUT` merging the flag; the flag emitted as `false` rather than
+omitted; the permission catalogue filtered to the two `Permission` providers;
+the provider order reversed; the group route no longer resolving its group; the
+client routes no longer resolving their client; the roles routes starting to
+resolve; and the client-role route resolving its role.
+
+One mutation was discarded rather than counted: sorting the provider catalogue
+with `sort.Slice` reported a failure that was a missing import rather than a
+failed assertion. It was replaced with an in-place reversal that compiles, and
+that one is a real kill.
 
 ## 4. Parity, before and after
 
