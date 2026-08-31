@@ -115,8 +115,16 @@ func backchannelURL(l *listener, path string) map[string]string {
 }
 
 // logoutWithHint drives a direct grant at clientID and then logs that session
-// out through the GET family, returning the logout's own response.
-func logoutWithHint(t *testing.T, router http.Handler, clientID string, query url.Values) *httptest.ResponseRecorder {
+// out through the GET family, returning the logout's own response and the
+// tokens the grant produced.
+//
+// The caller needs the second because the logout token's aud, sub and sid are
+// compared against the session they name rather than against being non-empty.
+// Three mutations survived the first version of these tests for exactly that
+// reason - a constant sid, a sub holding the session id, and every token
+// carrying the first client's aud - and all three passed a suite that broke one
+// value at a time.
+func logoutWithHint(t *testing.T, router http.Handler, clientID string, query url.Values) (*httptest.ResponseRecorder, tokenResponse) {
 	t.Helper()
 	tokens := logoutTokens(t, router, clientID, "")
 	if query == nil {
@@ -127,7 +135,34 @@ func logoutWithHint(t *testing.T, router http.Handler, clientID string, query ur
 		"/realms/master/protocol/openid-connect/logout?"+query.Encode(), nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
-	return rec
+	return rec, tokens
+}
+
+// sessionUser is the user id the session belongs to, which is what the logout
+// token's sub must carry. It has to be read before the logout runs.
+func sessionUser(t *testing.T, s store.Store, realm *model.Realm, sessionID string) string {
+	t.Helper()
+	session, err := s.Sessions().UserSessionByID(context.Background(), realm.ID, sessionID)
+	if err != nil {
+		t.Fatalf("UserSessionByID: %v", err)
+	}
+	return session.UserID
+}
+
+// logoutTokenClaims parses one captured call's logout token into the three
+// values a test compares against the session.
+func logoutTokenClaims(t *testing.T, call capturedCall) (aud, sub, sid string) {
+	t.Helper()
+	_, payload := decodeJWT(t, call.form.Get("logout_token"))
+	var claims struct {
+		Aud string `json:"aud"`
+		Sub string `json:"sub"`
+		Sid string `json:"sid"`
+	}
+	if err := json.Unmarshal([]byte(payload), &claims); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	return claims.Aud, claims.Sub, claims.Sid
 }
 
 // decodeJWT splits a compact JWS and returns the two raw JSON segments, so a
@@ -158,10 +193,18 @@ func decodeJWT(t *testing.T, compact string) (header, payload string) {
 // docs/superpowers/plans/2026-08-31-p6-channel-logout.md sections 1.4 and 1.5.
 func TestBackchannelLogoutPostsTheMeasuredRequest(t *testing.T) {
 	l := newListener(t, http.StatusOK)
-	router, h, _, realm := channelServer(t, l,
+	router, h, s, realm := channelServer(t, l,
 		channelClient{clientID: "bc-plain", attributes: backchannelURL(l, "/bc")})
 
-	rec := logoutWithHint(t, router, "bc-plain", nil)
+	// The subject is read off the session **before** the logout removes it, so
+	// the assertion below compares the token against the session it names
+	// rather than against "not empty".
+	tokens := logoutTokens(t, router, "bc-plain", "")
+	wantSub := sessionUser(t, s, realm, tokens.SessionState)
+	req := httptest.NewRequest(http.MethodGet,
+		"/realms/master/protocol/openid-connect/logout?id_token_hint="+tokens.IDToken, nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("logout status = %d, want 200", rec.Code)
@@ -206,6 +249,10 @@ func TestBackchannelLogoutPostsTheMeasuredRequest(t *testing.T) {
 		t.Errorf("header = %s, want RS256/logout+jwt/%s", header, k.RSAKeyID)
 	}
 
+	if _, sub, _ := logoutTokenClaims(t, call); sub != wantSub {
+		t.Errorf("sub = %q, want the session's user %q", sub, wantSub)
+	}
+
 	// The payload is asserted as **bytes in order**, because the key order is
 	// the measurement. The four per-request values are cut out first.
 	got := maskJWTValues(t, payload)
@@ -236,9 +283,6 @@ func maskJWTValues(t *testing.T, payload string) string {
 	// which is not the access token's.
 	if claims.Exp-claims.Iat != 120 {
 		t.Errorf("exp - iat = %d, want 120", claims.Exp-claims.Iat)
-	}
-	if claims.Sub == "" {
-		t.Error("sub is empty; the token must name the subject")
 	}
 	out := payload
 	for _, r := range []struct{ from, to string }{
@@ -282,21 +326,23 @@ func TestBackchannelLogoutEmitsSidOnlyWhenTheClientAsks(t *testing.T) {
 			router, _, _, _ := channelServer(t, l,
 				channelClient{clientID: "bc-sid", attributes: attrs})
 
-			logoutWithHint(t, router, "bc-sid", nil)
+			_, tokens := logoutWithHint(t, router, "bc-sid", nil)
 
 			calls := l.seen()
 			if len(calls) != 1 {
 				t.Fatalf("outbound calls = %d, want 1", len(calls))
 			}
 			_, payload := decodeJWT(t, calls[0].form.Get("logout_token"))
-			var claims struct {
-				Sid string `json:"sid"`
+			_, _, sid := logoutTokenClaims(t, calls[0])
+			// The value is compared against the session, not merely its
+			// presence: a mutation putting a constant in sid passed a version
+			// of this test that asserted only that it was there.
+			want := ""
+			if tc.wantSid {
+				want = tokens.SessionState
 			}
-			if err := json.Unmarshal([]byte(payload), &claims); err != nil {
-				t.Fatalf("payload: %v", err)
-			}
-			if got := claims.Sid != ""; got != tc.wantSid {
-				t.Errorf("sid present = %v, want %v; payload %s", got, tc.wantSid, payload)
+			if sid != want {
+				t.Errorf("sid = %q, want %q; payload %s", sid, want, payload)
 			}
 			// The sid sits between typ and events when it is there at all.
 			if tc.wantSid && !strings.Contains(payload, `"typ":"Logout","sid":"`) {
@@ -340,16 +386,23 @@ func TestBackchannelLogoutCallsOnlyTheClientsInTheSession(t *testing.T) {
 		"/realms/master/protocol/openid-connect/logout?id_token_hint="+tokens.IDToken, nil)
 	router.ServeHTTP(httptest.NewRecorder(), req)
 
-	var paths []string
+	// Each call is checked against the client its path names, not just
+	// counted: a mutation giving every token the first client's aud passed a
+	// version of this test that compared paths alone, and would have shipped a
+	// server telling every client it was somebody else being logged out.
+	wantAud := map[string]string{"/in": "bc-in", "/joined": "bc-joined"}
+	got := map[string]string{}
 	for _, c := range l.seen() {
-		paths = append(paths, c.path)
+		aud, _, _ := logoutTokenClaims(t, c)
+		got[c.path] = aud
 	}
-	if len(paths) != 2 {
-		t.Fatalf("outbound paths = %v, want /in and /joined", paths)
+	if len(got) != len(wantAud) {
+		t.Fatalf("outbound calls = %v, want one each to /in and /joined", got)
 	}
-	seen := strings.Join(paths, " ")
-	if !strings.Contains(seen, "/in") || !strings.Contains(seen, "/joined") {
-		t.Errorf("outbound paths = %v, want /in and /joined", paths)
+	for path, want := range wantAud {
+		if got[path] != want {
+			t.Errorf("%s carried aud %q, want %q", path, got[path], want)
+		}
 	}
 }
 
@@ -464,7 +517,7 @@ func TestFrontchannelLogoutPageReplacesTheRedirect(t *testing.T) {
 		attributes: map[string]string{frontchannelLogoutURLAttribute: "http://localhost:9998/fc"},
 	})
 
-	rec := logoutWithHint(t, router, "fc-page", url.Values{
+	rec, _ := logoutWithHint(t, router, "fc-page", url.Values{
 		"post_logout_redirect_uri": {logoutRedirectURI},
 		"state":                    {"xyz123"},
 	})
@@ -503,7 +556,7 @@ func TestFrontchannelLogoutPageReplacesTheLoggedOutPage(t *testing.T) {
 		attributes: map[string]string{frontchannelLogoutURLAttribute: "http://localhost:9998/fc"},
 	})
 
-	rec := logoutWithHint(t, router, "fc-notarget", nil)
+	rec, _ := logoutWithHint(t, router, "fc-notarget", nil)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -538,7 +591,7 @@ func TestFrontchannelLogoutNeedsBothTheFlagAndTheURL(t *testing.T) {
 				clientID: "fc-half", frontFlag: tc.frontFlag, attributes: attrs,
 			})
 
-			rec := logoutWithHint(t, router, "fc-half", url.Values{
+			rec, _ := logoutWithHint(t, router, "fc-half", url.Values{
 				"post_logout_redirect_uri": {logoutRedirectURI},
 			})
 

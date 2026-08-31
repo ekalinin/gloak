@@ -1760,14 +1760,45 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-20",
 		},
 		Status: Pending,
-		// The endpoint is implemented as of 2026-08-29; what this case waits
-		// for is not the endpoint. Back-channel logout is Keycloak making an
-		// outbound HTTP call to the client's registered
-		// backchannel.logout.url, carrying a signed logout token. The harness
-		// records one request and one response and can observe neither the
-		// call nor its token, so there is nothing here for a golden to hold.
-		Reason:  "the harness cannot observe Keycloak calling out to a client",
-		Fixture: "", // needs a client with a registered backchannel logout URL and an active session; Keycloak calls the client, the client does not call this
+		// **Measured 2026-08-31 and implemented; what cannot be held here is
+		// the golden, not the behaviour.** See
+		// docs/superpowers/plans/2026-08-31-p6-channel-logout.md, which records
+		// how an outbound call is measured at all: a listener in a second
+		// container on the same bridge, because a colima host is not
+		// addressable from inside the reference container.
+		//
+		// The response this case would record is the ordinary logout - a 302 or
+		// a page, already covered by five sibling cases and byte-identical
+		// whether the client was called, answered 500 or does not exist. What
+		// this case is about is a **request Keycloak makes**, and a Case holds
+		// one request and one response with no side for a second socket. Three
+		// things would have to exist first: an address the recorder's container
+		// and the verifier's in-process handler can both reach, substituted the
+		// way {{id_token}} is; a golden shape that can hold an outbound request
+		// rather than a response; and something in the harness that says the
+		// call is synchronous, which it is - a hanging client blocks the logout
+		// for about five seconds, twice measured.
+		//
+		// What is asserted instead, in internal/oidc's own tests against an
+		// httptest.NewServer, so `go test` needs no Docker and no network:
+		//
+		//	POST <backchannel.logout.url>, application/x-www-form-urlencoded,
+		//	body logout_token=<jwt> and nothing else
+		//	header {"alg":"RS256","typ":"logout+jwt","kid":<the realm's RSA kid>}
+		//	claims exp, iat, jti, iss, aud, sub, typ:"Logout", [sid,] events
+		//	events {"http://schemas.openid.net/event/backchannel-logout":{}}
+		//	exp - iat = 120
+		//
+		// Four measurements a reader would get wrong: sid appears **only** when
+		// backchannel.logout.session.required is "true" and an absent attribute
+		// behaves as "false"; one POST goes to **every** client session in the
+		// user session, including the client that asked; a failing client
+		// changes nothing and is not retried; and `POST .../logout-all` and
+		// `POST /revoke` end sessions and call **nobody**, so hanging the
+		// notification off session removal fires on two paths Keycloak does
+		// not.
+		Reason:  "the harness holds one request and one response, and this is a request Keycloak makes",
+		Fixture: "", // deliberately none: a Pending case's fixture never runs, and this one would need a listener the harness has no way to start
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/protocol/openid-connect/logout",
@@ -1786,12 +1817,40 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-20",
 		},
 		Status: Pending,
-		// Same correction as its back-channel sibling: the endpoint exists, and
-		// front-channel logout is an HTML page carrying an iframe per client
-		// session, which is both a theme page (P13) and a call out to the
-		// client (unobservable here).
-		Reason:  "the response is a theme page carrying per-client iframes, and the calls it makes are unobservable",
-		Fixture: "", // needs a client with a registered frontchannel logout URL and an active session
+		// **The old reason was wrong in its second half, and that half was the
+		// interesting one.** Front-channel logout makes no outbound call at
+		// all: Keycloak answers the browser with a page and the *browser*
+		// fetches the iframes. So this response is exactly the shape the
+		// harness records, and what keeps it Pending is only its body - the
+		// same "the login theme is P13" the five sibling page cases carry.
+		//
+		// Measured 2026-08-31, and it is the seventh response shape of this
+		// endpoint rather than a variant of one of the six:
+		//
+		//	200, text/html;charset=utf-8, Cache-Control: no-cache
+		//	data-page-id="login-frontchannel-logout", title "Logging out"
+		//	Content-Security-Policy: frame-src 'self' <host> ; frame-ancestors 'self'; object-src 'none';
+		//
+		// **It takes the 302's inputs and answers 200** - a valid
+		// id_token_hint, a registered post_logout_redirect_uri and a state -
+		// and it replaces the "You are logged out" page too when there is no
+		// target. Its title is the *confirmation* page's, so the title cannot
+		// tell the two apart; the Content-Security-Policy can, and it is the
+		// one theme page whose policy is computed. One host:port per client,
+		// **not de-duplicated**, with a space before the semicolon.
+		//
+		// A client reaches it only with `frontchannelLogout: true` **and** a
+		// `frontchannel.logout.url`; either alone still answers the 302. And
+		// `frontchannel.logout.session.required` defaults to **true** when
+		// absent, which is the opposite of its back-channel namesake - what it
+		// decides is whether the iframe's src gains ?sid=&iss=, and that is in
+		// the body, which is why it is P13's and not this cut's.
+		//
+		// The envelope is served now. internal/oidc's own tests are what assert
+		// it, because Gloak's placeholder body cannot carry the iframes and this
+		// golden would not compare equal until it can.
+		Reason:  "the login theme is P13, and this response is a theme page",
+		Fixture: "", // deliberately none while the case is Pending: a Pending case's fixture never runs, and a promoted one needs P13 first
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/protocol/openid-connect/logout",
