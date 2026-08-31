@@ -121,9 +121,10 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   successful `DELETE`'s 204 omits it", from four deletes that all happened to
   send no `Content-Type`. When a new 204 disagrees with a header rule, measure
   the request's headers before believing the method.
-- **`Cache-Control` on a 204 does not follow the method.** Four of the five
-  measured deletes carry `no-cache` and `DELETE .../client-secret/rotated`
-  does not. It is pinned per endpoint.
+- **`Cache-Control` on a 204 does not follow the method.** Four of the **six**
+  measured deletes carry `no-cache`; `DELETE .../client-secret/rotated` does not,
+  and neither does `DELETE /organizations/{id}` or its `PUT`. It is pinned per
+  endpoint, which is now the third time that is the only part to survive.
   (This bullet ended "no `PUT` carries it" until 2026-08-29, when one cut added
   a `PUT` that does - `.../default-groups/{groupId}`, `no-cache`, and its
   `DELETE` sibling too - and two `PUT`s that do not, the client-policy pair, in
@@ -244,17 +245,25 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   sorted and not insertion order. **There are two constructors and
   `internal/javamap` models them separately.** `javamap.KeyOrder` is the
   no-argument one - 16 buckets, doubling at the 0.75 load factor - and is
-  confirmed against six measured key sets - four in its own tests; the
-  `clientMappings` of a combined role-mapping view, where six clients created
-  and assigned `cx1..cx6` came back `cx6, cx5, cx2, cx1, cx4, cx3` and
-  `internal/admin` pins it; and the `active` map of
-  `GET /admin/realms/{realm}/keys`, `RSA-OAEP, HS512, RS256, AES` on both
-  master and a created realm, which is the first confirmed vector with **no**
-  bucket collision at all. It cannot resolve a bucket
-  collision, because those chain in insertion order and nothing observable says
-  what that was; the 21 admin role names collide twice and come back the other
-  way round. Sorting instead is what makes `resource_access` come out
-  `account, master-realm` where Keycloak says `master-realm, account`.
+  confirmed against **fourteen** measured key sets: twelve in its own tests, and
+  two pinned where they are served. The twelve are four token and `access`
+  shapes, the five client `attributes` sets a default install has, and three
+  from the authentication SPI. The two outside are the `clientMappings` of a
+  combined role-mapping view, where six clients assigned `cx1..cx6` came back
+  `cx6, cx5, cx2, cx1, cx4, cx3`, and the `active` map of
+  `GET /admin/realms/{realm}/keys`, which has **no** bucket collision at all.
+  It cannot resolve a bucket collision, because those chain in insertion order
+  and nothing observable says what that was; **two key sets demonstrate that and
+  both collide exactly twice** - the 21 admin role names, and the fourteen
+  providers of `unregistered-required-actions`, where twelve are placed and the
+  two colliding pairs come back the other way round. Sorting instead is what
+  makes `resource_access` come out `account, master-realm` where Keycloak says
+  `master-realm, account`.
+  (This bullet said "six measured key sets - four in its own tests" until
+  2026-08-31, **and the tests already held nine**. A cut that measured three
+  more and reported "six to nine" inherited the wrong base, and the fold carried
+  it. A count in prose beside the tests that hold the thing counted is a count
+  that will drift; this one is now the number the package's own tests assert.)
 - **The refresh token's `scope` is the granted scope plus the client's default
   client scopes**, not a constant. `service_account` is one of them only on a
   client with service accounts enabled, and `openid` only when it was asked
@@ -411,9 +420,9 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **Role listings have no stable order across container starts.** Every one of
   them is a bare array at the root of the body, which is why `Case.Unordered`
   learned the root path spelling `"."`.
-- **Nineteen spellings of not-found in the admin API now**, including four for
-  one resource, three for a missing group, and three *pairs* that differ only in
-  a full stop. Counted from the list, not incremented: (1) `Could not find client`, (2) `Client not found`,
+- **Twenty-one spellings of not-found in the admin API now**, including four for
+  one resource, **four** for a missing group, and three *pairs* that differ only
+  in a full stop. Counted from the list, not incremented: (1) `Could not find client`, (2) `Client not found`,
   (3) `User not found`, (4) `Realm not found.` with its full stop,
   (5) `Credential not found`, (6) `Could not find role`, (7) `Role not found`,
   (8) `Could not find role with id`, (9) `Could not find composite role`,
@@ -426,8 +435,10 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `PUT /required-actions/{alias}`, (16) `Failed to find required action.` from
   its `DELETE` and the two priority posts, (17) `Could not find RequiredAction
   config`, (18) `Could not find configurable RequiredAction provider` and
-  (19) `Could not find authenticator provider`.
-  One missing group, three answers; one missing client scope, two; one missing
+  (19) `Could not find authenticator provider`, (20) `Group does not exist` from
+  all twenty-two operations under `/organizations/{org-id}/groups`, and
+  (21) `Organization not found.`
+  One missing group, **four** answers; one missing client scope, two; one missing
   required action, two - each decided by which route or which verb went looking.
   **(15) and (16) are the third pair in this list separated only by a full
   stop**, after `Realm not found.` and the group family's, and this one is split
@@ -591,8 +602,8 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   with no mappers and its representation has **five** keys where every other
   scope's has six. `attributes` goes the other way and is always there, `{}`
   when empty. Two neighbouring keys on one body, opposite rules.
-- **The body's `id` wins on create**, on `POST /client-scopes` and on
-  `POST /clients` alike: a create naming an id produced an object with exactly
+- **The body's `id` wins on create on two endpoints and loses on a third.**
+  `POST /client-scopes` and `POST /clients`: a create naming an id produced an object with exactly
   that id and put it in `Location`. It is what lets a conformance fixture know
   an object's id before it asks for it, which is how the client-scope fixtures
   avoid capturing from `Location` on a shared container.
@@ -902,6 +913,49 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **A 415 exists on this API**, and the scope mappings are where it is
   reachable, because they are the first routes whose `DELETE` carries a body.
 
+- **A required action is enforced on two endpoints and they disagree about one
+  user.** The browser login asks whether an **enabled** provider has anything to
+  do; the direct grant reads the user's `requiredActions` **raw**. So a user
+  carrying only the disabled `TERMS_AND_CONDITIONS` logs in through the browser
+  and is refused tokens by the password grant. Measured across seven aliases.
+- **Tokens are withheld, not issued-then-restricted.** No authorization code
+  exists until the queue is empty, and the redirect to an action sets **no
+  cookies at all** - where the credential POST that ends in a code sets three.
+- **`/login-actions/required-action` is decided by the `session_code`, and the
+  verb decides nothing.** Twelve requests, `GET` and `POST` agreeing on all six
+  cells. An **absent** execution serves the page; a *wrong* one is 200 "Page has
+  expired". The shipped handler refused anything but `OAUTH_GRANT` and was wrong
+  on five of six - its comment cited a measurement whose probe had never sent an
+  execution that was absent rather than wrong, and that unbroken request is the
+  one that tells the two rules apart.
+- **`CONFIGURE_TOTP` needs no device**: the secret's raw ASCII bytes are the
+  HMAC key, not a base32 decoding. `VERIFY_EMAIL` genuinely needs SMTP and its
+  500 is the contract, the same shape as CIBA's 503.
+
+- **The `Organizations` tag resolves its resource after the caller and the
+  `Groups` tag resolves before**, and both tags name their own resource in the
+  path and in the tag - so nothing in the description separates them. That is
+  the fourth time a rule stated over "every route naming a `{something}ID}`" has
+  broken on a neighbouring family.
+- **Organizations are gated by a realm flag, not by a feature flag**, and the
+  refusal sits **after** the caller's roles. `GET /admin/serverinfo` reports
+  `ORGANIZATION` as `"type":"DEFAULT","enabled":true` and it is absent from
+  `disabledFeatures` where `CLIENT_TYPES` and `CLIENT_SECRET_ROTATION` appear.
+  What is off is `organizationsEnabled` on the realm, and one `PUT` opens the
+  whole tag with `404 {"errorMessage":"Organizations not enabled for this
+  realm."}` until it does. `client-types`' 501 runs *before* authorization, so
+  the two gates could not share an implementation.
+- **`POST /organizations` reads the body's `id` and discards it**, inverting the
+  rule the client and client-scope creates follow.
+- **Four strict JSON decoders, and two families disagree about when the decode
+  runs.** `POST`/`PUT /organizations` and two of the required-action writes are
+  strict. On the required-action `PUT` the decode runs **before** the path's
+  alias is resolved; on the organization `PUT` an unknown id answers
+  `Organization not found.` for an unknown field and for unparseable JSON alike.
+  Opposite orders on one verb.
+- **The `Workflows` tag answers `application/yaml`**, chunked, and is not gated
+  by `organizationsEnabled` at all.
+
 - **`session_state` is minted by the login page, not by the login.** The
   authentication session's root id is created at `GET /auth`, goes out inside
   `AUTH_SESSION_ID`, and is then the redirect's `session_state`, the
@@ -1123,6 +1177,14 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
   the verifier will serve it from a handler that has seen nothing but that
   case's own fixture. Two minutes for a whole run instead of thirty seconds;
   budget minutes rather than seconds when other containers are alive.
+  **The tests open SQLite with `synchronous(off)`.** Not a tuning knob: with the
+  default, a bootstrap's hundreds of writes each wait on `fsync`, and on
+  2026-08-31 CI spent thirty minutes inside `libc.Xfsync` and was killed there,
+  having reported the same tree green twice before. A throwaway database in
+  `t.TempDir()` has nothing to be durable against. `go test` also carries an
+  explicit `-timeout`, which is a backstop and not the fix - Go's default is per
+  package, and a package-level timeout reads as a failed assertion, which is how
+  this was misread twice.
 - **Recording pristine cases *first* was the previous answer and it does not
   hold.** The pristine group pollutes itself: `admin/groups/list` creates a
   group, `admin/groups/count` counts the realm three cases later, and that
@@ -1181,7 +1243,7 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
   **The way to ask for a Pending golden back is to promote the case to
   `Recorded`**, which is what `Recorded` already means and which a reviewer sees
   in the diff; there is no flag.
-  **Seven Pending goldens are parked, not four.** The four login-theme pages are
+  **Nine Pending goldens are parked, not four.** The four login-theme pages are
   the ones that churned; the device, CIBA and dynamic-registration refusals are
   three more that had been parked without anybody counting them. All seven are
   declared in `parkedGoldens` with the reason each is kept, and
@@ -1189,6 +1251,14 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
   declaration whose file has gone, and one whose case is no longer `Pending`. A
   parked golden is a **measurement, not a contract**: read it for what Keycloak
   answered, never for what Gloak must serve. See F72.
+  **`Recorded` is the hole this leaves, and it was walked through.**
+  `GoldenIsAsserted` returns true for a `Recorded` case, so the recorder
+  maintains its golden - and four theme pages promoted to `Recorded` on
+  2026-08-30 churned on every run again, found independently by three later
+  cuts and by nobody's test, because a `Recorded` case is required *not* to
+  match. They are parked now. **A page carrying a per-request value cannot be
+  `Recorded`**, whatever else is true of it, because `Recorded` is a promise the
+  recorder has to be able to keep.
 - **Every object a fixture or a case creates is named `gloak-probe-*`, and
   `TestEveryCreatedObjectCarriesTheProbePrefix` is what says so.** Six goldens'
   windows rest on that convention and nothing enforced it:

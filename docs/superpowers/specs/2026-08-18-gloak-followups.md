@@ -160,6 +160,30 @@ and 438 committed goldens had said otherwise since P2 - as had a doc comment in
 three-endpoint table describing it was a claim about the rejections that had
 been measured.
 
+**Status, 2026-08-31 (sixth fold).** Three cuts and two gate fixes took parity
+to **294 of 526**, closed **F104, F105 and F106**, and opened **F113 through
+F121**. A temporary password is now actually temporary.
+
+Three things about how the round found what it found.
+
+**Two entries named the smaller half of their own subject.** F104 said an admin
+field was "consumed by nothing" - the larger half was that the *token endpoint*
+never read a user's `requiredActions` either, and nothing in the entry would
+have led a reader there. F105 said "six to nine" and the base was wrong: the
+tests already held nine. Both understatements had already propagated into a
+briefing before a measurement caught them.
+
+**A wrong explanation attached to a correct observation is the most expensive
+thing these documents carry.** The observed spec explained an incomplete-profile
+refusal by an attribute that exempts nothing. A cut implemented the exemption
+from that paragraph, broke two fixtures, and reverted it after measuring - and
+without the fabrication, the same code **locks the administrator out of the
+server on first start**. The observation was right the whole time, which is
+exactly what kept the explanation looking checked.
+
+**Three independent cuts refuted the same line**, "`make record` is silent on a
+clean checkout". None was looking for it. See F113.
+
 One thing that is deliberately **not** filed. P4's handover proposes an entry
 for "a golden that enumerates a realm-wide set without `PristineRealm`", naming
 `admin/role-mapper/group-realm-available`. That case gained the flag in
@@ -3350,7 +3374,25 @@ inherits the list rather than the tag.
 The prerequisite for paying it is an execution engine in `internal/oidc`, not
 more admin surface.
 
-## F104: `enabled` and `defaultAction` on a required action are consumed by nothing
+## F104: `enabled` and `defaultAction` on a required action are consumed by nothing (closed, and it named the smaller half)
+
+**Closed 2026-08-31. A temporary password is now actually temporary**, and the
+divergence was on **two** endpoints rather than the one this entry describes.
+
+The admin half is what the entry names. The larger half is that `internal/oidc`
+never read a user's `requiredActions` **on any endpoint**, so the direct grant
+was handing out tokens too - and **nothing in these two sentences would have led
+a reader to the token endpoint.** The briefing written from this entry described
+it the same way, so the understatement propagated once before the measurement
+caught it.
+
+Tokens are **withheld**, not issued-then-restricted: no code exists until the
+queue is empty. And the two endpoints disagree about one user - the browser
+login asks whether an *enabled* provider has anything to do, the direct grant
+reads `requiredActions` raw.
+
+What the finding said, kept for the record:
+
 
 Both are stored and served. Gloak's login imposes no required action and never
 reads a user's `requiredActions`, so a realm can register, enable and prioritise
@@ -3359,7 +3401,26 @@ an action that changes nothing.
 The admin half is measured and correct; what is missing is the half that acts on
 it. Filed beside F103 because they close together or not at all.
 
-## F105: `javamap` gains three vectors and a near-miss that is not a test
+## F105: `javamap` gains three vectors and a near-miss that is not a test (closed, and the base was wrong)
+
+**Closed 2026-08-31**, with all four in the package's tests including the
+near-miss, which is the only test that shows what `KeyOrder` *cannot* do. All
+four reproduced when re-measured rather than transcribed.
+
+**This entry's "six to nine" inherited a wrong base.** `AGENTS.md` said six
+measured key sets and the package's own tests already held nine - the other five
+are the client `attributes` sets a bullet four paragraphs earlier describes. The
+count is fourteen now and it is what the tests assert, which is the only place a
+count like that can live without drifting.
+
+A second finding came with it: **four measured bucket chains come back
+descending**, so reversing `KeyOrder`'s pre-sort passes every vector in the
+package. A realm's `attributes` refutes it - one chain ascending, one fitting
+neither direction - and the package doc now carries the refutation beside the
+temptation.
+
+What the finding said, kept for the record:
+
 
 The authentication SPI registry's key order confirmed `javamap.KeyOrder` on
 three more key sets, taking it from six to nine. A fourth **near-miss**
@@ -3370,7 +3431,27 @@ cut's files.
 Adding it is three lines and would make the limit a tested claim instead of a
 sentence.
 
-## F106: a `Volatile` mask over a string with a stable prefix cannot be checked mechanically
+## F106: a `Volatile` mask over a string with a stable prefix cannot be checked mechanically (closed - it can, and this entry named a different question)
+
+**Closed 2026-08-31 by measurement, not by machinery.** The claim was that
+deciding it needs two recordings diffed per value. That is true of *a* question
+and not of the one this entry names.
+
+`ReplaceCaptured` and `ReplaceIssuer` run before `Normalize` **on both sides**,
+so a byte inside `{{issuer}}` or `{{group_id}}` is identical on both sides by
+construction: it carries no volatility, and a mask over it gives up an assertion
+for nothing. This entry's own example - `https://host/realms/x/<uuid>` - is
+therefore decidable from a single response.
+
+What genuinely needs two recordings is a value whose stable part carries **no
+placeholder at all**, and the guard says nothing about those.
+
+`volatileMasksOverPinnedPrefixes` was shown failing on a real over-wide mask
+before that mask was excused - with the exception list empty it fired on exactly
+one case in the whole catalogue, the one the mask audit had predicted.
+
+What the finding said, kept for the record:
+
 
 The two new mask ratchets catch a mask that changes nothing and a mask that
 covers a captured value. What neither reaches is a mask that is **too wide by a
@@ -3422,3 +3503,107 @@ the last place the old explanation survives.
 The other forty-nine were swept by hand against the server and that sweep is not
 a test. It is the difference between "somebody checked" and "something checks",
 and this list exists to keep that difference visible.
+
+## F113: `Recorded` is the hole `GoldenIsAsserted` leaves, and it was walked through (closed)
+
+F69 stopped the recorder rewriting `Pending` goldens. `GoldenIsAsserted` returns
+true for a **`Recorded`** case, because a golden worth comparing is a golden
+worth re-recording - and on 2026-08-30 four theme pages were promoted to
+`Recorded`, so the churn came straight back.
+
+**No test could see it.** A `Recorded` case is required *not* to match, and it
+did not match either way. Three later cuts refuted the "silent on a clean
+checkout" line independently, none of them looking for it, and each reverted the
+four files rather than committing them - which means each of the three spent
+time deciding whether four unrelated moves were a regression.
+
+**Closed 2026-08-31** by parking the four, each declared with its reason. The
+rule that follows is stronger than the fix: **a page carrying a per-request
+value cannot be `Recorded`**, whatever else is true of it, because `Recorded` is
+a promise the recorder has to be able to keep.
+
+A theme-resource substitution pass was written first and reverted. It removes
+one of the three churn sources - the `/resources/<hash>/` segment - and the
+other two are login session cookies and a `tab_id` inside the markup, which need
+the HTML masking F38 declined on four written grounds. Machinery that fixes a
+third of a problem and has no consumer is what this project calls a guess about
+what the next cut wants.
+
+## F114: CI was killed inside `fsync`, and the first diagnosis was wrong (closed)
+
+A cut reported that the identical tree passed, failed, then passed again, and
+read it as a slow runner. The fix applied from that reading - raising Go's
+per-package timeout from 10 minutes to 30 - **failed at 30 minutes**, with
+goroutine 1 waiting 22 minutes and the running goroutine inside
+`modernc.org/libc.Xfsync`.
+
+The cause is `fsync`. Every conformance case opens a fresh SQLite file and
+bootstraps it; a bootstrap is hundreds of writes, and under the default
+`synchronous=full` each waits on the disk. The runner's disk was the variable
+and nothing in the output named it.
+
+**Closed 2026-08-31**: the three test packages that build a throwaway store open
+it with `synchronous(off)`. Durability is meaningless for a file that lives in
+`t.TempDir()` for one subtest, and production is untouched. The CI `Test` step
+went from dying at 30 minutes to passing in 9m33s.
+
+The timeout flag stays at 20 minutes as a **backstop**, and its comment says so.
+Two lessons, and the second is the one worth keeping:
+
+- A package-level timeout reads as a failed assertion. `AGENTS.md` tells the
+  reader that any failure is a real regression - true of the local suite, and
+  it is what made this misread twice, once by the cut that found it and once by
+  the fold that acted on it.
+- **Raising a timeout to make a red build green buys time, not information.**
+  Thirty minutes of not knowing is worse than ten.
+
+## F115: one case's recording depends on the load average (closed)
+
+`oidc/userinfo/expired-token` waited two seconds on a one-second token lifespan.
+`iat` is truncated to the second, so `exp` can sit up to a second later than the
+mint and the real margin is under a second - which a machine running three
+containers eats.
+
+A whole `make record` recorded its **200** where the golden holds the **401**,
+and the golden was right. Five seconds now, which is three seconds of a
+six-minute run.
+
+Worth generalising: a fixture `Delay` tuned to the smallest value that worked
+once is tuned to the machine it was written on.
+
+## F116: `kc_action` triggers a required action on demand and is not built
+
+Measured: it echoes an **alias** on success and a **flow execution id** on
+failure. Two different vocabularies from one parameter.
+
+## F117: `CONFIGURE_TOTP` cannot be completed
+
+It is reachable - the secret's raw ASCII bytes are the HMAC key rather than a
+base32 decoding, so no device is needed - but completing it needs an `otp`
+credential type Gloak does not have.
+
+## F118: the required-action landing page has no conformance case
+
+It would need a `Pending` case plus a `parkedGoldens` entry, and `case_test.go`
+belonged to another stream. Filed so the gap is on the record rather than
+looking like a page nobody thought to measure.
+
+## F119: three aliases serve one 302 fewer than Keycloak
+
+The end state is identical; the redirect chain is shorter. Measured, and left as
+measured rather than padded to match, because inventing a redirect to make a
+count agree is the shape of divergence this project exists to avoid.
+
+## F120: the organization group family is blocked on a hidden root group
+
+A created organization's group carries a `parentId` naming an id the
+representation never shows. Eleven operations under
+`/organizations/{org-id}/groups`, and eleven more of their role-mappings
+currently counted under `Role Mapper` and `Client Role Mappings`, wait on
+understanding it.
+
+## F121: the `Workflows` tag needs a YAML writer
+
+Nine operations answering `application/yaml`, chunked. `internal/httpx` owns
+every response body this project writes and has no YAML path, so this is a
+decision about that package before it is nine handlers.
