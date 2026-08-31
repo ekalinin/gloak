@@ -2560,7 +2560,14 @@ func expiredTokenFixture() Fixture {
 			Capture: map[string]string{"access_token": "access_token"},
 		},
 	)
-	f.Delay = 2 * time.Second
+	// Five seconds against a one-second lifespan, not two. `iat` is truncated to
+	// the second, so `exp` can sit up to a second later than the mint, and two
+	// seconds left under a second of margin - which a machine running three
+	// containers eats. Measured failing: a whole `make record` on 2026-08-31
+	// recorded this case's 200 where its golden holds the 401, and the golden
+	// was right. Three seconds of a six-minute run buys a recording that does
+	// not depend on the load average.
+	f.Delay = 5 * time.Second
 	return f
 }
 
