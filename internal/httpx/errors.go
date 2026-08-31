@@ -33,14 +33,64 @@ func SetSecurityHeaders(w http.ResponseWriter) {
 	h.Set("X-Robots-Tag", "none")
 }
 
-// SetContentSecurityPolicy sets the header measured on exactly one response so
-// far: the token revocation success. No other recorded response carries it,
-// including revocation's own error responses, so it is set at that one call
-// site rather than alongside the five security headers. See
-// internal/conformance/testdata/golden/oidc/revocation/refresh-token.http.
+// ContentSecurityPolicy is the value every page the login theme renders sends,
+// and the value the token revocation success sends. It is one of the realm's
+// browserSecurityHeaders, so any response Keycloak produces through the page
+// path carries it; revocation is the odd one on the protocol side rather than
+// the only one in the server.
+//
+// (This constant's doc comment said "measured on exactly one response so far:
+// the token revocation success. No other recorded response carries it" until
+// 2026-08-31, and P3's sweep had falsified that on 2026-08-29 - six of the
+// seven responses in the browser flow carry it, and AGENTS.md has said so
+// since. The function was already called from writeThemeHTML and from
+// WriteLoginActionRedirect when the sentence was still here, which is the
+// failure mode AGENTS.md's charset bullet describes: the code knew and the
+// comment beside it did not.)
+//
+// It is **not** universal, and the exception is why the value is a constant
+// rather than a hard-coded string: the front-channel logout page computes its
+// own - see FrameSrcPolicy.
+const ContentSecurityPolicy = "frame-src 'self'; frame-ancestors 'self'; object-src 'none';"
+
+// SetContentSecurityPolicy sets ContentSecurityPolicy. It is set at its call
+// sites rather than alongside the five security headers because the responses
+// that carry it and the responses that carry those are different sets: the
+// authorization endpoint's redirect sends the five and not this one.
 func SetContentSecurityPolicy(w http.ResponseWriter) {
-	w.Header().Set("Content-Security-Policy",
-		"frame-src 'self'; frame-ancestors 'self'; object-src 'none';")
+	w.Header().Set("Content-Security-Policy", ContentSecurityPolicy)
+}
+
+// FrameSrcPolicy is the Content-Security-Policy the front-channel logout page
+// carries, which is the one theme page whose policy is computed per response.
+//
+// Measured 2026-08-31 with `od -c`, on a session holding two front-channel
+// clients registered at the same host:
+//
+//	frame-src 'self' localhost:9998 localhost:9998 ; frame-ancestors 'self'; object-src 'none';
+//
+// Two details are what make this a function rather than a join:
+//
+//   - **The hosts are not de-duplicated.** Two clients on one host put the host
+//     in twice. Deduplicating is the tidy-up that changes a measured byte.
+//   - **There is a space before the semicolon.** The list is built by appending
+//     "<host> " per client, so the separator that follows the last host is the
+//     one the loop left behind rather than one somebody wrote.
+//
+// An empty list gives ContentSecurityPolicy exactly, which is what every other
+// theme page sends, so the two shapes meet rather than diverging at zero.
+func FrameSrcPolicy(hosts []string) string {
+	if len(hosts) == 0 {
+		return ContentSecurityPolicy
+	}
+	var b strings.Builder
+	b.WriteString("frame-src 'self' ")
+	for _, h := range hosts {
+		b.WriteString(h)
+		b.WriteString(" ")
+	}
+	b.WriteString("; frame-ancestors 'self'; object-src 'none';")
+	return b.String()
 }
 
 // WriteAuthorizationRedirect writes the authorization endpoint's 302 back to a
@@ -474,8 +524,21 @@ func WriteThemeErrorPage(w http.ResponseWriter, status int, cacheControl string)
 // Content-Language: en, Content-Security-Policy, text/html;charset=utf-8 and
 // the five security headers. Only the status, the Cache-Control and the body
 // differ, which is why those three are the parameters and nothing else is.
+//
+// **A ninth page was measured on 2026-08-31 and it breaks the last sentence.**
+// The front-channel logout page carries the same envelope with a
+// Content-Security-Policy computed from the clients in the session, so the
+// policy is a fourth thing that differs - which is why WriteThemePagePolicy
+// exists beside this and why the value is not written here.
 func WriteThemePage(w http.ResponseWriter, status int, cacheControl, title string) {
-	writeThemeHTML(w, status, cacheControl, themePageBody(title))
+	WriteThemePagePolicy(w, status, cacheControl, title, ContentSecurityPolicy)
+}
+
+// WriteThemePagePolicy is WriteThemePage with the Content-Security-Policy
+// chosen by the caller, which only the front-channel logout page needs. See
+// FrameSrcPolicy for what it builds and why.
+func WriteThemePagePolicy(w http.ResponseWriter, status int, cacheControl, title, policy string) {
+	writeThemeHTMLPolicy(w, status, cacheControl, themePageBody(title), policy)
 }
 
 // writeThemeHTML is the envelope itself, shared by the placeholder pages and by
@@ -483,9 +546,16 @@ func WriteThemePage(w http.ResponseWriter, status int, cacheControl, title strin
 // function so that a page gaining a real body cannot quietly gain a different
 // header set with it.
 func writeThemeHTML(w http.ResponseWriter, status int, cacheControl, body string) {
+	writeThemeHTMLPolicy(w, status, cacheControl, body, ContentSecurityPolicy)
+}
+
+// writeThemeHTMLPolicy is writeThemeHTML with the policy as an argument. The
+// two are one function rather than two so that the one page with its own policy
+// cannot also quietly acquire its own header set.
+func writeThemeHTMLPolicy(w http.ResponseWriter, status int, cacheControl, body, policy string) {
 	suppressDate(w)
 	SetSecurityHeaders(w)
-	SetContentSecurityPolicy(w)
+	w.Header().Set("Content-Security-Policy", policy)
 	if cacheControl != "" {
 		w.Header().Set("Cache-Control", cacheControl)
 	}

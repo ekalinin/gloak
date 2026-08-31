@@ -369,3 +369,75 @@ func TestWriteThemePageTitle(t *testing.T) {
 		}
 	}
 }
+
+// TestFrameSrcPolicyIsTheMeasuredBytes pins the front-channel logout page's
+// Content-Security-Policy, which is the one theme page whose policy is computed
+// per response.
+//
+// Read off the wire with `od -c` on 2026-08-31, on a session holding two
+// front-channel clients registered at the same host. The two details that a
+// tidier implementation would lose are a duplicate host and a space.
+func TestFrameSrcPolicyIsTheMeasuredBytes(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		hosts []string
+		want  string
+	}{
+		{
+			// No front-channel client, so the page is every other theme page.
+			name: "none",
+			want: httpx.ContentSecurityPolicy,
+		},
+		{
+			name:  "one",
+			hosts: []string{"localhost:9998"},
+			want:  "frame-src 'self' localhost:9998 ; frame-ancestors 'self'; object-src 'none';",
+		},
+		{
+			// The same host twice, which is what two clients on one host
+			// produced. De-duplicating is the tidy-up that changes a byte.
+			name:  "two on one host",
+			hosts: []string{"localhost:9998", "localhost:9998"},
+			want: "frame-src 'self' localhost:9998 localhost:9998 ; " +
+				"frame-ancestors 'self'; object-src 'none';",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := httpx.FrameSrcPolicy(tc.hosts); got != tc.want {
+				t.Errorf("\n got %q\nwant %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestWriteThemePagePolicyKeepsTheEnvelope pins that the page with its own
+// policy has every other header the eight measured theme pages have. The two
+// writers share writeThemeHTMLPolicy for exactly this reason.
+func TestWriteThemePagePolicyKeepsTheEnvelope(t *testing.T) {
+	plain := httptest.NewRecorder()
+	httpx.WriteThemePage(plain, http.StatusOK, "no-cache", "Logging out")
+	computed := httptest.NewRecorder()
+	httpx.WriteThemePagePolicy(computed, http.StatusOK, "no-cache", "Logging out",
+		httpx.FrameSrcPolicy([]string{"localhost:9998"}))
+
+	if plain.Code != computed.Code {
+		t.Errorf("status %d vs %d", plain.Code, computed.Code)
+	}
+	if plain.Body.String() != computed.Body.String() {
+		t.Error("the bodies differ; only the policy was meant to")
+	}
+	for name := range plain.Header() {
+		if name == "Content-Security-Policy" {
+			continue
+		}
+		if got, want := computed.Header().Get(name), plain.Header().Get(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+	if len(plain.Header()) != len(computed.Header()) {
+		t.Errorf("header counts differ: %v vs %v", plain.Header(), computed.Header())
+	}
+	if computed.Header().Get("Content-Security-Policy") == httpx.ContentSecurityPolicy {
+		t.Error("the computed policy is the constant; the page would be indistinguishable")
+	}
+}
