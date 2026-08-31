@@ -55,7 +55,35 @@ type Store interface {
 	Keys() KeyRepo
 	Sessions() SessionRepo
 	RequiredActions() RequiredActionRepo
+	Organizations() OrganizationRepo
 	Close() error
+}
+
+// OrganizationRepo stores a realm's organizations.
+//
+// It is deliberately small: the listing's search, exact, q, first and max all
+// run in internal/admin over what List returns, so the four filters live in one
+// place a test can read rather than in two drivers that could disagree about
+// what "case-insensitive substring" means.
+type OrganizationRepo interface {
+	Create(ctx context.Context, o *model.Organization) error
+	// Update writes every field back except the alias, which is immutable -
+	// a PUT changing it was measured answering 400 "Cannot change the alias",
+	// so a driver that could write it would be offering a change nobody has
+	// measured.
+	Update(ctx context.Context, o *model.Organization) error
+	Delete(ctx context.Context, realmID, id string) error
+	ByID(ctx context.Context, realmID, id string) (*model.Organization, error)
+	// List returns every organization in the realm **ordered by name**, byte
+	// order rather than case-insensitively: five organizations created out of
+	// order came back `UPPER, aaa-org, mmm-org, with.dot, zzz-org`, with the
+	// capital first, which is what says the comparison is not folded.
+	List(ctx context.Context, realmID string) ([]*model.Organization, error)
+	// ByDomain resolves the organization holding a domain, anywhere in the
+	// realm. A domain is unique realm-wide and the measured 400 names the
+	// other organization by name - "Domain d is already linked to organization
+	// o in realm r" - so the create needs the row rather than a boolean.
+	ByDomain(ctx context.Context, realmID, domain string) (*model.Organization, error)
 }
 
 // RequiredActionRepo stores a realm's registered required action providers.

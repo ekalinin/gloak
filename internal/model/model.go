@@ -470,3 +470,69 @@ type RequiredActionProvider struct {
 	// leaving `{"config":{}}` rather than removing the key.
 	Config StringMap
 }
+
+// Organization is a realm's organization: a name, an immutable alias, a set of
+// e-mail domains and a multivalued attribute map.
+//
+// Field order is the measured serialisation order,
+// `id, name, alias, enabled, description, redirectUrl, attributes, domains` -
+// with description and redirectUrl present only when set. See
+// internal/admin/organizations.go for the three shapes that order feeds.
+//
+// **Alias is stored rather than derived.** It defaults to the name at creation
+// and is then immutable: a PUT carrying a different alias, or carrying none
+// after a rename, was measured answering 400 "Cannot change the alias". A field
+// computed from the name on every read could not answer that.
+//
+// Attributes is a MultivaluedHashMap - one name to many values - which is a
+// group's attribute type and not a client's. StringMap does not apply.
+type Organization struct {
+	ID          string
+	RealmID     string
+	Name        string
+	Alias       string
+	Enabled     bool
+	Description string
+	RedirectURL string
+	// Domains is **absent** from the representation when empty rather than
+	// serialised as `[]`, which is why internal/admin holds it behind a
+	// pointer. Measured on every shape.
+	Domains []OrganizationDomain
+	// Attributes is always serialised, `{}` when empty - the opposite rule
+	// from Domains beside it, on the same body.
+	Attributes []OrganizationAttribute
+}
+
+// OrganizationDomain is one e-mail domain an organization claims. A domain is
+// unique across the whole realm, not just within its organization: a create
+// naming a domain another organization already holds was measured answering
+// 400 and naming that other organization.
+type OrganizationDomain struct {
+	Name     string
+	Verified bool
+}
+
+// OrganizationAttribute is one attribute name and its values, kept as a slice
+// rather than a map because the wire order is the order it arrived in and a Go
+// map would sort it - the reason StringMap exists, applied to a multivalued
+// map.
+type OrganizationAttribute struct {
+	Name   string
+	Values []string
+}
+
+// AddAttribute appends one value under name, starting a new entry when the name
+// is new and extending the existing one otherwise.
+//
+// It is on the model rather than in a driver because both drivers rebuild the
+// same slice from the same ordered rows, and two copies of "append or extend"
+// is two places the attribute order could start to differ.
+func (o *Organization) AddAttribute(name, value string) {
+	for i := range o.Attributes {
+		if o.Attributes[i].Name == name {
+			o.Attributes[i].Values = append(o.Attributes[i].Values, value)
+			return
+		}
+	}
+	o.Attributes = append(o.Attributes, OrganizationAttribute{Name: name, Values: []string{value}})
+}

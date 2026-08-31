@@ -2016,6 +2016,188 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 			t.Errorf("an empty realm: got %v, %v; want a non-nil empty slice", rows, err)
 		}
 	})
+
+	t.Run("an organization round-trips with its domains and attributes", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := newRealm(t, s)
+
+		org := &model.Organization{
+			ID: model.NewID(), RealmID: realm.ID,
+			Name: "probe-org", Alias: "probe-alias", Enabled: true,
+			Description: "desc", RedirectURL: "http://x/",
+			Domains: []model.OrganizationDomain{
+				{Name: "b.example.com", Verified: true},
+				{Name: "a.example.com"},
+			},
+			Attributes: []model.OrganizationAttribute{
+				{Name: "zz", Values: []string{"one", "two"}},
+				{Name: "aa", Values: []string{"three"}},
+			},
+		}
+		if err := s.Organizations().Create(ctx, org); err != nil {
+			t.Fatalf("Organizations().Create: %v", err)
+		}
+		back, err := s.Organizations().ByID(ctx, realm.ID, org.ID)
+		if err != nil {
+			t.Fatalf("ByID: %v", err)
+		}
+		if !reflect.DeepEqual(back, org) {
+			t.Errorf("round-trip:\n got %+v\nwant %+v", back, org)
+		}
+		// The order the values arrived in, not the order a map would give:
+		// `zz` before `aa` and `one` before `two`. Sorting either would be
+		// invisible to a test that only counted them.
+		if got := []string{back.Attributes[0].Name, back.Attributes[1].Name}; !slices.Equal(got, []string{"zz", "aa"}) {
+			t.Errorf("attribute order: got %v, want [zz aa]", got)
+		}
+		if got := back.Domains[0].Name; got != "b.example.com" {
+			t.Errorf("domain order: got %q first, want b.example.com", got)
+		}
+	})
+
+	t.Run("the organization listing is sorted by name in byte order", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := newRealm(t, s)
+		// Created out of order, and with a capital, because the measured
+		// listing put `UPPER` before `aaa-org`: the comparison is not folded.
+		for _, name := range []string{"zzz-org", "aaa-org", "UPPER", "mmm-org"} {
+			o := &model.Organization{ID: model.NewID(), RealmID: realm.ID, Name: name, Alias: name, Enabled: true}
+			if err := s.Organizations().Create(ctx, o); err != nil {
+				t.Fatalf("Create %q: %v", name, err)
+			}
+		}
+		rows, err := s.Organizations().List(ctx, realm.ID)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		var got []string
+		for _, o := range rows {
+			got = append(got, o.Name)
+		}
+		if want := []string{"UPPER", "aaa-org", "mmm-org", "zzz-org"}; !slices.Equal(got, want) {
+			t.Errorf("List order: got %v, want %v", got, want)
+		}
+	})
+
+	t.Run("name and alias collide separately, and a domain resolves realm-wide", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := newRealm(t, s)
+
+		first := &model.Organization{
+			ID: model.NewID(), RealmID: realm.ID, Name: "one", Alias: "one-alias", Enabled: true,
+			Domains: []model.OrganizationDomain{{Name: "shared.example.com"}},
+		}
+		if err := s.Organizations().Create(ctx, first); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		// Two constraints rather than one, because the handler answers the two
+		// collisions with sentences that differ by a full stop and has to know
+		// which fired.
+		sameName := &model.Organization{ID: model.NewID(), RealmID: realm.ID, Name: "one", Alias: "other", Enabled: true}
+		if err := s.Organizations().Create(ctx, sameName); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("duplicate name: want ErrConflict, got %v", err)
+		}
+		sameAlias := &model.Organization{ID: model.NewID(), RealmID: realm.ID, Name: "other", Alias: "one-alias", Enabled: true}
+		if err := s.Organizations().Create(ctx, sameAlias); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("duplicate alias: want ErrConflict, got %v", err)
+		}
+
+		// The domain lookup is case-insensitive and reaches across the realm,
+		// which is what lets the create name the *other* organization in its
+		// refusal.
+		held, err := s.Organizations().ByDomain(ctx, realm.ID, "SHARED.example.com")
+		if err != nil {
+			t.Fatalf("ByDomain: %v", err)
+		}
+		if held.Name != "one" {
+			t.Errorf("ByDomain: got %q, want one", held.Name)
+		}
+		if _, err := s.Organizations().ByDomain(ctx, realm.ID, "absent.example.com"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("ByDomain of nothing: want ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("update replaces the children and leaves the alias alone", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := newRealm(t, s)
+
+		org := &model.Organization{
+			ID: model.NewID(), RealmID: realm.ID, Name: "before", Alias: "keep-me", Enabled: true,
+			Description: "d", RedirectURL: "u",
+			Domains:     []model.OrganizationDomain{{Name: "old.example.com"}},
+			Attributes:  []model.OrganizationAttribute{{Name: "k", Values: []string{"v"}}},
+		}
+		if err := s.Organizations().Create(ctx, org); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		// A PUT was measured renaming the organization, clearing description,
+		// redirectUrl and the domains, and **refusing** an alias change - so
+		// Update writes everything but the alias, and the alias it is handed
+		// is ignored rather than trusted.
+		org.Name, org.Alias, org.Description, org.RedirectURL = "after", "ignored", "", ""
+		org.Domains = nil
+		org.Attributes = nil
+		if err := s.Organizations().Update(ctx, org); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		back, err := s.Organizations().ByID(ctx, realm.ID, org.ID)
+		if err != nil {
+			t.Fatalf("ByID: %v", err)
+		}
+		if back.Name != "after" {
+			t.Errorf("name: got %q, want after", back.Name)
+		}
+		if back.Alias != "keep-me" {
+			t.Errorf("alias: got %q, want keep-me - Update must not write it", back.Alias)
+		}
+		if len(back.Domains) != 0 || len(back.Attributes) != 0 {
+			t.Errorf("children survived the replace: %+v", back)
+		}
+		if back.Description != "" || back.RedirectURL != "" {
+			t.Errorf("cleared fields survived: %+v", back)
+		}
+	})
+
+	t.Run("an organization is scoped to its realm and cascades with it", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := newRealm(t, s)
+		other := &model.Realm{ID: model.NewID(), Name: "other", Enabled: true}
+		if err := s.Realms().Create(ctx, other); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+		org := &model.Organization{
+			ID: model.NewID(), RealmID: realm.ID, Name: "scoped", Alias: "scoped", Enabled: true,
+			Domains: []model.OrganizationDomain{{Name: "d.example.com"}},
+		}
+		if err := s.Organizations().Create(ctx, org); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if _, err := s.Organizations().ByID(ctx, other.ID, org.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("cross-realm read: want ErrNotFound, got %v", err)
+		}
+		if err := s.Organizations().Delete(ctx, other.ID, org.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("cross-realm delete: want ErrNotFound, got %v", err)
+		}
+		if rows, err := s.Organizations().List(ctx, other.ID); err != nil || rows == nil || len(rows) != 0 {
+			t.Errorf("an empty realm: got %v, %v; want a non-nil empty slice", rows, err)
+		}
+		// Deleting twice is a 404 on the wire, so the second Delete has to
+		// report ErrNotFound rather than succeeding quietly.
+		if err := s.Organizations().Delete(ctx, realm.ID, org.ID); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		if err := s.Organizations().Delete(ctx, realm.ID, org.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("second Delete: want ErrNotFound, got %v", err)
+		}
+		if err := s.Organizations().Update(ctx, org); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("Update of a gone row: want ErrNotFound, got %v", err)
+		}
+	})
 }
 
 // newRealm creates one realm for a subtest that only needs somewhere to hang
