@@ -107,6 +107,29 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/realms/{realm}/client-types", h.guardRealmFeature(writeFeatureNotEnabled))
 	mux.HandleFunc("PUT /admin/realms/{realm}/client-types", h.guardRealmFeature(writeFeatureNotEnabled))
 
+	// Organizations: the six operations that treat one as a resource.
+	//
+	// **Every one of them sits behind the realm's own organizationsEnabled
+	// flag, and the check is after the caller's roles rather than before
+	// them** - which is where this family differs from client-types above.
+	// See guardOrganizations.
+	//
+	// The listing and the count take query-organizations as well as the read
+	// pair, exactly the way the group listing takes query-groups and the
+	// single group read does not.
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations",
+		h.guardOrganizations(organizationsListReadRoles, h.listOrganizations))
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/count",
+		h.guardOrganizations(organizationsListReadRoles, h.countOrganizations))
+	mux.HandleFunc("POST /admin/realms/{realm}/organizations",
+		h.guardOrganizations(organizationWriteRoles, h.createOrganization))
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}",
+		h.guardOrganization(organizationReadRoles, h.readOrganization))
+	mux.HandleFunc("PUT /admin/realms/{realm}/organizations/{orgID}",
+		h.guardOrganization(organizationWriteRoles, h.updateOrganization))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/organizations/{orgID}",
+		h.guardOrganization(organizationWriteRoles, h.deleteOrganization))
+
 	// Authentication Management, the eighteen operations of P8's first cut.
 	// The other twenty-one - the flows, the executions and the shared
 	// authenticator config - are not here, and that is a decision rather than
@@ -1018,6 +1041,58 @@ func writeFeatureNotEnabled(w http.ResponseWriter, _ *http.Request, _ *reqContex
 		"For more on this error consult the server log.")
 }
 
+// guardOrganizations is the guard every route under /organizations takes:
+// authenticate, resolve the realm, check the roles, **then** check the realm's
+// organizationsEnabled flag.
+//
+// **The order is the opposite of guardRealmFeature's, and that is measured
+// rather than assumed from the resemblance.** On
+// GET /admin/realms/master/organizations with the flag off:
+//
+//	no Authorization header      401 {"error":"HTTP 401 Unauthorized"}
+//	unknown realm                404 {"error":"Realm not found."}
+//	a caller holding no role     403 {"error":"HTTP 403 Forbidden"}
+//	view-organizations           404 Organizations not enabled for this realm.
+//	a full administrator         404 Organizations not enabled for this realm.
+//
+// client-types puts its feature check **before** the authorization check and
+// therefore has no role list at all; this one puts it after and therefore has
+// one. Reusing guardRealmFeature here would answer 404 where Keycloak answers
+// 403, which is the whole difference between the two families.
+func (h *handler) guardOrganizations(roles []string, next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
+	return h.guardAny(roles, func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+		if !organizationsEnabled(rc.realm) {
+			writeOrganizationsNotEnabled(w)
+			return
+		}
+		next(w, r, rc)
+	})
+}
+
+// guardOrganization is guardOrganizations for the three routes naming an
+// {orgID}: the organization is resolved **after** the caller is judged.
+//
+// Measured 2026-08-31 on an id that resolves to nothing: a caller holding no
+// admin role gets 403 and one holding view-organizations gets 404. That is the
+// users family's shape and **not** the groups family's, where every route
+// naming a {groupID} answers 404 to every caller including one holding
+// nothing. The description tags both families' routes after their own
+// resource, so the tag does not predict it here either.
+func (h *handler) guardOrganization(roles []string, next func(http.ResponseWriter, *http.Request, *reqContext, *model.Organization)) http.HandlerFunc {
+	return h.guardOrganizations(roles, func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+		org, err := h.store.Organizations().ByID(r.Context(), rc.realm.ID, r.PathValue("orgID"))
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeOrganizationNotFound(w)
+				return
+			}
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		next(w, r, rc, org)
+	})
+}
+
 // guardAnyRejecting is the one implementation the three wrappers share:
 // resolve the realm, resolve the caller, admit it if it holds any of the
 // roles.
@@ -1186,3 +1261,29 @@ var clientRolesReadRoles = []string{"view-clients", "manage-clients"}
 var requiredActionsListReadRoles = []string{
 	"view-realm", "manage-realm", "view-users", "query-users",
 }
+
+// organizationReadRoles is what the single organization read accepts.
+//
+// **manage-realm is in it and view-realm is not.** Measured 2026-08-31 with a
+// token minted per role, eleven single-role callers against seven requests:
+// view-organizations, manage-organizations and manage-realm answer 200, and
+// view-realm, view-users, manage-users, view-clients, manage-clients and
+// query-groups all answer 403. The realm pair is not a view/manage pair on this
+// family - only the manage half reaches - so realmConfigReadRoles is wrong here
+// in both directions and is not reused.
+var organizationReadRoles = []string{"view-organizations", "manage-organizations", "manage-realm"}
+
+// organizationsListReadRoles is the listing's and the count's, which is the
+// read set plus query-organizations.
+//
+// query-organizations opens **those two and nothing else**: the single read
+// answers it 403. That is exactly query-groups' shape on the group listing and
+// query-clients' on the client listing, measured on this family rather than
+// inherited from either.
+var organizationsListReadRoles = []string{
+	"view-organizations", "manage-organizations", "manage-realm", "query-organizations",
+}
+
+// organizationWriteRoles is what the create, the update and the delete accept.
+// view-organizations reads and does not write; manage-realm does both.
+var organizationWriteRoles = []string{"manage-organizations", "manage-realm"}

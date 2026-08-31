@@ -152,6 +152,10 @@ func (s *Store) RequiredActions() store.RequiredActionRepo {
 	return &requiredActionRepo{s.db}
 }
 
+func (s *Store) Organizations() store.OrganizationRepo {
+	return &organizationRepo{s.db}
+}
+
 // classify maps driver errors onto the store's sentinels so handlers never
 // inspect driver-specific error text.
 func classify(err error) error {
@@ -1834,6 +1838,246 @@ func collectRequiredActions(rows *sql.Rows) ([]*model.RequiredActionProvider, er
 	out := []*model.RequiredActionProvider{}
 	for rows.Next() {
 		m, err := scanRequiredAction(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+type organizationRepo struct{ db *sql.DB }
+
+// Create writes the row, its domains and its attributes in one transaction, so
+// an organization with domains never exists half-written - groupRepo.Create's
+// shape, for the same reason.
+func (r *organizationRepo) Create(ctx context.Context, m *model.Organization) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO organization
+		   (id, realm_id, name, alias, enabled, description, redirect_url)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.RealmID, m.Name, m.Alias, boolToInt(m.Enabled),
+		m.Description, m.RedirectURL); err != nil {
+		return classify(err)
+	}
+	if err := insertOrganizationChildren(ctx, tx, m); err != nil {
+		return classify(err)
+	}
+	return tx.Commit()
+}
+
+// Update writes every field back except the alias.
+//
+// **alias is not in the statement on purpose.** It is immutable: a PUT carrying
+// a different one, or omitting it after a rename so that the derived value
+// differs, was measured answering 400 "Cannot change the alias". A driver able
+// to write it would offer a change nobody has measured, and the handler's
+// refusal would be the only thing standing between a caller and it.
+func (r *organizationRepo) Update(ctx context.Context, m *model.Organization) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx,
+		`UPDATE organization
+		    SET name = ?, enabled = ?, description = ?, redirect_url = ?
+		  WHERE realm_id = ? AND id = ?`,
+		m.Name, boolToInt(m.Enabled), m.Description, m.RedirectURL,
+		m.RealmID, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return store.ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM organization_domain WHERE organization_id = ?`, m.ID); err != nil {
+		return classify(err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM organization_attribute WHERE organization_id = ?`, m.ID); err != nil {
+		return classify(err)
+	}
+	if err := insertOrganizationChildren(ctx, tx, m); err != nil {
+		return classify(err)
+	}
+	return tx.Commit()
+}
+
+// Delete removes the row; the schema cascades the domains and the attributes,
+// whose foreign keys are real.
+func (r *organizationRepo) Delete(ctx context.Context, realmID, id string) error {
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM organization WHERE realm_id = ? AND id = ?`, realmID, id)
+	if err != nil {
+		return classify(err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (r *organizationRepo) ByID(ctx context.Context, realmID, id string) (*model.Organization, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT id, realm_id, name, alias, enabled, description, redirect_url
+		   FROM organization WHERE realm_id = ? AND id = ?`, realmID, id)
+	m, err := scanOrganization(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadOrganizationChildren(ctx, []*model.Organization{m}); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (r *organizationRepo) List(ctx context.Context, realmID string) ([]*model.Organization, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, realm_id, name, alias, enabled, description, redirect_url
+		   FROM organization WHERE realm_id = ? ORDER BY name`, realmID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	out, err := collectOrganizations(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadOrganizationChildren(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ByDomain matches case-insensitively, which is what the measured refusal
+// implies: a domain is an e-mail domain and Keycloak stores it folded.
+func (r *organizationRepo) ByDomain(ctx context.Context, realmID, domain string) (*model.Organization, error) {
+	var id string
+	err := r.db.QueryRowContext(ctx,
+		`SELECT o.id FROM organization o
+		   JOIN organization_domain d ON d.organization_id = o.id
+		  WHERE o.realm_id = ? AND LOWER(d.name) = LOWER(?) LIMIT 1`,
+		realmID, domain).Scan(&id)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return r.ByID(ctx, realmID, id)
+}
+
+// insertOrganizationChildren writes the domains and the attributes. Both carry
+// an ordinal because both came off the wire in an order a Go map would lose.
+func insertOrganizationChildren(ctx context.Context, tx *sql.Tx, m *model.Organization) error {
+	for i, d := range m.Domains {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO organization_domain (organization_id, name, verified, ordinal)
+			 VALUES (?, ?, ?, ?)`,
+			m.ID, d.Name, boolToInt(d.Verified), i); err != nil {
+			return err
+		}
+	}
+	for i, a := range m.Attributes {
+		for j, v := range a.Values {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO organization_attribute (organization_id, name, value, ordinal)
+				 VALUES (?, ?, ?, ?)`,
+				m.ID, a.Name, v, i*1000+j); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// loadOrganizationChildren fills Domains and Attributes on organizations
+// already scanned, one query each for the whole set - loadGroupAttributes'
+// shape.
+func (r *organizationRepo) loadOrganizationChildren(ctx context.Context, orgs []*model.Organization) error {
+	if len(orgs) == 0 {
+		return nil
+	}
+	byID := make(map[string]*model.Organization, len(orgs))
+	ids := make([]any, 0, len(orgs))
+	placeholders := make([]string, 0, len(orgs))
+	for _, o := range orgs {
+		byID[o.ID] = o
+		ids = append(ids, o.ID)
+		placeholders = append(placeholders, "?")
+	}
+	in := strings.Join(placeholders, ",")
+
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT organization_id, name, verified FROM organization_domain
+		  WHERE organization_id IN (`+in+`) ORDER BY organization_id, ordinal`, ids...)
+	if err != nil {
+		return classify(err)
+	}
+	if err := scanOrganizationDomains(rows, byID); err != nil {
+		return err
+	}
+
+	rows, err = r.db.QueryContext(ctx,
+		`SELECT organization_id, name, value FROM organization_attribute
+		  WHERE organization_id IN (`+in+`) ORDER BY organization_id, ordinal`, ids...)
+	if err != nil {
+		return classify(err)
+	}
+	return scanOrganizationAttributes(rows, byID)
+}
+
+func scanOrganizationDomains(rows *sql.Rows, byID map[string]*model.Organization) error {
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var orgID, name string
+		var verified int
+		if err := rows.Scan(&orgID, &name, &verified); err != nil {
+			return err
+		}
+		o := byID[orgID]
+		o.Domains = append(o.Domains, model.OrganizationDomain{Name: name, Verified: verified != 0})
+	}
+	return classify(rows.Err())
+}
+
+func scanOrganizationAttributes(rows *sql.Rows, byID map[string]*model.Organization) error {
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var orgID, name, value string
+		if err := rows.Scan(&orgID, &name, &value); err != nil {
+			return err
+		}
+		byID[orgID].AddAttribute(name, value)
+	}
+	return classify(rows.Err())
+}
+
+func scanOrganization(row scanner) (*model.Organization, error) {
+	m := &model.Organization{}
+	var enabled int
+	var description sql.NullString
+	if err := row.Scan(&m.ID, &m.RealmID, &m.Name, &m.Alias, &enabled,
+		&description, &m.RedirectURL); err != nil {
+		return nil, classify(err)
+	}
+	m.Enabled = enabled != 0
+	// NULL is "never set" and '' is "set to nothing", and the representation
+	// tells them apart. See 0018_organization.sql.
+	if description.Valid {
+		m.Description = &description.String
+	}
+	return m, nil
+}
+
+func collectOrganizations(rows *sql.Rows) ([]*model.Organization, error) {
+	defer func() { _ = rows.Close() }()
+	out := []*model.Organization{}
+	for rows.Next() {
+		m, err := scanOrganization(rows)
 		if err != nil {
 			return nil, err
 		}
