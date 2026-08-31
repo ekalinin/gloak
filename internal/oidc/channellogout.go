@@ -40,7 +40,8 @@ import (
 //
 // Only the back-channel one is read here. What the front-channel one decides is
 // whether the iframe's src gains `?sid=…&iss=…`, and that lives in the page
-// body Gloak does not render - it is P13's, and follow-up F113 records it.
+// body Gloak does not render, which is P13's. See
+// docs/superpowers/handover/p6-channel-logout.md.
 const (
 	backchannelLogoutURLAttribute                   = "backchannel.logout.url"
 	backchannelLogoutSessionAttribute               = "backchannel.logout.session.required"
