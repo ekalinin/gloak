@@ -82,21 +82,26 @@ Working today:
   like more than it is
 - organizations: creation, reading, update and deletion - 6 operations, gated by
   the realm flag Keycloak gates them with rather than by a feature flag
+- back-channel and front-channel logout: the signed logout token posted to each
+  client that was in the session, and the four paths that send it where two
+  others end a session and notify nobody
+- authorization services: the resource server, its two provider catalogues and
+  the twelve `management/permissions` refusals - which close the roles, the
+  roles-by-id and the groups chapters outright
 - client secrets, service accounts, user credentials and user logout
 - a documentation-derived conformance suite (`internal/conformance`) that checks
   Gloak's responses byte-for-byte against bytes recorded from a live
   Keycloak 26.7.1
 - a parity meter whose denominator comes from Keycloak's own OpenAPI description
-  rather than from a hand-kept list: **294 of 526 enumerated behaviours served**,
+  rather than from a hand-kept list: **311 of 526 enumerated behaviours served**,
   plus four chapters whose surface has not been counted
 - an external oracle: `make oracle` drives Gloak with `kcadm.sh`, Keycloak's own
   admin CLI, which asks for things no recorded case asks for
 
 Not implemented yet: the login page's own markup (the flow is served, the theme
 is not), the authentication flow engine - Gloak walks a hard-coded flow -
-back-channel and front-channel logout, an organization's groups and members,
-workflows, SAML, user federation, identity brokering, authorization services,
-the admin console.
+an organization's groups and members, workflows, most of authorization services,
+SAML, user federation, identity brokering, the admin console.
 
 Where this is going is `docs/superpowers/specs/2026-08-21-gloak-parity-roadmap.md`:
 fourteen sub-projects with their dependencies and what each closes.
@@ -218,7 +223,7 @@ and stay out of the total rather than being dropped from it silently, which
 would inflate the percentage by hiding the parts nobody has counted. It reads:
 
 ```
-total: 294 of 526 enumerated behaviours served; 4 chapters not enumerated
+total: 311 of 526 enumerated behaviours served; 4 chapters not enumerated
 ```
 
 The denominator is 526 rather than 413 plus a fixed number because the protocol
