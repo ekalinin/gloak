@@ -1,0 +1,12 @@
+# GET /admin/realms/master/clients/{{client_uuid}}/authz/resource-server/policy/providers
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"type":"regex","name":"Regex","group":"Identity Based"},{"type":"role","name":"Role","group":"Identity Based"},{"type":"resource","name":"Resource-Based","group":"Permission"},{"type":"scope","name":"Scope-Based","group":"Permission"},{"type":"client","name":"Client","group":"Identity Based"},{"type":"time","name":"Time","group":"Time Based"},{"type":"user","name":"User","group":"Identity Based"},{"type":"client-scope","name":"Client Scope","group":"Identity Based"},{"type":"group","name":"Group","group":"Identity Based"},{"type":"aggregate","name":"Aggregated","group":"Others"}]

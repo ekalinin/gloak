@@ -144,20 +144,17 @@ func (h *handler) register(mux *http.ServeMux) {
 	// The two provider catalogues are the same handler twice because the two
 	// responses are byte-identical, verified with cmp rather than assumed from
 	// the names.
-	for _, prefix := range []string{
-		"/admin/realms/{realm}/clients/{clientUUID}/authz/resource-server",
-	} {
-		mux.HandleFunc("GET "+prefix, h.guardAuthz(authzReadRoles, h.readResourceServer))
-		mux.HandleFunc("PUT "+prefix, h.guardAuthz(authzWriteRoles, h.updateResourceServer))
-		// **The settings read takes the write set**, measured: view-clients and
-		// view-authorization both read the route above and are 403 on this one.
-		// It is a read that refuses the view role, which is the inverse of
-		// AGENTS.md's "reads accept the manage role, not just the view role" -
-		// so the list is written out here rather than shared with the read.
-		mux.HandleFunc("GET "+prefix+"/settings", h.guardAuthz(authzWriteRoles, h.readResourceServerSettings))
-		mux.HandleFunc("GET "+prefix+"/policy/providers", h.guardAuthz(authzReadRoles, h.listPolicyProviders))
-		mux.HandleFunc("GET "+prefix+"/permission/providers", h.guardAuthz(authzReadRoles, h.listPolicyProviders))
-	}
+	const authzPrefix = "/admin/realms/{realm}/clients/{clientUUID}/authz/resource-server"
+	mux.HandleFunc("GET "+authzPrefix, h.guardAuthz(authzReadRoles, h.readResourceServer))
+	mux.HandleFunc("PUT "+authzPrefix, h.guardAuthz(authzWriteRoles, h.updateResourceServer))
+	// **The settings read takes the write set**, measured: view-clients and
+	// view-authorization both read the route above and are 403 on this one. It
+	// is a read that refuses the view role, which is the inverse of AGENTS.md's
+	// "reads accept the manage role, not just the view role" - so the list is
+	// written out here rather than shared with the read.
+	mux.HandleFunc("GET "+authzPrefix+"/settings", h.guardAuthz(authzWriteRoles, h.readResourceServerSettings))
+	mux.HandleFunc("GET "+authzPrefix+"/policy/providers", h.guardAuthz(authzReadRoles, h.listPolicyProviders))
+	mux.HandleFunc("GET "+authzPrefix+"/permission/providers", h.guardAuthz(authzReadRoles, h.listPolicyProviders))
 
 	// The twelve `management/permissions` operations. All of them are the same
 	// 501, and they need **three** combinators because the refusal does not sit

@@ -9351,4 +9351,492 @@ var adminCases = []Case{
 		},
 		AssertAbsentHeaders: []string{"X-Frame-Options", "Cache-Control"},
 	},
+
+	// ---- P10 first cut: authorization services ----------------------------
+	//
+	// Appended at the very end of the slice. Every value below was measured
+	// against a live 26.7.1 on 2026-08-31; the plan carries the sweeps.
+	{
+		ID: "admin/authz-resource-server/read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: the resource server",
+			Retrieved: "2026-08-31",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server",
+		Fixture:   "authz-client",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		// **The absence is the assertion.** This read and settings beside it
+		// send no Cache-Control where every sub-resource read on the family
+		// sends no-cache, so "the authz family caches nothing" is a claim two
+		// routes falsify. Without this line the golden would pass whether the
+		// header were emitted or not.
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The body's id and clientId are **both** the client UUID and name is
+		// the clientId string, so ReplaceCaptured rewrites two of the three and
+		// the third is asserted literally. That is what pins the confusion: a
+		// serialiser filling clientId from model.Client.ClientID would put
+		// `gloak-probe-authz-upd` where {{client_uuid}} is and the golden would
+		// not match.
+		ID: "admin/authz-resource-server/read-updated",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: a PUT naming decisionStrategy alone",
+			Retrieved: "2026-08-31",
+		},
+		Status:  Implemented,
+		Fixture: "authz-client-updated",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		// The fixture's PUT sent decisionStrategy and nothing else. This body
+		// is what the other two fields became: **ENFORCING and true**, the
+		// representation's own initialisers, not what was stored and not the
+		// zero values. Only `decisionStrategy` differs from the plain read
+		// eight lines up, and that difference is the whole measurement.
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "admin/authz-resource-server/settings",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: the settings export",
+			Retrieved: "2026-08-31",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/settings",
+		Fixture:   "authz-client-settings",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/settings",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		// A different body from the read two cases up: no id, no clientId, no
+		// name. On a resource server holding nothing that is the whole
+		// difference, which is why this case and that one are worth having side
+		// by side - one shared serialiser would make them equal.
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "admin/authz-resource-server/policy-providers",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: the policy provider catalogue",
+			Retrieved: "2026-08-31",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/policy/providers",
+		Fixture:   "authz-client-policy",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/policy/providers",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		// **No Unordered.** The ten entries come back in a Java map's order,
+		// javamap.SizedKeyOrder reproduces it, and sorting the array would
+		// throw away the one thing this golden is for. It is also where the two
+		// absentees are pinned: `uma` is a registered policy provider and is
+		// not here, and `js` is absent because SCRIPTS is disabled.
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// Byte-identical to the case above, and that is the assertion. A
+		// permission catalogue filtered to the two providers whose group is
+		// "Permission" is the obvious implementation and it would fail here and
+		// nowhere else.
+		ID: "admin/authz-resource-server/permission-providers",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: the permission provider catalogue",
+			Retrieved: "2026-08-31",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/permission/providers",
+		Fixture:   "authz-client-perm",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/permission/providers",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/authz-resource-server/put",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: updating the resource server",
+			Retrieved: "2026-08-31",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server",
+		Fixture:   "authz-client-put",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"allowRemoteResourceManagement":false,"policyEnforcementMode":"PERMISSIVE","decisionStrategy":"AFFIRMATIVE"}`),
+		},
+		// The 204 carries X-Frame-Options because the request declared a JSON
+		// Content-Type, and no Cache-Control - which is the per-endpoint pin,
+		// not the method's.
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **A body with no decisionStrategy is a 409**, whatever else it holds.
+		// The body here carries a name on purpose: `{}` would pass a handler
+		// that refused an absent *name*, and `{"name":"x"}` is the probe that
+		// tells the two rules apart. That was the first reading of this
+		// endpoint and it was wrong.
+		//
+		// The 409 also **drops the five security headers**, which the strict
+		// 400 and the bad-enum 400 on this same route do not.
+		ID: "admin/authz-resource-server/put-no-decision-strategy",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: a write with no decisionStrategy",
+			Retrieved: "2026-08-31",
+		},
+		Status:  Implemented,
+		Fixture: "authz-client-conflict",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-authz-conflict"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Referrer-Policy"},
+	},
+	{
+		// The gate. A client without authorizationServicesEnabled answers this
+		// on every path under authz/resource-server, and the body is
+		// `{"error":"HTTP 404 Not Found"}` - **not** any of the twenty-one
+		// spellings of not-found, and not `Could not find client`, which the
+		// same route answers for a client that does not exist at all.
+		ID: "admin/authz-resource-server/not-enabled",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: a client without the flag",
+			Retrieved: "2026-08-31",
+		},
+		Status:  Implemented,
+		Fixture: "authz-client-off",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The twelve management/permissions operations, one case per ordering
+		// rather than one per route: what varies between them is where the 501
+		// sits. The roles route never looks its role up...
+		ID: "admin/roles/management-permissions",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: management permissions, ADMIN_FINE_GRAINED_AUTHZ disabled",
+			Retrieved: "2026-08-31",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/roles/{role-name}/management/permissions",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method: http.MethodGet,
+			// A role name that does not exist, deliberately: the 501 runs
+			// before the lookup, so this asserts the ordering and the body at
+			// once. A real role name would pass a handler that resolved first.
+			Path:    "/admin/realms/master/roles/gloak-probe-no-such-role/management/permissions",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// ...and neither does the by-id route, on an id that resolves to
+		// nothing.
+		ID: "admin/roles-by-id/management-permissions",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles (by ID): management permissions, ADMIN_FINE_GRAINED_AUTHZ disabled",
+			Retrieved: "2026-08-31",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/roles-by-id/{role-id}/management/permissions",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/roles-by-id/00000000-0000-0000-0000-000000000000/management/permissions",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"enabled":true}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The group route **does** resolve first, so this one names a group
+		// that exists. Its sibling below names one that does not and gets a 404
+		// instead - the pair is the ordering, and either alone would pass a
+		// handler with the other ordering.
+		ID: "admin/groups/management-permissions",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Groups: management permissions, ADMIN_FINE_GRAINED_AUTHZ disabled",
+			Retrieved: "2026-08-31",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/groups/{group-id}/management/permissions",
+		Fixture:   "authz-mgmt-group",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/groups/{{group_id}}/management/permissions",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/groups/management-permissions-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Groups: management permissions resolve the group before refusing",
+			Retrieved: "2026-08-31",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/groups/00000000-0000-0000-0000-000000000000/management/permissions",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The clients pair resolves the client first, so this asserts the 501
+		// on a client that exists...
+		ID: "admin/clients/management-permissions",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: management permissions, ADMIN_FINE_GRAINED_AUTHZ disabled",
+			Retrieved: "2026-08-31",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/management/permissions",
+		Fixture:   "authz-mgmt-client",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/management/permissions",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// ...and this one the 404 on a client that does not, which is the other
+		// half of the same ordering. It is `Could not find client`, the clients
+		// family's spelling, and not the gate's `HTTP 404 Not Found`.
+		ID: "admin/clients/management-permissions-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: management permissions resolve the client before refusing",
+			Retrieved: "2026-08-31",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/00000000-0000-0000-0000-000000000000/management/permissions",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The client's *role* route resolves the client and **not** the role,
+		// so this names a real client and a role that does not exist. It is the
+		// two-fault case the ordering needs: breaking one parameter at a time
+		// would not tell this route from the group one.
+		ID: "admin/roles/client-management-permissions",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: a client role's management permissions",
+			Retrieved: "2026-08-31",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/roles/{role-name}/management/permissions",
+		Fixture:   "authz-mgmt-client-role",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/roles/gloak-probe-no-such-role/management/permissions",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The identity-provider pair never looks its alias up, which is why
+		// this case can exist at all: Gloak serves no identity providers, and
+		// this refusal is two of that chapter's seventeen operations without
+		// one.
+		ID: "admin/identity-providers/management-permissions",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: management permissions, ADMIN_FINE_GRAINED_AUTHZ disabled",
+			Retrieved: "2026-08-31",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/identity-provider/instances/{alias}/management/permissions",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/identity-provider/instances/gloak-probe-no-such-idp/management/permissions",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+
+	// The second verb of each of the six management/permissions paths.
+	//
+	// They are separate cases rather than a note on the six above because the
+	// parity meter counts operations and PUT is one, and because **the verb
+	// really could decide something here**: it does on
+	// `/required-actions/{alias}`, where GET and DELETE answer a missing alias
+	// with two spellings of one sentence. Measured on all twelve: it does not.
+	{
+		ID: "admin/roles/management-permissions-put",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: setting management permissions, ADMIN_FINE_GRAINED_AUTHZ disabled",
+			Retrieved: "2026-08-31",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/roles/{role-name}/management/permissions",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/roles/gloak-probe-no-such-role/management/permissions",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"enabled":true}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/roles-by-id/management-permissions-get",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles (by ID): reading management permissions, ADMIN_FINE_GRAINED_AUTHZ disabled",
+			Retrieved: "2026-08-31",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/roles-by-id/{role-id}/management/permissions",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles-by-id/00000000-0000-0000-0000-000000000000/management/permissions",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/groups/management-permissions-put",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Groups: setting management permissions, ADMIN_FINE_GRAINED_AUTHZ disabled",
+			Retrieved: "2026-08-31",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/groups/{group-id}/management/permissions",
+		Fixture:   "authz-mgmt-group",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/groups/{{group_id}}/management/permissions",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"enabled":true}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/clients/management-permissions-put",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: setting management permissions, ADMIN_FINE_GRAINED_AUTHZ disabled",
+			Retrieved: "2026-08-31",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/clients/{client-uuid}/management/permissions",
+		Fixture:   "authz-mgmt-client-put",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/management/permissions",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"enabled":true}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/roles/client-management-permissions-put",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Roles: setting a client role's management permissions",
+			Retrieved: "2026-08-31",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/clients/{client-uuid}/roles/{role-name}/management/permissions",
+		Fixture:   "authz-mgmt-client-role-put",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/roles/gloak-probe-no-such-role/management/permissions",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"enabled":true}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "admin/identity-providers/management-permissions-put",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: setting management permissions, ADMIN_FINE_GRAINED_AUTHZ disabled",
+			Retrieved: "2026-08-31",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/identity-provider/instances/{alias}/management/permissions",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/identity-provider/instances/gloak-probe-no-such-idp/management/permissions",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"enabled":true}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
 }

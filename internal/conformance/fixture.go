@@ -880,6 +880,84 @@ var Fixtures = map[string]Fixture{
 	// the body named none.
 	"org-updated": organizationFixture("gloak-probe-org-upd",
 		`{"name":"gloak-probe-org-renamed","alias":"gloak-probe-org-alias"}`),
+
+	// Authorization services. **The gate is the client's own flag, not the
+	// realm's**, so unlike the organization fixtures above these need no realm
+	// of their own: one client created with authorizationServicesEnabled is the
+	// whole setup, and it touches nothing any other golden reads.
+	//
+	// One client per case, for clientFixtureBody's stated reason - the recorder
+	// shares a container and a repeated clientId answers 409 with no Location
+	// to capture.
+	//
+	// serviceAccountsEnabled and publicClient:false ride along because that is
+	// how the surface was measured; a public client is refused the flag
+	// outright, so the pair is not decoration.
+	"authz-client":          authzClientFixture("gloak-probe-authz-read"),
+	"authz-client-settings": authzClientFixture("gloak-probe-authz-settings"),
+	"authz-client-policy":   authzClientFixture("gloak-probe-authz-policy"),
+	"authz-client-perm":     authzClientFixture("gloak-probe-authz-perm"),
+	"authz-client-put":      authzClientFixture("gloak-probe-authz-put"),
+	"authz-client-conflict": authzClientFixture("gloak-probe-authz-conflict"),
+	// The client whose resource server has already been through the PUT, so a
+	// case can read what the 204 cannot show: **the two fields the body did not
+	// name came back as ENFORCING and true rather than as what was stored or as
+	// the zero values.** That is the whole of the replace-with-defaults rule and
+	// no 204 can assert it.
+	"authz-client-updated": authzClientUpdatedFixture("gloak-probe-authz-upd"),
+	// A client **without** the flag, for the gate's 404. It is its own fixture
+	// rather than reusing one of the client fixtures above so that the case
+	// reads a client whose absence of authorization services is deliberate.
+	"authz-client-off": clientFixture("gloak-probe-authz-off"),
+	// A group to hang the group-shaped management/permissions 501 off, so the
+	// case exercises the combinator that resolves the resource **before** the
+	// refusal rather than the one that never looks.
+	"authz-mgmt-group": groupFixture("gloak-probe-authz-mgmt-group", "group_id"),
+	// The two management/permissions cases that need a client that exists.
+	//
+	// They get **a client each** rather than sharing one of the client fixtures
+	// above, which is clientFixtureBody's stated rule and which this cut
+	// learned the hard way: both cases first named `admin-token-client-to-read`,
+	// and the recorder - which shares one container and runs fixtures in
+	// catalogue order - answered the second and third creates of
+	// `gloak-probe-read` with a 409 carrying no Location to capture. The
+	// verifier never sees it, because it builds a fresh store per case.
+	"authz-mgmt-client":          clientFixture("gloak-probe-authz-mgmt-client"),
+	"authz-mgmt-client-put":      clientFixture("gloak-probe-authz-mgmt-cput"),
+	"authz-mgmt-client-role":     clientFixture("gloak-probe-authz-mgmt-role"),
+	"authz-mgmt-client-role-put": clientFixture("gloak-probe-authz-mgmt-rput"),
+}
+
+// authzClientFixture creates one client with authorization services on and
+// captures its UUID.
+//
+// It is clientFixtureBody with the flag, and it exists as a named helper
+// because the flag is the gate for every case in this family: a case that used
+// a plain clientFixture would get the measured 404 rather than the body it
+// asserts, which is a failure that reads like a routing bug.
+func authzClientFixture(clientID string) Fixture {
+	return clientFixtureBody(`{"clientId":"` + clientID + `","enabled":true,` +
+		`"publicClient":false,"serviceAccountsEnabled":true,` +
+		`"authorizationServicesEnabled":true}`)
+}
+
+// authzClientUpdatedFixture is authzClientFixture plus the PUT whose effect the
+// case then reads.
+//
+// The body names `decisionStrategy` alone, which is the only field that has to
+// be there - a body without it is the measured 409 - and **omits the other
+// two on purpose**, because what the case asserts is what they become.
+func authzClientUpdatedFixture(clientID string) Fixture {
+	f := authzClientFixture(clientID)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`{"decisionStrategy":"AFFIRMATIVE"}`),
+		},
+	})
+	return f
 }
 
 // The fixed client-scope ids P5's fixtures create their scopes with. They are
