@@ -370,11 +370,15 @@ func (h *handler) createOrganization(w http.ResponseWriter, r *http.Request, rc 
 // conflict, then the alias.
 //
 // **A body with no name, or an empty one, is a 409 rather than the create's
-// 400.** `{"alias":"target"}` on an organization aliased `target` answers
-// `A organization with the same name already exists.` - a conflict about a name
-// the request does not have. It is Keycloak's own defect and it is reproduced:
-// the missing name falls back to the alias, which then collides with the
-// organization's own row.
+// 400** - a conflict about a name the request does not have. One resource, one
+// missing field, two verbs, two answers. Keycloak's own defect, reproduced.
+//
+// The first reading of it was that the missing name falls back to the alias and
+// then collides with this organization's own row, and that reading was wrong:
+// it was taken on an organization whose name and alias were the same string.
+// On one where they differ, a PUT naming the alias **as the name** is a 204 and
+// a PUT naming nothing is still the 409, so the empty name is its own branch.
+// The conformance case update-without-name is what caught it.
 //
 // Every field but the alias and the attributes is replaced. Attributes absent
 // from the body **survive**, and attributes sent as `{}` are cleared: one field
@@ -389,10 +393,16 @@ func (h *handler) updateOrganization(w http.ResponseWriter, r *http.Request, rc 
 	if body.Name != nil {
 		name = *body.Name
 	}
+	// **An absent or empty name is the conflict, outright.** It is not a
+	// fallback to the alias colliding with this row: measured on an
+	// organization whose name and alias differ, a PUT naming the alias as the
+	// name is a 204 while a PUT naming nothing is a 409. So the missing name is
+	// its own branch and the two only looked like one because the first
+	// organization measured happened to have name == alias.
 	if name == "" {
-		// The fallback that produces the self-conflict. Spelled out rather than
-		// hidden, because it is the reason the answer is a 409.
-		name = o.Alias
+		httpx.WriteAdminError(w, http.StatusConflict,
+			"A organization with the same name already exists.")
+		return
 	}
 	if name != o.Name {
 		other, err := h.organizationByName(r, rc, name)
@@ -405,12 +415,6 @@ func (h *handler) updateOrganization(w http.ResponseWriter, r *http.Request, rc 
 				"A organization with the same name already exists.")
 			return
 		}
-	} else if body.Name == nil || *body.Name == "" {
-		// The self-conflict: the fallback landed on this organization's own
-		// name, so the row it collides with is itself.
-		httpx.WriteAdminError(w, http.StatusConflict,
-			"A organization with the same name already exists.")
-		return
 	}
 
 	alias := body.Alias

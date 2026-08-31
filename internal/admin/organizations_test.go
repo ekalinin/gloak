@@ -378,18 +378,26 @@ func TestOrganizationUpdateReplacesAndCannotRenameTheAlias(t *testing.T) {
 }
 
 // TestOrganizationUpdateAnsweringAConflictItDoesNotHave pins Keycloak's own
-// defect: a PUT with no name falls back to the alias, which then collides with
-// the organization's own row, so the answer is a 409 about a name the request
-// never sent. The create answers the same missing name with a 400.
+// defect: a PUT with no name is a 409 about a name the request never sent,
+// where the create answers the same missing name with a 400.
+//
+// **The organization here has a name and an alias that differ, and that is the
+// whole point.** The first reading of this rule was "the missing name falls
+// back to the alias, which then collides with this row", taken on an
+// organization created as `{"name":"target","alias":"target"}` - where both
+// readings give a 409 and nothing tells them apart. On an organization where
+// they differ, a PUT naming the **alias** as the name is a 204 and a PUT naming
+// nothing is still a 409, which refutes the fallback outright. A test written
+// on the first organization passes either implementation.
 func TestOrganizationUpdateAnsweringAConflictItDoesNotHave(t *testing.T) {
 	h, _, _ := newServer(t)
 	admin := tokenFor(t, h, "admin", "admin")
 	enableOrganizations(t, h, admin, "master")
-	id := createOrg(t, h, admin, `{"name":"target","alias":"target"}`)
+	id := createOrg(t, h, admin, `{"name":"the-name","alias":"the-alias"}`)
 	path := "/admin/realms/master/organizations/" + id
 
 	const want = `{"errorMessage":"A organization with the same name already exists."}`
-	for _, body := range []string{`{"alias":"target"}`, `{"name":"","alias":"target"}`} {
+	for _, body := range []string{`{"alias":"the-alias"}`, `{"name":"","alias":"the-alias"}`} {
 		w := send(t, h, http.MethodPut, path, admin, body)
 		if w.Code != http.StatusConflict || strings.TrimSpace(w.Body.String()) != want {
 			t.Errorf("PUT %s: got %d %s, want 409 %s", body, w.Code, w.Body, want)
@@ -398,9 +406,19 @@ func TestOrganizationUpdateAnsweringAConflictItDoesNotHave(t *testing.T) {
 
 	// A real collision with another organization answers the same way.
 	createOrg(t, h, admin, `{"name":"other","alias":"other"}`)
-	w := send(t, h, http.MethodPut, path, admin, `{"name":"other","alias":"target"}`)
+	w := send(t, h, http.MethodPut, path, admin, `{"name":"other","alias":"the-alias"}`)
 	if w.Code != http.StatusConflict || strings.TrimSpace(w.Body.String()) != want {
 		t.Errorf("PUT onto a taken name: got %d %s, want 409", w.Code, w.Body)
+	}
+
+	// **The alias used as the name is a 204**, which is what the fallback
+	// reading forbids. It renames the organization and leaves the alias alone.
+	if w := send(t, h, http.MethodPut, path, admin,
+		`{"name":"the-alias","alias":"the-alias"}`); w.Code != http.StatusNoContent {
+		t.Fatalf("PUT naming the alias as the name: got %d %s, want 204", w.Code, w.Body)
+	}
+	if body := get(t, h, path, admin).Body.String(); !strings.Contains(body, `"name":"the-alias","alias":"the-alias"`) {
+		t.Errorf("after the rename: %s", body)
 	}
 }
 
