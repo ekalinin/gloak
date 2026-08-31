@@ -299,12 +299,14 @@ It exists, and it is measured and deliberately not built - see the dispositions.
    is a real regression" leads a reader to assume, because that sentence is about
    the local suite and not about the gate. And the fix is a `-timeout` on the CI
    step, which is the gate and outside this cut's files. What *was* done here is
-   the part that belongs to this cut: the twenty-two `authServerAndStore` calls
-   this branch added were cut to five by sharing a server wherever the subtests
-   do not mutate what their neighbours read, taking `internal/oidc` from 65s to
-   52s locally. Every mutation was re-run against the shared-server versions and
-   all were still killed - a shared fixture that hides a mutation would be worse
-   than the minute it saves.
+   the part that belongs to this cut: this branch's tests bootstrapped a server
+   **thirty-six** times - fifteen call sites, some of them inside a table - and
+   now do so **seventeen** times, by sharing one wherever the subtests do not
+   mutate what their neighbours read. The grid went from twelve to two, the
+   direct-grant table from seven to one. `internal/oidc` went from 65s to 52s
+   locally. Every mutation was re-run against the shared-server versions and all
+   were still killed - a shared fixture that hides a mutation would be worse than
+   the minute it saves.
 
 ## Follow-up dispositions
 
