@@ -211,20 +211,22 @@ operations is allocated below; none is left unassigned.
 | P6 first cut | The RP-initiated logout endpoint | P3 | `oidc/logout` 0->10, and the chapter's denominator 5->14. The estimate before the cut was **+1**, from counting the five cases already in the catalogue; the endpoint has two verbs, two request families per verb and six response shapes | 0 ops |
 | **P7** | Advanced grants, **first cut done 2026-08-30** | P1, P5 | `device` 5, `ciba` 3, `registration` 6, token exchange, JWT bearer, DPoP, PAR | ~20 cases |
 | P7 first cut | The device grant's flow, CIBA's refusals | P5 | `oidc/device` 0->11 of 12, `oidc/ciba` 0->10 of 12. The eight cases the catalogue held all measured the grant **disabled**, which is its state on every client of a default install; the two endpoints have twenty-two distinct answers. CIBA cannot complete on a default container at all, which is a measurement rather than a gap | 0 ops |
-| **P8** | Authentication flow engine | P3 | Authentication Management 39, required actions, OTP, WebAuthn, brute force | 39 ops |
+| **P8** | Authentication flow engine, **first cut done 2026-08-30** | P3 | Authentication Management 39, required actions, OTP, WebAuthn, brute force | 39 ops |
+| P8 first cut | The SPI registry and required actions | P3 | `admin/authentication-management` 0->18 of 39. The other 21 - `flows`, `executions`, `config` - are **deliberately deferred**: Gloak walks a hard-coded flow, so they would edit a description nothing reads. Named individually in F103 | 18 ops |
 | **P9** | Federation and brokering | P4, P8 | Identity Providers 17, Component 6 | 23 ops |
 | **P10** | Authorization services (UMA 2.0) | P5 | `authz/resource-server/*` | 31 ops |
 | **P11** | SAML 2.0 | P4 | descriptors, SSO and SLO bindings | not in OpenAPI |
 | **P12** | Organizations and Workflows | P4 | Organizations 36, Workflows 9 | 45 ops |
 | **P13** | Themes, i18n, account console, admin console, **first cut done 2026-08-30** | P5 | - | not in OpenAPI |
 | P3 third cut | The `authorization_code` grant, **done 2026-08-30** | P13 first cut | `oidc/token` 10->14 and its `recorded` column to **zero**. With P13's cut this is the first time Gloak can complete a browser OAuth flow. The measured contract said "Every rejection" over eight rows and there are twelve | 0 ops |
+| P13 second cut | SSO and the consent pages, **done 2026-08-30** | P13 first cut, P7 first cut | no operations: F65, F77 and F101 close, so a browser that has signed in once gets a code without a form and a user can finish a device login. `oidc/authorization` 12->14, `oidc/device` 11->13 | 0 ops |
 | P13 first cut | The browser login, end to end | P3, P5 | no operations, and the column that matters is `oidc/authorization`'s `recorded` going **4 -> 0**: the chapter no longer holds a case waiting on an endpoint nobody built. The flow is served - authentication session, login form, `/login-actions/authenticate`, authorization code - and the theme's markup is not | 0 ops |
 | **P14** | Operational parity | P4 | events and audit, SMTP, health and metrics, clustering | not in OpenAPI |
 
-Denominator today: **413 Admin API operations plus 103 protocol behaviours, 516
+Denominator today: **413 Admin API operations plus 110 protocol behaviours, 523
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **263** after
-P7's first cut, and **P2, P4 and P5 are complete** - up from 8 before P1, 25 after it, 89 after the second cut's
+surface is not counted and which the report says so about. Served: **285** after
+P8's first cut, and **P2, P4 and P5 are complete** - up from 8 before P1, 25 after it, 89 after the second cut's
 roles half, 100 after that cut was complete, 109 after the group tree and 113
 after the membership.
 
@@ -249,7 +251,32 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-08-30 (fourth fold).** `make conformance` reports **263 of 516**.
+**Updated 2026-08-30 (fifth fold).** `make conformance` reports **285 of 523**,
+and the **browser flow is complete**: a browser that has signed in once gets a
+code without a form, and a user can finish a device login through the
+verification and consent pages.
+
+The round's most useful result is not a feature. **116 of the catalogue's 293
+masks were doing nothing**, found by asking a question nobody had asked - which
+of these change no byte? Forty sat on arrays of one element or none; sixty-six
+masked a value `ReplaceCaptured` had already rewritten; three contradicted a
+measurement the case beside them asserts. Every one read as "this varies", which
+is a claim about Keycloak the next reader believes. The proof they were inert is
+arithmetic: removing all fifty inert ones moved **zero** goldens.
+
+Two documents were wrong in ways the repository itself had already contradicted.
+`AGENTS.md` said the `;charset=UTF-8` split was "only on this one endpoint" -
+438 committed goldens had said otherwise since P2, and so had a doc comment in
+`internal/admin`. **The code knew and the contract document did not**, which is
+the failure this project is least able to catch in itself.
+
+And one deferral is worth recording as a decision rather than a gap. P8's other
+21 operations are the flow model, and Gloak walks a **hard-coded** flow, so
+building them would let a caller edit a description the server does not read.
+That is the roadmap's own §6 debt shape, and twice now "we store it and serve it
+back" has read as "we implement it" to the next person. F103 names all twenty-one.
+
+**Earlier on 2026-08-30 (fourth fold).** `make conformance` reported **263 of 516**.
 The denominator grew by sixteen because the device and CIBA endpoints turned out
 to have twenty-two distinct answers where the catalogue held eight - and the
 eight it held all measured the grant **disabled**, which is its state on every

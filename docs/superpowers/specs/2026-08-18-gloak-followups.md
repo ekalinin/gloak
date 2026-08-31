@@ -139,6 +139,27 @@ nothing about layout, so no step existed that could have caught it. Fixed in
 both the Makefile and the workflow, and verified failing before verified
 passing.
 
+**Status, 2026-08-30 (fifth fold).** Three cuts took parity to **285 of 523**,
+closed **F65, F77 and F101** - so the browser flow is complete, including a
+device login a user can finish - and opened **F103 through F112**.
+
+The round's most useful result is not a feature. **116 of the catalogue's 293
+masks were doing nothing**, and they were found by asking a question nobody had
+asked: which of these change no byte? Forty sat on arrays of one element or
+none. Sixty-six masked a value `ReplaceCaptured` had already rewritten. Three
+contradicted a measurement the case beside them asserts. Every one of them read
+as "this varies", which is a claim about Keycloak the next reader believes and
+does not go behind - and the proof that they were inert is that removing all
+fifty inert ones moved **zero** goldens.
+
+Two documents were wrong in ways the repository itself had already contradicted.
+**AGENTS.md said the `;charset=UTF-8` split was "only on this one endpoint"**,
+and 438 committed goldens had said otherwise since P2 - as had a doc comment in
+`internal/admin`. The code knew and the contract document did not. And
+**`/auth`'s page family disagrees with itself** about `Cache-Control`, so the
+three-endpoint table describing it was a claim about the rejections that had
+been measured.
+
 One thing that is deliberately **not** filed. P4's handover proposes an entry
 for "a golden that enumerates a realm-wide set without `PristineRealm`", naming
 `admin/role-mapper/group-realm-available`. That case gained the flag in
@@ -2739,7 +2760,21 @@ observable, so it sets none.
 The conformance cases mask `Set-Cookie` as volatile and assert none of it, so
 nothing catches this. Closes when P13 builds authentication sessions.
 
-## F65: the browser-session branch of the logout confirmation page is unmodelled
+## F65: the browser-session branch of the logout confirmation page is unmodelled (closed)
+
+**Closed 2026-08-30.** Gloak reads `KEYCLOAK_IDENTITY`, so the branch is
+reachable and served. A browser session changes exactly one cell of the logout
+grid, which is measured rather than assumed.
+
+The sentence this entry was filed against - "Gloak has no browser session
+cookie, so it always takes the second branch" - **was already false when it was
+written**, because the login cut had set the cookie the same day. That is on the
+record because it is the failure mode this list keeps meeting: a claim about
+Gloak's own capabilities, written from what the author had just built rather
+than from what the tree held.
+
+What the finding said, kept for the record:
+
 
 Keycloak serves `Logging out` when a session cookie is present and redirects
 when it is not. Gloak has no session cookie and therefore always takes the
@@ -2948,7 +2983,20 @@ attached to the code.
 
 Until it lands, a browser login produces a code nothing can exchange.
 
-## F77: SSO is not recognised (still open, and now measured)
+## F77: SSO is not recognised (closed)
+
+**Closed 2026-08-30.** A second `GET /auth` from a browser holding
+`KEYCLOAK_IDENTITY` is a 302 with a real code. The original user session id is
+carried into a fresh `AUTH_SESSION_ID`, the original `auth_time` survives, and
+the first session stays refreshable.
+
+`prompt` turned out to be a **set of tokens** rather than a value, ignoring
+unknown ones, and it is the parameter that makes all of this observable.
+
+What the finding said, kept for the record - and note that **one item of it was
+wrong**: `prompt=none` does not *clear* `KC_RESTART`, it never sets one, and the
+clear is conditional on the request having presented one.
+
 
 Deliberately scoped out of the code-grant cut, and **measured anyway so the next
 one does not repeat it**: five cookies, the *original* user session id carried
@@ -3251,7 +3299,21 @@ behaviours that now have to stay coupled or that case breaks silently.
 
 A `RawForm` is the honest fix and it is three lines beside `RawQuery`.
 
-## F101: the device grant's browser half is unbuilt
+## F101: the device grant's browser half is unbuilt (closed)
+
+**Closed 2026-08-30, and a user can now complete a device login**: verification
+landing, login page, `OAUTH_GRANT` consent, accept, `/device/status`, and the
+device's next poll returns tokens. `oidc/device/poll-access-denied` closes with
+it, driven end to end against a live Keycloak inside `make record` - which is
+the strongest confirmation this project can produce.
+
+The surprise is that **the verification page cannot be submitted**:
+`/realms/{realm}/device` and `/protocol/openid-connect/auth/device` are one
+endpoint at two paths, so the theme's own form posts into the device
+authorization request and gets 401. Gloak reproduces the broken form.
+
+What the finding said, kept for the record:
+
 
 `GET /realms/{realm}/protocol/openid-connect/auth/device` is a page Gloak
 answers 404. With the `OAUTH_GRANT` consent page,
@@ -3270,3 +3332,93 @@ That is a statistical property no unit test in this repository's style can
 catch, so it is written down rather than tested - which is the point of filing
 it, since an untested property that nobody has named reads exactly like a tested
 one.
+
+## F103: twenty-one authentication operations move state nothing consumes
+
+The `flows` 10, `executions` 7 and `config` 4 of the Authentication Management
+tag - the flow model. They are deferred rather than built, and the reason is
+worth more than the deferral: **Gloak walks a hard-coded authentication flow**,
+so every one of those twenty-one would let a caller edit a description of
+something the server does not read.
+
+That is the shape the parity roadmap's §6 calls a staged debt, and this project
+has twice found that "we store it and serve it back" reads as "we implement it"
+to the next person. The twenty-one are named individually in
+`docs/superpowers/plans/2026-08-30-p8-authentication.md` §1 so that the next cut
+inherits the list rather than the tag.
+
+The prerequisite for paying it is an execution engine in `internal/oidc`, not
+more admin surface.
+
+## F104: `enabled` and `defaultAction` on a required action are consumed by nothing
+
+Both are stored and served. Gloak's login imposes no required action and never
+reads a user's `requiredActions`, so a realm can register, enable and prioritise
+an action that changes nothing.
+
+The admin half is measured and correct; what is missing is the half that acts on
+it. Filed beside F103 because they close together or not at all.
+
+## F105: `javamap` gains three vectors and a near-miss that is not a test
+
+The authentication SPI registry's key order confirmed `javamap.KeyOrder` on
+three more key sets, taking it from six to nine. A fourth **near-miss**
+demonstrates the documented bucket-collision limit rather than refuting it, and
+it is not in the package's tests because `internal/javamap` was outside that
+cut's files.
+
+Adding it is three lines and would make the limit a tested claim instead of a
+sentence.
+
+## F106: a `Volatile` mask over a string with a stable prefix cannot be checked mechanically
+
+The two new mask ratchets catch a mask that changes nothing and a mask that
+covers a captured value. What neither reaches is a mask that is **too wide by a
+prefix** - `Location: https://host/realms/x/<uuid>` masked whole rather than by
+its tail - because deciding it needs two recordings diffed per value, which is
+one more `make record` run than a sweep has.
+
+It is a real design and it is written down rather than half-built. Whoever wants
+it should read F46, which is the same question already answered for headers.
+
+## F107: seven masks in `catalog_oidc_pending.go` were not examined
+
+The mask sweep could not edit that file - it belonged to a parallel stream - so
+it reported instead: two inert `id_token` masks, one over-wide `session_state`,
+F39's four whole-`Location` masks, and `registration_client_uri` and
+`verification_uri_complete` as F46's shape in cases nobody has built yet.
+
+The evidence is per case in `docs/superpowers/handover/mask-audit.md`. This is a
+list to work from, not a question to re-ask.
+
+## F108: `POST /logout/logout-confirm` and `/login-actions/restart` are measured and unbuilt
+
+Both fell out of the SSO work. Neither is on any tag's operation list, so they
+move no parity number, and both are reachable from a browser today.
+
+## F109: `prompt=login` serves the plain login page
+
+Keycloak serves a re-authentication page; Gloak serves the ordinary form. The
+envelope is right and the prose is not, which is F67's family.
+
+## F110: consent grants are in memory, and that one is a real divergence
+
+The authentication session, the authorization code and the device store are all
+in memory by design - F75 - because Keycloak keeps them in Infinispan rather
+than its schema.
+
+**A consent grant is not like those three.** Keycloak persists it and exposes it
+through the Admin API, so this is a divergence rather than a faithful copy, and
+it is filed separately from F75 for that reason.
+
+## F111: `httpx.WriteJSONCharset`'s doc comment repeats a corrected reason
+
+It says the charset is a quirk of `GET /realms/{realm}`. The rule is per API
+surface and status class, and `AGENTS.md` now says so. One comment, and it is
+the last place the old explanation survives.
+
+## F112: the 87 authentication config properties are asserted for three providers
+
+The other forty-nine were swept by hand against the server and that sweep is not
+a test. It is the difference between "somebody checked" and "something checks",
+and this list exists to keep that difference visible.
