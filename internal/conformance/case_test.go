@@ -96,6 +96,14 @@ var parkedGoldens = map[string]string{
 	// admin-cli, which is now oidc/device/grant-disabled's, while
 	// oidc/device/authorization-request measures the grant with a client that
 	// has it on.
+	"oidc/authorization/prompt-create": "the registration page, and the one record that /auth's " +
+		"own page family disagrees with itself about Cache-Control - this one sends it where the " +
+		"400 beside it does not",
+	"oidc/authorization/max-age-invalid": "the other half of that pair, and the reason the " +
+		"variable is the rejection rather than the endpoint",
+	"oidc/device/verification-page": "the page whose own form cannot be submitted, because the two " +
+		"device paths are one endpoint - read it for the form's action, which is the measurement",
+	"oidc/device/status-page": "the end of a completed device login, kept for its two headings",
 	"oidc/registration/without-initial-access-token": "a reproducible body naming the 'Trusted Hosts' policy, " +
 		"which is why anonymous registration is 403 rather than 401 on a default 26.7.1",
 }
