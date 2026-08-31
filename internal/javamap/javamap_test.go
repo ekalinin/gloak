@@ -118,6 +118,139 @@ func TestKeyOrderReproducesAClientsAttributes(t *testing.T) {
 	}
 }
 
+// F105's three: the authentication SPI's provider registries, re-measured on a
+// live Keycloak 26.7.1 on 2026-08-31 rather than transcribed from the P8
+// handover that found them.
+//
+// Every one is a Java `Map<String,Object>` Keycloak builds by hand, so the
+// order it serialises in is a HashMap's and not the order anything was put in:
+//
+//	GET .../authentication/authenticator-providers        42 rows, one key order
+//	GET .../authentication/form-providers                  1 row,  the same order
+//	GET .../authentication/form-action-providers           5 rows, the same order
+//	GET .../authentication/client-authenticator-providers  5 rows, one key order
+//	GET .../authentication/per-client-config-description   the object's own keys
+//
+// Measured on `master` and on a realm created through `POST /admin/realms`, and
+// byte-identical on both.
+//
+// **What they pin that the client `attributes` vectors do not is the table
+// size.** The five client-authenticator ids are reproduced at a capacity of 16
+// and at **no other power of two** from 1 to 128, so a build that got
+// capacityFor wrong for a five-key map fails here. The four-key registry row
+// narrows it to 16 or 32 and the three-key one only to 2, 16, 32 or 64, which is
+// why the weakest of the three is not the one carrying the claim.
+//
+// **What they do not pin is the tie-break**, exactly as with a client's
+// attributes: no key set here collides. Buckets 6, 9 and 11 for the three-key
+// row; 4, 6, 9 and 11 for the four-key one; 1, 5, 7, 14 and 15 for the five
+// ids. TestKeyOrderMissesTheCollidingRequiredActionPairs below is the vector
+// that exercises a chain.
+//
+// SizedKeyOrder is wrong on all three, which is what makes them evidence about
+// *which* constructor the SPI registries use rather than only about the bucket
+// rule.
+func TestKeyOrderReproducesTheAuthenticationRegistries(t *testing.T) {
+	cases := []struct {
+		name string
+		want []string
+	}{
+		{
+			// authenticator-providers, form-providers and form-action-providers
+			// all serve this shape, and all three came back in this order.
+			name: "a provider registry row",
+			want: []string{"displayName", "description", "id"},
+		},
+		{
+			// client-authenticator-providers is the same row plus the flag, and
+			// the flag comes back first rather than last.
+			name: "a client authenticator row",
+			want: []string{"supportsSecret", "displayName", "description", "id"},
+		},
+		{
+			// per-client-config-description is an object keyed by client
+			// authenticator id, which is the one of the six operations on this
+			// tag that is not a list. SizedKeyOrder gets these five wrong.
+			name: "per-client-config-description's five ids",
+			want: []string{
+				"client-jwt", "client-secret", "federated-jwt", "client-x509",
+				"client-secret-jwt",
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			in := slices.Sorted(slices.Values(c.want))
+			if got := javamap.KeyOrder(in); !slices.Equal(got, c.want) {
+				t.Fatalf("want %v, got %v", c.want, got)
+			}
+			if slices.Equal(in, c.want) {
+				t.Fatalf("sorting reproduces %v, so this vector says nothing", c.want)
+			}
+			if got := javamap.SizedKeyOrder(len(in), in); slices.Equal(got, c.want) {
+				t.Fatalf("SizedKeyOrder reproduces %v too, so this vector does not "+
+					"say which constructor the registry uses", c.want)
+			}
+		})
+	}
+}
+
+// F105's fourth, and the one worth more than the other three: the fourteen
+// required action providers `GET .../unregistered-required-actions` serves once
+// all fourteen have been unregistered.
+//
+// Re-measured on 2026-08-31 by deleting all fourteen rows in priority order,
+// which is measurably not the order they come back in - on `master` and on a
+// created realm, identically.
+//
+// It is a **near-miss and that is the point.** Twelve of the fourteen land
+// exactly where KeyOrder puts them; the other two are the two bucket collisions,
+// and Keycloak chains a collision in an insertion order nothing observable
+// reveals while KeyOrder sorts. This is the second key set to demonstrate that
+// limit after the 21 admin role names, and it demonstrates a stronger claim:
+// the pairs are named here, so the test pins **which** positions are wrong
+// rather than only how many.
+//
+// **Its chains agree with the 21 roles' and disagree with a realm's
+// attributes.** Both pairs here come back in *descending* alphabetical order,
+// and so do both of the 21 roles' - four of the five measured two-key chains in
+// this repository. Reversing KeyOrder's pre-sort would therefore pass this test,
+// TestKeyOrderCannotResolveBucketCollisions and every vector above. It is still
+// a guess: a realm's `attributes` has a two-key chain that comes back
+// *ascending* and a four-key chain that fits neither direction, so no
+// alphabetical tie-break can be right, and four of five is what a coin looks
+// like when it has been flipped five times. The tie-break is unpinned by
+// construction and these vectors do not change that - they only make the size
+// of the gap visible.
+func TestKeyOrderMissesTheCollidingRequiredActionPairs(t *testing.T) {
+	measured := []string{
+		"CONFIGURE_TOTP", "webauthn-register-passwordless", "UPDATE_PASSWORD",
+		"update_user_locale", "TERMS_AND_CONDITIONS", "idp_link", "delete_account",
+		"VERIFY_EMAIL", "UPDATE_EMAIL", "webauthn-register", "VERIFY_PROFILE",
+		"delete_credential", "CONFIGURE_RECOVERY_AUTHN_CODES", "UPDATE_PROFILE",
+	}
+	got := javamap.KeyOrder(slices.Sorted(slices.Values(measured)))
+
+	if slices.Equal(got, measured) {
+		t.Fatal("KeyOrder now places all fourteen required action providers; " +
+			"if that is real, this test and the package doc are out of date")
+	}
+
+	// The two chains, named. A count alone would pass a build that swapped some
+	// other pair, and the whole value of this vector over the 21 role names is
+	// that it collides twice in fourteen keys rather than twice in twenty-one.
+	want := slices.Clone(measured)
+	for _, pair := range [][2]int{{3, 4}, {6, 7}} {
+		want[pair[0]], want[pair[1]] = want[pair[1]], want[pair[0]]
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("want exactly {update_user_locale, TERMS_AND_CONDITIONS} and "+
+			"{delete_account, VERIFY_EMAIL} swapped and nothing else\nwant %v\ngot  %v",
+			want, got)
+	}
+}
+
 // The other half of F90's answer, and the reason the conformance suite's
 // retreat is not one thing: a **realm's** attributes are the same constructor
 // and KeyOrder still cannot place them, because four of the eight keys share
