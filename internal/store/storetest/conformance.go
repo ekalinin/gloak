@@ -2214,6 +2214,110 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 			t.Errorf("Update of a gone row: want ErrNotFound, got %v", err)
 		}
 	})
+
+	// The authorization services family. Its whole point is that the row's
+	// existence is the client's authorizationServicesEnabled flag, so every
+	// assertion here is about a client representation as much as about a
+	// resource server - and the flag is read through ClientRepo, which is the
+	// half a driver can get wrong while AuthzRepo looks right.
+	t.Run("a resource server row is the client's authorizationServicesEnabled flag", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := newRealm(t, s)
+		client := &model.Client{ID: model.NewID(), RealmID: realm.ID, ClientID: "authz-client", Enabled: true}
+		if err := s.Clients().Create(ctx, client); err != nil {
+			t.Fatalf("Clients().Create: %v", err)
+		}
+
+		// No row: the flag is off on all three client reads. All three are
+		// checked because the subquery is written out three times.
+		assertFlag := func(what string, want bool) {
+			t.Helper()
+			byID, err := s.Clients().ByID(ctx, realm.ID, client.ID)
+			if err != nil {
+				t.Fatalf("%s ByID: %v", what, err)
+			}
+			if byID.AuthorizationServicesEnabled != want {
+				t.Errorf("%s ByID: flag = %v, want %v", what, byID.AuthorizationServicesEnabled, want)
+			}
+			byClientID, err := s.Clients().ByClientID(ctx, realm.ID, client.ClientID)
+			if err != nil {
+				t.Fatalf("%s ByClientID: %v", what, err)
+			}
+			if byClientID.AuthorizationServicesEnabled != want {
+				t.Errorf("%s ByClientID: flag = %v, want %v", what, byClientID.AuthorizationServicesEnabled, want)
+			}
+			listed, err := s.Clients().ListByRealm(ctx, realm.ID)
+			if err != nil {
+				t.Fatalf("%s ListByRealm: %v", what, err)
+			}
+			for _, c := range listed {
+				if c.ID == client.ID && c.AuthorizationServicesEnabled != want {
+					t.Errorf("%s ListByRealm: flag = %v, want %v", what, c.AuthorizationServicesEnabled, want)
+				}
+			}
+		}
+		assertFlag("before Upsert", false)
+		if _, err := s.Authz().ByClientID(ctx, client.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("ByClientID with no row: want ErrNotFound, got %v", err)
+		}
+
+		if err := s.Authz().Upsert(ctx, model.DefaultAuthzResourceServer(client.ID)); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+		assertFlag("after Upsert", true)
+		got, err := s.Authz().ByClientID(ctx, client.ID)
+		if err != nil {
+			t.Fatalf("ByClientID: %v", err)
+		}
+		if want := model.DefaultAuthzResourceServer(client.ID); *got != *want {
+			t.Errorf("defaults: got %+v, want %+v", *got, *want)
+		}
+
+		// Upsert twice replaces rather than conflicting, and it moves all
+		// three columns. AllowRemoteResourceManagement goes true -> false so a
+		// driver that stored a constant is caught.
+		changed := &model.AuthzResourceServer{
+			ClientID:                      client.ID,
+			AllowRemoteResourceManagement: false,
+			PolicyEnforcementMode:         "PERMISSIVE",
+			DecisionStrategy:              "AFFIRMATIVE",
+		}
+		if err := s.Authz().Upsert(ctx, changed); err != nil {
+			t.Fatalf("second Upsert: %v", err)
+		}
+		got, err = s.Authz().ByClientID(ctx, client.ID)
+		if err != nil {
+			t.Fatalf("ByClientID after replace: %v", err)
+		}
+		if *got != *changed {
+			t.Errorf("after replace: got %+v, want %+v", *got, *changed)
+		}
+		assertFlag("after replace", true)
+
+		// Delete turns the flag off and is idempotent - the second call is not
+		// ErrNotFound, because PUT /clients/{uuid} answers 204 both times.
+		if err := s.Authz().DeleteByClientID(ctx, client.ID); err != nil {
+			t.Fatalf("DeleteByClientID: %v", err)
+		}
+		assertFlag("after delete", false)
+		if err := s.Authz().DeleteByClientID(ctx, client.ID); err != nil {
+			t.Errorf("second DeleteByClientID: want nil, got %v", err)
+		}
+
+		// The row cascades with the client, which is what makes the flag
+		// impossible to strand: a deleted client cannot leave a resource
+		// server behind for a client that reuses its id.
+		if err := s.Authz().Upsert(ctx, model.DefaultAuthzResourceServer(client.ID)); err != nil {
+			t.Fatalf("Upsert before cascade: %v", err)
+		}
+		if err := s.Clients().Delete(ctx, realm.ID, client.ID); err != nil {
+			t.Fatalf("Clients().Delete: %v", err)
+		}
+		if _, err := s.Authz().ByClientID(ctx, client.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("after the client is deleted: want ErrNotFound, got %v", err)
+		}
+	})
 }
 
 // strPtr is the "absent is not empty" helper the organization cases need, and

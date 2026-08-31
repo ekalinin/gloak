@@ -39,23 +39,33 @@ type clientRepresentation struct {
 	// reason those two do: none of the six bootstrapped clients has one. It
 	// was missing entirely until kcadm.sh set one and it vanished - see
 	// TestKcadmDrivesTheAdminAPI.
-	Description                        string            `json:"description,omitempty"`
-	RootURL                            string            `json:"rootUrl,omitempty"`
-	BaseURL                            string            `json:"baseUrl,omitempty"`
-	SurrogateAuthRequired              bool              `json:"surrogateAuthRequired"`
-	Enabled                            bool              `json:"enabled"`
-	AlwaysDisplayInConsole             bool              `json:"alwaysDisplayInConsole"`
-	ClientAuthenticatorType            string            `json:"clientAuthenticatorType"`
-	Secret                             string            `json:"secret,omitempty"`
-	RedirectURIs                       []string          `json:"redirectUris"`
-	WebOrigins                         []string          `json:"webOrigins"`
-	NotBefore                          int               `json:"notBefore"`
-	BearerOnly                         bool              `json:"bearerOnly"`
-	ConsentRequired                    bool              `json:"consentRequired"`
-	StandardFlowEnabled                bool              `json:"standardFlowEnabled"`
-	ImplicitFlowEnabled                bool              `json:"implicitFlowEnabled"`
-	DirectAccessGrantsEnabled          bool              `json:"directAccessGrantsEnabled"`
-	ServiceAccountsEnabled             bool              `json:"serviceAccountsEnabled"`
+	Description               string   `json:"description,omitempty"`
+	RootURL                   string   `json:"rootUrl,omitempty"`
+	BaseURL                   string   `json:"baseUrl,omitempty"`
+	SurrogateAuthRequired     bool     `json:"surrogateAuthRequired"`
+	Enabled                   bool     `json:"enabled"`
+	AlwaysDisplayInConsole    bool     `json:"alwaysDisplayInConsole"`
+	ClientAuthenticatorType   string   `json:"clientAuthenticatorType"`
+	Secret                    string   `json:"secret,omitempty"`
+	RedirectURIs              []string `json:"redirectUris"`
+	WebOrigins                []string `json:"webOrigins"`
+	NotBefore                 int      `json:"notBefore"`
+	BearerOnly                bool     `json:"bearerOnly"`
+	ConsentRequired           bool     `json:"consentRequired"`
+	StandardFlowEnabled       bool     `json:"standardFlowEnabled"`
+	ImplicitFlowEnabled       bool     `json:"implicitFlowEnabled"`
+	DirectAccessGrantsEnabled bool     `json:"directAccessGrantsEnabled"`
+	ServiceAccountsEnabled    bool     `json:"serviceAccountsEnabled"`
+	// AuthorizationServicesEnabled is **absent rather than false**, which is why
+	// it carries omitempty where every boolean around it does not. Measured on
+	// all six bootstrapped clients of a default 26.7.1: none of them has the
+	// key at all, and a client created with the flag carries `true`. Emitting
+	// `false` "for consistency with the neighbours" would move every client
+	// golden in the repository, and it would be wrong.
+	//
+	// It sits between serviceAccountsEnabled and publicClient, which is where
+	// the recording puts it.
+	AuthorizationServicesEnabled       bool              `json:"authorizationServicesEnabled,omitempty"`
 	PublicClient                       bool              `json:"publicClient"`
 	FrontchannelLogout                 bool              `json:"frontchannelLogout"`
 	Protocol                           string            `json:"protocol,omitempty"`
@@ -153,6 +163,7 @@ func clientRepresentationOf(m *model.Client, c *caller, realmName string) client
 		ImplicitFlowEnabled:                m.ImplicitFlowEnabled,
 		DirectAccessGrantsEnabled:          m.DirectAccessGrantsEnabled,
 		ServiceAccountsEnabled:             m.ServiceAccountsEnabled,
+		AuthorizationServicesEnabled:       m.AuthorizationServicesEnabled,
 		PublicClient:                       m.PublicClient,
 		FrontchannelLogout:                 m.FrontchannelLogout,
 		Protocol:                           m.Protocol,

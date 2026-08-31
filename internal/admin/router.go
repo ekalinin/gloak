@@ -130,6 +130,61 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /admin/realms/{realm}/organizations/{orgID}",
 		h.guardOrganization(organizationWriteRoles, h.deleteOrganization))
 
+	// Authorization services. Five operations of the description's thirty-one
+	// untagged ones - the resource server as a resource, and the two provider
+	// catalogues. The other twenty-six are the resource, scope, policy and
+	// permission families, `import` and the two `evaluate` routes, and they are
+	// P10's second cut. See docs/superpowers/plans/2026-08-31-p10-authz-services.md.
+	//
+	// **Every one of them sits behind the client's own
+	// authorizationServicesEnabled**, and guardAuthz checks it *before* the
+	// roles - client-types' order and not organizations'. See guardAuthz for
+	// the six-row table this expresses.
+	//
+	// The two provider catalogues are the same handler twice because the two
+	// responses are byte-identical, verified with cmp rather than assumed from
+	// the names.
+	for _, prefix := range []string{
+		"/admin/realms/{realm}/clients/{clientUUID}/authz/resource-server",
+	} {
+		mux.HandleFunc("GET "+prefix, h.guardAuthz(authzReadRoles, h.readResourceServer))
+		mux.HandleFunc("PUT "+prefix, h.guardAuthz(authzWriteRoles, h.updateResourceServer))
+		// **The settings read takes the write set**, measured: view-clients and
+		// view-authorization both read the route above and are 403 on this one.
+		// It is a read that refuses the view role, which is the inverse of
+		// AGENTS.md's "reads accept the manage role, not just the view role" -
+		// so the list is written out here rather than shared with the read.
+		mux.HandleFunc("GET "+prefix+"/settings", h.guardAuthz(authzWriteRoles, h.readResourceServerSettings))
+		mux.HandleFunc("GET "+prefix+"/policy/providers", h.guardAuthz(authzReadRoles, h.listPolicyProviders))
+		mux.HandleFunc("GET "+prefix+"/permission/providers", h.guardAuthz(authzReadRoles, h.listPolicyProviders))
+	}
+
+	// The twelve `management/permissions` operations. All of them are the same
+	// 501, and they need **three** combinators because the refusal does not sit
+	// at one point relative to the resource the path names. The reason each is
+	// what it is lives in managementpermissions.go; the short version is that
+	// the two tagged Groups and the four tagged Clients resolve their resource
+	// first and the other six never look theirs up at all.
+	for _, path := range []string{
+		"/admin/realms/{realm}/roles/{roleName}/management/permissions",
+		"/admin/realms/{realm}/roles-by-id/{roleID}/management/permissions",
+		"/admin/realms/{realm}/identity-provider/instances/{alias}/management/permissions",
+	} {
+		mux.HandleFunc("GET "+path, h.guardRealmFeature(h.managementPermissions))
+		mux.HandleFunc("PUT "+path, h.guardRealmFeature(h.managementPermissions))
+	}
+	for _, path := range []string{
+		"/admin/realms/{realm}/clients/{clientUUID}/management/permissions",
+		"/admin/realms/{realm}/clients/{clientUUID}/roles/{roleName}/management/permissions",
+	} {
+		mux.HandleFunc("GET "+path, h.guardClientFeature(h.managementPermissions))
+		mux.HandleFunc("PUT "+path, h.guardClientFeature(h.managementPermissions))
+	}
+	mux.HandleFunc("GET /admin/realms/{realm}/groups/{groupID}/management/permissions",
+		h.guardGroupResolving(h.managementPermissionsAfterGroup))
+	mux.HandleFunc("PUT /admin/realms/{realm}/groups/{groupID}/management/permissions",
+		h.guardGroupResolving(h.managementPermissionsAfterGroup))
+
 	// Authentication Management, the eighteen operations of P8's first cut.
 	// The other twenty-one - the flows, the executions and the shared
 	// authenticator config - are not here, and that is a decision rather than
@@ -1194,6 +1249,33 @@ var userMappingsWriteRoles = []string{userMappingsWriteRole}
 // a guard from a role's name: manage-clients is not composite over
 // view-clients, so nothing in the role graph predicts it opens a read.
 var clientsReadRoles = []string{"view-clients", "query-clients", "manage-clients"}
+
+// authzReadRoles and authzWriteRoles are the authorization services family's,
+// swept 2026-08-31 one single role at a time over seven callers - none,
+// view-authorization, manage-authorization, view-clients, query-clients,
+// manage-clients and manage-realm - on four routes and both verbs.
+//
+// Three cells surprise, and none of them follows from a role's name:
+//
+//   - **query-clients is 403 on every one of them**, although it is in
+//     clientsReadRoles and although it is admitted by the *client lookup* on
+//     these very paths - the caller who may learn a client does not exist may
+//     not read its resource server. So the coarse clients gate is not reusable
+//     here even though the path starts `/clients/{uuid}`.
+//   - **manage-realm is 403 on every one of them**, so this family is not
+//     authorised out of the realm set the way the neighbouring client-policy
+//     routes are.
+//   - **manage-clients is in both sets and view-clients in only the read one**,
+//     so the clients family and the authorization family both open this
+//     surface and they do it with different halves of themselves.
+//
+// The two sets differ by exactly the two view roles, which looks like a read
+// set and a write set and is measurably not: GET .../settings takes the *write*
+// set. See the router entry for it.
+var (
+	authzReadRoles  = []string{"view-authorization", "manage-authorization", "view-clients", "manage-clients"}
+	authzWriteRoles = []string{"manage-authorization", "manage-clients"}
+)
 
 // groupsReadRoles is what the group listing and the count accept. Measured
 // 2026-08-28 on one caller per role.
