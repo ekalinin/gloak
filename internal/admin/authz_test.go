@@ -404,6 +404,27 @@ func TestTheFlagIsTheResourceServersExistence(t *testing.T) {
 		t.Fatalf("moving the settings: %d %s", w.Code, w.Body)
 	}
 
+	// **A client PUT that names the flag true leaves the settings alone.**
+	// Measured 2026-08-31 on two body shapes - the flag by itself, and the flag
+	// beside clientId, serviceAccountsEnabled and a description - both of which
+	// left `false / PERMISSIVE / AFFIRMATIVE` exactly as it was.
+	//
+	// This cell was added because a mutation survived without it: making
+	// syncResourceServer upsert the defaults unconditionally whenever the flag
+	// is on passed **every test in internal/admin**, so "turning the flag on
+	// resets the settings" and "turning it on preserves them" were
+	// indistinguishable to the suite. The rest of this test only ever turns the
+	// flag on when it is off, where the two agree.
+	if w := send(t, h, http.MethodPut, clientPath, admin, `{"authorizationServicesEnabled":true}`); w.Code != http.StatusNoContent {
+		t.Fatalf("a client PUT naming the flag true: %d %s", w.Code, w.Body)
+	}
+	kept := get(t, h, rsPath, admin)
+	if !strings.Contains(kept.Body.String(), `"policyEnforcementMode":"PERMISSIVE"`) ||
+		!strings.Contains(kept.Body.String(), `"allowRemoteResourceManagement":false`) ||
+		!strings.Contains(kept.Body.String(), `"decisionStrategy":"AFFIRMATIVE"`) {
+		t.Errorf("a client PUT naming the flag true reset the settings: got %s, want false PERMISSIVE AFFIRMATIVE", kept.Body)
+	}
+
 	// Seven fields merge and this one does not.
 	if w := send(t, h, http.MethodPut, clientPath, admin, `{"description":"touched"}`); w.Code != http.StatusNoContent {
 		t.Fatalf("the client PUT: %d %s", w.Code, w.Body)
