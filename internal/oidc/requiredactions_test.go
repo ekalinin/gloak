@@ -305,6 +305,54 @@ func disableProvider(t *testing.T, s store.Store, alias string) {
 	}
 }
 
+// TestAnIncompleteProfileIsNotAnActionInMaster is a measurement about the realm,
+// and it is here because the observed document's account of it is wrong.
+//
+// A user with no email, no first name and no last name is refused
+// "Account is not fully set up" **in a realm created through POST /admin/realms**
+// and is served a token **in master**. The observed document records that split
+// and explains it as "what differs is the user, not the realm: master's
+// bootstrapped administrator carries is_temporary_admin". Both halves of that
+// explanation were re-measured on 2026-08-31 and both are false:
+//
+//   - a user in a created realm carrying is_temporary_admin is still refused, so
+//     the attribute exempts nothing;
+//   - master's own `admin`, attribute and all, is refused the moment master's
+//     user-profile configuration is edited to mark the three attributes
+//     required.
+//
+// What differs is the **realm's user profile configuration**:
+// GET /admin/realms/{realm}/users/profile carries `"required":{"roles":["user"]}`
+// on email, firstName and lastName in a created realm and carries no `required`
+// key at all in master.
+//
+// Gloak bootstraps master and models no user profile, so it serves master's
+// answer, and that is what this test pins. Six conformance fixtures create users
+// with no profile at all and then log them in; a handler that refused an
+// incomplete profile would break every one of them, and would be reproducing a
+// created realm's rule in the one realm that does not have it.
+func TestAnIncompleteProfileIsNotAnActionInMaster(t *testing.T) {
+	h, s := authServerAndStore(t)
+	b := &browser{h: h, t: t, jar: map[string]string{}}
+	ctx := context.Background()
+	realm, _ := s.Realms().ByName(ctx, "master")
+	user, _ := s.Users().ByUsername(ctx, realm.ID, "admin")
+	user.Email, user.FirstName, user.LastName = "", "", ""
+	user.Attributes = map[string][]string{}
+	if err := s.Users().Update(ctx, user); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	action, _ := actionParams(t, b.login(nil))
+	w := b.do(http.MethodPost, action, credentials("admin", "admin"))
+	if !strings.Contains(w.Header().Get("Location"), "code=") {
+		t.Errorf("browser: want a code, got %s", w.Header().Get("Location"))
+	}
+	if g := directGrant(t, h, "admin"); g.Code != http.StatusOK {
+		t.Errorf("direct grant: want 200, got %d %s", g.Code, g.Body)
+	}
+}
+
 // TestVerifyProfileClearsItselfAtLogin, where the three skipped aliases do not.
 // Measured one at a time: VERIFY_PROFILE came back `[]` after a login that never
 // redirected, and idp_link came back still carrying its alias.
