@@ -939,6 +939,90 @@ func volatileMasksOverCaptures(paths []string, body []byte, vars map[string]stri
 	return out, nil
 }
 
+// pinnedPlaceholders is every placeholder the harness itself writes into a body
+// before Normalize runs: ReplaceIssuer's {{issuer}}, and one per value a fixture
+// step captured.
+//
+// They are what makes the prefix question answerable from a single response.
+// Both sides of a comparison get them from the same code, so a byte inside one
+// is identical on both sides **by construction** - it carries no volatility, it
+// cannot vary between recordings, and a mask over it therefore gives up an
+// assertion in exchange for nothing.
+func pinnedPlaceholders(vars map[string]string) []string {
+	out := []string{issuerPlaceholder}
+	for name := range vars {
+		out = append(out, "{{"+name+"}}")
+	}
+	sort.Strings(out)
+	return out
+}
+
+// volatileMasksOverPinnedPrefixes is every Volatile path whose values all carry
+// a placeholder the harness had already pinned, plus bytes of their own.
+//
+// **This is F106, and F46 one level further down than the capture guard
+// reaches.** That guard fires when a value *is* a placeholder. This one fires
+// when a value merely *contains* one, which is the "too wide by a prefix" shape
+// the entry describes: `{{issuer}}/realms/master/device?user_code=UOHG-OJZA` is
+// a URL whose host, realm and endpoint are pinned and whose last eight
+// characters are not, and Volatile throws away all of it to mask the eight.
+//
+// **F106 says deciding this needs two recordings diffed per value, and that is
+// true of a different question than the one it names.** Its own example -
+// `https://host/realms/x/<uuid>` - is decidable from one response, because
+// ReplaceIssuer has already pinned the host before Normalize sees the value.
+// What genuinely needs two recordings is a value whose stable part carries no
+// placeholder at all, and this guard says nothing about those.
+//
+// The "all values" rule is the capture guard's, for the capture guard's reason:
+// a path whose values are only partly pinned is still earning its mask on the
+// others.
+//
+// A value that is exactly a captured placeholder is left to
+// volatileMasksOverCaptures, so the two guards partition rather than overlap and
+// one finding never needs two exception entries.
+func volatileMasksOverPinnedPrefixes(paths []string, body []byte, vars map[string]string) ([]maskFinding, error) {
+	pinned := pinnedPlaceholders(vars)
+	var out []maskFinding
+	for _, p := range paths {
+		values, err := MaskedValues(body, []string{p})
+		if err != nil {
+			return nil, fmt.Errorf("Volatile %q: %w", p, err)
+		}
+		if len(values) == 0 {
+			continue // addressing nothing is TestNoMaskIsInertOnItsGolden's finding
+		}
+		carried, covered := "", true
+		for _, v := range values {
+			trimmed := bytes.TrimSpace(v)
+			if m := capturedValue.FindSubmatch(trimmed); m != nil {
+				if _, ok := vars[string(m[1])]; ok {
+					covered = false // the capture guard's finding, whole
+					break
+				}
+			}
+			hit := ""
+			for _, ph := range pinned {
+				if bytes.Contains(trimmed, []byte(ph)) {
+					hit = ph
+					break
+				}
+			}
+			if hit == "" {
+				covered = false
+				break
+			}
+			carried = hit
+		}
+		if covered {
+			out = append(out, maskFinding{"Volatile", p, fmt.Sprintf(
+				"covers %d value(s), every one of them carrying %s and more - the mask "+
+					"gives up bytes the harness had already pinned", len(values), carried)})
+		}
+	}
+	return out, nil
+}
+
 // TestNoVolatileMaskCoversACapturedValue is the half of the sweep a committed
 // golden cannot answer, asked of the served body instead.
 //
@@ -958,8 +1042,16 @@ func volatileMasksOverCaptures(paths []string, body []byte, vars map[string]stri
 // If a case ever legitimately needs a mask this reports - a value Gloak pins and
 // Keycloak does not - the way to say so is a comment in the case and an entry in
 // capturedMasksLeftInPlace, the way inertMasksLeftInPlace does it.
+//
+// **It asks two questions of each served body, not one**, and the second is
+// F106's: volatileMasksOverPinnedPrefixes reports a mask that covers a
+// placeholder plus more. Serving is what this test spends its time on - the walk
+// over the answer is free beside it - so a second loop would double the cost to
+// ask a question the same response has already answered. The name is the older
+// question's; the failure messages say which is which.
 func TestNoVolatileMaskCoversACapturedValue(t *testing.T) {
 	matched := map[string]bool{}
+	matchedWide := map[string]bool{}
 	visited := map[string]bool{}
 	for _, c := range Catalog {
 		if c.Status != Implemented || len(c.Volatile) == 0 {
@@ -993,11 +1085,38 @@ func TestNoVolatileMaskCoversACapturedValue(t *testing.T) {
 				}
 				t.Errorf("%s - drop the mask and let the golden assert which object this is", m)
 			}
+
+			wide, err := volatileMasksOverPinnedPrefixes(c.Volatile, body, vars)
+			if err != nil {
+				t.Fatalf("%v", err)
+			}
+			for _, m := range wide {
+				if _, listed := prefixMasksLeftInPlace[m.key(c.ID)]; listed {
+					matchedWide[m.key(c.ID)] = true
+					continue
+				}
+				t.Errorf("%s - narrow the mask, or say in the case why the pinned part "+
+					"has to be given up with the volatile one", m)
+			}
 		})
 	}
 
-	stale := make([]string, 0, len(capturedMasksLeftInPlace))
-	for entry := range capturedMasksLeftInPlace {
+	reportStale(t, "capturedMasksLeftInPlace", "no longer covers a capture",
+		capturedMasksLeftInPlace, matched, visited)
+	reportStale(t, "prefixMasksLeftInPlace", "no longer covers a pinned prefix",
+		prefixMasksLeftInPlace, matchedWide, visited)
+}
+
+// reportStale fails for every exception entry whose case ran and whose finding
+// did not come back. It is shared by the two lists above because a ratchet that
+// is checked for one and not the other is the half that rots.
+//
+// The visited gate is what makes `go test -run` on one case honest: a narrowed
+// run visits one case and can only speak for that one.
+func reportStale(t *testing.T, list, gone string, entries map[string]string, matched, visited map[string]bool) {
+	t.Helper()
+	stale := make([]string, 0, len(entries))
+	for entry := range entries {
 		id, _, _ := strings.Cut(entry, " ")
 		if visited[id] && !matched[entry] {
 			stale = append(stale, entry)
@@ -1005,8 +1124,8 @@ func TestNoVolatileMaskCoversACapturedValue(t *testing.T) {
 	}
 	sort.Strings(stale)
 	for _, entry := range stale {
-		t.Errorf("capturedMasksLeftInPlace excuses %q and it no longer covers a capture; "+
-			"drop the entry rather than leaving a reason nobody has re-read", entry)
+		t.Errorf("%s excuses %q and it %s; drop the entry rather than leaving a "+
+			"reason nobody has re-read", list, entry, gone)
 	}
 }
 
@@ -1021,6 +1140,75 @@ var capturedMasksLeftInPlace = map[string]string{
 		"one the authorization redirect handed back, captured as {{session_state}} - so masking it drops the " +
 		"assertion that the token belongs to the browser session that authorised it. " +
 		"catalog_oidc_pending.go is another stream's.",
+}
+
+// prefixMasksLeftInPlace is every mask volatileMasksOverPinnedPrefixes reports
+// that is still in the catalogue, keyed the way the two lists above are.
+//
+// One entry, and it is a finding rather than an exemption. The mask audit
+// predicted it as F107 and could not reach it, because the case was Pending when
+// that sweep ran and had no golden; it is Implemented now, so the guard sees it
+// on the first run.
+//
+// It is also the one finding here that needs a **mechanism** and not an edit.
+// F46's answer for a header was a new field - VolatileTailHeaders, masking a
+// URL's last segment and comparing the rest - and Case has no body-side
+// equivalent, so there is nothing to narrow this to today.
+var prefixMasksLeftInPlace = map[string]string{
+	`oidc/device/authorization-request Volatile "verification_uri_complete"`: "measured on a live 26.7.1 on " +
+		"2026-08-31: verification_uri_complete is verification_uri plus `?user_code=` plus the code - " +
+		"`http://localhost:8123/realms/master/device?user_code=BKSP-TWQJ`. Every part of it is pinned " +
+		"or masked elsewhere in the same body already: verification_uri is asserted whole one key " +
+		"later, and user_code is masked two keys earlier. So this mask gives up the issuer, the realm " +
+		"and the endpoint to hide eight characters the case has already given up beside it. Narrowing " +
+		"it needs a body-side VolatileTail, which Case has not got, and " +
+		"catalog_oidc_pending.go is another stream's.",
+}
+
+// TestVolatilePrefixGuardCanFail proves F106's guard can fail, and pins the
+// three shapes it must leave alone.
+//
+// It matters more here than for the two older guards. Those are green on the
+// catalogue with nothing excused, so a catalogue run is evidence they still see
+// something; this one is green **because its single finding is excused**, which
+// is the same colour a guard watching nothing comes in.
+func TestVolatilePrefixGuardCanFail(t *testing.T) {
+	vars := map[string]string{"group_id": "0f8f1f52-0000-0000-0000-000000000001"}
+	body := []byte(`{"url":"{{issuer}}/realms/master/device?user_code=ABCD-EFGH",` +
+		`"whole":"{{issuer}}","captured":"{{group_id}}",` +
+		`"under":"/groups/{{group_id}}/children","minted":"7b712638",` +
+		`"mixed":["{{issuer}}/a","7b712638"],"number":600}`)
+
+	for _, tc := range []struct {
+		name   string
+		paths  []string
+		report bool
+	}{
+		{"a pinned prefix and a volatile tail", []string{"url"}, true},
+		// A value that is nothing but the issuer is pinned end to end, and no
+		// other guard sees it: the capture guard wants a fixture variable.
+		{"a value that is entirely pinned", []string{"whole"}, true},
+		{"a pinned segment inside a longer value", []string{"under"}, true},
+		// The capture guard's finding, whole. Reporting it here as well would
+		// make one mask need two exception entries.
+		{"a value that is exactly a capture", []string{"captured"}, false},
+		{"a value the harness pinned nothing of", []string{"minted"}, false},
+		{"one pinned element of two", []string{"mixed/*"}, false},
+		{"a value that is not a string", []string{"number"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := volatileMasksOverPinnedPrefixes(tc.paths, body, vars)
+			if err != nil {
+				t.Fatalf("%v", err)
+			}
+			if tc.report && len(got) == 0 {
+				t.Errorf("%v went unreported", tc.paths)
+			}
+			if !tc.report && len(got) != 0 {
+				t.Errorf("%v was reported anyway: %v", tc.paths, got)
+			}
+		})
+	}
 }
 
 // TestVolatileCaptureGuardCanFail proves the guard above can fail, and that it
