@@ -979,12 +979,14 @@ var oidcPending = []Case{
 		// and X-Frame-Options where GET /auth's 302, to a different URI with the
 		// same status, carries neither.
 		//
-		// **Set-Cookie is asserted for its absence.** The redirect to an action
-		// sets no cookies at all - the session cookies come from whatever
-		// finishes the flow - and a handler that established the session here
-		// would leave a signed-in browser behind an action never done. The
-		// verifier compares an absent header with an absent one, so naming it
-		// here is what makes that absence a contract rather than an accident.
+		// **Set-Cookie is deliberately not in the list**, although its absence
+		// is the most interesting thing about this response: the redirect to an
+		// action sets no cookies at all, where the credential POST that ends in
+		// a code sets three. The harness refuses a header that is asserted and
+		// absent from the golden - "header Set-Cookie is asserted but absent
+		// from the golden" - so a case cannot pin an absence, and
+		// internal/oidc's TestATemporaryPasswordIsActuallyTemporary counts the
+		// Set-Cookie headers instead.
 		//
 		// Location is masked whole because it carries a per-request tab_id, the
 		// same reason oidc/authorization/code-flow-redirect masks its own.
@@ -1008,7 +1010,7 @@ var oidcPending = []Case{
 		AssertHeaders: []string{
 			"Location", "Cache-Control", "Content-Security-Policy",
 			"X-Frame-Options", "Referrer-Policy", "Strict-Transport-Security",
-			"X-Content-Type-Options", "X-Robots-Tag", "Set-Cookie",
+			"X-Content-Type-Options", "X-Robots-Tag",
 		},
 		VolatileHeaders: []string{"Location"},
 	},
