@@ -63,6 +63,14 @@ const (
 	descVerifierMismatch   = "PKCE verification failed: Code mismatch"
 )
 
+// The direct grant's two refusals of an account that authenticated correctly.
+// Both are invalid_grant with a 400, both are measured after the password, and
+// descAccountDisabled outranks descAccountNotSetUp on a user that is both.
+const (
+	descAccountDisabled = "Account disabled"
+	descAccountNotSetUp = "Account is not fully set up"
+)
+
 // defaultClientScopes is what a client grants when the request asks for no
 // scope. Measured on the admin-cli password grant, whose response carries
 // scope "profile email" - see
@@ -310,6 +318,19 @@ func codeChallengeFor(verifier, method string) string {
 // produce the identical measured 400 invalid_grant "Invalid user credentials".
 // Reporting them differently would turn the endpoint into an
 // account-enumeration oracle.
+//
+// **Two checks run after the password and neither did until 2026-08-31.**
+// Measured on one container, one user at a time:
+//
+//	disabled user, right password        Account disabled
+//	disabled user, wrong password        Invalid user credentials
+//	requiredActions non-empty            Account is not fully set up
+//	disabled and requiredActions both    Account disabled
+//
+// So `enabled` is not an early gate - it is checked after the credential, the
+// same way the browser flow's "Account is disabled, contact your administrator."
+// is - and Gloak answered "Invalid user credentials" for a disabled user until
+// this was measured, from a check that ran before the password.
 func (h *handler) passwordGrant(w http.ResponseWriter, r *http.Request, realm *model.Realm, client *model.Client, k *keys.RealmKeys) {
 	if !client.DirectAccessGrantsEnabled {
 		// Unmeasured: no bootstrapped client reaches this branch, since
@@ -330,10 +351,6 @@ func (h *handler) passwordGrant(w http.ResponseWriter, r *http.Request, realm *m
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	if !user.Enabled {
-		writeInvalidUserCredentials(w)
-		return
-	}
 	cred, err := h.store.Users().CredentialByUser(r.Context(), user.ID, passwordCredentialType)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -351,6 +368,22 @@ func (h *handler) passwordGrant(w http.ResponseWriter, r *http.Request, realm *m
 		// A credential this build cannot evaluate is a server problem, not a
 		// failed login.
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	if !user.Enabled {
+		httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_grant", descAccountDisabled)
+		return
+	}
+	// **The direct grant reads requiredActions raw, where the browser flow
+	// filters them.** It applies no enabled filter and asks no provider whether
+	// there is anything to do: measured, a user carrying only the *disabled*
+	// TERMS_AND_CONDITIONS completes the browser login and is refused here, and
+	// so are delete_account, UPDATE_EMAIL, delete_credential, idp_link and
+	// update_user_locale - seven aliases on which the two endpoints disagree
+	// about one user. Sharing nextRequiredAction between them is the obvious
+	// saving and it is wrong on every one of the seven.
+	if len(user.RequiredActions) > 0 {
+		httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_grant", descAccountNotSetUp)
 		return
 	}
 

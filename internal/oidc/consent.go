@@ -17,20 +17,41 @@ import (
 // and the device authorization grant. See section 1 of
 // docs/superpowers/plans/2026-08-30-p13-sso-and-consent.md.
 
-// executionOAuthGrant is the one `execution` /login-actions/required-action is
-// measured to answer. Anything else is a 400 page whose instruction is
-// `invalid_request` - the same envelope the endpoint's other rejections use, and
-// a value spelled in the OAuth style where every other instruction on these
-// pages is prose.
+// executionOAuthGrant is the consent's `execution`, and it is the **last**
+// member of the queue /login-actions/required-action serves rather than the only
+// value it knows. Measured: a consentRequired client whose user carries
+// UPDATE_PASSWORD is sent to execution=UPDATE_PASSWORD first, and the consent
+// page follows the action rather than replacing it.
 const executionOAuthGrant = "OAUTH_GRANT"
 
-// requiredAction serves GET /realms/{realm}/login-actions/required-action.
+// requiredAction serves GET and POST /realms/{realm}/login-actions/required-action.
 //
-// It is reached by the 302 a completed login answers when the client still wants
-// a consent, and its query is client_id, tab_id and client_data plus the
-// execution - **with no session_code**, which is what makes it a landing rather
-// than a form submission. The page it serves is the one place the browser flow
-// and the device flow become the same request.
+// **The session_code decides what the request is, and the verb decides
+// nothing.** Measured 2026-08-31 as a twelve-cell grid on a live UPDATE_PASSWORD
+// tab, GET and POST for each of six combinations, and the two verbs agree on
+// every row:
+//
+//	session_code  execution   answer
+//	present       matches     the action runs
+//	present       mismatched  302 -> required-action?execution=<the tab's own>
+//	present       absent      302 -> required-action?execution=<the tab's own>
+//	absent        matches     200, the step's page
+//	absent        mismatched  200, "Page has expired"
+//	absent        absent      200, the step's page
+//
+// A GET carrying a session code therefore **submits**, with whatever the body
+// holds - nothing, for a GET - which is the same rule
+// GET /login-actions/authenticate already follows. A matrix that varied the verb
+// alone would have found the two agreeing and concluded the verb was the
+// variable.
+//
+// This replaces what this function did until 2026-08-31, which was to answer the
+// 400 error page to any execution that was not exactly OAUTH_GRANT. Re-measured
+// on a consent-only tab, `execution=BOGUS` is 200 "Page has expired" and an
+// **absent** execution serves the consent page, so the old comment's "400, the
+// theme error page, invalid_request" was wrong on five of the six rows. It is
+// the reachable-in-one-request shape of the same mistake CIBA's parameter order
+// caught: every probe behind it broke one thing at a time.
 func (h *handler) requiredAction(w http.ResponseWriter, r *http.Request) {
 	realm := h.resolveRealm(w, r)
 	if realm == nil {
@@ -41,15 +62,11 @@ func (h *handler) requiredAction(w http.ResponseWriter, r *http.Request) {
 		h.writeLoginActionErrorPage(w)
 		return
 	}
-	// The execution is checked before the cookies. Measured with a bogus
-	// execution on a jar holding a live authentication session: 400, the theme
-	// error page, `invalid_request`, and Cache-Control present - so it is this
-	// endpoint's own page family rather than the restart branch.
-	if q.Get("execution") != executionOAuthGrant {
-		h.writeLoginActionErrorPage(w)
-		return
-	}
-	tab, sess, ok := h.resolveAuthTab(r, realm, q)
+	// The tab is resolved by its id alone, never by the session code, because a
+	// stale code here is measured to re-issue the landing rather than to take
+	// the restart branch. resolveAuthTab would consume the code and report the
+	// tab missing.
+	sess, tab, ok := h.resolveActionTab(r, realm, q)
 	if !ok {
 		h.writeUnusableSession(w, r, realm, q)
 		return
@@ -59,7 +76,94 @@ func (h *handler) requiredAction(w http.ResponseWriter, r *http.Request) {
 		h.writeLoginActionErrorPage(w)
 		return
 	}
-	h.serveConsentPage(w, realm, sess, tab, client)
+	user, err := h.store.Users().ByID(r.Context(), realm.ID, tab.UserID)
+	if err != nil {
+		// The tab reached this endpoint without a user on it, which only a
+		// hand-made request can produce.
+		h.writeUnusableSession(w, r, realm, q)
+		return
+	}
+	step, err := h.tabStep(r.Context(), realm, client, user, tab)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+
+	execution := q.Get("execution")
+	code := q.Get("session_code")
+	if code == "" {
+		// A landing. An execution naming something this tab is not at is the
+		// expired page; an absent one is served the step, which is why this is
+		// not a presence check.
+		if step == "" || (execution != "" && execution != step) {
+			httpx.WriteThemePage(w, http.StatusOK, loginActionCacheControl, httpx.ExpiredPageTitle)
+			return
+		}
+		h.serveStep(w, realm, sess, tab, client, user, step, "")
+		return
+	}
+	if step == "" || execution != step || code != tab.SessionCode {
+		// A submission that does not match what the tab is waiting for is sent
+		// back to the landing for what it is waiting for - not refused, and not
+		// answered the expired page, which is the landing's answer and not this
+		// one's.
+		h.writeRequiredActionRedirect(w, realm, client, tab, step)
+		return
+	}
+	if step == executionOAuthGrant {
+		// The consent has its own endpoint for its submission, and this one is
+		// measured not to take it: the page's form posts to
+		// /login-actions/consent.
+		h.serveStep(w, realm, sess, tab, client, user, step, "")
+		return
+	}
+	if !h.runStep(w, r, realm, client, sess, tab, user, step) {
+		return
+	}
+	h.continueAfterStep(w, r, realm, client, sess, tab, user)
+}
+
+// resolveActionTab finds the tab by its id, without spending or checking the
+// session code.
+func (h *handler) resolveActionTab(r *http.Request, realm *model.Realm, q url.Values) (*authSession, *authTab, bool) {
+	cookie, err := r.Cookie(authSessionCookie)
+	if err != nil {
+		return nil, nil, false
+	}
+	sess, ok := h.auth.sessionByCookie(realm.Name, cookie.Value)
+	if !ok {
+		return nil, nil, false
+	}
+	tab, ok := h.auth.tabByID(sess, q.Get("tab_id"))
+	return sess, tab, ok
+}
+
+// continueAfterStep is what a completed required action answers, and it is two
+// answers rather than one.
+//
+// Measured on a user carrying UPDATE_PROFILE and UPDATE_PASSWORD: submitting the
+// profile answered **200 with the password page**, not a redirect to it. So the
+// chain between two actions is served in place, and only the end of the queue
+// redirects. A handler that answered a 302 for both would send a browser through
+// an extra round trip Keycloak does not make.
+func (h *handler) continueAfterStep(w http.ResponseWriter, r *http.Request, realm *model.Realm,
+	client *model.Client, sess *authSession, tab *authTab, user *model.User) {
+	next, err := h.tabStep(r.Context(), realm, client, user, tab)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	if next != "" {
+		h.serveStep(w, realm, sess, tab, client, user, next, "")
+		return
+	}
+	k := h.realmKeys(w, r, realm)
+	if k == nil {
+		return
+	}
+	if err := h.finishFlow(w, r, realm, client, sess, tab, user, k); err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+	}
 }
 
 // serveConsentPage renders the OAUTH_GRANT page, minting the tab a fresh
@@ -203,23 +307,28 @@ func (h *handler) finishFlow(w http.ResponseWriter, r *http.Request, realm *mode
 	return h.completeLogin(w, r, realm, client, sess, tab, user, k)
 }
 
-// writeRequiredActionRedirect is the 302 a login answers when the client still
-// wants a consent.
+// writeRequiredActionRedirect is the 302 a login answers when the flow still
+// wants something from the user - a required action or a consent.
 //
-// Measured on both flows: the key order is execution, client_id, tab_id,
-// client_data, the location is **absolute**, and the response sets **no cookies
-// at all** - the session cookies come later, from the consent accept. A handler
-// that established the session here would set them one request early and would
-// leave a signed-in browser behind a consent that was never given.
+// Measured on both flows and on both kinds of step: the key order is execution,
+// client_id, tab_id, client_data, the location is **absolute**, and the response
+// sets **no cookies at all** - the session cookies come later, from whatever
+// finishes the flow. A handler that established the session here would set them
+// one request early and would leave a signed-in browser behind an action that
+// was never done.
+//
+// The alias is a parameter rather than the constant it was until 2026-08-31:
+// UPDATE_PASSWORD, UPDATE_PROFILE and OAUTH_GRANT all travel through this one
+// redirect, byte for byte alike apart from the value.
 func (h *handler) writeRequiredActionRedirect(w http.ResponseWriter, realm *model.Realm,
-	client *model.Client, tab *authTab) {
+	client *model.Client, tab *authTab, step string) {
 	data, err := tab.clientData()
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
 	httpx.WriteLoginActionRedirect(w, h.realmBase(realm.Name)+"/login-actions/required-action?"+strings.Join([]string{
-		"execution=" + executionOAuthGrant,
+		"execution=" + url.QueryEscape(step),
 		"client_id=" + url.QueryEscape(client.ClientID),
 		"tab_id=" + url.QueryEscape(tab.TabID),
 		"client_data=" + url.QueryEscape(data),
