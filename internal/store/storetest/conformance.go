@@ -2025,7 +2025,7 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		org := &model.Organization{
 			ID: model.NewID(), RealmID: realm.ID,
 			Name: "probe-org", Alias: "probe-alias", Enabled: true,
-			Description: "desc", RedirectURL: "http://x/",
+			Description: strPtr("desc"), RedirectURL: "http://x/",
 			Domains: []model.OrganizationDomain{
 				{Name: "b.example.com", Verified: true},
 				{Name: "a.example.com"},
@@ -2127,9 +2127,9 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 
 		org := &model.Organization{
 			ID: model.NewID(), RealmID: realm.ID, Name: "before", Alias: "keep-me", Enabled: true,
-			Description: "d", RedirectURL: "u",
-			Domains:     []model.OrganizationDomain{{Name: "old.example.com"}},
-			Attributes:  []model.OrganizationAttribute{{Name: "k", Values: []string{"v"}}},
+			Description: strPtr("d"), RedirectURL: "u",
+			Domains:    []model.OrganizationDomain{{Name: "old.example.com"}},
+			Attributes: []model.OrganizationAttribute{{Name: "k", Values: []string{"v"}}},
 		}
 		if err := s.Organizations().Create(ctx, org); err != nil {
 			t.Fatalf("Create: %v", err)
@@ -2138,7 +2138,9 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		// redirectUrl and the domains, and **refusing** an alias change - so
 		// Update writes everything but the alias, and the alias it is handed
 		// is ignored rather than trusted.
-		org.Name, org.Alias, org.Description, org.RedirectURL = "after", "ignored", "", ""
+		// Description goes back to nil rather than to "": a PUT that names no
+		// description clears the key, and a PUT naming an empty one keeps it.
+		org.Name, org.Alias, org.Description, org.RedirectURL = "after", "ignored", nil, ""
 		org.Domains = nil
 		org.Attributes = nil
 		if err := s.Organizations().Update(ctx, org); err != nil {
@@ -2157,8 +2159,22 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		if len(back.Domains) != 0 || len(back.Attributes) != 0 {
 			t.Errorf("children survived the replace: %+v", back)
 		}
-		if back.Description != "" || back.RedirectURL != "" {
+		if back.Description != nil || back.RedirectURL != "" {
 			t.Errorf("cleared fields survived: %+v", back)
+		}
+		// An empty description is **not** the same state as no description,
+		// which is the whole reason the column is nullable.
+		empty := ""
+		org.Description = &empty
+		if err := s.Organizations().Update(ctx, org); err != nil {
+			t.Fatalf("Update with an empty description: %v", err)
+		}
+		back, err = s.Organizations().ByID(ctx, realm.ID, org.ID)
+		if err != nil {
+			t.Fatalf("ByID: %v", err)
+		}
+		if back.Description == nil || *back.Description != "" {
+			t.Errorf("empty description: got %v, want a pointer to \"\"", back.Description)
 		}
 	})
 
@@ -2199,6 +2215,10 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 }
+
+// strPtr is the "absent is not empty" helper the organization cases need, and
+// nothing else in this file has wanted one.
+func strPtr(s string) *string { return &s }
 
 // newRealm creates one realm for a subtest that only needs somewhere to hang
 // its objects.

@@ -17,13 +17,21 @@
 -- enabled is INTEGER in both drivers, following client_client_scope.default_scope
 -- next door: the two migrations are byte-identical per driver on purpose, and a
 -- BOOLEAN here would be the first place they diverge.
+-- **description is nullable and redirect_url is not**, which is not tidiness
+-- and not an oversight. A create sending `{"description":"","redirectUrl":""}`
+-- reads back carrying `"description":""` and **no** `redirectUrl` key at all:
+-- two fields, one empty value, opposite answers. So description has to tell
+-- "never set" from "set to nothing" and redirectUrl does not, and NULL is what
+-- carries that difference. It is RequiredActionProvider.Name's rule on another
+-- resource, and the same reason applies - a NOT NULL column collapses the two
+-- states the representation distinguishes.
 CREATE TABLE organization (
     id           TEXT PRIMARY KEY,
     realm_id     TEXT NOT NULL REFERENCES realm(id) ON DELETE CASCADE,
     name         TEXT NOT NULL,
     alias        TEXT NOT NULL,
     enabled      INTEGER NOT NULL,
-    description  TEXT NOT NULL DEFAULT '',
+    description  TEXT,
     redirect_url TEXT NOT NULL DEFAULT '',
     UNIQUE (realm_id, name),
     UNIQUE (realm_id, alias)

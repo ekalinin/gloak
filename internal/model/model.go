@@ -487,12 +487,20 @@ type RequiredActionProvider struct {
 // Attributes is a MultivaluedHashMap - one name to many values - which is a
 // group's attribute type and not a client's. StringMap does not apply.
 type Organization struct {
-	ID          string
-	RealmID     string
-	Name        string
-	Alias       string
-	Enabled     bool
-	Description string
+	ID      string
+	RealmID string
+	Name    string
+	Alias   string
+	Enabled bool
+	// Description is a pointer because absent and empty are two measured
+	// answers. A create sending `"description":""` reads back carrying
+	// `"description":""`; one sending nothing reads back with no such key.
+	// RequiredActionProvider.Name is a pointer for exactly this reason.
+	Description *string
+	// RedirectURL is **not** a pointer, and that is measured rather than a
+	// choice: the same create sending `"redirectUrl":""` reads back with no
+	// `redirectUrl` key, so empty and absent are one state here where they are
+	// two next door. Two neighbouring fields, opposite rules.
 	RedirectURL string
 	// Domains is **absent** from the representation when empty rather than
 	// serialised as `[]`, which is why internal/admin holds it behind a

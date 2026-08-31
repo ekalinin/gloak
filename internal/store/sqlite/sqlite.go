@@ -2059,11 +2059,17 @@ func scanOrganizationAttributes(rows *sql.Rows, byID map[string]*model.Organizat
 func scanOrganization(row scanner) (*model.Organization, error) {
 	m := &model.Organization{}
 	var enabled int
+	var description sql.NullString
 	if err := row.Scan(&m.ID, &m.RealmID, &m.Name, &m.Alias, &enabled,
-		&m.Description, &m.RedirectURL); err != nil {
+		&description, &m.RedirectURL); err != nil {
 		return nil, classify(err)
 	}
 	m.Enabled = enabled != 0
+	// NULL is "never set" and '' is "set to nothing", and the representation
+	// tells them apart. See 0018_organization.sql.
+	if description.Valid {
+		m.Description = &description.String
+	}
 	return m, nil
 }
 
