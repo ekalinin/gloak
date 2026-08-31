@@ -309,6 +309,34 @@ func TestOrganizationNameIsOnlyAliasCheckedWhenItBecomesTheAlias(t *testing.T) {
 	}
 }
 
+// TestOrganizationAliasWhitespaceIsCheckedBeforeAnyCharacter pins the one thing
+// a single scan gets wrong.
+//
+// `a/b c` answers about the **space** although the slash comes first, so the
+// whitespace check runs over the whole string before any character is looked
+// at. The obvious implementation walks the runes once and answers about the
+// slash, and it passes every other case in this file.
+func TestOrganizationAliasWhitespaceIsCheckedBeforeAnyCharacter(t *testing.T) {
+	h, _, _ := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	enableOrganizations(t, h, admin, "master")
+
+	const space = `{"errorMessage":"Name cannot be used as alias: Empty Space not allowed."}`
+	for _, name := range []string{"gloak-probe a/b", "gloak-probe/a b"} {
+		w := send(t, h, http.MethodPost, "/admin/realms/master/organizations", admin,
+			`{"name":"`+name+`"}`)
+		if w.Code != http.StatusBadRequest || strings.TrimSpace(w.Body.String()) != space {
+			t.Errorf("name %q: got %d %s, want 400 %s", name, w.Code, w.Body, space)
+		}
+	}
+	// A tab is whitespace too, and answers the same sentence.
+	w := send(t, h, http.MethodPost, "/admin/realms/master/organizations", admin,
+		"{\"name\":\"gloak-probe\\ttab\"}")
+	if w.Code != http.StatusBadRequest || strings.TrimSpace(w.Body.String()) != space {
+		t.Errorf("a tab: got %d %s, want 400 %s", w.Code, w.Body, space)
+	}
+}
+
 // TestOrganizationCreateIgnoresTheBodyID pins the inversion: POST /clients and
 // POST /client-scopes both honour an id in the body, and this one does not.
 func TestOrganizationCreateIgnoresTheBodyID(t *testing.T) {
