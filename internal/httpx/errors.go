@@ -260,6 +260,96 @@ const (
 // family that is not fixed.
 func ConsentPageTitle(clientID string) string { return "Grant Access to " + clientID }
 
+// The headings /realms/{realm}/login-actions/required-action serves for the
+// seven required actions a default 26.7.1 realm can reach, measured 2026-08-31
+// one alias at a time on container kc-reqact.
+//
+// **Two aliases share one heading.** webauthn-register and
+// webauthn-register-passwordless are two providers at two priorities, and both
+// answer "Passkey Registration" - so a table keyed by heading would lose one of
+// them, and the alias stays the key.
+//
+// The first four have real forms here; the last three are envelopes under a
+// measured heading, because completing them needs a credential type Gloak does
+// not model. That is the same debt every theme page in this package already
+// carries and not a different one.
+const (
+	UpdatePasswordPageTitle = "Update password"
+	UpdateProfilePageTitle  = "Update Account Information"
+	ConfigureTOTPPageTitle  = "Mobile Authenticator Setup"
+	PasskeyPageTitle        = "Passkey Registration"
+	RecoveryCodesPageTitle  = "Recovery Authentication Codes"
+)
+
+// The feedback lines the two required-action pages Gloak executes carry.
+//
+// The first line of each is the one an untouched page shows - a warning rather
+// than an error, and measured on the first render of each page. The other two
+// are UPDATE_PASSWORD's two failures, and they are separate constants because
+// they are measured to be different sentences for what a reader would call one
+// condition: an empty new password and a mismatched confirmation.
+const (
+	UpdatePasswordPrompt    = "You need to change your password to activate your account."
+	UpdateProfilePrompt     = "You need to update your user profile to activate your account."
+	PasswordMissingMessage  = "Please specify password."
+	PasswordMismatchMessage = "Passwords don't match."
+)
+
+// WriteThemeUpdatePasswordPage writes the UPDATE_PASSWORD required action's
+// page, the third in this flow whose body a fixture reads.
+//
+// Measured, its form is a POST back to
+// /realms/{realm}/login-actions/required-action **itself** - not to a sibling
+// path the way the consent page posts to /login-actions/consent - carrying
+// session_code, execution, client_id, tab_id and client_data, the login form's
+// five with the alias in execution.
+//
+// Its three inputs are password-new, password-confirm and an **unchecked**
+// logout-sessions checkbox with no value attribute. The checkbox is rendered
+// because Keycloak renders it and nothing here reads it: what it does to a
+// user's other sessions was not measured, and a form that omitted it would look
+// like a form whose endpoint had never had one. That is the reasoning
+// WriteThemeConsentPage already applies to its hidden `code`.
+func WriteThemeUpdatePasswordPage(w http.ResponseWriter, action, message string) {
+	var body strings.Builder
+	body.WriteString(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
+		`<title>Sign in to Keycloak</title></head><body>` +
+		`<h1 id="kc-page-title">` + UpdatePasswordPageTitle + `</h1>`)
+	if message != "" {
+		body.WriteString(`<span class="kc-feedback-text">` + html.EscapeString(message) + `</span>`)
+	}
+	body.WriteString(`<form id="kc-passwd-update-form" action="` + html.EscapeString(action) +
+		`" method="post" novalidate="novalidate">` +
+		`<input id="password-new" name="password-new" value="" type="password" autocomplete="new-password"/>` +
+		`<input id="password-confirm" name="password-confirm" value="" type="password" autocomplete="new-password"/>` +
+		`<input type="checkbox" id="logout-sessions" name="logout-sessions"/>` +
+		`</form></body></html>`)
+	writeThemeHTML(w, http.StatusOK, "no-store, must-revalidate, max-age=0", body.String())
+}
+
+// WriteThemeUpdateProfilePage writes the UPDATE_PROFILE required action's page.
+//
+// Measured, its three inputs are email, firstName and lastName, each echoing
+// the user's current value, and there is **no** logout-sessions checkbox - the
+// one page in this family that does not carry one, which is why the checkbox is
+// written per page rather than by a shared helper.
+func WriteThemeUpdateProfilePage(w http.ResponseWriter, action, email, firstName, lastName, message string) {
+	var body strings.Builder
+	body.WriteString(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
+		`<title>Sign in to Keycloak</title></head><body>` +
+		`<h1 id="kc-page-title">` + UpdateProfilePageTitle + `</h1>`)
+	if message != "" {
+		body.WriteString(`<span class="kc-feedback-text">` + html.EscapeString(message) + `</span>`)
+	}
+	body.WriteString(`<form id="kc-update-profile-form" action="` + html.EscapeString(action) +
+		`" method="post" novalidate="novalidate">` +
+		`<input type="text" id="email" name="email" value="` + html.EscapeString(email) + `"/>` +
+		`<input type="text" id="firstName" name="firstName" value="` + html.EscapeString(firstName) + `"/>` +
+		`<input type="text" id="lastName" name="lastName" value="` + html.EscapeString(lastName) + `"/>` +
+		`</form></body></html>`)
+	writeThemeHTML(w, http.StatusOK, "no-store, must-revalidate, max-age=0", body.String())
+}
+
 // WriteThemeConsentPage writes the OAUTH_GRANT page: the second page in this
 // flow whose body a fixture reads, after the login page.
 //

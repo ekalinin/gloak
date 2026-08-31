@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/ekalinin/gloak/internal/httpx"
 )
 
 // The consent page and the device grant's browser half.
@@ -381,18 +383,23 @@ func TestTheConsentEndpointNeedsItsCookies(t *testing.T) {
 	}
 }
 
-// TestRequiredActionRefusesAnUnknownExecution. Measured 400, the theme error
-// page, with Cache-Control present - so it is this endpoint's own page family
-// rather than the restart branch, and the execution is checked before the
-// cookies.
+// TestRequiredActionAnswersAnUnknownExecutionTheExpiredPage.
 //
-// **It is driven on a browser that is mid-flow**, and that is the correction
-// mutation testing forced. The first version sent the request with no cookies
-// and asserted a 400; deleting the execution check entirely still answered a
-// 400, because a request with no authentication session lands on the identical
-// page by the other route. Only a browser that *would* have been served the
-// consent page can tell the two apart.
-func TestRequiredActionRefusesAnUnknownExecution(t *testing.T) {
+// **This test asserted the opposite until 2026-08-31, and the code agreed with
+// it.** Both said an execution that is not OAUTH_GRANT is a 400 theme error page
+// whose instruction is `invalid_request`. Re-measured on container kc-reqact,
+// on a consent-only tab and on a required-action tab alike, a landing carrying
+// an unknown execution answers **200 "Page has expired"** - and an *absent*
+// execution serves the page rather than refusing it, which the old code refused
+// too.
+//
+// The old version was not careless: it drove a browser that was mid-flow,
+// precisely because an earlier version had passed with no cookies at all and a
+// mutation had survived. What it never sent was an execution that was absent
+// rather than wrong, and the answer to that is the one that told the two rules
+// apart. Breaking one parameter at a time is the failure mode AGENTS.md records
+// on CIBA; here the missing probe was the *unbroken* request.
+func TestRequiredActionAnswersAnUnknownExecutionTheExpiredPage(t *testing.T) {
 	b := newBrowser(t)
 	action, _, _ := deviceLogin(t, b)
 	// deviceLogin leaves the browser on the consent page, so the same query with
@@ -409,11 +416,20 @@ func TestRequiredActionRefusesAnUnknownExecution(t *testing.T) {
 		t.Fatalf("the control: OAUTH_GRANT should serve the consent page, got %d", w.Code)
 	}
 	w := b.do(http.MethodGet, base+"&execution=BOGUS", nil)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("want 400, got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+	if body := w.Body.String(); !strings.Contains(body, httpx.ExpiredPageTitle) {
+		t.Errorf("want the %q page, got %s", httpx.ExpiredPageTitle, body)
 	}
 	if got := w.Header().Get("Cache-Control"); got != "no-store, must-revalidate, max-age=0" {
 		t.Errorf("Cache-Control: got %q", got)
+	}
+	// The half the old rule got wrong in the other direction: an execution that
+	// is not sent at all is served the step, not refused.
+	if w := b.do(http.MethodGet, base, nil); w.Code != http.StatusOK ||
+		!strings.Contains(w.Body.String(), "Grant Access to") {
+		t.Errorf("an absent execution: want the consent page, got %d %s", w.Code, w.Body)
 	}
 }
 

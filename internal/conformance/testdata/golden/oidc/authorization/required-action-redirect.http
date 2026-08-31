@@ -1,0 +1,12 @@
+# POST {{login_action}}
+HTTP/1.1 302 Found
+Cache-Control: no-store, must-revalidate, max-age=0
+Content-Length: {{volatile}}
+Content-Security-Policy: frame-src 'self'; frame-ancestors 'self'; object-src 'none';
+Location: {{volatile}}
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+

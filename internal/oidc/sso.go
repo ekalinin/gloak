@@ -201,13 +201,31 @@ func (h *handler) resolveSSO(w http.ResponseWriter, r *http.Request, realm *mode
 	sess := h.resolveBrowserSession(w, r, realm, k)
 	fresh := sess != nil && (!hasMaxAge || maxAgeSatisfied(sess, maxAge, time.Now()))
 
+	// A pending required action is resolved once, before the branches, because
+	// two of them need it and it is a store read. It is only asked for when
+	// there is a session to ask about.
+	var pending string
+	if fresh {
+		var err error
+		if pending, err = h.nextRequiredAction(r.Context(), realm, sess.User); err != nil {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+	}
+
 	if prompt[promptNone] {
 		switch {
 		case !fresh || prompt[promptLogin]:
 			h.openSilentSession(w, r, realm, client, k, req)
 			h.clearPresentedRestart(w, r, realm)
 			reject(authErrLoginRequired, "")
-		case h.consentNeeded(realm, client, sess.User, prompt):
+		// **A pending required action is interaction_required, the same code a
+		// pending consent gets.** Measured on a signed-in browser whose user had
+		// just been given UPDATE_PASSWORD: prompt=none answered
+		// error=interaction_required rather than a code, so a login that cannot
+		// be finished silently is reported as one whether the missing thing is a
+		// consent or an action.
+		case pending != "" || h.consentNeeded(realm, client, sess.User, prompt):
 			h.openSilentSession(w, r, realm, client, k, req)
 			h.clearPresentedRestart(w, r, realm)
 			reject(authErrInteractionRequired, "")
@@ -226,8 +244,15 @@ func (h *handler) resolveSSO(w http.ResponseWriter, r *http.Request, realm *mode
 		return
 	}
 	if fresh {
+		// The action outranks the consent here as it does after a credential
+		// check: measured, a consentRequired client whose user carries
+		// UPDATE_PASSWORD is sent to execution=UPDATE_PASSWORD.
+		if pending != "" {
+			h.beginRequiredActionFromSSO(w, r, realm, client, k, sess, req, pending)
+			return
+		}
 		if h.consentNeeded(realm, client, sess.User, prompt) {
-			h.beginConsentFromSSO(w, r, realm, client, k, sess, req)
+			h.beginRequiredActionFromSSO(w, r, realm, client, k, sess, req, executionOAuthGrant)
 			return
 		}
 		h.completeSSO(w, r, realm, client, k, sess, req)
@@ -236,8 +261,8 @@ func (h *handler) resolveSSO(w http.ResponseWriter, r *http.Request, realm *mode
 	h.beginLoginFromParams(w, r, realm, client, req)
 }
 
-// beginConsentFromSSO is what a signed-in browser gets when the client still
-// wants a consent: the login is skipped and the consent page is not.
+// The redirect a signed-in browser gets when the flow still wants a consent or a
+// required action lives in requiredactions.go, as beginRequiredActionFromSSO.
 //
 // Measured with prompt=consent on a live session at an already-consented client:
 // a **302 straight to /login-actions/required-action?execution=OAUTH_GRANT**,
@@ -246,17 +271,8 @@ func (h *handler) resolveSSO(w http.ResponseWriter, r *http.Request, realm *mode
 // session_state, so the SSO session is reused here exactly as it is on the
 // silent path - which is why the authentication session is rooted at the user
 // session's id and the user goes onto the tab now rather than at a credential
-// check that never happens.
-func (h *handler) beginConsentFromSSO(w http.ResponseWriter, r *http.Request, realm *model.Realm,
-	client *model.Client, k *keys.RealmKeys, sess *browserSession, req *authRequest) {
-	tab := req.tab(client)
-	tab.UserID = sess.User.ID
-	if _, err := h.resumeAuthSession(w, r, realm, k, sess.Session.ID, tab, req.restart(realm, client)); err != nil {
-		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
-		return
-	}
-	h.writeRequiredActionRedirect(w, realm, client, tab)
-}
+// check that never happens. A pending required action was measured taking the
+// identical redirect with the alias in place of OAUTH_GRANT.
 
 // openSilentSession is the pair of cookies the two rejections at step 10 send,
 // and it is the part of them a reader would leave out.

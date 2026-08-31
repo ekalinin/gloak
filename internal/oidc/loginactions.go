@@ -309,11 +309,23 @@ func (h *handler) attemptLogin(w http.ResponseWriter, r *http.Request, realm *mo
 	}
 
 	// The user goes on the tab before anything is established, because the
-	// consent page is a second request and the session does not exist until it
-	// comes back. Measured: the 302 to the consent page sets no cookies at all.
+	// required action and the consent are both a second request and the session
+	// does not exist until one of them comes back. Measured: the 302 to
+	// /login-actions/required-action sets no cookies at all, for either kind of
+	// step.
 	tab.UserID = user.ID
-	if h.tabConsentNeeded(realm, client, user, tab) {
-		h.writeRequiredActionRedirect(w, realm, client, tab)
+	// **The required actions are checked here, after the credentials and after
+	// the disabled-account message.** Measured: a disabled user carrying
+	// UPDATE_PASSWORD is answered "Account is disabled, contact your
+	// administrator." rather than the action, so verifyLoginCredentials runs
+	// first and this cannot be moved above it.
+	step, err := h.tabStep(r.Context(), realm, client, user, tab)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	if step != "" {
+		h.writeRequiredActionRedirect(w, realm, client, tab, step)
 		return
 	}
 

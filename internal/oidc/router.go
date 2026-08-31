@@ -116,7 +116,12 @@ func (h *handler) register(mux *http.ServeMux) {
 	// `{"error":"HTTP 404 Not Found"}`, which is what WithKeycloakFallbacks
 	// already answers for a known path hit with the wrong method - so
 	// registering POST alone is the measured behaviour rather than an omission.
+	// **POST is registered here and not on /login-actions/consent's sibling**:
+	// a required action's own form posts back to this path, where the consent
+	// page posts to /login-actions/consent. Measured, and the two verbs answer
+	// identically on all six cells of the session_code x execution grid.
 	mux.HandleFunc("GET /realms/{realm}/login-actions/required-action", h.requiredAction)
+	mux.HandleFunc("POST /realms/{realm}/login-actions/required-action", h.requiredAction)
 	mux.HandleFunc("POST /realms/{realm}/login-actions/consent", h.consent)
 	// **These two paths are one endpoint mounted twice**, measured in both
 	// directions and on both verbs: POST on either mints a device code, GET on

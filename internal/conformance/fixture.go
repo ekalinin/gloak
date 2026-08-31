@@ -364,6 +364,28 @@ var Fixtures = map[string]Fixture{
 	"browser-code-spent":    browserSpentCodeFixture("gloak-probe-browser", nil, nil),
 	"browser-logged-in":     browserLogoutFixture(),
 
+	// The required-action fixtures. Each creates its user through the **inline
+	// credentials array** rather than through reset-password, because that is
+	// the route the follow-up this closes named: `temporary: true` there is a
+	// disjunction that only ever adds UPDATE_PASSWORD, and a fixture that used
+	// the other route would exercise a different write.
+	//
+	// One user per fixture, for the reason every client is its own: the
+	// recorder shares one container, and the browser fixture's user has its
+	// password *changed* by the case that follows it, so a second case reusing
+	// that username would log in with a password the first case replaced.
+	// The **landing page** the redirect below points at has no case, and that is
+	// deliberate rather than an omission: its body is 10776 bytes of
+	// keycloak.v2 Freemarker carrying a /resources/<hash>/ segment regenerated
+	// on every container start, so a golden of it would churn on every
+	// `make record` - which is exactly why the four login-theme pages are
+	// Pending and parked. Gloak serves the measured envelope, status and
+	// heading under a placeholder body, and `internal/oidc`'s own tests are what
+	// guard it until P13 builds themes.
+	"temporary-password":      temporaryPasswordUserFixture("gloak-probe-temp-password"),
+	"disabled-user":           disabledUserFixture("gloak-probe-disabled-user"),
+	"browser-required-action": requiredActionLoginFixture(),
+
 	// The logout fixtures. Every one of them signs its user in with a direct
 	// grant rather than through the login form, because the logout endpoint's
 	// answer is measured identical either way and only the direct grant can be
@@ -2271,6 +2293,80 @@ func browserSpentCodeFixture(clientID string, authQuery, exchange map[string]str
 		},
 	})
 	return f
+}
+
+// requiredActionUserBody is a user created with an inline credentials array,
+// which is the route a temporary password actually arrives by.
+//
+// **`temporary` is a disjunction over the array that only ever adds**
+// UPDATE_PASSWORD - measured both orderings of {true, false} - so a fixture
+// wanting the action needs one entry saying true and nothing else.
+func requiredActionUserBody(username string, enabled, temporary bool) string {
+	return `{"username":"` + username + `","enabled":` + strconv.FormatBool(enabled) + `,` +
+		`"firstName":"Ada","lastName":"Lovelace","email":"` + username + `@example.com",` +
+		`"credentials":[{"type":"password","value":"` + requiredActionPassword + `",` +
+		`"temporary":` + strconv.FormatBool(temporary) + `}]}`
+}
+
+// requiredActionPassword is what these fixtures' users log in with. It is one
+// constant because the credential POST that changes it is a case's own request,
+// and a case reading a literal the fixture did not write is how a login stops
+// working when only one of the two is edited.
+const requiredActionPassword = "gloak-probe-pw"
+
+// createUserStep posts one user body, idempotently.
+func createUserStep(body string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/users",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(body),
+		},
+		ExpectStatus: idempotentCreate,
+	}
+}
+
+// temporaryPasswordUserFixture creates a user whose password is temporary, so
+// the case's own request is the direct grant that must be refused.
+//
+// Measured on this exact body: the representation comes back carrying
+// requiredActions ["UPDATE_PASSWORD"], and the password grant for it answers
+// 400 invalid_grant "Account is not fully set up".
+func temporaryPasswordUserFixture(username string) Fixture {
+	return Fixture{State: "bootstrap", Steps: []Step{
+		adminTokenStep(),
+		createUserStep(requiredActionUserBody(username, true, true)),
+	}}
+}
+
+// disabledUserFixture creates a disabled user with a working password, so the
+// case's own request is the direct grant that answers "Account disabled".
+//
+// It is a separate fixture rather than a second case on the one above because
+// the two refusals are measured to be ordered - a user that is both disabled
+// and not set up answers about being disabled - and one user could only ever
+// show the winner.
+func disabledUserFixture(username string) Fixture {
+	return Fixture{State: "bootstrap", Steps: []Step{
+		adminTokenStep(),
+		createUserStep(requiredActionUserBody(username, false, false)),
+	}}
+}
+
+// requiredActionLoginFixture takes a user with a temporary password up to the
+// login page, so the case's own request is the credential POST and its own
+// response is the 302 to /login-actions/required-action.
+//
+// Its user is its own because the case that follows **changes that user's
+// password**: the answer to the credential POST is the action redirect, and a
+// second case reusing the username would arrive after some other case had
+// completed the action.
+func requiredActionLoginFixture() Fixture {
+	const clientID = "gloak-probe-browser-reqaction"
+	steps := browserClientSteps(clientID, "")
+	steps = append(steps, createUserStep(requiredActionUserBody("gloak-probe-reqaction-user", true, true)))
+	return Fixture{State: "bootstrap", Steps: append(steps, authorizeStep(clientID, nil))}
 }
 
 // browserLogoutFixture logs a user in and exchanges the code, so the case's
