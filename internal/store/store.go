@@ -56,7 +56,37 @@ type Store interface {
 	Sessions() SessionRepo
 	RequiredActions() RequiredActionRepo
 	Organizations() OrganizationRepo
+	Authz() AuthzRepo
 	Close() error
+}
+
+// AuthzRepo stores a client's authorization services settings.
+//
+// **It also owns the client's authorizationServicesEnabled flag**, because that
+// flag is the presence of a row here rather than a column on the client. The
+// client repositories read it with a subquery and cannot write it; Upsert and
+// DeleteByClientID are the only two things that move it. A boolean beside this
+// table would be a second truth, and Keycloak's own behaviour says the two
+// cannot drift: turning the flag off destroys the settings, measured.
+type AuthzRepo interface {
+	// Upsert creates the resource server or replaces its three settings.
+	//
+	// It is one method rather than Create plus Update because the two callers
+	// want different halves and neither wants a not-found: turning the flag on
+	// writes model.DefaultAuthzResourceServer, and PUT .../authz/resource-server
+	// writes the caller's values over a row that is guaranteed to exist because
+	// the route's own gate resolved it.
+	Upsert(ctx context.Context, rs *model.AuthzResourceServer) error
+	// ByClientID returns the resource server, or ErrNotFound when the client
+	// has no authorization services. The 404 that ErrNotFound becomes is
+	// `{"error":"HTTP 404 Not Found"}` and **not** any of the twenty-one
+	// spellings - see guardAuthz.
+	ByClientID(ctx context.Context, clientID string) (*model.AuthzResourceServer, error)
+	// DeleteByClientID turns the flag off. It is idempotent: a client that
+	// never had authorization services is not an error, because
+	// PUT /clients/{uuid} sending `"authorizationServicesEnabled":false` twice
+	// answers 204 both times.
+	DeleteByClientID(ctx context.Context, clientID string) error
 }
 
 // OrganizationRepo stores a realm's organizations.

@@ -156,6 +156,10 @@ func (s *Store) Organizations() store.OrganizationRepo {
 	return &organizationRepo{s.db}
 }
 
+func (s *Store) Authz() store.AuthzRepo {
+	return &authzRepo{s.db}
+}
+
 // classify maps driver errors onto the store's sentinels so handlers never
 // inspect driver-specific error text.
 func classify(err error) error {
@@ -340,7 +344,8 @@ func (r *clientRepo) ByClientID(ctx context.Context, realmID, clientID string) (
 		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
 		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
 		 full_scope_allowed, not_before, node_re_registration_timeout,
-		 redirect_uris, web_origins, attributes, protocol_mappers
+		 redirect_uris, web_origins, attributes, protocol_mappers,
+		 EXISTS (SELECT 1 FROM authz_resource_server a WHERE a.client_id = client.id)
 		 FROM client WHERE realm_id = ? AND client_id = ?`, realmID, clientID)
 	return r.scanWithScopes(ctx, row)
 }
@@ -352,7 +357,8 @@ func (r *clientRepo) ByID(ctx context.Context, realmID, id string) (*model.Clien
 		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
 		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
 		 full_scope_allowed, not_before, node_re_registration_timeout,
-		 redirect_uris, web_origins, attributes, protocol_mappers
+		 redirect_uris, web_origins, attributes, protocol_mappers,
+		 EXISTS (SELECT 1 FROM authz_resource_server a WHERE a.client_id = client.id)
 		 FROM client WHERE realm_id = ? AND id = ?`, realmID, id)
 	return r.scanWithScopes(ctx, row)
 }
@@ -364,7 +370,8 @@ func (r *clientRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.
 		 bearer_only, consent_required, standard_flow_enabled, implicit_flow_enabled,
 		 direct_access_grants_enabled, service_accounts_enabled, frontchannel_logout,
 		 full_scope_allowed, not_before, node_re_registration_timeout,
-		 redirect_uris, web_origins, attributes, protocol_mappers
+		 redirect_uris, web_origins, attributes, protocol_mappers,
+		 EXISTS (SELECT 1 FROM authz_resource_server a WHERE a.client_id = client.id)
 		 FROM client WHERE realm_id = ? ORDER BY client_id`, realmID)
 	if err != nil {
 		return nil, classify(err)
@@ -511,7 +518,9 @@ func scanClient(row scanner) (*model.Client, error) {
 		&m.BearerOnly, &m.ConsentRequired, &m.StandardFlowEnabled, &m.ImplicitFlowEnabled,
 		&m.DirectAccessGrantsEnabled, &m.ServiceAccountsEnabled, &m.FrontchannelLogout,
 		&m.FullScopeAllowed, &m.NotBefore, &m.NodeReRegistrationTimeout,
-		&redirectURIs, &webOrigins, &attributes, &protocolMappers)
+		&redirectURIs, &webOrigins, &attributes, &protocolMappers,
+		// The flag is the subquery in the three SELECTs above, never a column.
+		&m.AuthorizationServicesEnabled)
 	if err != nil {
 		return nil, classify(err)
 	}
@@ -2084,4 +2093,48 @@ func collectOrganizations(rows *sql.Rows) ([]*model.Organization, error) {
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+type authzRepo struct{ db *sql.DB }
+
+// Upsert writes the three settings, creating the row when it is absent.
+//
+// ON CONFLICT rather than an UPDATE-then-INSERT because the row's existence is
+// the client's authorizationServicesEnabled flag: an update that found nothing
+// would have to decide whether to turn the flag on, and that decision belongs
+// to the caller in internal/admin rather than to a driver.
+func (r *authzRepo) Upsert(ctx context.Context, rs *model.AuthzResourceServer) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO authz_resource_server
+		   (client_id, allow_remote_resource_management, policy_enforcement_mode, decision_strategy)
+		 VALUES (?, ?, ?, ?)
+		 ON CONFLICT (client_id) DO UPDATE SET
+		   allow_remote_resource_management = excluded.allow_remote_resource_management,
+		   policy_enforcement_mode = excluded.policy_enforcement_mode,
+		   decision_strategy = excluded.decision_strategy`,
+		rs.ClientID, rs.AllowRemoteResourceManagement, rs.PolicyEnforcementMode, rs.DecisionStrategy)
+	return classify(err)
+}
+
+func (r *authzRepo) ByClientID(ctx context.Context, clientID string) (*model.AuthzResourceServer, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT client_id, allow_remote_resource_management, policy_enforcement_mode, decision_strategy
+		 FROM authz_resource_server WHERE client_id = ?`, clientID)
+	m := &model.AuthzResourceServer{}
+	var allowRemote int
+	if err := row.Scan(&m.ClientID, &allowRemote, &m.PolicyEnforcementMode, &m.DecisionStrategy); err != nil {
+		return nil, classify(err)
+	}
+	m.AllowRemoteResourceManagement = allowRemote != 0
+	return m, nil
+}
+
+// DeleteByClientID is idempotent and deliberately does not report ErrNotFound:
+// PUT /clients/{uuid} sending authorizationServicesEnabled false twice answers
+// 204 both times, so a driver that distinguished the two calls would be
+// offering the handler a difference it must not act on.
+func (r *authzRepo) DeleteByClientID(ctx context.Context, clientID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM authz_resource_server WHERE client_id = ?`, clientID)
+	return classify(err)
 }

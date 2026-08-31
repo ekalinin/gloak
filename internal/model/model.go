@@ -158,15 +158,21 @@ type Client struct {
 	ImplicitFlowEnabled       bool
 	DirectAccessGrantsEnabled bool
 	ServiceAccountsEnabled    bool
-	FrontchannelLogout        bool
-	FullScopeAllowed          bool
-	NotBefore                 int
-	NodeReRegistrationTimeout int
-	RedirectURIs              []string
-	WebOrigins                []string
-	DefaultClientScopes       []string
-	OptionalClientScopes      []string
-	Attributes                map[string]string
+	// AuthorizationServicesEnabled is **derived, not stored**: it is true
+	// exactly when the client has a row in authz_resource_server. The client
+	// repositories read it with a subquery and never write it; AuthzRepo owns
+	// it, because a boolean beside the settings table would be a second truth
+	// that could disagree with it. See 0019_authz_resource_server.sql.
+	AuthorizationServicesEnabled bool
+	FrontchannelLogout           bool
+	FullScopeAllowed             bool
+	NotBefore                    int
+	NodeReRegistrationTimeout    int
+	RedirectURIs                 []string
+	WebOrigins                   []string
+	DefaultClientScopes          []string
+	OptionalClientScopes         []string
+	Attributes                   map[string]string
 	// ProtocolMappers are the client's own, distinct from the ones it reaches
 	// through its client scopes. Two of the six bootstrapped clients carry one:
 	// account-console's `audience resolve` and security-admin-console's
@@ -469,6 +475,43 @@ type RequiredActionProvider struct {
 	// Attributes and unlike its ProtocolMappers. DELETE .../config was measured
 	// leaving `{"config":{}}` rather than removing the key.
 	Config StringMap
+}
+
+// AuthzResourceServer is a client's authorization services settings.
+//
+// It has exactly three fields because exactly three are settable. The
+// representation also carries `id`, `clientId` and `name`, and none of them is
+// state: `id` and `clientId` are **both** the client's internal UUID and `name`
+// is the client's `clientId` string - so the representation's `clientId` is not
+// the client's `clientId`, measured 2026-08-31. internal/admin fills all three
+// from the client it already holds.
+//
+// The `resources`, `policies` and `scopes` arrays are not here for a different
+// reason: on `GET .../authz/resource-server` they are **always empty**, measured
+// against a resource server holding four scopes. `GET .../settings` is the read
+// that populates them, and it is a different body.
+//
+// The zero value is not the default. A resource server Keycloak creates carries
+// AllowRemoteResourceManagement true, PolicyEnforcementMode ENFORCING and
+// DecisionStrategy UNANIMOUS; DefaultAuthzResourceServer is that value.
+type AuthzResourceServer struct {
+	ClientID                      string
+	AllowRemoteResourceManagement bool
+	PolicyEnforcementMode         string
+	DecisionStrategy              string
+}
+
+// DefaultAuthzResourceServer is what a client gets when its
+// authorizationServicesEnabled is turned on, through the create or through the
+// update. Measured on both paths, and measured again after the flag was turned
+// off and back on, which resets to exactly this.
+func DefaultAuthzResourceServer(clientID string) *AuthzResourceServer {
+	return &AuthzResourceServer{
+		ClientID:                      clientID,
+		AllowRemoteResourceManagement: true,
+		PolicyEnforcementMode:         "ENFORCING",
+		DecisionStrategy:              "UNANIMOUS",
+	}
 }
 
 // Organization is a realm's organization: a name, an immutable alias, a set of

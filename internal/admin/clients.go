@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -139,6 +140,14 @@ func (h *handler) createClient(w http.ResponseWriter, r *http.Request, rc *reqCo
 			return
 		}
 	}
+	// A create naming authorizationServicesEnabled gets a resource server with
+	// the measured defaults and **nothing in it**: no Default Resource, no
+	// Default Policy, no Default Permission. Measured on this path and on the
+	// PUT that turns the flag on afterwards, and both were empty.
+	if err := h.syncResourceServer(r.Context(), m.ID, m.AuthorizationServicesEnabled); err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
 
 	// Absolute, including the host the request arrived on, which is what the
 	// recording shows and what a client follows.
@@ -183,6 +192,19 @@ func (h *handler) updateClient(w http.ResponseWriter, r *http.Request, rc *reqCo
 	// and the mappers are restored below.
 	kept := merged.ProtocolMappers
 	merged.ProtocolMappers = nil
+	// **authorizationServicesEnabled is the one field on this body that does
+	// not merge**, and it is cleared for that reason rather than for the
+	// mappers' one. Measured 2026-08-31 on a client carrying six non-default
+	// values: a `PUT {"description":"touched"}` left serviceAccountsEnabled,
+	// implicitFlowEnabled, consentRequired, fullScopeAllowed, publicClient,
+	// webOrigins and attributes exactly as they were and **turned this flag
+	// off**, destroying the resource server with it. So an omitted value means
+	// false here where it means "unchanged" everywhere else on the same body.
+	//
+	// AGENTS.md's "PUT on a client or a user merges" is true of the other
+	// hundred fields and false of this one. Leaving it in the merge is the
+	// obvious implementation and it makes the flag impossible to turn off.
+	merged.AuthorizationServicesEnabled = false
 	if err := json.NewDecoder(r.Body).Decode(&merged); err != nil {
 		httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_request", "Cannot parse the JSON")
 		return
@@ -233,7 +255,35 @@ func (h *handler) updateClient(w http.ResponseWriter, r *http.Request, rc *reqCo
 			return
 		}
 	}
+	if err := h.syncResourceServer(r.Context(), updated.ID, updated.AuthorizationServicesEnabled); err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
 	httpx.WriteNoContent(w, r)
+}
+
+// syncResourceServer makes the client's resource server agree with the flag.
+//
+// **Turning the flag off destroys the settings**, measured: a client whose
+// resource server had been PUT to `false`, `PERMISSIVE`, `AFFIRMATIVE` came
+// back `true`, `ENFORCING`, `UNANIMOUS` after the flag was turned off and on
+// again. So this deletes rather than remembering, and the row that comes back
+// is model.DefaultAuthzResourceServer.
+//
+// Turning it on when it is **already** on leaves the settings alone, which is
+// why this reads before it writes rather than upserting the defaults
+// unconditionally. That distinction is the difference between a PUT on the
+// client that preserves the resource server and one that silently resets it.
+func (h *handler) syncResourceServer(ctx context.Context, clientID string, enabled bool) error {
+	if !enabled {
+		return h.store.Authz().DeleteByClientID(ctx, clientID)
+	}
+	if _, err := h.store.Authz().ByClientID(ctx, clientID); err == nil {
+		return nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	return h.store.Authz().Upsert(ctx, model.DefaultAuthzResourceServer(clientID))
 }
 
 // deleteClient serves DELETE /admin/realms/{realm}/clients/{client-uuid}.
@@ -319,12 +369,17 @@ func newClientFrom(rep clientRepresentation, realmID string) *model.Client {
 		ImplicitFlowEnabled:       rep.ImplicitFlowEnabled,
 		DirectAccessGrantsEnabled: rep.DirectAccessGrantsEnabled,
 		ServiceAccountsEnabled:    rep.ServiceAccountsEnabled,
-		FrontchannelLogout:        rep.FrontchannelLogout,
-		FullScopeAllowed:          rep.FullScopeAllowed,
-		NotBefore:                 rep.NotBefore,
-		NodeReRegistrationTimeout: rep.NodeReRegistrationTimeout,
-		RedirectURIs:              nonNil(rep.RedirectURIs),
-		WebOrigins:                nonNil(rep.WebOrigins),
+		// Carried so the two write paths can read it back off the merged
+		// representation. It is never written to the client table - the store
+		// derives it from the resource server row - so this field is the
+		// request's intent rather than state, and syncResourceServer acts on it.
+		AuthorizationServicesEnabled: rep.AuthorizationServicesEnabled,
+		FrontchannelLogout:           rep.FrontchannelLogout,
+		FullScopeAllowed:             rep.FullScopeAllowed,
+		NotBefore:                    rep.NotBefore,
+		NodeReRegistrationTimeout:    rep.NodeReRegistrationTimeout,
+		RedirectURIs:                 nonNil(rep.RedirectURIs),
+		WebOrigins:                   nonNil(rep.WebOrigins),
 		// The two scope lists are deliberately **not** put through nonNil. A
 		// nil one means "the body did not name them" and is what
 		// bootstrap.InheritClientScopes fills from the realm; an empty one

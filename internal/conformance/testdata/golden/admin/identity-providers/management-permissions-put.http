@@ -1,0 +1,11 @@
+# PUT /admin/realms/master/identity-provider/instances/gloak-probe-no-such-idp/management/permissions
+HTTP/1.1 501 Not Implemented
+Content-Length: {{volatile}}
+Content-Type: application/json
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"error":"Feature not enabled","error_description":"For more on this error consult the server log."}
