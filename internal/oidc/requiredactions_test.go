@@ -159,12 +159,12 @@ func TestATemporaryPasswordIsActuallyTemporary(t *testing.T) {
 // 57 - and not from the user's array. Asserting one ordering alone would pass on
 // a handler that read the array in order, which is the obvious implementation.
 func TestRequiredActionsAreServedInPriorityOrder(t *testing.T) {
+	h, s := authServerAndStore(t)
 	for _, order := range [][]string{
 		{"UPDATE_PASSWORD", "UPDATE_PROFILE"},
 		{"UPDATE_PROFILE", "UPDATE_PASSWORD"},
 	} {
 		t.Run(strings.Join(order, ","), func(t *testing.T) {
-			h, s := authServerAndStore(t)
 			b := &browser{h: h, t: t, jar: map[string]string{}}
 			setActions(t, s, order...)
 			landing := b.browserAt(t, "")
@@ -378,7 +378,16 @@ func TestVerifyProfileClearsItselfAtLogin(t *testing.T) {
 // which is the point: a matrix that varied the verb alone would have concluded
 // the verb was the variable, and one that varied the execution alone would have
 // missed that a stale session code re-issues the landing rather than expiring.
+//
+// **Eleven of the twelve share one server and the twelfth cannot.** Every
+// subtest restores the action with setActions and takes a fresh jar, so the
+// eleven that only read are independent of each other; the POST that *matches*
+// changes the user's password, and a subtest after it would be logging in with
+// a password its neighbour replaced. Sharing is not a tidy-up here - a full
+// bootstrap per cell is an argon2 hash and a migration run per cell, and this
+// package already runs for two minutes on CI.
 func TestTheSessionCodeDecidesNotTheVerb(t *testing.T) {
+	shared, sharedStore := authServerAndStore(t)
 	for _, verb := range []string{http.MethodGet, http.MethodPost} {
 		for _, tc := range []struct {
 			name       string
@@ -395,7 +404,10 @@ func TestTheSessionCodeDecidesNotTheVerb(t *testing.T) {
 			{"nocode+absent", false, "", http.StatusOK, httpx.UpdatePasswordPageTitle},
 		} {
 			t.Run(verb+"/"+tc.name, func(t *testing.T) {
-				h, s := authServerAndStore(t)
+				h, s := shared, sharedStore
+				if verb == http.MethodPost && tc.name == "code+match" {
+					h, s = authServerAndStore(t)
+				}
 				b := &browser{h: h, t: t, jar: map[string]string{}}
 				setActions(t, s, "UPDATE_PASSWORD")
 
@@ -479,6 +491,7 @@ func TestAStaleSessionCodeReIssuesTheLanding(t *testing.T) {
 // match." - and the empty case is checked first, since an empty pair also
 // matches. One message for both would be wrong on one of them.
 func TestTheTwoPasswordFailuresAreTwoSentences(t *testing.T) {
+	h, s := authServerAndStore(t)
 	for _, tc := range []struct {
 		name       string
 		form       url.Values
@@ -491,7 +504,6 @@ func TestTheTwoPasswordFailuresAreTwoSentences(t *testing.T) {
 			httpx.PasswordMismatchMessage, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h, s := authServerAndStore(t)
 			b := &browser{h: h, t: t, jar: map[string]string{}}
 			setActions(t, s, "UPDATE_PASSWORD")
 			landing := b.browserAt(t, "")
@@ -544,8 +556,8 @@ func TestAnActionGloakCannotExecuteStopsTheLogin(t *testing.T) {
 // is 500 with "Failed to send email, please try again later.", because no
 // default container - and no Gloak - configures SMTP.
 func TestVerifyEmailIsTwoAnswers(t *testing.T) {
+	h, s := authServerAndStore(t)
 	t.Run("verified", func(t *testing.T) {
-		h, s := authServerAndStore(t)
 		b := &browser{h: h, t: t, jar: map[string]string{}}
 		setEmailVerified(t, s, true)
 		setActions(t, s, "VERIFY_EMAIL")
@@ -560,7 +572,6 @@ func TestVerifyEmailIsTwoAnswers(t *testing.T) {
 		}
 	})
 	t.Run("unverified", func(t *testing.T) {
-		h, s := authServerAndStore(t)
 		b := &browser{h: h, t: t, jar: map[string]string{}}
 		setEmailVerified(t, s, false)
 		setActions(t, s, "VERIFY_EMAIL")
@@ -654,7 +665,12 @@ func TestPromptNoneWithAPendingActionIsInteractionRequired(t *testing.T) {
 // - TestADisabledProviderIsSkippedAndLeftOnTheUser above - and is refused
 // tokens. One user, two endpoints, opposite answers, and sharing one predicate
 // between them is wrong on seven aliases.
+//
+// The seven rows share one server: none of them logs in through the browser or
+// changes a password, so each is independent of its neighbours once it has
+// written the user's two fields.
 func TestDirectGrantRefusesAnAccountThatIsNotSetUp(t *testing.T) {
+	h, s := authServerAndStore(t)
 	for _, tc := range []struct {
 		name     string
 		actions  []string
@@ -673,7 +689,6 @@ func TestDirectGrantRefusesAnAccountThatIsNotSetUp(t *testing.T) {
 		{"disabled and an action", []string{"UPDATE_PASSWORD"}, false, "admin", "Account disabled"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h, s := authServerAndStore(t)
 			ctx := context.Background()
 			realm, _ := s.Realms().ByName(ctx, "master")
 			user, _ := s.Users().ByUsername(ctx, realm.ID, "admin")

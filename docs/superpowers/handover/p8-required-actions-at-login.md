@@ -285,6 +285,27 @@ It exists, and it is measured and deliberately not built - see the dispositions.
    cookies where the credential POST that ends in a code sets three - so the
    absence is pinned by `internal/oidc`'s own test instead.
 
+7. **CI is within a factor of two of Go's per-package test timeout, and one run
+   on this branch went over.** Nothing in AGENTS.md says so. Measured from the
+   run logs: on the javamap branch - effectively `main` - `internal/conformance`
+   took **307s** and `internal/oidc` **152s** against Go's default **600s per
+   package**. This branch's first run was *faster* on both (282s and 146s) and
+   passed; its second run, on the same code plus a clean merge of `main` that
+   touches neither package, hit the ceiling on **both** with
+   `panic: test timed out after 10m0s` - `TestConformance` was at 7m40s when it
+   fired. So the runner was roughly twice as slow and the margin was not there.
+   Two things follow. **A red build on this repository is not necessarily a
+   regression**, which is the opposite of what "`make test` is clean; any failure
+   is a real regression" leads a reader to assume, because that sentence is about
+   the local suite and not about the gate. And the fix is a `-timeout` on the CI
+   step, which is the gate and outside this cut's files. What *was* done here is
+   the part that belongs to this cut: the twenty-two `authServerAndStore` calls
+   this branch added were cut to five by sharing a server wherever the subtests
+   do not mutate what their neighbours read, taking `internal/oidc` from 65s to
+   52s locally. Every mutation was re-run against the shared-server versions and
+   all were still killed - a shared fixture that hides a mutation would be worse
+   than the minute it saves.
+
 ## Follow-up dispositions
 
 - **F104 - closed.** Both halves. `internal/oidc` now reads a user's
