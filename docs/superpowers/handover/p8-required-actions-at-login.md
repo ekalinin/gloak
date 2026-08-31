@@ -285,20 +285,33 @@ It exists, and it is measured and deliberately not built - see the dispositions.
    cookies where the credential POST that ends in a code sets three - so the
    absence is pinned by `internal/oidc`'s own test instead.
 
-7. **CI is within a factor of two of Go's per-package test timeout, and one run
-   on this branch went over.** Nothing in AGENTS.md says so. Measured from the
-   run logs: on the javamap branch - effectively `main` - `internal/conformance`
-   took **307s** and `internal/oidc` **152s** against Go's default **600s per
-   package**. This branch's first run was *faster* on both (282s and 146s) and
-   passed; its second run, on the same code plus a clean merge of `main` that
-   touches neither package, hit the ceiling on **both** with
-   `panic: test timed out after 10m0s` - `TestConformance` was at 7m40s when it
-   fired. So the runner was roughly twice as slow and the margin was not there.
+7. **CI is a coin flip against Go's per-package test timeout, and nothing says
+   so.** Not "close to the limit" - **the identical tree passed, failed and then
+   passed again**, and the third of those was a re-run of the second with no
+   change at all. The evidence, all from this branch's own runs:
+
+   ```
+   run   tree                              conformance   oidc    result
+   1     the branch                          282s         146s   pass
+   2     + a clean merge of main             timeout      timeout fail
+   3     + a test-sharing commit             457s         186s   pass
+   4     + an 8-line markdown edit           timeout      timeout fail
+   4'    the same tree, re-run               369s         186s   pass
+   ```
+
+   Run 4 differs from run 3 by **eight inserted and six deleted lines of one
+   markdown file**. Its timeout named `TestNoVolatileMaskCoversACapturedValue`
+   at **9m45s**, a `main` ratchet from the javamap round - a test that takes
+   **22s locally**. That is a 26x slowdown, which is not "a slower runner"; the
+   baseline is `main`'s own 307s conformance against Go's default 600s per
+   package, so the headroom is under 2x and any oversubscribed runner eats it.
    Two things follow. **A red build on this repository is not necessarily a
    regression**, which is the opposite of what "`make test` is clean; any failure
-   is a real regression" leads a reader to assume, because that sentence is about
-   the local suite and not about the gate. And the fix is a `-timeout` on the CI
-   step, which is the gate and outside this cut's files. What *was* done here is
+   is a real regression" leads a reader to assume - that sentence is about the
+   local suite and not about the gate, and a reader who applies it to a red CI
+   run will go looking for a bug that is not there. This cut lost roughly an hour
+   to exactly that. And the fix is a `-timeout` on the CI step, which is the gate
+   and outside this cut's files. What *was* done here is
    the part that belongs to this cut: this branch's tests bootstrapped a server
    **thirty-six** times - fifteen call sites, some of them inside a table - and
    now do so **seventeen** times, by sharing one wherever the subtests do not
