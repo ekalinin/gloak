@@ -523,3 +523,45 @@ catalogues, the second chunked at 11 kB), the five mapper operations (a mapper
 table plus that catalogue), `POST`/`PUT /components` and `sub-component-types`
 (the config is filtered to the provider's declared properties, which needs the
 same catalogue), and `DELETE /components/{id}` (§3).
+
+## 6. The mutation pass, and the three survivors it found
+
+Thirty-one mutations, one per claim, each confirming the *named* test fails and
+then reverted. Twenty-eight were killed on the first pass. The three survivors
+are all findings and none of them is a nuisance.
+
+**"A component's `config` is `KeyOrder`" was not pinned by anything.** Swapping
+the constructor in `components.go` for `SizedKeyOrder` passed the whole of
+`components_test.go`. The reason is in the measurement: every config a default
+install has holds nought, one or two keys, and both functions agree on all of
+those. Reaching a discriminating key set means `POST /components`, which this cut
+does not build. So the claim was moved to where the discriminating measurements
+are - six vectors in `internal/javamap`'s tests, with a counted counterpart
+saying `SizedKeyOrder` is wrong on two of them - and the serialiser's doc comment
+now says plainly that nothing it serves would notice. Mutating the vectors kills
+it. Four more vectors went in for the identity provider side, with a counted
+claim that `KeyOrder` is wrong on four of nine; **the first version of that count
+said "wrong on all of them" and the test refuted it on the seven-key set**, which
+is the counted claim being wrong on its first writing exactly as this project
+keeps finding.
+
+**"The search pattern gets an implied trailing wildcard" survived twice, and both
+times the mutation was behaviour-preserving.** Removing the append leaves an
+unanchored walk that agrees on every probe; re-adding the tail anchor is dead
+code once the append is there. Reverting the *fix* means reverting both halves at
+once, and that mutation is killed by both the user test and the identity provider
+one. Worth writing down because two separate mutations of one function can each
+look like a survivor while the property is genuinely pinned.
+
+**"The delete is not idempotent" survived because the branch it mutated is dead
+code.** `guardIdentityProvider` resolves the alias before the handler runs, so
+`deleteIdentityProvider`'s own `ErrNotFound` branch is unreachable through the
+router. The reachable 404 is the guard's, and mutating that one is killed. The
+handler keeps its branch as a defence against the row going between the two
+lookups; what the mutation established is that the test pins the guard and not
+the handler, which is where somebody would look first.
+
+The store claims were mutated against the SQLite driver and the Postgres suite
+was run by hand on the merged tree, `-v` confirming both new subtests actually
+executed - AGENTS.md's warning that it "once passed while exercising none of a
+cut's new code".
