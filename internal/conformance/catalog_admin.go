@@ -10978,7 +10978,7 @@ var adminCases = []Case{
 				"Authorization": "Bearer {{access_token}}",
 				"Content-Type":  "application/json",
 			},
-			Body: []byte(`{"_id":"5e50a5ce-0000-4000-8000-0000000000f401",` +
+			Body: []byte(`{"_id":"5e50a5ce-0000-4000-8000-00000000f401",` +
 				`"name":"gloak-probe-created","displayName":"Created","type":"urn:gloak:c",` +
 				`"icon_uri":"http://example.test/c.png","ownerManagedAccess":true,` +
 				`"uris":["/z","/a","/m"],"attributes":{"k2":["b"],"k1":["a"]},` +
@@ -11055,7 +11055,7 @@ var adminCases = []Case{
 		Request: Request{
 			Method: http.MethodGet,
 			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/" +
-				"resource/5e50a5ce-0000-4000-8000-0000000000f601",
+				"resource/5e50a5ce-0000-4000-8000-00000000f601",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
@@ -11191,7 +11191,7 @@ var adminCases = []Case{
 		Request: Request{
 			Method: http.MethodPut,
 			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/" +
-				"resource/5e50a5ce-0000-4000-8000-0000000000fa01",
+				"resource/5e50a5ce-0000-4000-8000-00000000fa01",
 			Headers: map[string]string{
 				"Authorization": "Bearer {{access_token}}",
 				"Content-Type":  "application/json",
@@ -11218,7 +11218,7 @@ var adminCases = []Case{
 		Request: Request{
 			Method: http.MethodGet,
 			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/" +
-				"resource/5e50a5ce-0000-4000-8000-0000000000fb01",
+				"resource/5e50a5ce-0000-4000-8000-00000000fb01",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
@@ -11239,7 +11239,7 @@ var adminCases = []Case{
 		Request: Request{
 			Method: http.MethodPut,
 			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/" +
-				"resource/5e50a5ce-0000-4000-8000-0000000000fc01",
+				"resource/5e50a5ce-0000-4000-8000-00000000fc01",
 			Headers: map[string]string{
 				"Authorization": "Bearer {{access_token}}",
 				"Content-Type":  "application/json",
@@ -11264,7 +11264,7 @@ var adminCases = []Case{
 		Request: Request{
 			Method: http.MethodDelete,
 			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/" +
-				"resource/5e50a5ce-0000-4000-8000-0000000000fd01",
+				"resource/5e50a5ce-0000-4000-8000-00000000fd01",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type", "X-Frame-Options"},
@@ -11308,7 +11308,7 @@ var adminCases = []Case{
 		Request: Request{
 			Method: http.MethodGet,
 			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/" +
-				"resource/5e50a5ce-0000-4000-8000-0000000000fe01/attributes",
+				"resource/5e50a5ce-0000-4000-8000-00000000fe01/attributes",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
@@ -11332,7 +11332,7 @@ var adminCases = []Case{
 		Request: Request{
 			Method: http.MethodGet,
 			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/" +
-				"resource/5e50a5ce-0000-4000-8000-0000000000ff01/permissions",
+				"resource/5e50a5ce-0000-4000-8000-00000000ff01/permissions",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},

@@ -1,0 +1,12 @@
+# GET /admin/realms/master/clients/{{client_uuid}}/authz/resource-server/resource
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"name":"gloak-probe-full","type":"urn:gloak:full","owner":{"id":"{{client_uuid}}","name":"gloak-probe-authz-rs-deep"},"ownerManagedAccess":true,"displayName":"Full Probe","_id":"5e50a5ce-0000-4000-8000-00000000f201","uris":["/a","/z","/m"],"icon_uri":"http://example.test/i.png"}]
