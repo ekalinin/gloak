@@ -51,6 +51,11 @@ func TestNoPendingGoldenIsCompared(t *testing.T) {
 	}
 	// A rule about parked goldens over a catalogue holding none asserts
 	// nothing. The pollution guard fails the same way for the same reason.
+	//
+	// **This is one promotion away from firing**, since 2026-09-01 left exactly
+	// one parked golden. When the last one goes, delete this test rather than
+	// loosening it: a guard that has nothing to guard is worse than none,
+	// because it reads as though something is still being checked.
 	if parked == 0 {
 		t.Fatal("no Pending case has a golden, so this test has stopped checking anything; " +
 			"either they were all promoted or the goldens were removed, and both are worth reading about")

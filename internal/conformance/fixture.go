@@ -374,14 +374,12 @@ var Fixtures = map[string]Fixture{
 	// recorder shares one container, and the browser fixture's user has its
 	// password *changed* by the case that follows it, so a second case reusing
 	// that username would log in with a password the first case replaced.
-	// The **landing page** the redirect below points at has no case, and that is
-	// deliberate rather than an omission: its body is 10776 bytes of
-	// keycloak.v2 Freemarker carrying a /resources/<hash>/ segment regenerated
-	// on every container start, so a golden of it would churn on every
-	// `make record` - which is exactly why the four login-theme pages are
-	// Pending and parked. Gloak serves the measured envelope, status and
-	// heading under a placeholder body, and `internal/oidc`'s own tests are what
-	// guard it until P13 builds themes.
+	// The **landing page** the redirect below points at has no case, and the
+	// reason changed on 2026-09-01. It was "its /resources/<hash>/ segment
+	// churns on every re-record", and ReplaceThemeResource has answered that.
+	// What is left is that Gloak serves the placeholder body here: the
+	// required-action pages are among the nine theme pages nobody has measured
+	// the instruction and the chrome of. See themePageBody in internal/httpx.
 	"temporary-password":      temporaryPasswordUserFixture("gloak-probe-temp-password"),
 	"disabled-user":           disabledUserFixture("gloak-probe-disabled-user"),
 	"browser-required-action": requiredActionLoginFixture(),

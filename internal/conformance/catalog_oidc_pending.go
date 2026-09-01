@@ -312,15 +312,18 @@ var oidcPending = []Case{
 		VolatileHeaders:     []string{"Location", "Set-Cookie"},
 	},
 
-	// --- The pages this cut serves as envelopes ---
+	// --- The login theme's pages ---
 	//
-	// All four are Recorded rather than Implemented, and the reason is the same
-	// one the four parked login-theme goldens have: Keycloak serves keycloak.v2
-	// Freemarker here, carrying a /resources/<hash>/ segment minted per
-	// container start, and Gloak serves the measured envelope with a placeholder
-	// body. Recorded is the honest status - measured, committed, and the
-	// verifier requires it **not** to match - where Pending would say nobody had
-	// looked. What each of them pins is in its own comment.
+	// Three of these four are compared contracts as of 2026-09-01: Gloak serves
+	// the keycloak.v2 markup and ReplaceThemeResource makes the one
+	// installation-wide value in it - the /resources/<version>/ segment -
+	// comparable on both sides. prompt-create is the exception and its Reason
+	// says why. What each of them pins is in its own comment.
+	//
+	// That segment is **minted with the database**, not per container start,
+	// which is what every comment in this file said until it was restarted six
+	// times and measured. It changes nothing here, because `make record` starts
+	// a fresh container each run.
 	{
 		ID: "oidc/device/verification-page",
 		Doc: Doc{
@@ -530,12 +533,14 @@ var oidcPending = []Case{
 		},
 		Status: Implemented,
 		// Measured 2026-08-29: 400, text/html;charset=utf-8, no Cache-Control
-		// at all, and 3618 bytes of the keycloak.v2 theme whose
-		// /resources/<hash>/ segment is regenerated per container start. Two
+		// at all, and the keycloak.v2 error page whose /resources/<version>/
+		// segment is the one value in it that belongs to the installation. Two
 		// recordings from one container are byte-identical and two containers
-		// are not, so the golden already in the repository churns on every
-		// re-record. That is the churn the P3 design defers to P13, now
-		// measured rather than assumed.
+		// are not - re-measured 2026-09-01, and the variable is the **database**
+		// rather than the container start: six restarts of one container gave
+		// one value and eight fresh databases gave eight. ReplaceThemeResource
+		// is what makes the two sides comparable, and this case is the first
+		// consumer it ever had.
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodGet,
