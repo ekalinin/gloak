@@ -651,7 +651,7 @@ func registrationBearer(r *http.Request) string {
 // and one carrying `{` and no credentials answers 400.
 func decodeRegistration(w http.ResponseWriter, r *http.Request) (registrationRequest, bool) {
 	var rep registrationRequest
-	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+	if !registrationConsumes(r.Header.Get("Content-Type")) {
 		httpx.WriteMessageError(w, http.StatusUnsupportedMediaType, descUnsupportedMediaType)
 		return rep, false
 	}
@@ -660,6 +660,42 @@ func decodeRegistration(w http.ResponseWriter, r *http.Request) (registrationReq
 		return rep, false
 	}
 	return rep, true
+}
+
+// registrationConsumes is what the 415 is decided by, and it is a **media type
+// match rather than a prefix**. Measured over eight Content-Type values on one
+// request:
+//
+//	(the header absent)                 accepted
+//	application/json                    accepted
+//	application/json;charset=UTF-8      accepted
+//	application/JSON                    accepted - the comparison folds case
+//	*/*                                 accepted
+//	application/x-www-form-urlencoded   415
+//	text/plain                          415
+//	application/xml                     415
+//	application/jsonx                   415 - so it is not a prefix
+//
+// **An absent header is accepted**, which is the row a "must be JSON" check gets
+// wrong, and it is how the conformance harness reaches this endpoint at all:
+// buildRequest sets no Content-Type for a case sending a Body.
+//
+// One input is not reproduced. A header present with an **empty value** was
+// measured answering a 500 serving Keycloak's HTML error page with an error id
+// in it, which is neither of this endpoint's two body shapes; Go's Header.Get
+// cannot tell it from an absent header without reading the map directly, and an
+// HTML 500 is not a contract this project has anywhere else. Filed rather than
+// guessed at.
+func registrationConsumes(value string) bool {
+	if value == "" {
+		return true
+	}
+	media, _, _ := strings.Cut(value, ";")
+	switch strings.ToLower(strings.TrimSpace(media)) {
+	case "application/json", "*/*":
+		return true
+	}
+	return false
 }
 
 // applyRegistration writes a request onto a client, returning false when it has

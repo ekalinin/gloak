@@ -1,0 +1,11 @@
+# POST /realms/master/clients-registrations/openid-connect
+HTTP/1.1 401 Unauthorized
+Content-Length: {{volatile}}
+Content-Type: application/json
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"error":"invalid_token","error_description":"Failed decode token"}

@@ -2766,7 +2766,7 @@ var oidcPending = []Case{
 				"Authorization": "Bearer {{access_token}}",
 				"Content-Type":  "application/json",
 			},
-			Body: []byte(`{"client_name":"gloak-probe-create","redirect_uris":["http://localhost:8080/admin/master/console/"]}`),
+			Body: []byte(`{"client_name":"gloak-probe-create","redirect_uris":["http://localhost:9999/callback"]}`),
 		},
 		// Location is asserted rather than merely present: it is the one
 		// response on the protocol side that carries one, and everything before
@@ -2782,6 +2782,13 @@ var oidcPending = []Case{
 			"client_id", "client_secret", "registration_access_token",
 			"registration_client_uri", "client_id_issued_at",
 		},
+		// The client's optional scope list is not stable across container
+		// starts, measured twice on this very case: one recording answered
+		// `address phone offline_access organization microprofile-jwt` and a
+		// hand probe minutes earlier answered the same five words with
+		// `organization` and `offline_access` the other way round. Same rule as
+		// oidc/token/password-grant-admin-cli.
+		UnorderedWords: []string{"scope"},
 	},
 	{
 		ID: "oidc/registration/read-client",
@@ -2801,6 +2808,13 @@ var oidcPending = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type"},
+		// The client's optional scope list is not stable across container
+		// starts, measured twice on this very case: one recording answered
+		// `address phone offline_access organization microprofile-jwt` and a
+		// hand probe minutes earlier answered the same five words with
+		// `organization` and `offline_access` the other way round. Same rule as
+		// oidc/token/password-grant-admin-cli.
+		UnorderedWords: []string{"scope"},
 		// Nothing is masked. The client id, the secret and the registration
 		// token are all captured by the fixture, so ReplaceCaptured rewrites
 		// them - inside registration_client_uri too, which therefore stays
@@ -2822,6 +2836,13 @@ var oidcPending = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{registration_access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type"},
+		// The client's optional scope list is not stable across container
+		// starts, measured twice on this very case: one recording answered
+		// `address phone offline_access organization microprofile-jwt` and a
+		// hand probe minutes earlier answered the same five words with
+		// `organization` and `offline_access` the other way round. Same rule as
+		// oidc/token/password-grant-admin-cli.
+		UnorderedWords: []string{"scope"},
 	},
 	{
 		ID: "oidc/registration/update-client",
@@ -2840,7 +2861,7 @@ var oidcPending = []Case{
 				"Content-Type":  "application/json",
 			},
 			Body: []byte(`{"client_id":"{{registered_client_id}}","client_name":"gloak-probe-registered-renamed",` +
-				`"redirect_uris":["http://localhost:8080/admin/master/console/"]}`),
+				`"redirect_uris":["http://localhost:9999/callback"]}`),
 		},
 		AssertHeaders: []string{"Content-Type"},
 		// One mask, and it is the one the update earns: **the PUT rotates the
@@ -2848,6 +2869,13 @@ var oidcPending = []Case{
 		// the fixture never saw and the one it presented is dead. A GET does
 		// not rotate it, which is why the two reads above mask nothing.
 		Volatile: []string{"registration_access_token"},
+		// The client's optional scope list is not stable across container
+		// starts, measured twice on this very case: one recording answered
+		// `address phone offline_access organization microprofile-jwt` and a
+		// hand probe minutes earlier answered the same five words with
+		// `organization` and `offline_access` the other way round. Same rule as
+		// oidc/token/password-grant-admin-cli.
+		UnorderedWords: []string{"scope"},
 	},
 	{
 		ID: "oidc/registration/delete-client",
@@ -2884,7 +2912,7 @@ var oidcPending = []Case{
 			Headers: map[string]string{
 				"Content-Type": "application/json",
 			},
-			Body: []byte(`{"client_name":"gloak-probe","redirect_uris":["http://localhost:8080/admin/master/console/"]}`),
+			Body: []byte(`{"client_name":"gloak-probe","redirect_uris":["http://localhost:9999/callback"]}`),
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},
@@ -2974,15 +3002,22 @@ var oidcPending = []Case{
 		},
 		Status:  Implemented,
 		Fixture: "bootstrap",
-		// **No Authorization header and no Content-Type**, and the answer is
-		// about the Content-Type. That is what says the body is examined before
-		// the caller is, which is the opposite order to every other guarded
-		// route in this project. The body is a form so buildRequest sends no
-		// Content-Type of its own.
+		// **No Authorization header**, and the answer is about the
+		// Content-Type. That is what says the body is examined before the
+		// caller is, which is the opposite order to every other guarded route
+		// in this project.
+		//
+		// The header has to be sent and has to be wrong. An **absent**
+		// Content-Type is accepted here, measured - the request then falls
+		// through to the anonymous 403 - so a case that simply omitted it would
+		// be a second copy of without-initial-access-token rather than a
+		// measurement of the 415. text/plain is one of the three values
+		// measured to be refused.
 		Request: Request{
-			Method: http.MethodPost,
-			Path:   "/realms/master/clients-registrations/openid-connect",
-			Body:   []byte(`{"client_name":"gloak-probe-media"}`),
+			Method:  http.MethodPost,
+			Path:    "/realms/master/clients-registrations/openid-connect",
+			Headers: map[string]string{"Content-Type": "text/plain"},
+			Body:    []byte(`{"client_name":"gloak-probe-media"}`),
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},

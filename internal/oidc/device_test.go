@@ -78,7 +78,7 @@ func deviceServer(t *testing.T) (http.Handler, *handler, store.Store, *model.Rea
 		}
 	}
 	h := &handler{store: s, keys: keys.NewManager(s), issuerBase: "http://localhost:8080",
-		auth: newAuthStore(), device: newDeviceStore()}
+		auth: newAuthStore(), device: newDeviceStore(), registrations: newRegistrationStore()}
 	mux := http.NewServeMux()
 	h.register(mux)
 	return WithKeycloakFallbacks(mux), h, s, realm

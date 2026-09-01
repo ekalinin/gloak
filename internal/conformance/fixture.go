@@ -4660,7 +4660,7 @@ func registrationFixture(name string) Fixture {
 						"Content-Type":  "application/json",
 					},
 					Body: []byte(`{"client_name":"` + name +
-						`","redirect_uris":["http://localhost:8080/admin/master/console/"]}`),
+						`","redirect_uris":["http://localhost:9999/callback"]}`),
 				},
 				Capture: map[string]string{
 					"registered_client_id":      "client_id",
