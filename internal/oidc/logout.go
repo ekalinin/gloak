@@ -98,7 +98,10 @@ func (h *handler) logout(w http.ResponseWriter, r *http.Request) {
 	}
 	params, err := logoutParams(r)
 	if err != nil {
-		h.writeLogoutErrorPage(w)
+		// Not the page family: a body that cannot be form-decoded is a 500 with
+		// a JSON body, byte-identical to POST /auth's. Measured 2026-09-01 on
+		// both endpoints.
+		writeUnparseableBody(w)
 		return
 	}
 	// A POST carrying a refresh_token is the other family entirely: it is
@@ -135,7 +138,11 @@ func (h *handler) logoutFrontChannel(w http.ResponseWriter, r *http.Request, rea
 	// Its expiry is deliberately not checked; see token.ParseID.
 	hint, ok := h.resolveLogoutHint(k, realm, params)
 	if !ok {
-		h.writeLogoutErrorPage(w)
+		// **This page names no client**, even when the request sent a good
+		// client_id: measured 2026-09-01, its restart URL carries none and it
+		// has no Back to Application link. The hint is judged before the client
+		// is looked up, and the page shows it.
+		h.writeLogoutErrorPage(w, h.themeChrome(realm), pageInvalidIDTokenHint)
 		return
 	}
 
@@ -147,7 +154,8 @@ func (h *handler) logoutFrontChannel(w http.ResponseWriter, r *http.Request, rea
 	if hasTarget {
 		client := h.logoutClient(r, realm, hint, params.Get("client_id"))
 		if client == nil || !matchRedirectURI(postLogoutPatterns(client), target) {
-			h.writeLogoutErrorPage(w)
+			h.writeLogoutErrorPage(w, h.logoutPageChrome(realm, client),
+				logoutTargetInstruction(hint, params))
 			return
 		}
 	}
@@ -425,11 +433,48 @@ func postLogoutPatterns(client *model.Client) []string {
 //
 // Keycloak distinguishes the three in the page's prose - "Invalid parameter:
 // id_token_hint", "Invalid redirect uri" and "Missing parameters:
-// id_token_hint" - and Gloak's placeholder body cannot, which is exactly the
-// gap P13 closes. The envelope is identical across all three and is what is
-// served.
-func (h *handler) writeLogoutErrorPage(w http.ResponseWriter) {
-	httpx.WriteThemeErrorPage(w, http.StatusBadRequest, logoutCacheControl)
+// id_token_hint" - and Gloak's placeholder body could not, which was F67. All
+// three are served now, each from the branch that was measured producing it.
+// The envelope is identical across all three.
+func (h *handler) writeLogoutErrorPage(w http.ResponseWriter, c httpx.ThemeChrome, instruction string) {
+	httpx.WriteThemeErrorPage(w, http.StatusBadRequest, logoutCacheControl, c, instruction)
+}
+
+// logoutTargetInstruction picks between the two sentences a rejected
+// post_logout_redirect_uri can answer, and the variable is **not** whether a
+// client was found.
+//
+// Measured 2026-09-01 as an eight-cell grid over the client_id and the target:
+//
+//	client_id absent      Missing parameters: id_token_hint   registered and not, alike
+//	client_id=            Missing parameters: id_token_hint
+//	client_id unknown     Invalid redirect uri                registered and not, alike
+//	client_id disabled    Invalid redirect uri
+//	client_id known       Invalid redirect uri                when the target does not match
+//
+// So it turns on the request naming *something* to validate against, not on
+// that something resolving: an unknown client_id and a real one give the same
+// sentence, and an unknown one and an absent one do not.
+//
+// **An empty client_id counts as absent here and as present at /auth**, where
+// `client_id=` answers "Client not found." and an absent one answers "Invalid
+// Request". One parameter, two endpoints, opposite readings of emptiness -
+// which is the shape `state=` already has across the same two endpoints.
+func logoutTargetInstruction(hint *token.Parsed, params url.Values) string {
+	if hint == nil && params.Get("client_id") == "" {
+		return pageMissingIDTokenHint
+	}
+	return pageInvalidLogoutRedirect
+}
+
+// logoutPageChrome names the client on the page when one was resolved. An
+// unknown client_id resolves nothing, and the page then names nothing even
+// though the request did.
+func (h *handler) logoutPageChrome(realm *model.Realm, client *model.Client) httpx.ThemeChrome {
+	if client == nil {
+		return h.themeChrome(realm)
+	}
+	return h.themeChromeFor(realm, client)
 }
 
 // logoutParams reads the request's parameters from the place the method puts

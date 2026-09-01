@@ -16,6 +16,14 @@ package conformance
 // or reorder the bytes a captured token sits in, so a live token can never
 // survive into a golden.
 //
+// ReplaceThemeResource runs beside ReplaceIssuer and after it. The order of
+// those two is free rather than load-bearing and the reason is worth writing
+// down: the theme's asset URLs are **relative** - `/resources/<version>/...` -
+// so no issuer ever appears inside one and no `/resources/` segment ever
+// appears inside an issuer. Putting it after keeps the two unconditional
+// substitutions together and ahead of every Case-declared mask, which is the
+// property that does matter.
+//
 // It lives in its own file, called from both record_test.go and
 // conformance_test.go, because a pass added to one side and not the other is
 // a divergence no test can see: both sides would simply agree on the wrong
@@ -23,6 +31,7 @@ package conformance
 func normalisePasses(body []byte, base string, c Case, vars map[string]string) ([]byte, error) {
 	body = ReplaceCaptured(body, vars)
 	body = ReplaceIssuer(body, base)
+	body = ReplaceThemeResource(body)
 	body, err := Normalize(body, c.Volatile)
 	if err != nil {
 		return nil, err

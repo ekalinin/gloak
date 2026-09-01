@@ -312,15 +312,18 @@ var oidcPending = []Case{
 		VolatileHeaders:     []string{"Location", "Set-Cookie"},
 	},
 
-	// --- The pages this cut serves as envelopes ---
+	// --- The login theme's pages ---
 	//
-	// All four are Recorded rather than Implemented, and the reason is the same
-	// one the four parked login-theme goldens have: Keycloak serves keycloak.v2
-	// Freemarker here, carrying a /resources/<hash>/ segment minted per
-	// container start, and Gloak serves the measured envelope with a placeholder
-	// body. Recorded is the honest status - measured, committed, and the
-	// verifier requires it **not** to match - where Pending would say nobody had
-	// looked. What each of them pins is in its own comment.
+	// Three of these four are compared contracts as of 2026-09-01: Gloak serves
+	// the keycloak.v2 markup and ReplaceThemeResource makes the one
+	// installation-wide value in it - the /resources/<version>/ segment -
+	// comparable on both sides. prompt-create is the exception and its Reason
+	// says why. What each of them pins is in its own comment.
+	//
+	// That segment is **minted with the database**, not per container start,
+	// which is what every comment in this file said until it was restarted six
+	// times and measured. It changes nothing here, because `make record` starts
+	// a fresh container each run.
 	{
 		ID: "oidc/device/verification-page",
 		Doc: Doc{
@@ -328,9 +331,7 @@ var oidcPending = []Case{
 			Section:   "Device authorization grant: the verification page",
 			Retrieved: "2026-08-30",
 		},
-		Status: Pending,
-		Reason: "the keycloak.v2 device verification page; Gloak serves the measured " +
-			"envelope with a placeholder body, so the bytes cannot match. Parked rather than Recorded: the page also carries three per-request values - the /resources/<hash>/ segment, the login session cookies and the tab_id inside the markup - so every re-record moves it, which is what F69 stopped for Pending goldens and what promoting it undid",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodGet,
@@ -347,9 +348,7 @@ var oidcPending = []Case{
 			Section:   "Device authorization grant: the status page",
 			Retrieved: "2026-08-30",
 		},
-		Status: Pending,
-		Reason: "the keycloak.v2 login-info page; Gloak serves the measured envelope " +
-			"with a placeholder body, so the bytes cannot match. Parked rather than Recorded: the page also carries three per-request values - the /resources/<hash>/ segment, the login session cookies and the tab_id inside the markup - so every re-record moves it, which is what F69 stopped for Pending goldens and what promoting it undid",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodGet,
@@ -368,8 +367,13 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-30",
 		},
 		Status: Pending,
-		Reason: "the keycloak.v2 error page; Gloak serves the measured envelope with a " +
-			"placeholder body, so the bytes cannot match. Parked rather than Recorded: the page also carries three per-request values - the /resources/<hash>/ segment, the login session cookies and the tab_id inside the markup - so every re-record moves it, which is what F69 stopped for Pending goldens and what promoting it undid",
+		Reason: "the keycloak.v2 error page, and the one of the eight that stays parked. " +
+			"Its markup is served now; what is not comparable is two values **inside the body** - the tab_id in " +
+			"the restart URL and the authentication session's hash inside checkAuthSession(...) - both minted by " +
+			"this request. Measured 2026-09-01 by issuing all eight requests twice against one container: the " +
+			"other seven are byte-identical on two requests and this one is not, and client_data is not one of " +
+			"the movers. Masking a value at a named position inside HTML is F38's mechanism, declined on four " +
+			"written grounds; this is the second case that wants it and one more than F38 closed on",
 		Fixture: "browser-client",
 		Request: Request{
 			Method: http.MethodGet,
@@ -396,9 +400,7 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: a non-numeric max_age",
 			Retrieved: "2026-08-30",
 		},
-		Status: Pending,
-		Reason: "the keycloak.v2 error page; Gloak serves the measured envelope with a " +
-			"placeholder body, so the bytes cannot match. Parked rather than Recorded: the page also carries three per-request values - the /resources/<hash>/ segment, the login session cookies and the tab_id inside the markup - so every re-record moves it, which is what F69 stopped for Pending goldens and what promoting it undid",
+		Status:  Implemented,
 		Fixture: "browser-client",
 		Request: Request{
 			Method: http.MethodGet,
@@ -529,15 +531,16 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: redirect URI validation",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
-		Reason: "the login theme is P13, and this response is a theme page",
+		Status: Implemented,
 		// Measured 2026-08-29: 400, text/html;charset=utf-8, no Cache-Control
-		// at all, and 3618 bytes of the keycloak.v2 theme whose
-		// /resources/<hash>/ segment is regenerated per container start. Two
+		// at all, and the keycloak.v2 error page whose /resources/<version>/
+		// segment is the one value in it that belongs to the installation. Two
 		// recordings from one container are byte-identical and two containers
-		// are not, so the golden already in the repository churns on every
-		// re-record. That is the churn the P3 design defers to P13, now
-		// measured rather than assumed.
+		// are not - re-measured 2026-09-01, and the variable is the **database**
+		// rather than the container start: six restarts of one container gave
+		// one value and eight fresh databases gave eight. ReplaceThemeResource
+		// is what makes the two sides comparable, and this case is the first
+		// consumer it ever had.
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodGet,
@@ -559,8 +562,7 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: client validation",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the login theme is P13, and this response is a theme page",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodGet,
@@ -1637,8 +1639,7 @@ var oidcPending = []Case{
 			Section:   "Logout endpoint: redirect URI validation",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
-		Reason: "the login theme is P13, and this response is a theme page",
+		Status: Implemented,
 		// Measured 2026-08-29: 400, text/html;charset=utf-8, the theme's error
 		// page with the instruction "Invalid redirect uri", and
 		// **Cache-Control: no-cache** - which the authorization endpoint's
@@ -1663,8 +1664,7 @@ var oidcPending = []Case{
 			Section:   "Logout endpoint: redirect URI validation",
 			Retrieved: "2026-08-29",
 		},
-		Status: Pending,
-		Reason: "the login theme is P13, and this response is a theme page",
+		Status: Implemented,
 		// The third instruction the 400 page carries, and the branch that
 		// decides the rejection order: an unusable id_token_hint is answered
 		// **before** the redirect URI is looked at, so a request wrong in both

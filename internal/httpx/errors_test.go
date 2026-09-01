@@ -324,14 +324,15 @@ func TestWriteLogoutRedirect(t *testing.T) {
 // that always set the header and one that never set it would each pass a test
 // checking only the other one.
 func TestWriteThemePageCacheControl(t *testing.T) {
+	chrome := httpx.ThemeChrome{Realm: "master"}
 	none := httptest.NewRecorder()
-	httpx.WriteThemeErrorPage(none, http.StatusBadRequest, "")
+	httpx.WriteThemeErrorPage(none, http.StatusBadRequest, "", chrome, "Invalid Request")
 	if got, ok := none.Header()["Cache-Control"]; ok {
 		t.Errorf("Cache-Control = %q, want absent for the authorization endpoint", got)
 	}
 
 	cached := httptest.NewRecorder()
-	httpx.WriteThemeErrorPage(cached, http.StatusBadRequest, "no-cache")
+	httpx.WriteThemeErrorPage(cached, http.StatusBadRequest, "no-cache", chrome, "Invalid Request")
 	if got := cached.Header().Get("Cache-Control"); got != "no-cache" {
 		t.Errorf("Cache-Control = %q, want %q for the logout endpoint", got, "no-cache")
 	}

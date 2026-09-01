@@ -52,10 +52,13 @@ const (
 // TestConformance skips a Pending case whether or not a golden exists, so a
 // Pending golden is compared by nothing; a recorder that rewrote it anyway
 // produces a diff that says nothing and has to be reverted by hand. Four of
-// them did, every run: the login-theme pages carry a /resources/<hash>/ segment
-// regenerated per container start, so their whole body churned. The count went
-// from three to four inside two days, which is what made the hand-reverting
-// stop being a habit anybody could keep (F23, F69).
+// them did, every run: the login-theme pages carry a /resources/<version>/
+// segment that is minted with the database, so their whole body churned on a
+// fresh container. The count went from three to four inside two days, which is
+// what made the hand-reverting stop being a habit anybody could keep (F23,
+// F69). Seven of the eight are compared contracts as of 2026-09-01 and the
+// churn is gone with them, but the predicate is unchanged: this is what kept
+// them still while nothing compared them.
 //
 // The "unless asked" is a status change rather than a flag. A golden worth
 // re-recording is one worth comparing, and the catalogue already spells that:

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -65,6 +66,58 @@ func ReplaceIssuer(raw []byte, base string) []byte {
 	}
 	raw = bytes.ReplaceAll(raw, []byte(base), []byte(issuerPlaceholder))
 	return bytes.ReplaceAll(raw, []byte(url.QueryEscape(base)), []byte(issuerPlaceholder))
+}
+
+// themeResourcePlaceholder stands in for the login theme's cache-busting
+// segment, the one value a keycloak.v2 page carries that belongs to the
+// installation rather than to the request.
+const themeResourcePlaceholder = "{{theme_resource}}"
+
+// themeResourcePattern is `/resources/<version>/`, and the version is written
+// against what has been measured rather than against what a token could in
+// principle be.
+//
+// Thirteen values have been measured: `l3kth`, `fl8wm` and `ynxld` off the
+// goldens this pass promotes, plus ten taken on 2026-09-01 - `t72jg`, `880ae`
+// and eight more from eight fresh databases. Every one is **exactly five
+// characters, lowercase letters and digits**. Sixty-five sampled characters
+// with no uppercase among them; a mixed-case alphanumeric alphabet would do
+// that with probability (36/62)^65, about 1e-15.
+//
+// A value outside the alphabet would fail loudly rather than quietly: the
+// recording side would write the raw segment into the golden, the serving side
+// would write Gloak's own, and TestConformance would go red on the difference.
+var themeResourcePattern = regexp.MustCompile(`/resources/[0-9a-z]{5}/`)
+
+// ReplaceThemeResource swaps the login theme's `/resources/<version>/` segment
+// for a placeholder, so that a page recorded against one installation and the
+// same page served by another compare equal.
+//
+// Keycloak mints the version once and stores it: six `docker restart` of one
+// container gave one value, a second container gave another, and wiping
+// `/opt/keycloak/data/h2` and restarting gave eight more - the value is inside
+// `keycloakdb.mv.db`. Every document in this repository that mentions it says
+// "per container start", which is measurably not what it is; the harness is
+// unaffected either way, because `make record` starts a fresh container each
+// time. Gloak mints its own the same shape, so the pass has two sides to make
+// comparable rather than one to erase.
+//
+// It is unconditional, like ReplaceIssuer and unlike every Case mask, because
+// the value is a property of whichever server answered rather than of the case
+// that asked. A per-case flag would be a mask somebody forgets on the ninth
+// theme page, and a forgotten mask here churns a golden on every re-record -
+// which is the disease this pass exists to cure.
+//
+// **What it does to a page that legitimately holds `/resources/` in prose**: it
+// rewrites it, if and only if the next path segment is five lowercase
+// alphanumerics followed by a slash. `see /resources/login/index.html` would
+// come out as `see /resources/{{theme_resource}}/index.html`. That over-reach
+// is bounded by a fact rather than a hope - `/resources/` appears in no golden
+// in this repository outside the eight theme pages, and
+// TestThemeResourceAppearsOnlyInTheThemePages is what keeps saying so.
+func ReplaceThemeResource(raw []byte) []byte {
+	return themeResourcePattern.ReplaceAll(raw,
+		[]byte("/resources/"+themeResourcePlaceholder+"/"))
 }
 
 // Normalize replaces the values at the given paths with placeholders that

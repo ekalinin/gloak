@@ -71,7 +71,7 @@ func (h *handler) requiredAction(w http.ResponseWriter, r *http.Request) {
 		h.writeUnusableSession(w, r, realm, q)
 		return
 	}
-	client, ok := h.resolveAuthClient(r, realm, q.Get("client_id"))
+	client, ok := h.authClient(r, realm, q.Get("client_id"))
 	if !ok || client.ClientID != tab.ClientID {
 		h.writeLoginActionErrorPage(w)
 		return
@@ -234,7 +234,7 @@ func (h *handler) consent(w http.ResponseWriter, r *http.Request) {
 		h.writeUnusableSession(w, r, realm, q)
 		return
 	}
-	client, ok := h.resolveAuthClient(r, realm, q.Get("client_id"))
+	client, ok := h.authClient(r, realm, q.Get("client_id"))
 	if !ok || client.ClientID != tab.ClientID {
 		h.writeLoginActionErrorPage(w)
 		return

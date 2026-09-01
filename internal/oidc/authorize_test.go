@@ -99,6 +99,18 @@ func authServerAndStore(t *testing.T) (http.Handler, store.Store) {
 			Attributes:   map[string]string{"oauth2.device.authorization.grant.enabled": "true"}},
 		{ClientID: "probe-consent", Enabled: true, PublicClient: true, StandardFlowEnabled: true,
 			ConsentRequired: true, RedirectURIs: []string{probeRedirectURI}},
+		// The four rootUrl/baseUrl shapes the error page's "Back to
+		// Application" link was measured over, plus the fourth cell that gets
+		// no link at all. See TestBackToApplicationFollowsTheBaseURL.
+		{ClientID: "probe-home", Enabled: true, PublicClient: true, StandardFlowEnabled: true,
+			BaseURL: "http://abs.example/home", RedirectURIs: []string{probeRedirectURI}},
+		{ClientID: "probe-relhome", Enabled: true, PublicClient: true, StandardFlowEnabled: true,
+			BaseURL: "/rel/home", RedirectURIs: []string{probeRedirectURI}},
+		{ClientID: "probe-roothome", Enabled: true, PublicClient: true, StandardFlowEnabled: true,
+			RootURL: "http://root.example", BaseURL: "/rel/home",
+			RedirectURIs: []string{probeRedirectURI}},
+		{ClientID: "probe-rootonly", Enabled: true, PublicClient: true, StandardFlowEnabled: true,
+			RootURL: "http://root.example", RedirectURIs: []string{probeRedirectURI}},
 	}
 	for _, c := range clients {
 		c.ID = model.NewID()
@@ -108,7 +120,7 @@ func authServerAndStore(t *testing.T) (http.Handler, store.Store) {
 			t.Fatalf("create %s: %v", c.ClientID, err)
 		}
 	}
-	return oidc.NewRouter(s, keys.NewManager(s), "http://localhost:8080"), s
+	return oidc.NewRouter(s, keys.NewManager(s), testIssuerBase), s
 }
 
 // authorize issues one GET /auth and returns the response.
@@ -120,6 +132,10 @@ func authorize(t *testing.T, h http.Handler, query string) *httptest.ResponseRec
 	h.ServeHTTP(w, req)
 	return w
 }
+
+// testIssuerBase is the base URL every handler in these tests is built with,
+// and it is what a client's relative baseUrl resolves against.
+const testIssuerBase = "http://localhost:8080"
 
 // absent is the override value that removes a parameter. An empty string means
 // "sent, with no value", which is a different request and often a different

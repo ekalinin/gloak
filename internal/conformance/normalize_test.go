@@ -1,6 +1,10 @@
 package conformance
 
-import "testing"
+import (
+	"bytes"
+	"os"
+	"testing"
+)
 
 func TestReplaceIssuerRewritesEveryOccurrence(t *testing.T) {
 	in := []byte(`{"issuer":"http://localhost:18091/realms/master","jwks_uri":"http://localhost:18091/realms/master/certs"}`)
@@ -439,5 +443,156 @@ func TestMaskedValuesReachesTheDocumentRoot(t *testing.T) {
 	}
 	if len(got) != 1 || string(got[0]) != `[{"id":"x"}]` {
 		t.Fatalf("want the whole document, got %s", got)
+	}
+}
+
+// TestReplaceThemeResourceRewritesEveryMeasuredVersion runs the pass over the
+// thirteen values a live 26.7.1 has actually produced.
+//
+// The list is the evidence for the pattern's alphabet and length and is not
+// decoration: three come off the goldens this pass promotes, and ten were taken
+// on 2026-09-01, two from two containers and eight from eight fresh databases
+// inside one. Sixty-five characters, none of them upper case.
+func TestReplaceThemeResourceRewritesEveryMeasuredVersion(t *testing.T) {
+	measured := []string{
+		"l3kth", "fl8wm", "ynxld", // off the parked goldens
+		"t72jg", "880ae", // two containers
+		"ooekw", "oupiz", "3fprx", "sktey", // eight fresh databases
+		"foqmc", "k3fzh", "qctvi", "rj2lz",
+	}
+	for _, v := range measured {
+		in := []byte(`<link href="/resources/` + v + `/login/keycloak.v2/css/styles.css" rel="stylesheet" />`)
+		want := `<link href="/resources/{{theme_resource}}/login/keycloak.v2/css/styles.css" rel="stylesheet" />`
+		if got := string(ReplaceThemeResource(in)); got != want {
+			t.Errorf("version %q: want %s, got %s", v, want, got)
+		}
+	}
+}
+
+// A page carries the segment seven times and the pass has to reach all of
+// them. One occurrence rewritten and six left is the shape a ReplaceFirst would
+// take, and it would still make the pass look as though it worked on a diff of
+// one line.
+func TestReplaceThemeResourceRewritesEveryOccurrence(t *testing.T) {
+	in := []byte(`<link href="/resources/t72jg/login/keycloak.v2/img/favicon.ico" />` +
+		`<link href="/resources/t72jg/common/keycloak/vendor/patternfly-v5/patternfly.min.css" />` +
+		`import { startSessionPolling } from "/resources/t72jg/login/keycloak.v2/js/authChecker.js";`)
+	got := ReplaceThemeResource(in)
+	if n := bytes.Count(got, []byte(themeResourcePlaceholder)); n != 3 {
+		t.Fatalf("want three occurrences rewritten, got %d: %s", n, got)
+	}
+	if bytes.Contains(got, []byte("t72jg")) {
+		t.Fatalf("a version survived the pass: %s", got)
+	}
+}
+
+// The pattern is anchored on what has been measured, so a segment that is not
+// five lowercase alphanumerics is left alone. These are the shapes a pattern
+// written against "what a token could in principle be" would have swallowed.
+func TestReplaceThemeResourceLeavesAnUnmeasuredShapeAlone(t *testing.T) {
+	for _, in := range []string{
+		`/resources/t72j/login/keycloak.v2/x.css`,   // four characters
+		`/resources/t72jgg/login/keycloak.v2/x.css`, // six
+		`/resources/T72JG/login/keycloak.v2/x.css`,  // upper case
+		`/resources/t72-g/login/keycloak.v2/x.css`,  // a hyphen
+		`/resources/t72jg`,                          // no trailing slash
+	} {
+		if got := string(ReplaceThemeResource([]byte(in))); got != in {
+			t.Errorf("want %s untouched, got %s", in, got)
+		}
+	}
+}
+
+// TestReplaceThemeResourceOverReachesExactlyHere is the other half, and it
+// asserts the damage rather than hiding it.
+//
+// Two shapes are swallowed that a reader would not expect, and both are worth
+// having written down rather than discovered:
+//
+//   - **`login` is itself five lowercase alphanumerics.** A URL spelled
+//     `/resources/login/...` is indistinguishable from a versioned one. The real
+//     theme URLs are `/resources/<version>/login/...`, so `login` is always the
+//     *second* segment and never the first - but a page whose prose named the
+//     directory directly would be rewritten.
+//   - **The pattern is not anchored to the start of a path.** `/admin/resources/`
+//     matches as readily as `/resources/`.
+//
+// Neither reaches any committed golden, which is what
+// TestThemeResourceAppearsOnlyInTheThemePages keeps true.
+func TestReplaceThemeResourceOverReachesExactlyHere(t *testing.T) {
+	cases := map[string]string{
+		`/resources/login/keycloak.v2/x.css`:   `/resources/{{theme_resource}}/keycloak.v2/x.css`,
+		`{"path":"/admin/resources/t72jg/x"}`:  `{"path":"/admin/resources/{{theme_resource}}/x"}`,
+		`see /resources/theme/index.html here`: `see /resources/{{theme_resource}}/index.html here`,
+	}
+	for in, want := range cases {
+		if got := string(ReplaceThemeResource([]byte(in))); got != want {
+			t.Errorf("want %s, got %s", want, got)
+		}
+	}
+}
+
+// The pass is unconditional, so it runs over every JSON body in the catalogue
+// too. It is idempotent by construction - the placeholder is not five lowercase
+// alphanumerics - and this is what says so, because a second pass is exactly
+// what the recorder and the verifier between them perform.
+func TestReplaceThemeResourceIsIdempotent(t *testing.T) {
+	in := []byte(`<link href="/resources/rj2lz/login/keycloak.v2/css/styles.css" />`)
+	once := ReplaceThemeResource(in)
+	twice := ReplaceThemeResource(once)
+	if !bytes.Equal(once, twice) {
+		t.Fatalf("second pass changed the body: %s then %s", once, twice)
+	}
+}
+
+// TestThemeResourceAppearsOnlyInTheThemePages is the bound on the pass's
+// over-reach, and it is a fact about the tree rather than a hope about regexes.
+//
+// The pattern rewrites `/resources/<five lowercase alphanumerics>/` wherever it
+// finds it, prose included. What makes that safe is that `/resources/` appears
+// in no committed golden outside the login theme's own pages, and that every
+// one of those carries the segment a fixed number of times. The day a ninth
+// occurrence appears, or the segment turns up in a body that is not a theme
+// page, this test is what says so - one step before somebody wonders why a
+// golden churned.
+func TestThemeResourceAppearsOnlyInTheThemePages(t *testing.T) {
+	// Counted from the goldens, not incremented: every theme page carries the
+	// segment seven times, and prompt-create carries an eighth because its
+	// checkAuthSession import is a second script tag.
+	want := map[string]int{
+		"oidc/authorization/invalid-redirect-uri":      7,
+		"oidc/authorization/unknown-client-id":         7,
+		"oidc/authorization/max-age-invalid":           7,
+		"oidc/authorization/prompt-create":             8,
+		"oidc/logout/invalid-post-logout-redirect-uri": 7,
+		"oidc/logout/invalid-id-token-hint":            7,
+		"oidc/device/verification-page":                7,
+		"oidc/device/status-page":                      7,
+	}
+	seen := map[string]bool{}
+	for _, c := range Catalog {
+		raw, err := os.ReadFile(GoldenPath(goldenDir, c.ID))
+		if err != nil {
+			continue // no golden, which other tests are responsible for
+		}
+		n := bytes.Count(raw, []byte("/resources/"))
+		if n == 0 {
+			continue
+		}
+		seen[c.ID] = true
+		if _, isThemePage := want[c.ID]; !isThemePage {
+			t.Errorf("%q: holds %d /resources/ segments and is not a theme page - "+
+				"ReplaceThemeResource runs over every body, so read what it would do to this one",
+				c.ID, n)
+			continue
+		}
+		if n != want[c.ID] {
+			t.Errorf("%q: holds %d /resources/ segments, want %d", c.ID, n, want[c.ID])
+		}
+	}
+	for id := range want {
+		if !seen[id] {
+			t.Errorf("%q: named here as a theme page and its golden holds no /resources/ segment", id)
+		}
 	}
 }

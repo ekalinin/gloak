@@ -1,0 +1,340 @@
+package httpx
+
+import (
+	"crypto/rand"
+	"html"
+	"strings"
+)
+
+// The keycloak.v2 login theme's markup.
+//
+// Every byte below was read off a live Keycloak 26.7.1 on 2026-09-01, container
+// kc-theme on port 8152, and the whitespace is part of it: the Freemarker
+// templates indent their output unevenly and the three page headings do not
+// agree on how far. See docs/superpowers/plans/2026-09-01-p13-theme-markup.md.
+//
+// One head and three body templates cover the eight pages this project has
+// measured. The pages it has **not** measured - the logout confirmation, "You
+// are logged out", "Page has expired", the consent page and the five
+// required-action pages - keep the placeholder body in errors.go, because
+// giving them this chrome would mean writing an instruction nobody has read off
+// a server.
+
+// themeResourceAlphabet is the character set every measured resource version is
+// drawn from: lowercase letters and digits, no upper case.
+const themeResourceAlphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+// themeResourceLength is how long every measured one is.
+const themeResourceLength = 5
+
+// themeResourceVersion is the cache-busting segment this process serves inside
+// every theme asset URL, minted once and never changed.
+//
+// **Keycloak mints it with the database, not with the process**, which is
+// measured and is not what any document in this repository said before
+// 2026-09-01: six `docker restart` of one container gave one value, wiping
+// /opt/keycloak/data/h2 gave a new one each time, and `grep` finds it inside
+// keycloakdb.mv.db. Gloak has no equivalent moment - its store is created by
+// something else and outlives nothing - so it mints per process, which is the
+// same observable: a value a client cannot predict and that is constant for as
+// long as anything is being served.
+//
+// Thirteen of Keycloak's have been measured and all thirteen are five lowercase
+// alphanumerics, which is why the alphabet and the length are what they are.
+// internal/conformance's ReplaceThemeResource is what makes the two comparable.
+var themeResourceVersion = mintThemeResourceVersion()
+
+// ThemeResourceVersion is the segment this process serves. It is exported so a
+// test can assert the shape of the thing it cannot predict the value of.
+func ThemeResourceVersion() string { return themeResourceVersion }
+
+// mintThemeResourceVersion draws themeResourceLength characters from
+// themeResourceAlphabet.
+//
+// The modulo is deliberately not rejection-sampled. This value is a cache
+// buster, not a secret: nothing is authorised by it, and a bias of six symbols
+// in thirty-six changes nothing a client can act on. crypto/rand.Read cannot
+// fail on Go 1.24 and later, so its error is not checked.
+func mintThemeResourceVersion() string {
+	raw := make([]byte, themeResourceLength)
+	_, _ = rand.Read(raw)
+	out := make([]byte, themeResourceLength)
+	for i, b := range raw {
+		out[i] = themeResourceAlphabet[int(b)%len(themeResourceAlphabet)]
+	}
+	return string(out)
+}
+
+// ThemeChrome is what the shared head and footer of a theme page vary in.
+//
+// Realm and RestartParams build the URL the page's session poller calls;
+// BackToApplication is the error page's one optional element. All three are
+// strings the caller has already resolved, because internal/httpx owns
+// formatting and knows nothing domain-specific.
+type ThemeChrome struct {
+	// Realm names the realm in the restart URL's path.
+	Realm string
+	// RestartParams are the parameters in front of skip_logout=true in that
+	// URL, already escaped and joined with "&", with a trailing "&". It is
+	// empty when the page's own rejection happened before a client was
+	// resolved - measured on eight rejections, and a bearer-only client is one
+	// of them, so "the request named a client" is not the test.
+	RestartParams string
+	// BackToApplication is the href of the "« Back to Application" link. It is
+	// empty when there is no link, which is decided by the client's baseUrl
+	// alone: measured over five clients, one carrying a rootUrl and no baseUrl
+	// gets no link at all.
+	BackToApplication string
+}
+
+// themeHead is the <head> every measured page shares, plus the opening two
+// lines. It ends with the blank line after </head>.
+//
+// The three substitutions are the resource version (seven times here, and an
+// eighth inside the page body when a page has an authentication session) and
+// the restart URL's realm and parameters.
+func themeHead(c ThemeChrome) string {
+	v := themeResourceVersion
+	return `<!DOCTYPE html>
+<html class="login-pf" lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <meta name="color-scheme" content="light dark">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>Sign in to Keycloak</title>
+        <link rel="icon" href="/resources/` + v + `/login/keycloak.v2/img/favicon.ico" />
+        <link href="/resources/` + v + `/common/keycloak/vendor/patternfly-v5/patternfly.min.css" rel="stylesheet" />
+        <link href="/resources/` + v + `/common/keycloak/vendor/patternfly-v5/patternfly-addons.css" rel="stylesheet" />
+        <link href="/resources/` + v + `/login/keycloak.v2/css/styles.css" rel="stylesheet" />
+    <script type="importmap">
+        {
+            "imports": {
+                "rfc4648": "/resources/` + v + `/common/keycloak/vendor/rfc4648/rfc4648.js"
+            }
+        }
+    </script>
+      <script type="module" async blocking="render">
+          const DARK_MODE_CLASS = "pf-v5-theme-dark";
+          const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
+          updateDarkMode(mediaQuery.matches);
+          mediaQuery.addEventListener("change", (event) => updateDarkMode(event.matches));
+
+          function updateDarkMode(isEnabled) {
+            const { classList } = document.documentElement;
+
+            if (isEnabled) {
+              classList.add(DARK_MODE_CLASS);
+            } else {
+              classList.remove(DARK_MODE_CLASS);
+            }
+          }
+      </script>
+    <script type="module" src="/resources/` + v + `/login/keycloak.v2/js/passwordVisibility.js"></script>
+    <script type="module">
+        import { startSessionPolling } from "/resources/` + v + `/login/keycloak.v2/js/authChecker.js";
+
+        startSessionPolling(
+            "/realms/` + c.Realm + `/login-actions/restart?` + c.RestartParams + `skip_logout=true"
+        );
+    </script>
+    <script type="module">
+        document.addEventListener("click", (event) => {
+            const link = event.target.closest("a[data-once-link]");
+
+            if (!link) {
+                return;
+            }
+
+            if (link.getAttribute("aria-disabled") === "true") {
+                event.preventDefault();
+                return;
+            }
+
+            const { disabledClass } = link.dataset;
+
+            if (disabledClass) {
+                link.classList.add(...disabledClass.trim().split(/\s+/));
+            }
+
+            link.setAttribute("role", "link");
+            link.setAttribute("aria-disabled", "true");
+        });
+    </script>
+    <script>
+      // Workaround for https://bugzilla.mozilla.org/show_bug.cgi?id=1404468
+      const isFirefox = true;
+    </script>
+</head>
+
+`
+}
+
+// themeFeedback is the alert block a page carries when the flow has something
+// to tell the person. Measured on the device verification page answering an
+// unusable user code, which is the one page in this cut that can produce one.
+//
+// The three runs of trailing whitespace inside the icon div are Freemarker
+// directives that expanded to nothing, and they are bytes like any other.
+func themeFeedback(message string) string {
+	if message == "" {
+		return ""
+	}
+	return `            <div class="pf-v5-c-alert pf-m-inline pf-v5-u-mb-md pf-m-danger">
+                <div class="pf-v5-c-alert__icon">
+                    ` + `
+                    ` + `
+                    <span class="fa fa-fw fa-exclamation-circle"></span>
+                    ` + `
+                </div>
+                <span class="pf-v5-c-alert__title kc-feedback-text">` +
+		html.EscapeString(message) + `</span>
+            </div>
+`
+}
+
+// themeShell wraps the three body templates in the markup they share.
+//
+// pageID is <body data-page-id>, heading is everything between the opening
+// <h1> and the newline before </h1> - which is where the three templates
+// disagree on indentation, so it is passed whole rather than built here -
+// feedback is themeFeedback's block or nothing, main is the block inside
+// pf-v5-c-login__main-body, and footer is the one line the device page puts
+// inside the inner footer and the other two leave empty.
+func themeShell(c ThemeChrome, pageID, heading, feedback, main, footer string) string {
+	return themeHead(c) + `<body id="keycloak-bg" class="" data-page-id="` + pageID + `">
+<div class="pf-v5-c-login">
+  <div class="pf-v5-c-login__container">
+    <header id="kc-header" class="pf-v5-c-login__header">
+      <div id="kc-header-wrapper"
+              class="pf-v5-c-brand"><div class="kc-logo-text"><span>Keycloak</span></div></div>
+    </header>
+    <main class="pf-v5-c-login__main">
+      <div class="pf-v5-c-login__main-header">
+        <h1 class="pf-v5-c-title pf-m-3xl" id="kc-page-title">` + heading + `
+</h1>
+      </div>
+      <div class="pf-v5-c-login__main-body">
+
+` + feedback + `
+` + main + `
+
+
+
+          <div class="pf-v5-c-login__main-footer">
+` + footer + `
+          </div>
+      </div>
+
+        <div class="pf-v5-c-login__main-footer">
+        </div>
+    </main>
+  </div>
+</div>
+</body>
+</html>
+`
+}
+
+// themeErrorPageBody is the login-error template: six measured instructions on
+// /auth, three on /logout, three on /login-actions/authenticate and one on the
+// required-action landing, all the same page with one sentence changed.
+//
+// The « is Keycloak's, not a typographic improvement.
+func themeErrorPageBody(c ThemeChrome, instruction string) string {
+	main := `        <div id="kc-error-message">
+            <p class="instruction">` + html.EscapeString(instruction) + `</p>`
+	if c.BackToApplication != "" {
+		main += "\n" + `                    <p><a id="backToApplication" href="` +
+			html.EscapeString(c.BackToApplication) + `">« Back to Application</a></p>`
+	}
+	main += "\n" + `        </div>`
+	return themeShell(c, "login-error", "        "+html.EscapeString(ThemeErrorTitle), "", main, "")
+}
+
+// themeInfoPageBody is the login-info template, which the device status page is
+// the only measured user of.
+//
+// Its heading is indented twelve spaces where the error page's is indented
+// eight - one template, one indentation, and no rule joins them.
+func themeInfoPageBody(c ThemeChrome, title, instruction string) string {
+	main := `    <div id="kc-info-message">
+        <p class="instruction">` + html.EscapeString(instruction) + `</p>
+    </div>`
+	return themeShell(c, "login-info", "            "+html.EscapeString(title), "", main, "")
+}
+
+// deviceVerifyTemplateComment is the FTL comment keycloak.v2 emits three times
+// on the device verification page - inside the <h1>, above the form and inside
+// the inner footer. It is a comment and it is contract.
+const deviceVerifyTemplateComment = `<!-- template: login-oauth2-device-verify-user-code.ftl -->`
+
+// themeDeviceVerifyBody is the login-oauth2-device-verify-user-code template.
+//
+// **The form it renders cannot be submitted**, which is measured rather than a
+// shortcut: its action is the device *authorization* endpoint, so a POST with no
+// client_id answers 401 invalid_client. See WriteThemeDeviceCodePage.
+//
+// The action is the same string on both paths the page is served at. Measured
+// 2026-09-01: GET /realms/master/device and
+// GET /realms/master/protocol/openid-connect/auth/device produce byte-identical
+// 4692-byte pages, both naming /realms/master/device. The doc comment on
+// internal/oidc's serveDeviceCodePage said the action echoed the arrival path
+// and that was never true.
+//
+// The trailing whitespace after `autofocus` is Keycloak's own and is two
+// Freemarker directives that expanded to nothing.
+func themeDeviceVerifyBody(c ThemeChrome, action, message string) string {
+	main := deviceVerifyTemplateComment + `
+        <form id="kc-user-verify-device-user-code-form" class="pf-v5-c-form pf-v5-u-w-100" action="` +
+		html.EscapeString(action) + `" method="post">
+
+<div class="pf-v5-c-form__group">
+    <div class="pf-v5-c-form__group-label pf-v5-u-pb-xs">
+        <label for="device_user_code" class="pf-v5-c-form__label">
+        <span class="pf-v5-c-form__label-text">
+            Enter the code provided by your device and click Submit
+        </span>
+        </label>
+    </div>
+
+    <span class="pf-v5-c-form-control ">
+        <input id="device_user_code" name="device_user_code" value="" type="text" autocomplete="off" autofocus
+                ` + `
+                ` + `aria-invalid=""/>
+    </span>
+
+    <div id="input-error-container-device_user_code">
+    </div>
+</div>
+
+
+  <div class="pf-v5-c-form__group">
+    <div class="pf-v5-c-form__actions pf-v5-u-pt-xs pf-v5-u-flex-wrap">
+  <button class="pf-v5-c-button pf-m-primary pf-m-block" name="" id="kc-login"
+          type="submit" >
+  Submit
+  </button>
+    </div>
+  </div>
+        </form>`
+	heading := deviceVerifyTemplateComment + "\n        " + DevicePageTitle
+	// The footer's comment is followed by a blank line, which is the newline
+	// here plus the one the shell writes. The pages with an empty footer get
+	// that blank line and nothing else, so the two shapes are one template.
+	return themeShell(c, "login-login-oauth2-device-verify-user-code", heading,
+		themeFeedback(message), main, deviceVerifyTemplateComment+"\n")
+}
+
+// ThemeRestartParams joins the parameters the restart URL carries, adding the
+// trailing "&" the head expects. With none it returns the empty string, which
+// is what a page whose rejection resolved no client serves.
+func ThemeRestartParams(params ...string) string {
+	if len(params) == 0 {
+		return ""
+	}
+	return strings.Join(params, "&") + "&"
+}
