@@ -156,23 +156,40 @@ func (h *handler) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	params, err := authorizationParams(r)
 	if err != nil {
-		h.writeErrorPage(w, http.StatusBadRequest)
+		// Not the page family. Measured 2026-09-01: a body that cannot be
+		// form-decoded is a 500 with a JSON body, on this endpoint and on
+		// /logout alike. Gloak answered the 400 page until this cut.
+		writeUnparseableBody(w)
 		return
 	}
 
 	// Step 2. Everything about the client that cannot be reported to it is a
-	// page: an absent, empty, unknown or disabled client_id all answer the same
-	// 400, and the four pages differ only in the prose Gloak does not serve.
-	client, ok := h.resolveAuthClient(r, realm, params.Get("client_id"))
-	if !ok {
-		h.writeErrorPage(w, http.StatusBadRequest)
+	// page, and the four ways it can fail are **three** sentences rather than
+	// the four this comment claimed until 2026-09-01: an absent client_id is
+	// "Invalid Request", an empty one and an unknown one are both
+	// "Client not found.", and a disabled one is "Client disabled." So absent
+	// and empty part company here, which is why presence is read off the map
+	// rather than through Values.Get.
+	rawClientID, hasClientID := params["client_id"]
+	clientID := ""
+	if hasClientID {
+		clientID = rawClientID[0]
+	}
+	client, instruction := h.resolveAuthClient(r, realm, clientID, hasClientID)
+	if client == nil {
+		h.writeErrorPage(w, http.StatusBadRequest, h.themeChrome(realm), instruction)
 		return
 	}
 	// Step 2b. A bearer-only client is a 403 and it comes before the redirect
 	// URI: master-realm answers 403 with a bad redirect_uri, with none at all,
 	// and with a missing response_type alike.
+	//
+	// Its page names **no** client, although the client resolved: measured, the
+	// restart URL carries no client_id and there is no Back to Application link
+	// even though master-realm has a baseUrl. So the page's client is not "the
+	// one the request named".
 	if client.BearerOnly {
-		h.writeErrorPage(w, http.StatusForbidden)
+		h.writeErrorPage(w, http.StatusForbidden, h.themeChrome(realm), pageBearerOnly)
 		return
 	}
 	// Step 2c. max_age has to be a whole number, and it is checked **here**:
@@ -184,14 +201,18 @@ func (h *handler) authorize(w http.ResponseWriter, r *http.Request) {
 	// The page it writes carries no Cache-Control, where prompt=create's page at
 	// step 10 carries one. See writeRegistrationPage.
 	if _, _, ok := parseMaxAge(params); !ok {
-		h.writeErrorPage(w, http.StatusBadRequest)
+		h.writeErrorPage(w, http.StatusBadRequest, h.themeChromeFor(realm, client), pageInvalidRequest)
 		return
 	}
 
 	// Step 3. From here on the client can be told what went wrong.
+	//
+	// An **absent** redirect_uri answers the same sentence an unregistered one
+	// does, measured side by side, which is what says the comparison runs on
+	// the empty string rather than a presence check running in front of it.
 	redirectURI := params.Get("redirect_uri")
 	if !matchRedirectURI(client.RedirectURIs, redirectURI) {
-		h.writeErrorPage(w, http.StatusBadRequest)
+		h.writeErrorPage(w, http.StatusBadRequest, h.themeChromeFor(realm, client), pageInvalidRedirectURI)
 		return
 	}
 
@@ -201,9 +222,15 @@ func (h *handler) authorize(w http.ResponseWriter, r *http.Request) {
 	// response_mode=form_post with no response_type answers 200 with a form
 	// rather than the 302 the same request gets under query. See
 	// servableResponseModes.
+	//
+	// **The instruction here is not a measured value and cannot be**, because
+	// Keycloak serves no page at all on this branch: form_post answers 200 with
+	// an auto-submitting form and the jwt spellings answer a signed JARM
+	// assertion. The whole response is the divergence F51 records; the sentence
+	// is the one the endpoint's other unclassifiable rejection uses.
 	if raw, present := params["response_mode"]; present &&
 		responseModes[raw[0]] && !servableResponseModes[raw[0]] {
-		h.writeErrorPage(w, http.StatusBadRequest)
+		h.writeErrorPage(w, http.StatusBadRequest, h.themeChromeFor(realm, client), pageInvalidRequest)
 		return
 	}
 
@@ -599,21 +626,33 @@ func (h *handler) authorizationErrorLocation(realm, redirectURI, mode, code, des
 // resolveAuthClient looks up the client a request names, reporting false for
 // every reason the endpoint answers with a page: an absent or empty client_id,
 // one naming no client, and a disabled one.
-func (h *handler) resolveAuthClient(r *http.Request, realm *model.Realm, clientID string) (*model.Client, bool) {
-	if clientID == "" {
-		return nil, false
+// authClient is resolveAuthClient for the callers that need only "did a client
+// resolve" - every one outside this endpoint's own page family, where the three
+// sentences are what the distinction is for.
+func (h *handler) authClient(r *http.Request, realm *model.Realm, clientID string) (*model.Client, bool) {
+	client, _ := h.resolveAuthClient(r, realm, clientID, clientID != "")
+	return client, client != nil
+}
+
+func (h *handler) resolveAuthClient(r *http.Request, realm *model.Realm, clientID string,
+	present bool) (*model.Client, string) {
+	if !present {
+		return nil, pageInvalidRequest
 	}
 	client, err := h.store.Clients().ByClientID(r.Context(), realm.ID, clientID)
 	if err != nil {
 		// A store failure and an unknown client are the same page here. Nothing
 		// observable tells them apart, and inventing a 500 for one would be a
-		// shape no measurement supports.
-		return nil, false
+		// shape no measurement supports. An **empty** client_id lands here too,
+		// which is measured: `client_id=` answers "Client not found." exactly as
+		// an unknown one does, where an absent client_id answers "Invalid
+		// Request" above.
+		return nil, pageClientNotFound
 	}
 	if !client.Enabled {
-		return nil, false
+		return nil, pageClientDisabled
 	}
-	return client, true
+	return client, ""
 }
 
 // matchRedirectURI is the measured comparison, and it is a string comparison.
@@ -800,6 +839,7 @@ func authorizationParams(r *http.Request) (url.Values, error) {
 // family sends none at all, where the logout endpoint's identical-looking page
 // family sends "no-cache". Both were re-measured side by side on one container
 // on 2026-08-29, which is why the writer takes the value rather than choosing.
-func (h *handler) writeErrorPage(w http.ResponseWriter, status int) {
-	httpx.WriteThemeErrorPage(w, status, "")
+func (h *handler) writeErrorPage(w http.ResponseWriter, status int,
+	c httpx.ThemeChrome, instruction string) {
+	httpx.WriteThemeErrorPage(w, status, "", c, instruction)
 }

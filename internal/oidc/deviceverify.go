@@ -58,12 +58,20 @@ func (h *handler) deviceVerification(w http.ResponseWriter, r *http.Request) {
 	h.beginDeviceLogin(w, r, realm, client, dc)
 }
 
-// serveDeviceCodePage renders the verification form. Its action is the path this
-// request arrived on, so the copy served under /protocol/openid-connect/auth/device
-// posts there and the copy served under /device posts to /device - which is what
-// Keycloak does, both being the same handler.
+// serveDeviceCodePage renders the verification form.
+//
+// **Its action is /realms/{realm}/device on both paths, and it is relative.**
+// This comment said the action echoed the path the request arrived on, and that
+// was never measured and is not true: on 2026-09-01 GET /realms/master/device
+// and GET /realms/master/protocol/openid-connect/auth/device produced
+// byte-identical 4692-byte pages, both naming /realms/master/device. The code
+// always built /device, so the code was right and the sentence above it was
+// wrong - which is the failure AGENTS.md's charset bullet describes.
+//
+// The page names no client, because a browser arriving at the verification form
+// has identified none.
 func (h *handler) serveDeviceCodePage(w http.ResponseWriter, realm *model.Realm, message string) {
-	httpx.WriteThemeDeviceCodePage(w, h.realmBase(realm.Name)+"/device", message)
+	httpx.WriteThemeDeviceCodePage(w, "/realms/"+realm.Name+"/device", h.themeChrome(realm), message)
 }
 
 // beginDeviceLogin is the 302 a live user code answers: an authentication
@@ -163,9 +171,13 @@ func (h *handler) deviceStatus(w http.ResponseWriter, r *http.Request) {
 	if realm == nil {
 		return
 	}
-	title := httpx.DeviceStatusPageTitle
-	if r.URL.Query().Get("error") != "" {
-		title = httpx.DeviceStatusFailedTitle
+	title, instruction := httpx.DeviceStatusPageTitle, pageDeviceComplete
+	switch errCode := r.URL.Query().Get("error"); {
+	case errCode == "":
+	case errCode == deviceErrAccessDenied:
+		title, instruction = httpx.DeviceStatusFailedTitle, pageDeviceDenied
+	default:
+		title, instruction = httpx.DeviceStatusFailedTitle, pageDeviceFailed
 	}
-	httpx.WriteThemePage(w, http.StatusOK, "", title)
+	httpx.WriteThemeInfoPage(w, http.StatusOK, "", h.themeChrome(realm), title, instruction)
 }

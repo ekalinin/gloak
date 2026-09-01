@@ -239,8 +239,8 @@ func (h *handler) resolveSSO(w http.ResponseWriter, r *http.Request, realm *mode
 		return
 	}
 	if prompt[promptCreate] {
-		h.openSilentSession(w, r, realm, client, k, req)
-		h.writeRegistrationPage(w)
+		tab := h.openSilentSession(w, r, realm, client, k, req)
+		h.writeRegistrationPage(w, realm, client, tab)
 		return
 	}
 	if fresh {
@@ -289,8 +289,10 @@ func (h *handler) resolveSSO(w http.ResponseWriter, r *http.Request, realm *mode
 // is about to write a measured rejection, and losing it to a cookie nothing
 // observable asserts would be the worse answer.
 func (h *handler) openSilentSession(w http.ResponseWriter, r *http.Request, realm *model.Realm,
-	client *model.Client, k *keys.RealmKeys, req *authRequest) {
-	_, _ = h.beginAuthSession(w, r, realm, k, req.tab(client), nil)
+	client *model.Client, k *keys.RealmKeys, req *authRequest) *authTab {
+	tab := req.tab(client)
+	_, _ = h.beginAuthSession(w, r, realm, k, tab, nil)
+	return tab
 }
 
 // clearPresentedRestart adds a Max-Age=0 KC_RESTART when the request carried
@@ -480,6 +482,22 @@ func (h *handler) attachClientSessionTo(ctx context.Context, session *model.User
 // still land here. registrationAllowed is not modelled in internal/model, which
 // belongs to another stream; it is false on every default realm, so this is the
 // measured answer for every realm Gloak can serve today.
-func (h *handler) writeRegistrationPage(w http.ResponseWriter) {
-	httpx.WriteThemeErrorPage(w, http.StatusBadRequest, loginActionCacheControl)
+// Its chrome is the only one in the family with more than a client_id in it.
+// Measured 2026-09-01, the restart URL is
+//
+//	?client_id=<id>&tab_id=<11 chars>&client_data=<base64url>&skip_logout=true
+//
+// because the page is rendered from inside the authentication flow and the tab
+// already exists. Those two extra values are also why this page's golden stays
+// parked: the tab_id and the session hash inside checkAuthSession move on every
+// request, and masking a value at a named position inside HTML is F38's
+// mechanism, which is still declined.
+func (h *handler) writeRegistrationPage(w http.ResponseWriter, realm *model.Realm,
+	client *model.Client, tab *authTab) {
+	extra := []string{"tab_id=" + url.QueryEscape(tab.TabID)}
+	if data, err := tab.clientData(); err == nil {
+		extra = append(extra, "client_data="+url.QueryEscape(data))
+	}
+	httpx.WriteThemeErrorPage(w, http.StatusBadRequest, loginActionCacheControl,
+		h.themeChromeFor(realm, client, extra...), pageRegistrationNotAllowed)
 }
