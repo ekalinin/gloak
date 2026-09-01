@@ -614,3 +614,163 @@ func (o *Organization) AddAttribute(name, value string) {
 	}
 	o.Attributes = append(o.Attributes, OrganizationAttribute{Name: name, Values: []string{value}})
 }
+
+// IdentityProvider is one entry of a realm's identity brokering configuration,
+// the object `/admin/realms/{realm}/identity-provider/instances` serves.
+//
+// Its identity is the InternalID and its address is the Alias, and the two are
+// not interchangeable: every route in the family takes the alias, while the
+// representation carries both.
+//
+// **Alias is a pointer because a provider with no alias at all is reachable.**
+// `PUT .../instances/{alias}` with a body carrying no `alias` answers 204 and
+// leaves the row with its alias cleared - the listing then serves it with no
+// `alias` key and nothing can address it again. That is Keycloak's own defect
+// and it is reproduced, so the model has to be able to hold the state.
+type IdentityProvider struct {
+	InternalID  string
+	RealmID     string
+	Alias       *string
+	DisplayName string
+	ProviderID  string
+	Enabled     bool
+	// The six tri-state flags. **Absent and false are two measured answers**:
+	// a create that never mentions trustEmail reads back with no `trustEmail`
+	// key, and one sending `"trustEmail":false` reads back carrying
+	// `"trustEmail":false`. A plain bool collapses the pair, on six fields at
+	// once. Enabled above is not one of them - it is always serialised and
+	// defaults to true.
+	TrustEmail               *bool
+	StoreToken               *bool
+	AddReadTokenRoleOnCreate *bool
+	AuthenticateByDefault    *bool
+	LinkOnly                 *bool
+	HideOnLogin              *bool
+	// FirstBrokerLoginFlowAlias is omitted when empty, so empty and absent are
+	// one state here and two on the six flags above.
+	FirstBrokerLoginFlowAlias string
+	// Config is a slice rather than a map for the reason
+	// OrganizationAttribute is: the wire order is a Java map's and a Go map
+	// would sort it. Unlike an organization's attributes it is single-valued.
+	Config []IdentityProviderConfigEntry
+}
+
+// IdentityProviderConfigEntry is one `config` key and its value.
+type IdentityProviderConfigEntry struct {
+	Name  string
+	Value string
+}
+
+// identityProviderRegistry is the seventeen providers a default 26.7.1
+// registers, counted from `GET /admin/serverinfo` on 2026-09-01 rather than
+// incremented.
+//
+// It is a list rather than a predicate because `POST .../instances` refuses
+// anything outside it with `Invalid identity provider id [x]`, and because two
+// members - `oauth2` and `jwt-authorization-grant` - are registered and still
+// refuse a bare create, for required **config** rather than for being unknown.
+// Reading their 400 as "not registered" is the mistake this comment exists to
+// prevent; `GET /admin/serverinfo` lists all seventeen.
+var identityProviderRegistry = []string{
+	"kubernetes", "jwt-authorization-grant", "saml", "oauth2", "oidc",
+	"keycloak-oidc", "linkedin-openid-connect", "twitter", "github",
+	"openshift-v4", "facebook", "google", "gitlab", "microsoft", "bitbucket",
+	"paypal", "stackoverflow",
+}
+
+// IsIdentityProvider reports whether Keycloak registers this provider id.
+func IsIdentityProvider(providerID string) bool {
+	for _, p := range identityProviderRegistry {
+		if p == providerID {
+			return true
+		}
+	}
+	return false
+}
+
+// The four measured `types` arrays. The value is **derived from the provider
+// id and stored nowhere**, so it is a function rather than a field: a provider
+// created before its capabilities were known would otherwise serve a stale
+// list.
+//
+// Measured on all seventeen registered providers on 2026-09-01, one create
+// each. The eleven social providers, `oauth2` and `jwt-authorization-grant`
+// answer `[]`; `kubernetes` answers one type; `saml` answers a different one;
+// `oidc` and `keycloak-oidc` answer five. Four answers over seventeen
+// providers, so a boolean "is it OIDC" gets two of the four wrong.
+var (
+	identityProviderTypesOIDC = []string{
+		"USER_AUTHENTICATION", "CLIENT_ASSERTION", "TRUST_MATERIAL",
+		"EXCHANGE_EXTERNAL_TOKEN", "JWT_AUTHORIZATION_GRANT",
+	}
+	identityProviderTypesSAML       = []string{"USER_AUTHENTICATION"}
+	identityProviderTypesKubernetes = []string{"CLIENT_ASSERTION"}
+)
+
+// IdentityProviderTypes returns the `types` array for a provider id. An
+// unregistered id answers the empty list, which is what the eleven social
+// providers answer too - no create can reach it, since the id is validated
+// first.
+func IdentityProviderTypes(providerID string) []string {
+	switch providerID {
+	case "oidc", "keycloak-oidc":
+		return identityProviderTypesOIDC
+	case "saml":
+		return identityProviderTypesSAML
+	case "kubernetes":
+		return identityProviderTypesKubernetes
+	default:
+		return []string{}
+	}
+}
+
+// Component is one row of the generic SPI-component store, the object
+// `/admin/realms/{realm}/components` serves.
+//
+// A default realm has fourteen of them and master has fifteen: four key
+// providers, ten client-registration policies, and - on master alone - the
+// declarative user profile. So the listing is neither empty nor about user
+// federation on a fresh install, which is what a first look at the tag name
+// suggests.
+//
+// **Name is a pointer** because the user-profile component has no `name` key at
+// all where every other row has one, and that is the only observable
+// difference between "no name" and "empty name" this family offers.
+type Component struct {
+	ID           string
+	RealmID      string
+	Name         *string
+	ProviderID   string
+	ProviderType string
+	// ParentID is the realm's own internal id on every component a default
+	// install has. It is stored rather than derived because the schema allows a
+	// component to parent another one and `sub-component-types` addresses that
+	// case, even though nothing in this cut creates one.
+	ParentID string
+	// SubType is `anonymous` or `authenticated` on the ten client-registration
+	// policies and absent on everything else.
+	SubType string
+	Config  []ComponentConfigEntry
+}
+
+// ComponentConfigEntry is one `config` key and its values. The values are a
+// list because a component's config is Keycloak's MultivaluedHashMap and every
+// value on the wire is a JSON array, `{"priority":["100"]}`, even when it holds
+// one string.
+type ComponentConfigEntry struct {
+	Name   string
+	Values []string
+}
+
+// AddConfig appends one value under name, extending the existing entry when
+// the name repeats. It is on the model for the reason Organization.AddAttribute
+// is: both drivers rebuild the same slice from the same ordered rows.
+func (c *Component) AddConfig(name, value string) {
+	for i := range c.Config {
+		if c.Config[i].Name == name {
+			c.Config[i].Values = append(c.Config[i].Values, value)
+			return
+		}
+	}
+	c.Config = append(c.Config, ComponentConfigEntry{Name: name, Values: []string{value}})
+}

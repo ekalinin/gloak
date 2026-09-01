@@ -2452,6 +2452,190 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 			t.Errorf("the neighbouring resource server: got %v, %v", got, err)
 		}
 	})
+
+	t.Run("an identity provider round-trips, alias and all", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		realm := newRealm(t, s)
+		yes, no := true, false
+
+		full := &model.IdentityProvider{
+			InternalID: model.NewID(), RealmID: realm.ID, Alias: strPtr("full"),
+			DisplayName: "Full", ProviderID: "oidc", Enabled: true,
+			TrustEmail: &yes, StoreToken: &no, LinkOnly: &yes,
+			FirstBrokerLoginFlowAlias: "first broker login",
+			Config: []model.IdentityProviderConfigEntry{
+				{Name: "clientId", Value: "cid"},
+				{Name: "clientSecret", Value: "secret"},
+			},
+		}
+		if err := s.IdentityProviders().Create(ctx, full); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := s.IdentityProviders().ByAlias(ctx, realm.ID, "full")
+		if err != nil {
+			t.Fatalf("ByAlias: %v", err)
+		}
+		// **The three flag states have to survive separately.** A driver that
+		// stored them as plain booleans reads back three falses here and
+		// nothing else in this file notices.
+		if got.TrustEmail == nil || !*got.TrustEmail {
+			t.Errorf("trustEmail: got %v, want true", got.TrustEmail)
+		}
+		if got.StoreToken == nil || *got.StoreToken {
+			t.Errorf("storeToken: got %v, want false", got.StoreToken)
+		}
+		if got.HideOnLogin != nil {
+			t.Errorf("hideOnLogin: got %v, want nil - absent is not false", got.HideOnLogin)
+		}
+		if len(got.Config) != 2 || got.Config[0].Name != "clientId" || got.Config[1].Value != "secret" {
+			t.Errorf("config round-trip: got %v", got.Config)
+		}
+
+		// The alias is unique within the realm and the conflict is what the
+		// measured 409 rests on.
+		dup := &model.IdentityProvider{
+			InternalID: model.NewID(), RealmID: realm.ID, Alias: strPtr("full"),
+			ProviderID: "oidc", Enabled: true,
+		}
+		if err := s.IdentityProviders().Create(ctx, dup); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("duplicate alias: want ErrConflict, got %v", err)
+		}
+
+		// **The update replaces, and it writes the alias away.** That is the
+		// state Keycloak's own PUT reaches with a body carrying no alias, so
+		// the driver has to be able to reach it too.
+		full.Alias = nil
+		full.DisplayName = ""
+		full.TrustEmail = nil
+		full.Config = nil
+		if err := s.IdentityProviders().Update(ctx, full); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		if _, err := s.IdentityProviders().ByAlias(ctx, realm.ID, "full"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("the old alias after the update: want ErrNotFound, got %v", err)
+		}
+
+		// The listing sorts by alias and puts the aliasless row first, which is
+		// where the server puts it. Postgres sorts NULLs last by default, so
+		// this is the assertion the two drivers would otherwise differ on
+		// without either failing to compile.
+		for _, alias := range []string{"zzz", "aaa", "mmm"} {
+			p := &model.IdentityProvider{
+				InternalID: model.NewID(), RealmID: realm.ID, Alias: strPtr(alias),
+				ProviderID: "oidc", Enabled: true,
+			}
+			if err := s.IdentityProviders().Create(ctx, p); err != nil {
+				t.Fatalf("Create %s: %v", alias, err)
+			}
+		}
+		list, err := s.IdentityProviders().List(ctx, realm.ID)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		var order []string
+		for _, p := range list {
+			if p.Alias == nil {
+				order = append(order, "<none>")
+				continue
+			}
+			order = append(order, *p.Alias)
+		}
+		want := []string{"<none>", "aaa", "mmm", "zzz"}
+		if len(order) != len(want) {
+			t.Fatalf("listing: got %v, want %v", order, want)
+		}
+		for i := range want {
+			if order[i] != want[i] {
+				t.Fatalf("listing: got %v, want %v", order, want)
+			}
+		}
+
+		if err := s.IdentityProviders().Delete(ctx, realm.ID, "aaa"); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		if err := s.IdentityProviders().Delete(ctx, realm.ID, "aaa"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("the second Delete: want ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("a component round-trips with its multivalued config", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		realm := newRealm(t, s)
+
+		named := &model.Component{
+			ID: model.NewID(), RealmID: realm.ID, Name: strPtr("rsa-enc-generated"),
+			ProviderID: "rsa-enc-generated", ProviderType: "org.keycloak.keys.KeyProvider",
+			ParentID: realm.ID,
+			Config: []model.ComponentConfigEntry{
+				{Name: "priority", Values: []string{"100"}},
+				{Name: "algorithm", Values: []string{"RSA-OAEP"}},
+			},
+		}
+		// The nameless one, which is the only observable difference between an
+		// absent name and an empty one this family has.
+		nameless := &model.Component{
+			ID: model.NewID(), RealmID: realm.ID,
+			ProviderID: "declarative-user-profile", ProviderType: "org.keycloak.userprofile.UserProfileProvider",
+			ParentID: realm.ID,
+		}
+		// A multivalued entry, which is what separates this config from an
+		// identity provider's.
+		multi := &model.Component{
+			ID: model.NewID(), RealmID: realm.ID, Name: strPtr("Allowed Protocol Mapper Types"),
+			ProviderID:   "allowed-protocol-mappers",
+			ProviderType: "org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy",
+			ParentID:     realm.ID, SubType: "anonymous",
+			Config: []model.ComponentConfigEntry{
+				{Name: "allowed-protocol-mapper-types", Values: []string{"a", "b", "c"}},
+			},
+		}
+		for _, c := range []*model.Component{named, nameless, multi} {
+			if err := s.Components().Create(ctx, c); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+		}
+
+		got, err := s.Components().ByID(ctx, realm.ID, named.ID)
+		if err != nil {
+			t.Fatalf("ByID: %v", err)
+		}
+		if got.Name == nil || *got.Name != "rsa-enc-generated" {
+			t.Errorf("name: got %v", got.Name)
+		}
+		if len(got.Config) != 2 || got.Config[0].Name != "priority" ||
+			got.Config[1].Values[0] != "RSA-OAEP" {
+			t.Errorf("config: got %v", got.Config)
+		}
+
+		if got, err := s.Components().ByID(ctx, realm.ID, nameless.ID); err != nil || got.Name != nil {
+			t.Errorf("the nameless component: got %v, %v - absent is not empty", got, err)
+		}
+		if got, err := s.Components().ByID(ctx, realm.ID, multi.ID); err != nil ||
+			len(got.Config) != 1 || len(got.Config[0].Values) != 3 ||
+			got.Config[0].Values[2] != "c" {
+			t.Errorf("the multivalued config: got %v, %v", got, err)
+		}
+
+		if _, err := s.Components().ByID(ctx, realm.ID, "gloak-probe-nosuch"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("an unknown component: want ErrNotFound, got %v", err)
+		}
+		// The realm's own id is a parentId and not a component id.
+		if _, err := s.Components().ByID(ctx, realm.ID, realm.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("the realm as a component: want ErrNotFound, got %v", err)
+		}
+
+		// The listing is in the order the rows were written, which is what
+		// makes a driver deterministic where the server is not.
+		list, err := s.Components().List(ctx, realm.ID)
+		if err != nil || len(list) != 3 {
+			t.Fatalf("List: %v, %v", list, err)
+		}
+		if list[0].ID != named.ID || list[1].ID != nameless.ID || list[2].ID != multi.ID {
+			t.Errorf("the listing is not in creation order")
+		}
+	})
 }
 
 // strPtr is the "absent is not empty" helper the organization cases need, and

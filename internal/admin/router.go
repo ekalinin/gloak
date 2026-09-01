@@ -206,6 +206,65 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /admin/realms/{realm}/groups/{groupID}/management/permissions",
 		h.guardGroupResolving(h.managementPermissionsAfterGroup))
 
+	// Identity Providers, seven of the seventeen. The two
+	// `management/permissions` operations above are two more; the eight left
+	// are `import-config`, the provider and mapper-type catalogues and the five
+	// mapper operations. See
+	// docs/superpowers/plans/2026-09-01-p9-identity-providers.md.
+	//
+	// **The gate is a fifth shape and it is the simplest of the five**: a plain
+	// two-role check with no feature flag, no realm flag and no resource
+	// resolved in front of it. Measured one role at a time over sixteen
+	// callers - the whole family answers 403 to every role outside the
+	// identity-provider pair, `view-clients` and `manage-realm` included.
+	//
+	// **The alias is resolved after the roles**: a DELETE of an alias that does
+	// not exist is 403 to a `view-identity-providers` caller and 404 to a
+	// `manage-identity-providers` one. That is the `default-*-client-scopes`
+	// order and the opposite of the Groups tag's, whose routes answer 404 to a
+	// caller holding nothing.
+	const idpPrefix = "/admin/realms/{realm}/identity-provider/instances"
+	mux.HandleFunc("GET "+idpPrefix,
+		h.guardAny(identityProviderReadRoles, h.listIdentityProviders))
+	mux.HandleFunc("POST "+idpPrefix,
+		h.guardAny(identityProviderWriteRoles, h.createIdentityProvider))
+	mux.HandleFunc("GET "+idpPrefix+"/{alias}",
+		h.guardIdentityProvider(identityProviderReadRoles, h.readIdentityProvider))
+	// **The update resolves nothing**, deliberately: its strict decode runs
+	// *before* the path's alias, measured - a PUT to an alias that does not
+	// exist carrying an unknown field answers the 400 and not the 404. That is
+	// the required-action PUT's order and the opposite of the organization
+	// PUT's, so the handler does its own lookup after decoding.
+	mux.HandleFunc("PUT "+idpPrefix+"/{alias}",
+		h.guardAny(identityProviderWriteRoles, h.updateIdentityProvider))
+	mux.HandleFunc("DELETE "+idpPrefix+"/{alias}",
+		h.guardIdentityProvider(identityProviderWriteRoles, h.deleteIdentityProvider))
+	mux.HandleFunc("GET "+idpPrefix+"/{alias}/export",
+		h.guardIdentityProvider(identityProviderReadRoles, h.exportIdentityProvider))
+	// **reload-keys takes the write set although it is a GET.** Measured one
+	// role at a time: `view-identity-providers` reads the six routes above and
+	// is 403 here. It is the second read in this API with that shape, after
+	// `GET .../authz/resource-server/settings`, and the list is written out
+	// rather than shared for the reason that one's is.
+	mux.HandleFunc("GET "+idpPrefix+"/{alias}/reload-keys",
+		h.guardIdentityProvider(identityProviderWriteRoles, h.reloadIdentityProviderKeys))
+
+	// Component, two of the six. The four left - the two writes,
+	// `sub-component-types` and the delete - each need the per-provider
+	// config-property catalogue or would offer a state Keycloak cannot reach;
+	// the plan says which is which.
+	//
+	// **The family is authorised out of the realm role set**, although its rows
+	// are key providers and client-registration policies:
+	// `manage-identity-providers` is 403 on both routes and `view-realm` reads
+	// them. That is the third time the description's tag has failed to predict
+	// the guard, and the neighbouring family in this very commit takes the
+	// other pair.
+	mux.HandleFunc("GET /admin/realms/{realm}/components",
+		h.guardAny(componentReadRoles, h.listComponents))
+	mux.HandleFunc("GET /admin/realms/{realm}/components/{componentID}",
+		h.guardAny(componentReadRoles, h.readComponent))
+
 	// Authentication Management, the eighteen operations of P8's first cut.
 	// The other twenty-one - the flows, the executions and the shared
 	// authenticator config - are not here, and that is a decision rather than
@@ -1169,6 +1228,34 @@ func (h *handler) guardOrganization(roles []string, next func(http.ResponseWrite
 	})
 }
 
+// guardIdentityProvider is guardAny for the five routes naming an {alias}: the
+// provider is resolved **after** the caller is judged.
+//
+// Measured 2026-09-01 on an alias that resolves to nothing: a caller holding no
+// admin role gets 403, one holding view-identity-providers gets 404 on the
+// reads and 403 on the delete, and one holding manage-identity-providers gets
+// 404 on both. So the role check comes first and the route's own role set is
+// what decides which of the two answers a caller sees - the
+// `default-*-client-scopes` order, and not the Groups tag's, where every route
+// naming a resource answers 404 to every caller.
+//
+// **PUT is deliberately not built on this**, because its decode runs before the
+// alias is resolved. See the router entry for it.
+func (h *handler) guardIdentityProvider(roles []string, next func(http.ResponseWriter, *http.Request, *reqContext, *model.IdentityProvider)) http.HandlerFunc {
+	return h.guardAny(roles, func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+		p, err := h.store.IdentityProviders().ByAlias(r.Context(), rc.realm.ID, r.PathValue("alias"))
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeIdentityProviderNotFound(w)
+				return
+			}
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		next(w, r, rc, p)
+	})
+}
+
 // guardAnyRejecting is the one implementation the three wrappers share:
 // resolve the realm, resolve the caller, admit it if it holds any of the
 // roles.
@@ -1390,3 +1477,38 @@ var organizationsListReadRoles = []string{
 // organizationWriteRoles is what the create, the update and the delete accept.
 // view-organizations reads and does not write; manage-realm does both.
 var organizationWriteRoles = []string{"manage-organizations", "manage-realm"}
+
+// identityProviderReadRoles is what six of the seven reads on the tag accept.
+//
+// **The pair is exactly view-identity-providers and manage-identity-providers,
+// and nothing else reaches it.** Measured 2026-09-01 with a token minted per
+// role, fifteen single-role callers against ten requests: view-realm,
+// manage-realm, view-clients, manage-clients, query-clients, query-realms,
+// view-users, manage-users, view-authorization, manage-authorization,
+// view-organizations, create-client and a caller holding nothing all answer
+// 403 on every route in the family. It is the narrowest guard in this package.
+var identityProviderReadRoles = []string{
+	"view-identity-providers", "manage-identity-providers",
+}
+
+// identityProviderWriteRoles is what the create, the update, the delete **and
+// `GET .../reload-keys`** accept.
+//
+// The last of those is the finding: a read that refuses the view role, one of
+// two in the whole API. `view-identity-providers` reads the listing, the single
+// provider, the export, the mappers, the mapper types and the provider
+// catalogue, and is 403 on `reload-keys` alone. Measured one role at a time on
+// all seven reads, so it is a difference between siblings rather than between
+// families.
+var identityProviderWriteRoles = []string{"manage-identity-providers"}
+
+// componentReadRoles is what both component reads accept.
+//
+// **It is the realm pair and not the identity-provider pair**, although the
+// rows this family serves are key providers and client-registration policies
+// and although user federation lives here too. Measured on the same fifteen
+// single-role callers as the family above, on the same container, in the same
+// sweep: view-realm and manage-realm answer 200 and every other role answers
+// 403, `manage-identity-providers` included. Two neighbouring chapters, two
+// disjoint role pairs, and nothing in the description says so.
+var componentReadRoles = []string{"view-realm", "manage-realm"}

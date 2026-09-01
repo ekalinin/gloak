@@ -1,0 +1,12 @@
+# GET /admin/realms/master/identity-provider/instances
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"alias":"gloak-probe-idp-aaa","internalId":"1de07000-0000-4000-8000-000000000012","providerId":"github","enabled":true,"config":{"clientSecret":"**********","clientId":"gloak-probe-cid"},"types":[]},{"alias":"gloak-probe-idp-mmm","internalId":"1de07000-0000-4000-8000-000000000011","providerId":"github","enabled":true,"config":{"clientSecret":"**********","clientId":"gloak-probe-cid"},"types":[]},{"alias":"gloak-probe-idp-zzz","internalId":"1de07000-0000-4000-8000-000000000010","providerId":"github","enabled":true,"config":{"clientSecret":"**********","clientId":"gloak-probe-cid"},"types":[]}]

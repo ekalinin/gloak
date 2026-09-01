@@ -10304,4 +10304,527 @@ var adminCases = []Case{
 		AssertHeaders:       []string{"Content-Type"},
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
+
+	// P9: identity providers and components. See
+	// docs/superpowers/plans/2026-09-01-p9-identity-providers.md.
+	{
+		// **The representation's field rules are not uniform and this body is
+		// where they are asserted together.** The create sent fifteen fields
+		// and the read answers thirteen: `updateProfileFirstLoginMode` and
+		// `postBrokerLoginFlowAlias` are accepted and never echoed. The six
+		// tri-state flags are all `true` here and all absent in the minimal
+		// case below, which is the pair that says absent is not false.
+		//
+		// **`clientSecret` comes back as ten asterisks**, so a caller cannot
+		// round-trip a provider through a GET and a PUT without losing it.
+		//
+		// The config's key order is javamap.SizedKeyOrder's, which is the
+		// **other** constructor from the component listing four cases down.
+		// Nothing masks it.
+		ID: "admin/identity-providers/read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: get one identity provider instance",
+			Retrieved: "2026-09-01",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/identity-provider/instances/{alias}",
+		Fixture:   "idp-full",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/identity-provider/instances/gloak-probe-idp-full",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The other end of the pair. Alias and providerId and nothing else:
+		// `config` is `{}` rather than absent, `enabled` is `true` rather than
+		// omitted, and the six flags are gone.
+		ID: "admin/identity-providers/read-minimal",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: an instance created from alias and providerId alone",
+			Retrieved: "2026-09-01",
+		},
+		Status:  Implemented,
+		Fixture: "idp-minimal",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/identity-provider/instances/gloak-probe-idp-min",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **Sorted by alias**, and the fixture creates them zzz, mmm, aaa so
+		// that the golden asserts the sort rather than the insertion order.
+		// No Unordered mask: this order is reproducible and asserting it is the
+		// point.
+		//
+		// **PristineRealm**, because the body is the realm's whole set of
+		// providers and the recorder shares one container: without it this
+		// golden holds whatever the fixtures of the cases beside it created,
+		// which is what the first recording of it did.
+		ID: "admin/identity-providers/list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: list the instances",
+			Retrieved: "2026-09-01",
+		},
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/identity-provider/instances",
+		PristineRealm: true,
+		Fixture:       "idp-listing",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/identity-provider/instances",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **`briefRepresentation=true` answers a six-key shape**, not the full
+		// one minus a field: it drops the six tri-state flags,
+		// `firstBrokerLoginFlowAlias` and `types`, and **empties `config`**
+		// while keeping the key. The default on this listing is false - the
+		// third default this one parameter has in this API.
+		//
+		// The first reading of it was "it drops types", from probes on
+		// providers that carried neither a config nor a flag. **This golden is
+		// what refuted it**: the fixture's providers carry both, and the
+		// recording sent the request no hand probe had.
+		ID: "admin/identity-providers/list-brief",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: the listing under briefRepresentation",
+			Retrieved: "2026-09-01",
+		},
+		Status:        Implemented,
+		PristineRealm: true,
+		Fixture:       "idp-listing",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/identity-provider/instances",
+			Query:   map[string]string{"briefRepresentation": "true"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **`search` is a prefix with an implied trailing wildcard**, so
+		// `gloak-probe-idp-m` finds `gloak-probe-idp-mmm` and nothing else. It
+		// is the same rule the user listing follows and **not** the role
+		// listing's, where `*` is a literal - measured on one container with
+		// one value.
+		ID: "admin/identity-providers/list-search",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: the listing under search",
+			Retrieved: "2026-09-01",
+		},
+		Status:        Implemented,
+		PristineRealm: true,
+		Fixture:       "idp-listing",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/identity-provider/instances",
+			Query:   map[string]string{"search": "gloak-probe-idp-m"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **A malformed integer bound is a 404**, and it is the generic
+		// `{"error":"HTTP 404 Not Found"}` rather than anything about the
+		// route. `/components` next door answers the same parameter with a 200
+		// and the whole listing, which is why the two families do not share a
+		// bound parser. See F134.
+		ID: "admin/identity-providers/list-bad-bound",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: the listing with an unparseable first",
+			Retrieved: "2026-09-01",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/identity-provider/instances",
+			Query:   map[string]string{"first": "abc"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **An alias that does not exist is the generic 404**, not a spelling
+		// of not-found. This family adds none, where the Component family two
+		// cases down adds two.
+		ID: "admin/identity-providers/read-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: an alias that resolves to nothing",
+			Retrieved: "2026-09-01",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/identity-provider/instances/gloak-probe-no-such-idp",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The create's Location ends in the alias**, a name tail rather than
+		// a uuid one, which is why this case is **not** in
+		// Case.VolatileTailHeaders: the tail is what the request chose and is
+		// asserted. The 201 carries no Content-Type at all.
+		ID: "admin/identity-providers/create",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: create an instance",
+			Retrieved: "2026-09-01",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/identity-provider/instances",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/identity-provider/instances",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"alias":"gloak-probe-idp-create","providerId":"github",` +
+				`"config":{"clientId":"gloak-probe-cid","clientSecret":"gloak-probe-secret"}}`),
+		},
+		AssertHeaders:       []string{"Location"},
+		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **A duplicate alias is a 409 naming it**, in the errorMessage family.
+		ID: "admin/identity-providers/create-duplicate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: create an instance whose alias is taken",
+			Retrieved: "2026-09-01",
+		},
+		Status:  Implemented,
+		Fixture: "idp-taken",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/identity-provider/instances",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"alias":"gloak-probe-idp-min","providerId":"oidc"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **A body with no alias is `path is null`**, which is Keycloak's own
+		// message and is about a path rather than about the field the request
+		// is missing.
+		ID: "admin/identity-providers/create-no-alias",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: create an instance with no alias",
+			Retrieved: "2026-09-01",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/identity-provider/instances",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"providerId":"oidc"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **An unregistered providerId names itself in the message**, and an
+		// absent one produces the same sentence with `null` in it - one check
+		// with one spelling rather than a presence test and a membership test.
+		ID: "admin/identity-providers/create-bad-provider",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: create an instance naming a provider that is not registered",
+			Retrieved: "2026-09-01",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/identity-provider/instances",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"alias":"gloak-probe-idp-bad","providerId":"nonesuch"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The sixth strict decoder**, and it reports a line and column. The
+		// claim that client registration is the only endpoint that does is
+		// wrong four ways over: the two required-action PUTs, the two
+		// organization writes, this pair and `POST /components` all do.
+		ID: "admin/identity-providers/create-unknown-field",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: create an instance with a field the server does not know",
+			Retrieved: "2026-09-01",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/identity-provider/instances",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"alias":"gloak-probe-idp-strict","providerId":"oidc","zzz":1}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The strict decode runs before the path's alias is resolved**: an
+		// unknown field on an alias that does not exist answers the 400 and not
+		// the 404. That is the required-action PUT's order and the opposite of
+		// the organization PUT's, and it is the request that tells the two
+		// apart - a clean body on the same alias is the 404.
+		ID: "admin/identity-providers/update-decodes-first",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: update an unknown alias with an unknown field",
+			Retrieved: "2026-09-01",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/identity-provider/instances/{alias}",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/identity-provider/instances/gloak-probe-no-such-idp",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"alias":"x","providerId":"oidc","zzz":1}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **Keycloak's own defect, reproduced.** The fixture PUTs a body with
+		// no `alias` and gets a 204; this listing is what that 204 cannot show.
+		// The row keeps its internalId, loses its `alias` key outright and
+		// sorts first, and nothing can address it again.
+		//
+		// Refusing an absent alias is the tidy-up that turns a measured 204
+		// into a 400, which is why this case exists rather than a test alone.
+		ID: "admin/identity-providers/update-strands-the-row",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: the listing after a PUT whose body has no alias",
+			Retrieved: "2026-09-01",
+		},
+		Status:        Implemented,
+		PristineRealm: true,
+		Fixture:       "idp-stranded",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/identity-provider/instances",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **A rename is refused**, where the absent alias above is not. Two
+		// halves of one sentence, one request each.
+		ID: "admin/identity-providers/update-rename",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: update an instance, changing its alias",
+			Retrieved: "2026-09-01",
+		},
+		Status:  Implemented,
+		Fixture: "idp-minimal",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/identity-provider/instances/gloak-probe-idp-min",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"alias":"gloak-probe-idp-other","providerId":"oidc"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The delete is not idempotent**: the second is the generic 404. The
+		// 204 carries `Cache-Control: no-cache` and no `X-Frame-Options`, the
+		// request having sent no Content-Type.
+		ID: "admin/identity-providers/delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: delete an instance",
+			Retrieved: "2026-09-01",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/identity-provider/instances/{alias}",
+		Fixture:   "idp-minimal",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/identity-provider/instances/gloak-probe-idp-min",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// **The export of anything but a SAML provider is a bodyless 204**, no
+		// Content-Type at all. A SAML provider answers `application/xml` with a
+		// freshly minted `ID_<uuid>` in it on every request, which is why that
+		// half is not here: a page carrying a per-request value cannot be
+		// asserted.
+		ID: "admin/identity-providers/export",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: export an instance's public broker configuration",
+			Retrieved: "2026-09-01",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/identity-provider/instances/{alias}/export",
+		Fixture:   "idp-minimal",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/identity-provider/instances/gloak-probe-idp-min/export",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type"},
+	},
+	{
+		// **The body is the bare JSON `false`**, on every provider type. It
+		// reports whether anything was reloaded, and nothing is: no provider on
+		// a default container has a JWKS Keycloak has cached.
+		//
+		// It is also the one read on this family that refuses the view role -
+		// see the router.
+		ID: "admin/identity-providers/reload-keys",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: reload an instance's keys",
+			Retrieved: "2026-09-01",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/identity-provider/instances/{alias}/reload-keys",
+		Fixture:   "idp-minimal",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/identity-provider/instances/gloak-probe-idp-min/reload-keys",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **A fresh realm's components are fifteen on master**, and the listing
+		// is neither empty nor about user federation: four key providers, ten
+		// client-registration policies, and the declarative user profile.
+		//
+		// Two masks, neither inert, both measured on two realms of one
+		// container:
+		//
+		//   - the **row order** has none. Two realms created minutes apart
+		//     returned the same fourteen rows in two entirely different orders,
+		//     matching neither insertion, name, id nor provider.
+		//   - `allowed-protocol-mapper-types` holds eight names in two
+		//     different orders on those same two realms.
+		//
+		// The ids and the parentId are per-realm UUIDs and are Volatile. The
+		// **key order inside each config is not masked**: it is
+		// javamap.KeyOrder's and it is asserted, which is the other of
+		// Keycloak's two HashMap constructors from the identity provider config
+		// eleven cases up.
+		ID: "admin/component/list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: list a realm's components",
+			Retrieved: "2026-09-01",
+		},
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/components",
+		PristineRealm: true,
+		Fixture:       "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/components",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/parentId"},
+		Unordered:     []string{".", "*/config/allowed-protocol-mapper-types"},
+	},
+	{
+		// The same listing narrowed to the four key providers, which is what
+		// `GET /admin/realms/{realm}/keys` is a view over and Gloak's is not -
+		// see AGENTS.md's note that Gloak derives that endpoint's `providerId`
+		// from the kid by a fixed hash.
+		//
+		// **A `type` that matches nothing is `[]` and not a 404**, which is why
+		// the filters run over rows rather than resolving anything.
+		ID: "admin/component/list-by-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: list a realm's components filtered by provider type",
+			Retrieved: "2026-09-01",
+		},
+		Status:        Implemented,
+		PristineRealm: true,
+		Fixture:       "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/components",
+			Query:   map[string]string{"type": "org.keycloak.keys.KeyProvider"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/parentId"},
+		Unordered:     []string{"."},
+	},
+	{
+		// **`Could not find component` is a spelling of not-found this API did
+		// not have**, and it is in the bare-`error` family. The realm's own id
+		// answers it too: components are parented on the realm and the realm is
+		// not one.
+		ID: "admin/component/read-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: an id that resolves to nothing",
+			Retrieved: "2026-09-01",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/components/{id}",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/components/gloak-probe-no-such-component",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
 }

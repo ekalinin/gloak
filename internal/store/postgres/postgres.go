@@ -148,6 +148,14 @@ func (s *Store) Authz() store.AuthzRepo {
 	return &authzRepo{s.pool}
 }
 
+func (s *Store) IdentityProviders() store.IdentityProviderRepo {
+	return &identityProviderRepo{s.pool}
+}
+
+func (s *Store) Components() store.ComponentRepo {
+	return &componentRepo{s.pool}
+}
+
 // classify maps driver errors onto the store's sentinels so handlers never
 // inspect driver-specific error text.
 func classify(err error) error {
@@ -2183,4 +2191,342 @@ func scanAuthzScope(row pgx.Row) (*model.AuthzScope, error) {
 		return nil, classify(err)
 	}
 	return s, nil
+}
+
+type identityProviderRepo struct{ pool *pgxpool.Pool }
+
+// identityProviderColumns is the SELECT list shared by ByAlias and List, so the
+// two cannot come to scan different columns into the same scanner.
+const identityProviderColumns = `internal_id, realm_id, alias, display_name, provider_id,
+	enabled, trust_email, store_token, add_read_token_role_on_create,
+	authenticate_by_default, link_only, hide_on_login, first_broker_login_flow_alias`
+
+func (r *identityProviderRepo) Create(ctx context.Context, m *model.IdentityProvider) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO identity_provider
+		   (internal_id, realm_id, alias, display_name, provider_id, enabled,
+		    trust_email, store_token, add_read_token_role_on_create,
+		    authenticate_by_default, link_only, hide_on_login,
+		    first_broker_login_flow_alias)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		m.InternalID, m.RealmID, m.Alias, m.DisplayName, m.ProviderID,
+		boolToInt(m.Enabled), nullableBool(m.TrustEmail), nullableBool(m.StoreToken),
+		nullableBool(m.AddReadTokenRoleOnCreate), nullableBool(m.AuthenticateByDefault),
+		nullableBool(m.LinkOnly), nullableBool(m.HideOnLogin),
+		m.FirstBrokerLoginFlowAlias); err != nil {
+		return classify(err)
+	}
+	if err := insertIdentityProviderConfig(ctx, tx, m); err != nil {
+		return classify(err)
+	}
+	return tx.Commit(ctx)
+}
+
+// Update writes every column back, the alias included - see
+// store.IdentityProviderRepo for why that is not the organization's rule.
+func (r *identityProviderRepo) Update(ctx context.Context, m *model.IdentityProvider) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx,
+		`UPDATE identity_provider
+		    SET alias = $1, display_name = $2, provider_id = $3, enabled = $4,
+		        trust_email = $5, store_token = $6, add_read_token_role_on_create = $7,
+		        authenticate_by_default = $8, link_only = $9, hide_on_login = $10,
+		        first_broker_login_flow_alias = $11
+		  WHERE internal_id = $12`,
+		m.Alias, m.DisplayName, m.ProviderID, boolToInt(m.Enabled),
+		nullableBool(m.TrustEmail), nullableBool(m.StoreToken),
+		nullableBool(m.AddReadTokenRoleOnCreate), nullableBool(m.AuthenticateByDefault),
+		nullableBool(m.LinkOnly), nullableBool(m.HideOnLogin),
+		m.FirstBrokerLoginFlowAlias, m.InternalID)
+	if err != nil {
+		return classify(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM identity_provider_config WHERE internal_id = $1`, m.InternalID); err != nil {
+		return classify(err)
+	}
+	if err := insertIdentityProviderConfig(ctx, tx, m); err != nil {
+		return classify(err)
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *identityProviderRepo) Delete(ctx context.Context, realmID, alias string) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM identity_provider WHERE realm_id = $1 AND alias = $2`, realmID, alias)
+	if err != nil {
+		return classify(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (r *identityProviderRepo) ByAlias(ctx context.Context, realmID, alias string) (*model.IdentityProvider, error) {
+	row := r.pool.QueryRow(ctx,
+		`SELECT `+identityProviderColumns+` FROM identity_provider
+		  WHERE realm_id = $1 AND alias = $2`, realmID, alias)
+	m, err := scanIdentityProvider(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadIdentityProviderConfig(ctx, []*model.IdentityProvider{m}); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// List orders by alias, which is the measured serving order. A row whose alias
+// was cleared sorts first, which is where the server puts it too - NULLS FIRST
+// is spelled out because Postgres sorts NULLs last by default and SQLite sorts
+// them first, and this is exactly the kind of place the two drivers would
+// otherwise diverge without anything failing to compile.
+func (r *identityProviderRepo) List(ctx context.Context, realmID string) ([]*model.IdentityProvider, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+identityProviderColumns+` FROM identity_provider
+		  WHERE realm_id = $1 ORDER BY alias NULLS FIRST`, realmID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	out, err := collectIdentityProviders(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadIdentityProviderConfig(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func insertIdentityProviderConfig(ctx context.Context, tx pgx.Tx, m *model.IdentityProvider) error {
+	for i, e := range m.Config {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO identity_provider_config (internal_id, name, value, ordinal)
+			 VALUES ($1, $2, $3, $4)`, m.InternalID, e.Name, e.Value, i); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *identityProviderRepo) loadIdentityProviderConfig(ctx context.Context, ps []*model.IdentityProvider) error {
+	if len(ps) == 0 {
+		return nil
+	}
+	byID := make(map[string]*model.IdentityProvider, len(ps))
+	ids := make([]any, 0, len(ps))
+	placeholders := make([]string, 0, len(ps))
+	for i, p := range ps {
+		byID[p.InternalID] = p
+		ids = append(ids, p.InternalID)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", i+1))
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT internal_id, name, value FROM identity_provider_config
+		  WHERE internal_id IN (`+strings.Join(placeholders, ",")+`)
+		  ORDER BY internal_id, ordinal`, ids...)
+	if err != nil {
+		return classify(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name, value string
+		if err := rows.Scan(&id, &name, &value); err != nil {
+			return err
+		}
+		p := byID[id]
+		p.Config = append(p.Config, model.IdentityProviderConfigEntry{Name: name, Value: value})
+	}
+	return classify(rows.Err())
+}
+
+func collectIdentityProviders(rows pgx.Rows) ([]*model.IdentityProvider, error) {
+	defer rows.Close()
+	out := []*model.IdentityProvider{}
+	for rows.Next() {
+		m, err := scanIdentityProvider(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+func scanIdentityProvider(row scanner) (*model.IdentityProvider, error) {
+	m := &model.IdentityProvider{}
+	var alias *string
+	var enabled int
+	var trustEmail, storeToken, addReadToken, authByDefault, linkOnly, hideOnLogin *int64
+	if err := row.Scan(&m.InternalID, &m.RealmID, &alias, &m.DisplayName, &m.ProviderID,
+		&enabled, &trustEmail, &storeToken, &addReadToken, &authByDefault,
+		&linkOnly, &hideOnLogin, &m.FirstBrokerLoginFlowAlias); err != nil {
+		return nil, classify(err)
+	}
+	m.Alias = alias
+	m.Enabled = enabled != 0
+	m.TrustEmail = boolFromNull(trustEmail)
+	m.StoreToken = boolFromNull(storeToken)
+	m.AddReadTokenRoleOnCreate = boolFromNull(addReadToken)
+	m.AuthenticateByDefault = boolFromNull(authByDefault)
+	m.LinkOnly = boolFromNull(linkOnly)
+	m.HideOnLogin = boolFromNull(hideOnLogin)
+	return m, nil
+}
+
+// nullableBool and boolFromNull carry the tri-state the six flag columns need.
+// They are two functions rather than one generic helper because the driver
+// boundary is where absent stops being a pointer and starts being a NULL, and
+// naming both directions is what makes the round trip readable.
+func nullableBool(b *bool) any {
+	if b == nil {
+		return nil
+	}
+	return boolToInt(*b)
+}
+
+func boolFromNull(n *int64) *bool {
+	if n == nil {
+		return nil
+	}
+	v := *n != 0
+	return &v
+}
+
+type componentRepo struct{ pool *pgxpool.Pool }
+
+const componentColumns = `id, realm_id, name, provider_id, provider_type, parent_id, sub_type`
+
+func (r *componentRepo) Create(ctx context.Context, m *model.Component) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var ordinal int
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(MAX(ordinal), -1) + 1 FROM component WHERE realm_id = $1`,
+		m.RealmID).Scan(&ordinal); err != nil {
+		return classify(err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO component
+		   (id, realm_id, name, provider_id, provider_type, parent_id, sub_type, ordinal)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		m.ID, m.RealmID, m.Name, m.ProviderID, m.ProviderType, m.ParentID,
+		m.SubType, ordinal); err != nil {
+		return classify(err)
+	}
+	// The values are flattened with a compound ordinal so that a name holding
+	// several values keeps both its position among the names and the order of
+	// its own values - organization_attribute's arithmetic, for the same
+	// reason.
+	for i, e := range m.Config {
+		for j, v := range e.Values {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO component_config (component_id, name, value, ordinal)
+				 VALUES ($1, $2, $3, $4)`, m.ID, e.Name, v, i*1000+j); err != nil {
+				return classify(err)
+			}
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *componentRepo) ByID(ctx context.Context, realmID, id string) (*model.Component, error) {
+	row := r.pool.QueryRow(ctx,
+		`SELECT `+componentColumns+` FROM component WHERE realm_id = $1 AND id = $2`,
+		realmID, id)
+	m, err := scanComponent(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadComponentConfig(ctx, []*model.Component{m}); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (r *componentRepo) List(ctx context.Context, realmID string) ([]*model.Component, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+componentColumns+` FROM component WHERE realm_id = $1 ORDER BY ordinal`,
+		realmID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	out, err := collectComponents(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadComponentConfig(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *componentRepo) loadComponentConfig(ctx context.Context, cs []*model.Component) error {
+	if len(cs) == 0 {
+		return nil
+	}
+	byID := make(map[string]*model.Component, len(cs))
+	ids := make([]any, 0, len(cs))
+	placeholders := make([]string, 0, len(cs))
+	for i, c := range cs {
+		byID[c.ID] = c
+		ids = append(ids, c.ID)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", i+1))
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT component_id, name, value FROM component_config
+		  WHERE component_id IN (`+strings.Join(placeholders, ",")+`)
+		  ORDER BY component_id, ordinal`, ids...)
+	if err != nil {
+		return classify(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name, value string
+		if err := rows.Scan(&id, &name, &value); err != nil {
+			return err
+		}
+		byID[id].AddConfig(name, value)
+	}
+	return classify(rows.Err())
+}
+
+func collectComponents(rows pgx.Rows) ([]*model.Component, error) {
+	defer rows.Close()
+	out := []*model.Component{}
+	for rows.Next() {
+		m, err := scanComponent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+func scanComponent(row scanner) (*model.Component, error) {
+	m := &model.Component{}
+	var name *string
+	if err := row.Scan(&m.ID, &m.RealmID, &name, &m.ProviderID, &m.ProviderType,
+		&m.ParentID, &m.SubType); err != nil {
+		return nil, classify(err)
+	}
+	m.Name = name
+	return m, nil
 }

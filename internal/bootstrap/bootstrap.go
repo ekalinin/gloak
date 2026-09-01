@@ -485,6 +485,15 @@ func CreateRealm(ctx context.Context, s store.Store, name string, want *model.Re
 		return nil, err
 	}
 
+	// The components depend on nothing else in the realm either, and they are
+	// **not the same set in every realm**: master gets fifteen and a realm
+	// created through POST /admin/realms gets fourteen, measured. That is the
+	// only place in this function where the realm's name changes what is
+	// written other than the master container below.
+	if err := ensureComponents(ctx, s, realm, name == MasterRealmName); err != nil {
+		return nil, err
+	}
+
 	for _, c := range realmClients(name) {
 		if err := createClient(ctx, s, realm.ID, c); err != nil {
 			return nil, err

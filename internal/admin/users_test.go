@@ -156,6 +156,17 @@ func TestSearchIsAPrefixAndNamedFiltersAreSubstrings(t *testing.T) {
 		{"full-user", `"full"`, false},     //
 		{"full-user", "FULL", true},        // case-insensitive throughout
 		{"full-user", "*", true},           //
+
+		// **The row the ten above could not decide**, measured 2026-09-01 on a
+		// user named `xabbcx`: `*bbc` matches, although `xabbcx` does not end
+		// in `bbc`. So the pattern gets an implied trailing wildcard rather
+		// than being anchored at its tail, and every row above is explained by
+		// both readings - which is why the wrong one stood for a week.
+		{"xabbcx", "*bbc", true},
+		{"xabbcx", "*bbcx", true},
+		{"xabbcx", "abb", false}, // the implied wildcard is only at the end
+		{"abcz", "*z", true},
+		{"abcz", "z", false}, // a bare term is still a prefix
 	} {
 		t.Run(tc.term, func(t *testing.T) {
 			if got := matchesSearch(tc.value, tc.term); got != tc.want {
