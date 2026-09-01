@@ -181,6 +181,43 @@ type Case struct {
 	// recorder is the thing a reviewer cannot run in CI.
 	PristineRealm bool
 
+	// SecondRealm marks a case that re-measures a behaviour another case
+	// already covers, against a realm other than master, so that the values
+	// the handler derives from the realm name are asserted rather than
+	// compared against the literal "master".
+	//
+	// Sixty goldens carry the realm name of the request in their response and
+	// fifty-eight of them address master, so a handler answering with the
+	// literal compares equal to one deriving it - F142, found by a mutation
+	// that hard-coded master into the theme page's restart URL and passed the
+	// whole tree.
+	//
+	// It is a **declaration**, not something derived from the path, and F53 is
+	// the entry that argued that for PristineRealm. Here the reason is sharper:
+	// oidc/discovery/unknown-realm addresses "nosuchrealm" and is a distinct
+	// documented behaviour that belongs in the denominator, while a
+	// second-realm re-measurement is the same behaviour twice and does not. A
+	// rule reading "the path does not say master" cannot tell those apart.
+	//
+	// Two things follow from the flag and both are checked, which is what
+	// keeps it from being a claim nothing can falsify:
+	//
+	//   - TestCoverage leaves it out of the tally. A protocol chapter's
+	//     denominator is the catalogue's own case count, so counting a
+	//     re-measurement would make Gloak read as serving one more behaviour
+	//     than it does - the failure Chapter's doc comment names.
+	//   - TestSecondRealmCasesAddressARealmTheyCreate and
+	//     TestSecondRealmGoldenPinsItsRealmName require the realm to be one
+	//     the case's own fixture creates, and the golden to carry that name
+	//     and not "master". A second-realm case whose golden pins nothing
+	//     realm-derived is a mask that changes nothing, and fails.
+	//
+	// The harness needed no other machinery for this: realmFixture has created
+	// realms through POST /admin/realms since P4, sixty-six cases already
+	// address one, and ReplaceIssuer deliberately rewrites the base URL and not
+	// the realm segment - which is what leaves the realm name asserted.
+	SecondRealm bool
+
 	Request Request
 
 	// AssertHeaders lists the response headers compared exactly. Every header
