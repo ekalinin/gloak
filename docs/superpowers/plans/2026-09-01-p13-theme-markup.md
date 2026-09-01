@@ -172,13 +172,23 @@ measured and not against what a base64url token could in principle be.
 
 **What it would do to a page that legitimately contains `/resources/` in
 prose**: it would rewrite it, if and only if the very next path segment is five
-lowercase alphanumerics and is followed by a `/`. A sentence saying
-`see /resources/login/index.html` would come out as
-`see /resources/{{theme_resource}}/index.html`. That is a real over-reach and it
-is bounded by a fact rather than by a hope: **`/resources/` appears in no golden
-in this repository except the eight theme pages**, seven occurrences each and
-eight on prompt-create, and a test asserts that count so the day a ninth
-occurrence appears is the day somebody reads this paragraph.
+lowercase alphanumerics and is followed by a `/`. Two of the shapes that hits
+are worth naming because a reader would not expect either:
+
+- **`login` is itself five lowercase alphanumerics**, so `/resources/login/x`
+  is swallowed. The real theme URLs put `login` in the *second* segment
+  (`/resources/<version>/login/keycloak.v2/...`), so this never fires on one -
+  but a sentence naming the directory would be rewritten.
+- **the pattern is not anchored to the start of a path**, so
+  `/admin/resources/t72jg/x` is rewritten too.
+
+That is a real over-reach and it is bounded by a fact rather than by a hope:
+**`/resources/` appears in no golden in this repository except the eight theme
+pages**, seven occurrences each and eight on prompt-create, and
+`TestThemeResourceAppearsOnlyInTheThemePages` asserts that count, so the day a
+ninth occurrence appears is the day somebody reads this paragraph.
+`TestReplaceThemeResourceOverReachesExactlyHere` pins the two shapes above as
+behaviour rather than leaving them to be discovered.
 
 ## 4. What is built
 
