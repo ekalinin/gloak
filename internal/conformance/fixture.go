@@ -992,6 +992,49 @@ var Fixtures = map[string]Fixture{
 	"authz-scope-resources":    authzScopeFixture("gloak-probe-authz-sc-res", "c0", scopeSeedOne),
 	"authz-scope-settings":     authzScopeFixture("gloak-probe-authz-sc-set", "d0", scopeSeedOutOfOrder),
 
+	// ---- P10 third cut: the authorization-services resource family --------
+	//
+	// Appended at the very end of the map, and the helpers after the last one.
+	//
+	// **Every resource carries a fixed `_id` and no fixture shares one**, for
+	// the reason the scope fixtures above give: the id is global rather than
+	// per resource server, and the body's id wins on the create, so a case can
+	// name a resource without capturing anything. Each fixture also builds its
+	// **own** scope, because a scope id is global too and one shared constant
+	// would collide with itself the moment two fixtures ran on one container.
+	//
+	// One client per case, again for clientFixtureBody's stated reason.
+	"authz-res-list":         authzResourceFixture("gloak-probe-authz-rs-list", "f0", resourceSeedOutOfOrder),
+	"authz-res-filter":       authzResourceFixture("gloak-probe-authz-rs-filt", "f1", resourceSeedOutOfOrder),
+	"authz-res-deep":         authzResourceFixture("gloak-probe-authz-rs-deep", "f2", resourceSeedFull),
+	"authz-res-uri":          authzResourceFixture("gloak-probe-authz-rs-uri", "f3", resourceSeedURIs),
+	"authz-res-bound":        authzClientFixture("gloak-probe-authz-rs-bnd"),
+	"authz-res-create":       authzResourceFixture("gloak-probe-authz-rs-crt", "f4", nil),
+	"authz-res-conflict":     authzResourceFixture("gloak-probe-authz-rs-conf", "f5", resourceSeedOne),
+	"authz-res-noname":       authzClientFixture("gloak-probe-authz-rs-non"),
+	"authz-res-read":         authzResourceFixture("gloak-probe-authz-rs-read", "f6", resourceSeedFull),
+	"authz-res-missing":      authzClientFixture("gloak-probe-authz-rs-miss"),
+	"authz-res-missing-sub":  authzClientFixture("gloak-probe-authz-rs-msub"),
+	"authz-res-missing-del":  authzClientFixture("gloak-probe-authz-rs-mdel"),
+	"authz-res-search":       authzResourceFixture("gloak-probe-authz-rs-srch", "f7", resourceSeedOne),
+	"authz-res-search-miss":  authzResourceFixture("gloak-probe-authz-rs-smis", "f8", resourceSeedOne),
+	"authz-res-search-empty": authzResourceFixture("gloak-probe-authz-rs-semp", "f9", resourceSeedOne),
+	"authz-res-put":          authzResourceFixture("gloak-probe-authz-rs-put", "fa", resourceSeedFull),
+	// The client whose resource has already been through the PUT, so the case
+	// can read what the 204 cannot show: five fields gone and `attributes`
+	// untouched.
+	"authz-res-put-replaced": authzResourcePutFixture("gloak-probe-authz-rs-repl", "fb"),
+	"authz-res-put-conflict": authzResourceFixture("gloak-probe-authz-rs-pcon", "fc", resourceSeedOutOfOrder),
+	"authz-res-delete":       authzResourceFixture("gloak-probe-authz-rs-del", "fd", resourceSeedOne),
+	"authz-res-attributes":   authzResourceFixture("gloak-probe-authz-rs-attr", "fe", resourceSeedFull),
+	"authz-res-permissions":  authzResourceFixture("gloak-probe-authz-rs-perm", "ff", resourceSeedFull),
+	"authz-res-scopes":       authzResourceFixture("gloak-probe-authz-rs-scop", "e0", resourceSeedFull),
+	// The settings export now carries resources, which it did not before this
+	// cut because nothing could create one.
+	"authz-res-settings": authzResourceFixture("gloak-probe-authz-rs-set", "e1", resourceSeedOutOfOrder),
+	// The scope-side read that stopped answering `[]` when this cut landed.
+	"authz-scope-resources-full": authzScopeResourcesFixture("gloak-probe-authz-rs-sres", "e2"),
+
 	// P9. The identity provider fixtures name their own internalId, because the
 	// body's id wins on this create - measured, the third endpoint with that
 	// rule - so a case can assert a whole body rather than mask a minted UUID.
@@ -5037,5 +5080,175 @@ func identityProviderStrandedFixture() Fixture {
 			Body:    []byte(`{"providerId":"oidc"}`),
 		},
 	})
+	return f
+}
+
+// ---- P10 third cut: the authorization-services resource family -------------
+//
+// Appended after the last helper. Everything below was measured 2026-09-01.
+
+// authzResourceID is the fixed id of one seeded resource.
+//
+// **A resource `_id` is global**, the way a scope id is: a create naming an id
+// another resource server already holds is a 409 `Duplicate resource error`,
+// measured on a fresh pair. So the group segment keeps every fixture's ids
+// apart and the suffix keeps one fixture's apart from each other, which is
+// exactly authzScopeID's arrangement one table along.
+//
+// The body's `_id` wins on this create - a fifth endpoint measured doing so,
+// after POST /clients, POST /client-scopes, POST .../scope and
+// POST .../identity-provider/instances - which is what lets a case name a
+// resource's id without capturing it.
+func authzResourceID(group, suffix string) string {
+	return "5e50a5ce-0000-4000-8000-00000000" + group + suffix
+}
+
+// resourceSeed is one resource a fixture creates: the suffix of its fixed id,
+// the suffix of its name, and the rest of its body.
+//
+// `extra` may carry seedScopePlaceholder, which authzResourceFixture rewrites
+// to the fixture's own scope id - the ids cannot be constants because a scope
+// id is global and every fixture builds its own resource server.
+type resourceSeed struct{ idSuffix, name, extra string }
+
+// seedScopePlaceholder stands for the fixture's own scope id inside a seed.
+const seedScopePlaceholder = "{{seed_scope}}"
+
+// resourceSeedOutOfOrder is the set that makes the two orders visible, and it
+// is chosen so that three separate rules have a witness.
+//
+// Created zulu, yankee, xray, Zebra - so:
+//
+//   - the settings export comes back in **creation order** and the listing
+//     sorts, so a set created alphabetically would record the same bytes twice;
+//   - the sort is **byte-wise**, so `Zebra` leads - a case-folded sort would
+//     put it between `yankee` and `zulu`;
+//   - `?name=` is a case-insensitive substring, so `Zebra` is also what says
+//     the filter and the sort disagree about case.
+//
+// The three non-empty `extra`s are the three filters that need a witness each:
+// a `type`, a `scopes` entry and a `uris` entry.
+var resourceSeedOutOfOrder = []resourceSeed{
+	{"01", "zulu", `,"type":"urn:gloak:TT"`},
+	{"02", "yankee", `,"scopes":[{"id":"` + seedScopePlaceholder + `"}]`},
+	{"03", "xray", `,"uris":["/one/two"]`},
+	{"04", "Zebra", ``},
+}
+
+// resourceSeedFull is one resource carrying every writable field, for the read,
+// the PUT that then drops five of them and the export that keeps three.
+//
+// **Both collection key sets are measured collision-free** and that is what
+// lets these goldens assert real bytes with no UnorderedKeys retreat. `/z`,
+// `/a` and `/m` hash to buckets 11, 2 and 14 at capacity 16, so the answer is
+// `/a, /z, /m` - neither the request order nor a sort; `k1` and `k2` land in 6
+// and 7, so `k2` first on the wire comes back second. A set that collided would
+// be a different measurement - the uri chain runs forwards and the attribute
+// chain runs backwards - which no committed golden asserts and which the
+// handover carries as a vector.
+var resourceSeedFull = []resourceSeed{{"01", "full",
+	`,"displayName":"Full Probe","type":"urn:gloak:full","icon_uri":"http://example.test/i.png"` +
+		`,"ownerManagedAccess":true,"uris":["/z","/a","/m"]` +
+		`,"attributes":{"k2":["b1","b2"],"k1":["a"]}` +
+		`,"scopes":[{"id":"` + seedScopePlaceholder + `"}]`}}
+
+// resourceSeedOne is a single bare resource for the cases that address one by
+// id and assert nothing about its contents.
+var resourceSeedOne = []resourceSeed{{"01", "solo", ``}}
+
+// resourceSeedURIs is the pair `matchingUri` needs: a wildcard registration and
+// an exact one that beats it on the uri it covers.
+var resourceSeedURIs = []resourceSeed{
+	{"01", "wild", `,"uris":["/gloak-probe/deep/*"]`},
+	{"02", "exact", `,"uris":["/gloak-probe/deep/a/b"]`},
+}
+
+// authzResourceFixture is authzClientFixture plus one scope and one create per
+// seed, in the order the seeds are given, which is the order the settings
+// export serves.
+//
+// The scope is created **first and unconditionally**, even for the seeds that
+// name none, so that every fixture in the family has the same resource-server
+// shape and a case reading the export sees the same scope list whatever it is
+// asserting about the resources.
+func authzResourceFixture(clientID, group string, seeds []resourceSeed) Fixture {
+	f := authzClientFixture(clientID)
+	scopeID := authzScopeID(group, "e0")
+	f.Steps = append(f.Steps, authzScopeStep(scopeID, "gloak-probe-alpha",
+		`,"iconUri":"http://example.test/s.png","displayName":"Alpha"`))
+	for _, s := range seeds {
+		body := `{"_id":"` + authzResourceID(group, s.idSuffix) + `","name":"gloak-probe-` + s.name + `"` +
+			strings.ReplaceAll(s.extra, seedScopePlaceholder, scopeID) + `}`
+		f.Steps = append(f.Steps, authzResourceStep(body))
+	}
+	return f
+}
+
+// authzScopeStep and authzResourceStep are the two creates every fixture in
+// this family repeats. They are helpers rather than inline literals because the
+// Content-Type is load-bearing on both - a create sending `text/plain` is a
+// 415 - and one place is where that stays true.
+func authzScopeStep(id, name, extra string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`{"id":"` + id + `","name":"` + name + `"` + extra + `}`),
+		},
+	}
+}
+
+func authzResourceStep(body string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/resource",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(body),
+		},
+	}
+}
+
+// authzResourcePutFixture creates the full resource and then PUTs a body naming
+// only its name, so the case after it reads what the 204 cannot show.
+//
+// **The PUT replaces five fields and keeps one.** displayName, type, icon_uri,
+// uris and scopes are gone from the read and ownerManagedAccess is back to
+// false, where `attributes` survives untouched - the one field on this body
+// where absent means unchanged. authzScopePutFixture's shape with the opposite
+// finding attached: there a replace dropped what a merge would have kept, here
+// a replace kept what a replace would have dropped.
+func authzResourcePutFixture(clientID, group string) Fixture {
+	f := authzResourceFixture(clientID, group, resourceSeedFull)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/resource/" +
+				authzResourceID(group, "01"),
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`{"name":"gloak-probe-full"}`),
+		},
+	})
+	return f
+}
+
+// authzScopeResourcesFixture builds the set GET .../scope/{id}/resources needs:
+// two resources naming the scope and one naming another, created out of name
+// order so the golden's **creation** order is an assertion rather than an
+// accident. A sorted implementation would answer alpha's neighbours first.
+func authzScopeResourcesFixture(clientID, group string) Fixture {
+	f := authzClientFixture(clientID)
+	mine, other := authzScopeID(group, "e0"), authzScopeID(group, "e1")
+	f.Steps = append(f.Steps,
+		authzScopeStep(mine, "gloak-probe-alpha", ``),
+		authzScopeStep(other, "gloak-probe-bravo", ``))
+	for i, seed := range []struct{ name, scope string }{
+		{"zulu", mine}, {"alpha", other}, {"mike", mine},
+	} {
+		f.Steps = append(f.Steps, authzResourceStep(
+			`{"_id":"`+authzResourceID(group, "0"+string(rune('1'+i)))+
+				`","name":"gloak-probe-`+seed.name+`","scopes":[{"id":"`+seed.scope+`"}]}`))
+	}
 	return f
 }
