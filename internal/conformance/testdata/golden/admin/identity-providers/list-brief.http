@@ -9,4 +9,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-[{"alias":"gloak-probe-idp-aaa","internalId":"1de07000-0000-4000-8000-000000000012","providerId":"github","enabled":true,"config":{}},{"alias":"gloak-probe-idp-full","displayName":"Full Probe","internalId":"1de07000-0000-4000-8000-000000000001","providerId":"oidc","enabled":true,"config":{}},{"alias":"gloak-probe-idp-min","internalId":"1de07000-0000-4000-8000-000000000002","providerId":"oidc","enabled":true,"config":{}},{"alias":"gloak-probe-idp-mmm","internalId":"1de07000-0000-4000-8000-000000000011","providerId":"github","enabled":true,"config":{}},{"alias":"gloak-probe-idp-zzz","internalId":"1de07000-0000-4000-8000-000000000010","providerId":"github","enabled":true,"config":{}}]
+[{"alias":"gloak-probe-idp-aaa","internalId":"1de07000-0000-4000-8000-000000000012","providerId":"github","enabled":true,"config":{}},{"alias":"gloak-probe-idp-mmm","internalId":"1de07000-0000-4000-8000-000000000011","providerId":"github","enabled":true,"config":{}},{"alias":"gloak-probe-idp-zzz","internalId":"1de07000-0000-4000-8000-000000000010","providerId":"github","enabled":true,"config":{}}]
