@@ -470,6 +470,14 @@ decision. The discriminating probe is written down so the fix is one edit.
 written the name.** The row was renamed and its config kept, and the request then
 failed. Not built here.
 
+**New, and found in review of this pull request rather than by this cut: the
+`term += "*"` in `matchesSearch` was dead code whose comment claimed to carry the
+rule.** Fixed on the branch - see §4 and the fourth survivor in §6. Recorded here
+too because the inference that finds it is reusable: **if every mutation of a
+block preserves behaviour, the block preserves behaviour**, and this cut had two
+such mutations in its own report and read each of them as a mutation problem
+instead.
+
 **New: the components table exists and `GET /admin/realms/{realm}/keys` does not
 read it.** AGENTS.md records that Gloak "has no component table and derives
 [`providerId`] from the `kid` by a fixed hash". It has one now. Wiring the two
@@ -495,6 +503,12 @@ leave a realm in a state Keycloak cannot reach. That is the argument migration
 - **`briefRepresentation` on the identity provider listing**, corrected from "it
   drops types" to the measured six-key shape after `make record` produced a body
   Gloak could not reproduce.
+- **The `term += "*"` block in `matchesSearch`, deleted.** It was dead code, and
+  its comment said it was the thing that made `*bbc` a substring match. What
+  actually does that is the **tail anchor removed in the same commit**. Found in
+  review of this pull request, not by this cut; see the fourth survivor in §6.
+  The measured behaviour did not change and no golden moved - only the code and
+  the explanation attached to it.
 
 ## 5. Parity, before and after
 
@@ -524,11 +538,13 @@ table plus that catalogue), `POST`/`PUT /components` and `sub-component-types`
 (the config is filtered to the provider's declared properties, which needs the
 same catalogue), and `DELETE /components/{id}` (§3).
 
-## 6. The mutation pass, and the three survivors it found
+## 6. The mutation pass, and the four survivors it found
 
 Thirty-one mutations, one per claim, each confirming the *named* test fails and
-then reverted. Twenty-eight were killed on the first pass. The three survivors
-are all findings and none of them is a nuisance.
+then reverted. Twenty-eight were killed on the first pass. Three of the
+survivors are recorded below as this cut read them; **the fourth was found in
+review and is the one that mattered**, because the other two readings of the
+same block were wrong.
 
 **"A component's `config` is `KeyOrder`" was not pinned by anything.** Swapping
 the constructor in `components.go` for `SizedKeyOrder` passed the whole of
@@ -545,13 +561,35 @@ said "wrong on all of them" and the test refuted it on the seven-key set**, whic
 is the counted claim being wrong on its first writing exactly as this project
 keeps finding.
 
-**"The search pattern gets an implied trailing wildcard" survived twice, and both
-times the mutation was behaviour-preserving.** Removing the append leaves an
-unanchored walk that agrees on every probe; re-adding the tail anchor is dead
-code once the append is there. Reverting the *fix* means reverting both halves at
-once, and that mutation is killed by both the user test and the identity provider
-one. Worth writing down because two separate mutations of one function can each
-look like a survivor while the property is genuinely pinned.
+**"The search pattern gets an implied trailing wildcard" survived twice, and this
+cut read both as behaviour-preserving mutations.** Removing the append leaves an
+unanchored walk that agrees on every probe; re-adding the tail anchor is
+unreachable while the append is there. The conclusion drawn was "two mutations of
+one function can each look like a survivor while the property is pinned", and
+only the combined revert was treated as the real one.
+
+**That conclusion was wrong, and the fourth survivor is why.** In review, the
+`term += "*"` block was deleted on its own - three lines, no other change - and
+`./internal/admin/` and `./internal/conformance/` were both still `ok`. The block
+is a no-op: appending a `*` adds one trailing empty run, which the walk skips, so
+`bbc`, `*bbc`, `a*b`, a term already ending in `*` and the empty term all take
+the identical path with and without it. What makes `*bbc` a substring match is
+the **tail anchor deleted in the same commit**, and the comment on the append
+claimed the opposite - a correct observation with a wrong explanation attached,
+which AGENTS.md calls the most expensive kind.
+
+The step this cut did not take: **if every mutation of a block preserves
+behaviour, the block preserves behaviour.** Two survivors of one block is not
+two awkward mutations, it is the block being dead. Both of those survivors were
+in this report, written up as mutation problems.
+
+The block is gone and the comment where it stood now says what actually carries
+the rule. The mutation that should have been guarding it all along - restoring
+the tail anchor - is killed by `TestSearchIsAPrefixAndNamedFiltersAreSubstrings`
+and by `TestIdentityProviderListingSearchIsAPrefix`, **each failing on the `*bbc`
+probe**. It is worth knowing that the identity provider test *survived* that same
+mutation before the append was deleted, for the reason above: the two blocks
+masked each other, and removing one is what makes the other testable.
 
 **"The delete is not idempotent" survived because the branch it mutated is dead
 code.** `guardIdentityProvider` resolves the alias before the handler runs, so
@@ -565,3 +603,11 @@ The store claims were mutated against the SQLite driver and the Postgres suite
 was run by hand on the merged tree, `-v` confirming both new subtests actually
 executed - AGENTS.md's warning that it "once passed while exercising none of a
 cut's new code".
+
+**One process note, because it cost a redo.** The mutation harness reverts with
+`git checkout -- .`, and the fourth survivor's fix was still uncommitted when it
+ran, so the edit was destroyed and the next run silently measured the old code -
+which is what made the identity provider test look like it survived a second
+time. AGENTS.md says "commit before you mutate anything" and names this exact
+command; the rule holds for a fix that is a response to review as much as for
+one of your own.
