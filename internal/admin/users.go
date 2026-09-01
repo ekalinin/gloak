@@ -545,9 +545,29 @@ func matches(value, want string, exact bool) bool {
 //	search=*ull*     matches full-user
 //	search="full-user" matches full-user      quotes mean equality
 //
-// The rule those six agree on: a quoted term is equality; a term containing *
-// is that pattern with * standing for any run of characters; anything else
-// gets an implied trailing *. Case-insensitive throughout.
+// The rule those six agree on was written down as "a term containing * is that
+// pattern with * standing for any run of characters, anchored at both ends",
+// **and it is wrong at the tail.** Corrected 2026-09-01 by a seventh probe the
+// six could not distinguish: with a user named `xabbcx`,
+//
+//	search=*bbc      matches xabbcx      an anchored glob says it must *end* in bbc
+//
+// The rule that fits all seven is Keycloak's LIKE: replace every `*` with `%`,
+// **append a `%` when the pattern does not already end in one**, and compare
+// case-insensitively. The six original probes are all still explained by it -
+// `user*` becomes `user%`, a prefix, which is why it matches nothing - and only
+// a pattern whose last literal run is neither at the end of the value nor
+// followed by a `*` can tell the two apart. That is why this stood for a week.
+//
+// **The role listing does not share it.** The same `search=*bbc` against a role
+// named `xabbcx` answers `[]`, and so do `xa*`, `*abbcx`, `*abb*` and `x*x`
+// while the bare `xabbcx` matches - so `*` is a literal there and a wildcard
+// here. The identity provider listing **does** share it, measured on the same
+// probe on the same container, which is what earns filterIdentityProviders the
+// right to call this rather than copying it. The **group** listing was measured
+// sharing it too and does not implement it; that is filed rather than fixed,
+// because a search-semantics change in a third chapter is not this one's to
+// make.
 //
 // Whether a term with spaces splits into several is not measured, so a term is
 // taken whole.
@@ -558,13 +578,16 @@ func matchesSearch(value, term string) bool {
 	if len(term) >= 2 && strings.HasPrefix(term, `"`) && strings.HasSuffix(term, `"`) {
 		return value == strings.Trim(term, `"`)
 	}
-	if !strings.Contains(term, "*") {
-		return strings.HasPrefix(value, term)
+	// The implied trailing wildcard. It is added to the *pattern* rather than
+	// handled as a special case below, because that is what makes `*bbc` a
+	// substring match and not a suffix one.
+	if !strings.HasSuffix(term, "*") {
+		term += "*"
 	}
 
 	// Walk the literal runs between the wildcards in order. The first run must
-	// sit at the start unless the term opens with *, and the last must end the
-	// value unless it closes with one.
+	// sit at the start unless the term opens with *; there is no tail run to
+	// anchor, because the pattern is now guaranteed to end in one.
 	parts := strings.Split(term, "*")
 	if head := parts[0]; head != "" {
 		if !strings.HasPrefix(value, head) {
@@ -572,13 +595,10 @@ func matchesSearch(value, term string) bool {
 		}
 		value = value[len(head):]
 	}
-	if tail := parts[len(parts)-1]; tail != "" {
-		if !strings.HasSuffix(value, tail) {
-			return false
+	for _, part := range parts[1:] {
+		if part == "" {
+			continue
 		}
-		value = value[:len(value)-len(tail)]
-	}
-	for _, part := range parts[1 : len(parts)-1] {
 		i := strings.Index(value, part)
 		if i < 0 {
 			return false

@@ -57,7 +57,66 @@ type Store interface {
 	RequiredActions() RequiredActionRepo
 	Organizations() OrganizationRepo
 	Authz() AuthzRepo
+	IdentityProviders() IdentityProviderRepo
+	Components() ComponentRepo
 	Close() error
+}
+
+// IdentityProviderRepo stores a realm's identity providers.
+//
+// It is deliberately small, OrganizationRepo's precedent: the listing's
+// `search`, `first` and `max` all run in internal/admin over what List returns,
+// because `search` is a case-insensitive **prefix** with `*` as a wildcard and
+// `"quotes"` meaning equality - the user listing's rule and not the four-field
+// substring one - and writing that comparison twice is writing it twice.
+type IdentityProviderRepo interface {
+	// Create inserts the provider and its config. An alias the realm already
+	// holds is ErrConflict, which internal/admin turns into the measured
+	// `409 {"errorMessage":"Identity Provider a already exists"}`.
+	Create(ctx context.Context, p *model.IdentityProvider) error
+	// Update **replaces**, alias included. Measured: a provider carrying eight
+	// non-default fields and four config keys, updated with a body naming only
+	// the alias, the provider id and a display name, kept its internal id and
+	// lost everything else. It is keyed on the internal id and not on the alias
+	// for exactly that reason - the alias is one of the things it writes, and
+	// a PUT whose body has none writes it away.
+	Update(ctx context.Context, p *model.IdentityProvider) error
+	// Delete removes one by alias. ErrNotFound becomes the generic
+	// `404 {"error":"HTTP 404 Not Found"}` and **not** one of the spellings of
+	// not-found: this family has none of its own.
+	Delete(ctx context.Context, realmID, alias string) error
+	// ByAlias resolves the provider every route in the family addresses.
+	ByAlias(ctx context.Context, realmID, alias string) (*model.IdentityProvider, error)
+	// List returns every provider of one realm **sorted by alias**, which is
+	// the measured serving order: three created `zzz, mmm, aaa` came back
+	// `aaa, mmm, zzz`. A provider whose alias was cleared sorts first.
+	List(ctx context.Context, realmID string) ([]*model.IdentityProvider, error)
+}
+
+// ComponentRepo stores a realm's SPI components.
+//
+// The three query filters - `type`, `parent` and `name` - run in internal/admin
+// over what List returns, for the reason the identity providers' do: an unknown
+// value on any of them is a measured `[]` rather than a 404, so they are a
+// filter over rows this returns and never a lookup that can fail.
+type ComponentRepo interface {
+	// Create inserts a component and its config, in the order given. Nothing in
+	// this cut serves `POST /components` - the write filters the config to the
+	// provider's declared properties, which needs a catalogue that is not built
+	// - so the only caller is the bootstrap.
+	Create(ctx context.Context, c *model.Component) error
+	// ByID resolves one. ErrNotFound becomes
+	// `404 {"error":"Could not find component"}`, which is a spelling of
+	// not-found this API did not previously have. **The realm's own id answers
+	// it too**: components are parented on the realm and the realm is not one.
+	ByID(ctx context.Context, realmID, id string) (*model.Component, error)
+	// List returns every component of one realm in the order bootstrap wrote
+	// them. That is **not** Keycloak's order, which was measured having none:
+	// two realms on one container returned the same fourteen rows two different
+	// ways. The conformance case masks the array rather than asserting either,
+	// and this order exists so that a driver is deterministic where the server
+	// is not.
+	List(ctx context.Context, realmID string) ([]*model.Component, error)
 }
 
 // AuthzRepo stores a client's authorization services settings.
