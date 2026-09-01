@@ -791,7 +791,24 @@ of them in the token regardless. That needs the scope-mapping model, which is
 P5, and it needs measuring first: nobody has recorded what a narrowed token
 looks like.
 
-## F23: three login-theme goldens churn on every re-record
+## F23: three login-theme goldens churn on every re-record (closed 2026-09-01)
+
+**Closed by exactly what it asked for**: a normalisation pass replacing the
+resource version. It is `ReplaceThemeResource` in
+`internal/conformance/normalize.go`, called from `normalisePasses` so both sides
+of a comparison get it, and its three named goldens are compared contracts now.
+
+**Its own description of the value was wrong, and so was this document's.** The
+version is minted with the **database**, not per container: six `docker restart`
+of one container gave one value, and eight wipes of `/opt/keycloak/data/h2` gave
+eight. The sentence below is kept as it stood, because five copies of it had
+been made without anybody restarting a container, and the reason it survived is
+worth more than the sentence: **nothing in the harness turned on it**. `make
+record` starts a fresh container every run, so the claim was never in a position
+to be falsified by anything the project does. Thirteen values are now measured
+and every one is five lowercase alphanumerics.
+
+What the finding said, kept for the record:
 
 `oidc/authorization/invalid-redirect-uri`, `unknown-client-id` and
 `oidc/logout/invalid-post-logout-redirect-uri` record Keycloak's login page,
@@ -2180,6 +2197,26 @@ the HTML". Nothing else in the catalogue wants one today, which is why it is
 filed rather than built - and why the P3 plan says so explicitly rather than
 growing the harness a feature to land one case.
 
+**2026-09-01, and the reopening condition was tested and not met.**
+`oidc/authorization/prompt-create` is now the second case that wants this
+mechanism - it is the one theme page still parked, and it carries a `tab_id` and
+a `checkAuthSession` argument that move per request. That is **two** cases, and
+this entry closed on one; a third is what should reopen it.
+
+P13 is deliberately **not** counted as that second case. Seven of the eight
+parked theme pages wanted no HTML masker at all: they wanted one unconditional
+substitution of an installation-wide constant, which is `ReplaceIssuer`'s shape
+and has no catalogue surface, where this entry asks for a mask per case and per
+position.
+
+Worth recording because ground 4 of this entry anticipated it. An earlier cut
+wrote the resource-version pass, measured **prompt-create's** diff, found the
+segment was one churn source of three, concluded "a third of the churn" and
+reverted the pass. True of prompt-create; false of the other seven, where the
+segment was the whole of it - and false of prompt-create too, since `client_data`
+turned out to be stable and the movers are two, not three. A judgement made from
+one example and generalised, which is the failure this project keeps paying for.
+
 ## F39: a success redirect's golden masks its whole Location, so the query key order is unasserted
 
 Found 2026-08-29, same recording.
@@ -2535,8 +2572,11 @@ carries a real authorization code. The four cases that were `Recorded` because
 of this are `Implemented`, and `oidc/authorization`'s `recorded` column is zero
 for the first time.
 
-What is still a placeholder is the page **body** - the theme's Freemarker output
-with its per-container resource hash - not the flow. See F67.
+What is still a placeholder is the page **body** - not the flow. As of
+2026-09-01 that list is shorter and named: `/auth`'s whole error-page family is
+served, and what remains is the login-actions family (F109's), the logout
+confirmation, "You are logged out", "Page has expired", the consent page and the
+five required-action pages. See F67, closed.
 
 What the finding said, kept for the record:
 
@@ -2860,7 +2900,18 @@ It was asserted by no test before either - `Set-Cookie` was masked - so this is
 the loss of a recording rather than of a guard. Re-earn it when P13 makes the
 browser fixture replayable.
 
-## F67: the logout page's three instructions are one placeholder
+## F67: the logout page's three instructions are one placeholder (closed 2026-09-01)
+
+**Closed.** All three are served, each from the branch measured producing it,
+and `TestLogoutPageInstructions` holds the eight-cell grid over `client_id` and
+the target that places them. The grid is the part worth keeping: an unknown
+`client_id` and a real one give the **same** sentence while an unknown one and
+an absent one do not, so the sentence turns on the request naming *something*
+and the page's chrome turns on that something resolving - two questions with two
+answers on one response.
+
+What the finding said, kept for the record:
+
 
 Keycloak distinguishes `Invalid parameter: id_token_hint`, `Invalid redirect
 uri` and `Missing parameters: id_token_hint`; Gloak's placeholder body says
@@ -2975,6 +3026,14 @@ reader is to do with such a file: **read it as a measurement and never as a
 contract.** `TestEveryParkedGoldenIsDeclared` refuses an eighth arriving without
 one, a declaration whose file has gone, one whose case is no longer `Pending`,
 and one naming nothing in the catalogue.
+
+**2026-09-01: there is one.** P13 promoted seven theme pages to contracts, and
+`oidc/authorization/prompt-create` is the only parked golden left. The decision
+above is unchanged in substance and nearly out of scope: `TestNoPendingGolden
+IsCompared`'s "parked == 0" guard is one promotion from firing, and when the
+last one goes **that test has to be deleted rather than loosened** - the comment
+there says so, and this is the entry that will be read when somebody wonders
+why.
 
 The grounds for keeping rather than deleting: a declared exception carrying its
 reason is the shape this project already uses three times over -
@@ -3319,6 +3378,14 @@ is written down so that "the test would have caught it" is not assumed.
 exactly reproducible - measured on all five key sets a default 26.7.1 has, with
 no bucket collision in any of them.
 
+**2026-09-01: the pattern this entry asks for is now the majority and the client
+is the holdout.** P9 added two more families that serialise a Java map from an
+ordered slice with a marshaller of their own - `identityProviderConfig` and
+`componentConfig` - which makes four counting an organization's attributes and a
+protocol mapper's config. Not closed here because it lives in `clients.go` and
+moving it re-records five goldens in another chapter, which is a change that
+should arrive on its own branch.
+
 The fix is the move `model.StringMap` already makes for a client scope's
 `attributes` and a protocol mapper's `config`. When it lands, `UnorderedKeys`
 comes off five cases and their goldens start asserting real bytes. This is the
@@ -3523,6 +3590,15 @@ move no parity number, and both are reachable from a browser today.
 Keycloak serves a re-authentication page; Gloak serves the ordinary form. The
 envelope is right and the prose is not, which is F67's family.
 
+**2026-09-01: F67 is closed and this one is not, and the reason is now written
+down rather than implied.** `writeLoginActionErrorPage` deliberately keeps the
+placeholder body while the rest of the page family serves markup. **Twelve call
+sites across three files reach it and no golden compares any of them**, so
+mapping each to one of the three measured sentences would be twelve unpinned
+judgements - and the chrome would be unpinned too, since nothing has measured
+which client that page's restart URL names. Guessing twelve sentences does not
+close this; measuring the twelve does.
+
 ## F110: consent grants are in memory, and that one is a real divergence
 
 The authentication session, the authorization code and the device store are all
@@ -3569,6 +3645,21 @@ other two are login session cookies and a `tab_id` inside the markup, which need
 the HTML masking F38 declined on four written grounds. Machinery that fixes a
 third of a problem and has no consumer is what this project calls a guess about
 what the next cut wants.
+
+**The arithmetic in that paragraph was wrong, and it was measured wrong on
+2026-09-01.** Each of the eight parked pages was requested twice against one
+container: **seven were byte-identical**, carrying the `/resources/<version>/`
+segment and nothing else per-request. Only `prompt-create` moved, and it moved in
+**two** places rather than three - `client_data` is a base64 of the request's own
+redirect URI, response type and state, and came back identical. So the pass
+removed a third of the churn on the one page it was measured against and *all* of
+it on the other seven. It was restored, the seven are contracts, and the rule
+this entry states is intact: prompt-create is still `Pending` precisely because
+it carries a per-request value.
+
+The general lesson is the one F38's note repeats: a judgement made from one
+example and generalised to a set. Checking the other seven cost one loop of
+`curl` twice.
 
 ## F114: CI was killed inside `fsync`, and the first diagnosis was wrong (closed)
 
@@ -3781,6 +3872,16 @@ bound.
 Whether Keycloak agrees on those four is unmeasured - the finding is that Gloak
 is inconsistent with itself, which is knowable without a container.
 
+**2026-09-01: measured on two more families, and they disagree with each
+other.** The identity provider listing answers `?first=abc` with the 404; on
+`/components` the same input is a 200 with the whole listing, and `?first=1&max=2`
+returns every row too, so that endpoint does not read the bounds at all. **There
+is therefore no single Keycloak answer to import into the four.** The premise of
+this entry survives for a second reason: the server is inconsistent as well, so
+each of the four has to be measured in its own family rather than settled by a
+rule. The new listing implements the 404 because that is what its own family
+answers.
+
 ## F135: DPoP is measured in full and not implemented
 
 It works on a default container: `token_type: DPoP` and `cnf.jkt` on both
@@ -3832,3 +3933,70 @@ Six of the ten UUID-tailed creates are routes this project already serves. The
 gap is not a defect - the other four either pin their tail through the body's
 `id` or are not served - but the arithmetic is worth having written down, since
 F46's mechanism exists precisely to keep those tails asserted.
+
+## F142: every conformance case runs against `master`, so realm-derived values are invisible
+
+Found by a mutation on 2026-09-01: hard-coding `master` into the theme page's
+restart URL, instead of using the realm the page was built for, **passed the
+whole tree** - all seven theme goldens included.
+
+The reason is structural rather than a gap in one suite. Every case in
+`internal/conformance` is recorded and replayed against `master`, so no golden
+here can tell a realm-derived value from that literal. It is the same blind spot
+`session_state` has, and the same answer: the claim has to live in
+`internal/httpx`'s or `internal/oidc`'s own tests, which can render for a second
+realm. `TestThemeErrorPageCarriesTheChrome` now does, and asserts the string
+`/realms/master/` does not appear.
+
+What is worth acting on is the general form. **Any** value a handler derives from
+the realm name is unpinned by this catalogue. A cut that adds one should say so
+and put the assertion in its package's tests; a `PristineRealm`-style second
+realm in the harness would be the alternative, and nobody has costed it.
+
+## F143: the group listing's `search` treats `*` as a literal and Keycloak does not
+
+`internal/admin/groups.go` uses `strings.Contains`. Measured: `search=*bbc`
+against a group named `xabbcx` matches on the server, and the identity provider,
+user and group listings all share Keycloak's LIKE rule - a wildcard `*`, an
+implied trailing `%`, `"quotes"` for equality. The **role** listing does not, and
+treats `*` as a literal.
+
+Measured, not fixed: a search-semantics change in a third chapter is not the
+branch that found it. `matchesSearch` is the function to call, the discriminating
+probe is `*bbc` against `xabbcx`, and the fix is one edit.
+
+## F144: `PUT /components/{id}` with a partial body is a 500 that has already written the name
+
+Measured on a live 26.7.1 while building the component reads. The row was
+renamed and its config kept, and *then* the request failed with a 500. Recorded
+here so the cut that builds that endpoint finds it in this document rather than
+by accident, and so the half-written state is understood to be Keycloak's own
+rather than a bug in the reimplementation of it.
+
+## F145: the components table exists now and `GET /admin/realms/{realm}/keys` does not read it
+
+AGENTS.md records that Gloak "has no component table and derives `providerId`
+from the `kid` by a fixed hash". As of P9 it has one, and the two are not wired
+together.
+
+**Wiring them is not a rename.** Master carries four key-provider components
+against Gloak's three realm keys - the arithmetic AGENTS.md already flags as
+"serving three keys is a divergence" - so there is an `rsa-enc-generated`
+component with no key behind it. Left alone deliberately; what changed is that
+the mismatch is now visible in one place instead of implied across two.
+
+Related: `DELETE /components/{id}` is deliberately unbuilt. Deleting
+`rsa-generated` in Keycloak removes the realm key, and Gloak's `GET /keys` is not
+backed by this table, so the delete would leave a realm in a state Keycloak
+cannot reach. That is the argument migration 0019 already makes for
+`authz_resource_server` having no `enabled` column.
+
+## F146: nine theme pages still serve the placeholder body
+
+Named in `themePageBody`'s doc comment: the logout confirmation, "You are logged
+out", "Page has expired", the consent page and the five required-action pages.
+Each is an hour with a container; the instruction and the chrome are what have to
+be measured. The login-actions family is separate and is F109.
+
+Also unmeasured, and served as a constant: the `<html lang="en">` attribute.
+Whether it follows the realm's locale has never been asked.

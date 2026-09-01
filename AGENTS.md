@@ -384,12 +384,17 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `manage-realm` for realm roles, `view-clients` or `manage-clients` for
   client roles, on the plain reads and the composite listings alike. The plan
   assumed single-role guards four separate times and was wrong every time.
-  **A read that refuses the *view* role exists**, one path segment away:
-  `GET .../authz/resource-server/settings` needs `manage-authorization` or
-  `manage-clients`, while `view-authorization` and `view-clients` read
-  `GET .../authz/resource-server` immediately beside it. Sharing a role list
-  between the two is the tidy-up that opens a settings export to a read-only
-  caller.
+  **Two reads refuse the *view* role**, and neither is where a role list would
+  put it. `GET .../authz/resource-server/settings` needs `manage-authorization`
+  or `manage-clients`, while `view-authorization` and `view-clients` read
+  `GET .../authz/resource-server` immediately beside it; sharing a role list
+  between those two is the tidy-up that opens a settings export to a read-only
+  caller. The second is
+  `GET .../identity-provider/instances/{alias}/reload-keys`, which needs
+  `manage-identity-providers` where **six** sibling reads under the same
+  `{alias}` take `view-identity-providers` too. So the first sits beside one
+  neighbour that disagrees with it and the second sits among six, and a guard
+  written per family gets one of them wrong either way.
 - **`roles-by-id`'s required role comes from the resolved role's container**,
   and its 404 precedes its 403 - which does leak which role ids exist. That is
   Keycloak's measured order, and the reason previously written down for it was
@@ -468,7 +473,7 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **Role listings have no stable order across container starts.** Every one of
   them is a bare array at the root of the body, which is why `Case.Unordered`
   learned the root path spelling `"."`.
-- **Twenty-one spellings of not-found in the admin API now**, including four for
+- **Twenty-three spellings of not-found in the admin API now**, including four for
   one resource, **four** for a missing group, and three *pairs* that differ only
   in a full stop. Counted from the list, not incremented: (1) `Could not find client`, (2) `Client not found`,
   (3) `User not found`, (4) `Realm not found.` with its full stop,
@@ -484,8 +489,14 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   its `DELETE` and the two priority posts, (17) `Could not find RequiredAction
   config`, (18) `Could not find configurable RequiredAction provider` and
   (19) `Could not find authenticator provider`, (20) `Group does not exist` from
-  all twenty-two operations under `/organizations/{org-id}/groups`, and
-  (21) `Organization not found.`
+  all twenty-two operations under `/organizations/{org-id}/groups`,
+  (21) `Organization not found.`, (22) `Could not find component` from
+  `/components/{id}` - which the **realm's own id** answers too, because
+  components are parented on the realm and the realm is not one - and
+  (23) `Could not find parent component` from `/components/{id}/sub-component-types`.
+  An unknown identity provider alias adds nothing here: the read, the update and
+  the delete all answer the generic `HTTP 404 Not Found`, so two neighbouring
+  chapters measured in one cut contributed two spellings and none.
   One missing group, **four** answers; one missing client scope, two; one missing
   required action, two - each decided by which route or which verb went looking.
   **(15) and (16) are the third pair in this list separated only by a full
@@ -548,16 +559,24 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   one family and inverted on its neighbour, and the second time the description's
   tag turned out to be the thing that predicts it.
 
-- **A create's `Location` ends in the new object's id on ten routes out of
-  thirteen**, counted from the list on one container rather than incremented.
-  The uuid tails are `POST /clients`, `/users`, `/groups`,
+- **A create's `Location` ends in a server-minted UUID on ten routes out of
+  fourteen; the other four end in a name the caller chose.** Counted from the
+  list below rather than incremented, which is the only way this number has ever
+  been right. The uuid tails are `POST /clients`, `/users`, `/groups`,
   `/groups/{id}/children`, `/client-scopes`, `/client-templates`,
   `/clients-initial-access`, `/components`, `/authentication/flows` and
   `/realms/{r}/clients-registrations/openid-connect`; the name tails are
-  `POST /roles`, `POST /clients/{uuid}/roles` and `POST /admin/realms`. Two more
-  could not be reached on a default container and are not counted.
-  (This said "four out of seven" until 2026-09-01, and seven was the set that
-  had been measured when it was written.) `POST .../clients`, `.../users`, `.../groups` and
+  `POST /roles`, `POST /clients/{uuid}/roles`, `POST /admin/realms` and
+  `POST .../identity-provider/instances`, which ends in the **alias**. One more
+  could not be reached on a default container and is not counted.
+  (This said "four out of seven" and then "ten out of thirteen" until
+  2026-09-01. The phrasing was half the problem: it used to read "ends in the new
+  object's id", and an identity provider *is* addressed by its alias, so P9's
+  handover counted that route as an eleventh id tail and reported "eleven of
+  fourteen". A role is addressed by its name too and has always been counted on
+  the other side. The split is server-minted against caller-chosen, and saying so
+  is what stops the next cut re-deciding it.)
+  `POST .../clients`, `.../users`, `.../groups` and
   `.../groups/{id}/children` end in a server-minted UUID; `POST .../roles` and
   `POST .../clients/{id}/roles` end in the **role's name**, and
   `POST /admin/realms` in the **realm's name**. And the child create's
@@ -1080,16 +1099,24 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   the two gates could not share an implementation.
 - **`POST /organizations` reads the body's `id` and discards it**, inverting the
   rule the client and client-scope creates follow.
-- **Five strict JSON decoders, and three families disagree about when the decode
-  runs.** `POST`/`PUT /organizations` and two of the required-action writes are
-  strict. On the required-action `PUT` the decode runs **before** the path's
-  alias is resolved; on the organization `PUT` an unknown id answers
-  `Organization not found.` for an unknown field and for unparseable JSON alike.
-  Opposite orders on one verb. **The fifth is client registration**, and it runs
-  before the *caller* is resolved at all - a third answer rather than a second.
-  It is also the only one that reports a **position**: `Invalid json
-  representation for OIDCClientRepresentation. Unrecognized field "x" at line 1
-  column 56.`, in the bare-error shape.
+- **Eight strict JSON decoders, and three families disagree about when the decode
+  runs.** Counted from the list: `POST`/`PUT /organizations`, two of the
+  required-action writes, client registration,
+  `POST`/`PUT .../identity-provider/instances` and `POST /components`. On the
+  required-action `PUT` the decode runs **before** the path's alias is resolved,
+  and the identity provider `PUT` joins it there; on the organization `PUT` an
+  unknown id answers `Organization not found.` for an unknown field and for
+  unparseable JSON alike. Opposite orders on one verb. **Client registration**
+  runs before the *caller* is resolved at all - a third answer rather than a
+  second.
+  This bullet said "five" and claimed client registration "is also the only one
+  that reports a **position**". The position claim was **already false when it
+  was written** - `decodeStrict` had produced `at line 1 column N` since the
+  required-action PUTs - and P9 made it false three more ways. What is measured
+  is that client registration, the required-action writes and the three P9
+  endpoints all report a line and column; **whether the organization pair does is
+  not measured**, and that is the request to send before anybody writes the
+  number back down as a rule.
 - **The `Workflows` tag answers `application/yaml`**, chunked, and is not gated
   by `organizationsEnabled` at all.
 
@@ -1243,6 +1270,154 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `POST /users`, the ten role-array endpoints and `PUT /admin/realms/{r}` each
   have their own. A shared decoder gets three of the four wrong.
 
+- **The login theme's `/resources/<version>/` segment is minted with the
+  database, not with the container start.** Six `docker restart` of one
+  container gave one value; a second container from the same image gave another;
+  wiping `/opt/keycloak/data/h2` and restarting gave eight more, and the value
+  is inside `keycloakdb.mv.db`. This document, F23, `themePageBody`'s doc
+  comment, four `parkedGoldens` entries and four catalogue `Reason` strings all
+  said "per container start" until 2026-09-01, and the sentence had been copied
+  five times without anybody restarting a container to check it. **Nothing in
+  the harness turns on it**, which is exactly why it survived: `make record`
+  starts a fresh container every run, so a claim nothing depends on is a claim
+  nothing falsifies. Thirteen values are measured and every one is five
+  lowercase alphanumerics, which is what `ReplaceThemeResource`'s pattern is
+  written against.
+- **An absent `client_id` and an empty one are different pages at `/auth` and
+  the same page at `/logout`.** `GET /auth` with no `client_id` answers
+  `Invalid Request`; `client_id=` answers `Client not found.`, exactly as an
+  unknown one does; a disabled one answers `Client disabled.` So the four ways a
+  client can fail are **three** sentences. At `/logout` the reading inverts:
+  `client_id=` counts as **absent**, and an absent or empty one answers
+  `Missing parameters: id_token_hint` where an unknown, disabled or real one all
+  answer `Invalid redirect uri`. One parameter, two endpoints in one flow,
+  opposite readings of emptiness - after `state=` being echoed at one and
+  dropped at the other. A handler reading the value through `url.Values.Get`
+  cannot see any of this, because that call cannot tell absent from empty.
+- **The theme page's chrome shows how far the request got, not what it asked
+  for.** The restart URL inside `startSessionPolling` carries `client_id=<id>`
+  exactly when the rejection happened *after* a client resolved. Two cells break
+  the obvious rule: a **bearer-only** client resolves - the 403 could not be
+  decided otherwise - and its page names no client and offers no link although
+  `master-realm` has a `baseUrl`; and `/logout`'s `id_token_hint` rejection
+  names no client even when the request sent a good `client_id`, because the
+  hint is judged first.
+- **The error page's "Back to Application" link is decided by the client's
+  `baseUrl` alone.** An absolute `baseUrl` is used as it is, a relative one is
+  resolved against `rootUrl` or against the server's base URL when there is no
+  `rootUrl`, and **a client carrying a `rootUrl` and no `baseUrl` gets no link
+  at all**. The admin console presents the two together as one "Home URL", so
+  concatenating whatever is there is the obvious implementation and it invents a
+  link on that fourth row. The link follows the **client**, not the rejection:
+  measured as a 2x2, a client with a `baseUrl` gets it on a bad `redirect_uri`
+  and on `max_age=abc` alike, one without gets it on neither.
+- **The device verification page is the same page at both its paths, action
+  included.** `GET /realms/{realm}/device` and
+  `GET /realms/{realm}/protocol/openid-connect/auth/device` answer
+  byte-identical 4692-byte pages naming `action="/realms/{realm}/device"` -
+  relative, and not the path the request arrived on. `serveDeviceCodePage`'s doc
+  comment claimed the action echoed the arrival path **and cited it as
+  measured**; the code had always built `/device`, so the code was right and the
+  sentence above it was wrong.
+- **An undecodable request body is a 500 with a JSON body on both browser
+  endpoints.** `POST /auth` and `POST /logout` carrying a bad percent escape
+  answer 500 `{"error":"unknown_error",...}` with `application/json` and the
+  five security headers, and none of `Content-Language`,
+  `Content-Security-Policy` or `Cache-Control` - so it is not the page family at
+  all. A body that is merely **empty** is the 400 page with `Invalid Request`,
+  so the two are separate branches.
+
+- **`search` is two rules and the family decides which.** With a value
+  `xabbcx`, `search=*bbc` matches on the **user, group and identity provider**
+  listings and answers `[]` on the **role** listing, where `*` is a literal -
+  `xa*`, `*abbcx`, `*abb*` and `x*x` all find nothing and the bare `xabbcx`
+  does. The rule the first three follow is Keycloak's LIKE: each `*` becomes
+  `%`, a trailing `%` is appended when the pattern does not already end in one,
+  and `"quotes"` mean equality. That trailing wildcard makes `*bbc` a
+  **substring** match rather than a suffix one. Gloak implemented an anchored
+  glob until 2026-09-01 and the six probes its doc comment listed are explained
+  by **both** readings - `user*` is `user%` either way - so only a pattern whose
+  last literal run is neither at the end of the value nor followed by a `*`
+  separates them. In `matchesSearch` the rule is carried by the **head being
+  anchored and the tail deliberately not**; a `term += "*"` written to express
+  it was a no-op whose comment claimed otherwise, and it masked the tail anchor
+  from the mutation that should have caught all of this. **The group listing
+  still uses `strings.Contains` and is measured wrong on the same probe.**
+- **The identity provider `config` and the component `config` use Keycloak's two
+  different HashMap constructors, one path segment apart.** An identity
+  provider's is `javamap.SizedKeyOrder` - nine measured key sets, all nine
+  placed, `KeyOrder` wrong on four including `{clientId, clientSecret}`. A
+  component's is `javamap.KeyOrder` - seven measured, six placed,
+  `SizedKeyOrder` wrong on two of the six, and a twelve-key LDAP set that
+  neither places. A shared serialiser is wrong on one of the two families and
+  which one depends on the key count. **No body Gloak serves can tell them apart
+  on the component side**: every config a default install has holds nought, one
+  or two keys and both functions agree on all of those, so the claim lives in
+  `internal/javamap`'s vectors rather than in the serialiser's tests.
+- **`briefRepresentation` on the identity provider listing is a six-key shape,
+  not the full shape minus a field.** It drops the six tri-state flags,
+  `firstBrokerLoginFlowAlias` and `types`, **and empties `config` while keeping
+  the key**. Its default here is `false`, the third default this one parameter
+  has in this API, and the single read ignores it entirely. The first reading
+  was "it drops types", from hand probes on providers that happened to carry
+  neither a config nor a flag; **the golden refuted it**, because its fixture
+  creates one that carries both. Sending the request nobody thought to send is
+  what recording does.
+- **An identity provider has six tri-state booleans and one field beside them
+  that is not.** `trustEmail`, `storeToken`, `addReadTokenRoleOnCreate`,
+  `authenticateByDefault`, `linkOnly` and `hideOnLogin` are **absent** when
+  never set and `false` when sent `false`; `displayName` on the same body is
+  stored and served as `""`. A plain `bool` collapses two states the wire
+  distinguishes, six times over, and `omitempty` on the seventh loses a value
+  the server keeps. `organizationId` is a 400 for **any** value including `""`.
+- **A `PUT` whose body carries no `alias` answers 204 and strands the row.** The
+  alias is cleared, the listing serves the row with no `alias` key, it sorts
+  first, and nothing can address it again. The rename guard is
+  `Identity Provider alias cannot be changed` and a null alias is not a change,
+  so the check passes and the write lands. Keycloak's own defect, reproduced.
+  A **present** alias that differs is the 400, so the two halves of that
+  sentence need one request each.
+- **The `Component` tag is authorised out of the realm role pair.** `view-realm`
+  and `manage-realm` read it; `manage-identity-providers` is 403, although the
+  rows are key providers and client-registration policies. The identity provider
+  family one path segment away takes the other pair and refuses `manage-realm`.
+  Two neighbouring chapters, two disjoint role pairs, and the gate is a fifth
+  shape - a plain two-role check with the resource resolved **after** it, so a
+  `DELETE` of an alias that does not exist is 403 to a viewer and 404 to a
+  manager.
+- **A created realm has fourteen components and master has fifteen.** The
+  fifteenth is `declarative-user-profile`, and it is also the **only component
+  with no `name` key at all** - so "the nameless component" and "the component a
+  created realm does not get" are one row. One bootstrap list for every realm is
+  wrong on master, and a `name` column that cannot be null is wrong on that row.
+  Neither the listing's row order nor the `allowed-protocol-mapper-types` array
+  inside it is reproducible: two realms created minutes apart on one container
+  returned the same fourteen rows in two entirely different orders, matching
+  neither insertion, name, id nor provider.
+- **A malformed integer bound is a 404 on the identity provider listing and is
+  ignored outright on `/components`.** `?first=abc` answers
+  `{"error":"HTTP 404 Not Found"}` on the first and 200 with the whole listing
+  on the second, where `?first=1&max=2` also returns all fourteen rows - so
+  `/components` does not read the bounds at all. Two neighbouring families, one
+  input, two answers, measured on one container in one cut. The generic-404
+  producer count is unchanged; what is new is that **this behaviour is per
+  family rather than per API**, so there is no single answer to import into the
+  four listings F134 names.
+- **`types` is derived from the provider id and stored nowhere**, with four
+  values over seventeen providers: five entries for `oidc` and `keycloak-oidc`,
+  `["USER_AUTHENTICATION"]` for `saml`, `["CLIENT_ASSERTION"]` for `kubernetes`,
+  and `[]` for the eleven social providers, `oauth2` and
+  `jwt-authorization-grant`. A boolean "is it OIDC" gets two of the four wrong.
+  Two of those seventeen refuse a bare create for **required config** rather than
+  for being unknown - `jwt-authorization-grant` answers `Issuer is required` and
+  `oauth2` answers `User Info URL not provided`, both 400, the same status an
+  unregistered id gets and a different sentence. `GET /admin/serverinfo` lists
+  all seventeen, which is what tells the two cases apart.
+- **`GET .../instances/{alias}/export` is a bodyless 204 for everything but a
+  SAML provider**, and the SAML body carries a freshly minted `ID="ID_<uuid>"`
+  on every request - so that half **cannot be `Recorded`**, whatever else is
+  true of it.
+
 ## Boundaries
 
 | Package | Owns | Must not |
@@ -1380,14 +1555,21 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
   **The way to ask for a Pending golden back is to promote the case to
   `Recorded`**, which is what `Recorded` already means and which a reviewer sees
   in the diff; there is no flag.
-  **Eight Pending goldens are parked**, counted from `parkedGoldens` rather than
-  incremented, and each is declared there with the reason it is kept.
+  **One Pending golden is parked**, counted from `parkedGoldens` rather than
+  incremented, and it is declared there with the reason it is kept.
   `TestEveryParkedGoldenIsDeclared` refuses one arriving without a declaration,
   a declaration whose file has gone, and one whose case is no longer `Pending`.
   (This bullet said nine, seven and eight **in one paragraph** until 2026-09-01,
   because each cut that moved the number edited a different sentence of it. A
   count written in prose beside the list it counts will do that; the list is the
-  answer.) A
+  answer.) Seven of the eight went on 2026-09-01 when P13 served the theme's
+  markup, and the reason they could go is worth keeping: **seven of them carried
+  exactly one per-request value between them and a contract**, the
+  `/resources/<version>/` segment, which one unconditional substitution pass
+  makes comparable. The judgement that had kept them parked was made from the
+  diff of `prompt-create`, the one page that carries more, and generalised to the
+  rest. A
+
   parked golden is a **measurement, not a contract**: read it for what Keycloak
   answered, never for what Gloak must serve. See F72.
   **`Recorded` is the hole this leaves, and it was walked through.**

@@ -29,7 +29,8 @@ import (
 // A Pending case is skipped too, and its golden is left byte for byte as it was
 // found. Nothing compares a Pending golden, so rewriting it can only add noise
 // to the diff - which four login-theme pages did on every single run, because
-// their /resources/<hash>/ segment is regenerated per container start. See
+// their /resources/<version>/ segment is minted with the database - see
+// ReplaceThemeResource, which is what made seven of the eight comparable. See
 // GoldenIsAsserted for why the way to ask for one is to promote the case rather
 // than to set a flag.
 //
@@ -56,7 +57,7 @@ func TestRecordGoldens(t *testing.T) {
 	// land on next. Without this, http.Client's default redirect-following
 	// silently turns those recordings into a capture of Keycloak's login
 	// theme instead - a giant HTML page that is not part of the contract and
-	// churns per container start besides.
+	// churns with every fresh database besides.
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
