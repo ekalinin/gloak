@@ -10,12 +10,14 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ekalinin/gloak/internal/bootstrap"
 	"github.com/ekalinin/gloak/internal/keys"
 	"github.com/ekalinin/gloak/internal/model"
 	"github.com/ekalinin/gloak/internal/store"
 	"github.com/ekalinin/gloak/internal/store/sqlite"
+	"github.com/ekalinin/gloak/internal/token"
 )
 
 // Dynamic client registration's tests live in package oidc for the reason the
@@ -359,15 +361,36 @@ func TestTokenEndpointAuthMethodIsAcceptedAndRefusedByName(t *testing.T) {
 // visible on the live container: a public client whose authenticator is
 // client-secret carries client_secret_expires_at and no client_secret, and a
 // client registered with `none` carries neither.
+//
+// All five accepted methods are driven rather than the two that differ, because
+// the rule is about which **group** a method is in and a test over two of them
+// cannot see a method moving between groups.
 func TestTheSecretAndItsExpiryAreDecidedSeparately(t *testing.T) {
 	h, _, s, realm := registrationServer(t)
 	access, _ := adminTokens(t, h)
 
-	none := registered(t, registerJSON(t, h, access,
-		`{"client_name":"gloak-probe-none","token_endpoint_auth_method":"none"}`))
-	if none.ClientSecret != "" || none.ClientSecretExpiresAt != nil {
-		t.Errorf(`token_endpoint_auth_method "none" must drop both keys, got secret=%q expires=%v`,
-			none.ClientSecret, none.ClientSecretExpiresAt)
+	for i, tc := range []struct {
+		method       string
+		secret       bool
+		expiresAt    bool
+		publicClient bool
+	}{
+		{authMethodSecretBasic, true, true, false},
+		{authMethodSecretPost, true, true, false},
+		{authMethodSecretJWT, true, true, false},
+		{authMethodTLS, false, false, false},
+		{authMethodNone, false, false, true},
+	} {
+		got := registered(t, registerJSON(t, h, access,
+			`{"client_name":"gloak-probe-sx`+string(rune('a'+i))+`","token_endpoint_auth_method":"`+
+				tc.method+`"}`))
+		if (got.ClientSecret != "") != tc.secret {
+			t.Errorf("%s: client_secret present=%v, want %v", tc.method, got.ClientSecret != "", tc.secret)
+		}
+		if (got.ClientSecretExpiresAt != nil) != tc.expiresAt {
+			t.Errorf("%s: client_secret_expires_at present=%v, want %v",
+				tc.method, got.ClientSecretExpiresAt != nil, tc.expiresAt)
+		}
 	}
 
 	// admin-cli is the measured counterexample: public, authenticator
@@ -792,6 +815,113 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// callerHolding creates a user carrying one client role on master-realm and
+// returns an access token for it, or a user holding nothing when role is empty.
+//
+// The role goes on **directly** rather than through a composite, which is what
+// makes the grid below one role per caller: the bootstrapped administrator holds
+// everything through `admin`'s composites, so a test using it could not tell any
+// of the six roles apart.
+//
+// The token is minted rather than obtained through the password grant. Six
+// callers would mean six argon2 hashes and six logins for a question none of
+// this is about; what the endpoint reads is the token's session and the user
+// behind it, and both are written here directly.
+func callerHolding(t *testing.T, h *handler, s store.Store, realm *model.Realm,
+	username, role string) string {
+	t.Helper()
+	ctx := context.Background()
+	user := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: username, Enabled: true}
+	if err := s.Users().Create(ctx, user); err != nil {
+		t.Fatalf("create %s: %v", username, err)
+	}
+	if role != "" {
+		container, err := s.Clients().ByClientID(ctx, realm.ID, "master-realm")
+		if err != nil {
+			t.Fatalf("master-realm: %v", err)
+		}
+		r, err := s.Roles().ByName(ctx, realm.ID, container.ID, role)
+		if err != nil {
+			t.Fatalf("role %s: %v", role, err)
+		}
+		if err := s.Roles().AssignToUser(ctx, user.ID, r.ID); err != nil {
+			t.Fatalf("assign %s: %v", role, err)
+		}
+	}
+	now := time.Now().UnixMilli()
+	session := &model.UserSession{
+		ID: model.NewID(), RealmID: realm.ID, UserID: user.ID, Username: username,
+		StartedAt: now, LastRefresh: now, ExpiresAt: now + realm.RefreshTokenLifespan.Milliseconds(),
+	}
+	if err := s.Sessions().CreateUserSession(ctx, session); err != nil {
+		t.Fatalf("session for %s: %v", username, err)
+	}
+	k, err := h.keys.ForRealm(ctx, realm)
+	if err != nil {
+		t.Fatalf("keys: %v", err)
+	}
+	client, err := s.Clients().ByClientID(ctx, realm.ID, "admin-cli")
+	if err != nil {
+		t.Fatalf("admin-cli: %v", err)
+	}
+	issuer := &token.Issuer{Keys: k, Issuer: h.realmIssuer(realm.Name)}
+	set, err := issuer.Issue(token.Request{
+		Client: client, User: user, UserSession: session,
+		AccessLife: time.Minute, RefreshLife: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	return set.AccessToken
+}
+
+// TestTheThreeVerbsTakeThreeRoleSets is the grid measured one caller at a time,
+// and the reason it is a grid rather than a list: `view-clients` opens a read
+// and refuses a write, `create-client` opens the create and refuses everything
+// else, and `manage-clients` opens all three. `query-clients` and `manage-realm`
+// open nothing here, which is not what the client listing's own guard does.
+func TestTheThreeVerbsTakeThreeRoleSets(t *testing.T) {
+	h, handler, s, realm := registrationServer(t)
+	// One client to read and to write, registered by the administrator.
+	target, _ := registerProbe(t, h, "gloak-probe-roles")
+	item := registrationPath + "/" + target.ClientID
+
+	for i, tc := range []struct {
+		role              string
+		create, read, put bool
+	}{
+		{"", false, false, false},
+		{"create-client", true, false, false},
+		{"manage-clients", true, true, true},
+		{"view-clients", false, true, false},
+		{"query-clients", false, false, false},
+		{"manage-realm", false, false, false},
+	} {
+		name := tc.role
+		if name == "" {
+			name = "none"
+		}
+		bearer := callerHolding(t, handler, s, realm, "gloak-probe-caller-"+string(rune('a'+i)), tc.role)
+
+		create := registerJSON(t, h, bearer, `{"client_name":"gloak-probe-byrole`+string(rune('a'+i))+`"}`)
+		if (create.Code == http.StatusCreated) != tc.create {
+			t.Errorf("%s: create got %d, want allowed=%v (%s)", name, create.Code, tc.create, create.Body)
+		}
+		read := registrationRequestOf(t, h, http.MethodGet, item, bearer, "", false)
+		if (read.Code == http.StatusOK) != tc.read {
+			t.Errorf("%s: read got %d, want allowed=%v (%s)", name, read.Code, tc.read, read.Body)
+		}
+		// The write is a DELETE on a client that does not exist, so a caller
+		// that gets past the guard lands on the 404 rather than destroying the
+		// client the next caller reads.
+		put := registrationRequestOf(t, h, http.MethodDelete,
+			registrationPath+"/gloak-probe-absent", bearer, "", false)
+		if (put.Code == http.StatusNotFound) != tc.put {
+			t.Errorf("%s: write got %d, want allowed=%v (%s)", name, put.Code, tc.put, put.Body)
+		}
+	}
 }
 
 // TestARegisteredClientCanUseTheGrantsItAskedFor is the end-to-end assertion

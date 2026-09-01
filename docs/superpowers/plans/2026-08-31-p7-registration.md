@@ -133,11 +133,21 @@ every other missing-parameter description on this endpoint is
 Step 4 precedes step 5, which is what makes the catalogue's case reachable
 exactly as written: `admin-cli` plus a literal placeholder assertion answers
 `The provided assertion is not a valid JWT` and never reaches the public-client
-check. **No client configuration opens step 6.** Six attribute spellings were
-tried on a confidential client and all six answered it. The two features that
-would - `TOKEN_EXCHANGE` and `TOKEN_EXCHANGE_DELEGATION` - are disabled previews,
-so the ladder above is the whole of this grant on a default 26.7.1, the same
-shape as `client-types`' 501 and CIBA's 503.
+check.
+
+**This paragraph said "no client configuration opens step 6" and that was
+wrong.** Six attribute spellings were guessed and all six answered the refusal,
+and the sentence written on the strength of it - a correct observation with an
+invented mechanism attached - survived about an hour. The real attribute is
+`oauth2.jwt.authorization.grant.enabled`, and it turned up in the attributes
+**dynamic client registration itself writes** when a body names `grant_types`.
+With it on there is a seventh rung, `invalid_grant` /
+`No Identity Provider for provided issuer`, and an eighth would need an identity
+provider - `POST /admin/realms/{r}/identity-provider/instances`, which Gloak does
+not serve, plus a key that provider names. So the ladder is seven rungs and the
+last of them is where a default 26.7.1 stops, the same shape as `client-types`'
+501 and CIBA's 503. The correction is left in rather than edited away, because
+the guess is the more useful half of the record.
 
 ### DPoP
 
