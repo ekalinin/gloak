@@ -1163,6 +1163,13 @@ var prefixMasksLeftInPlace = map[string]string{
 		"and the endpoint to hide eight characters the case has already given up beside it. Narrowing " +
 		"it needs a body-side VolatileTail, which Case has not got, and " +
 		"catalog_oidc_pending.go is another stream's.",
+	`oidc/registration/create-client Volatile "registration_client_uri"`: "the same shape as the entry " +
+		"above and the same missing mechanism. registration_client_uri is " +
+		"`{{issuer}}/realms/master/clients-registrations/openid-connect/<the new client's uuid>`, and " +
+		"the uuid is minted by the case's own request, so no fixture capture can reach it and " +
+		"ReplaceCaptured cannot rewrite it. The three reads of the same client beside this case mask " +
+		"nothing at all, because there the id *is* captured - which is what says the loss is this " +
+		"one request's rather than the field's. Narrowing it needs a body-side VolatileTail.",
 }
 
 // TestVolatilePrefixGuardCanFail proves F106's guard can fail, and pins the

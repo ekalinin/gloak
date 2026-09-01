@@ -761,30 +761,30 @@ var oidcPending = []Case{
 			Section:   "Grant types: device authorization grant",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
-		// **This reason said "the token endpoint is not implemented" until
-		// 2026-08-30, and that had been false since P1.** The token endpoint
-		// has served four grants for days and now dispatches this one too;
-		// what is missing is an *approved* device code, which needs the
-		// verification and consent pages. Same reason as
-		// oidc/device/poll-access-denied, and the client_id was admin-cli,
-		// which has the grant disabled and so could never have reached this
-		// body at all.
-		Reason:  "a completed device authorization needs the device verification and consent pages, which are not implemented",
-		Fixture: "", // needs a device_code a user approved through the browser
+		Status: Implemented,
+		// **Two stale Reasons in a row on this one case.** It said "the token
+		// endpoint is not implemented" until 2026-08-30, which had been false
+		// since P1; the correction then said a completed device authorization
+		// "needs the device verification and consent pages, which are not
+		// implemented", and those landed in the cut that filed it. The
+		// device-approved fixture is device-denied with one form field removed.
+		Fixture: "device-approved",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
 			Form: map[string]string{
 				"grant_type":  "urn:ietf:params:oauth:grant-type:device_code",
-				"client_id":   "gloak-probe-device",
-				"device_code": "REPLACE-WITH-A-REAL-APPROVED-DEVICE-CODE",
+				"client_id":   "gloak-probe-device-approved",
+				"device_code": "{{device_code}}",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
 		Volatile: []string{
 			"access_token", "refresh_token", "id_token", "session_state",
 		},
+		// See password-grant-admin-cli for why scope's word order is not stable
+		// across container starts.
+		UnorderedWords: []string{"scope"},
 	},
 	{
 		ID: "oidc/token/ciba-grant",
@@ -794,11 +794,10 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-20",
 		},
 		Status: Pending,
-		// The same correction: the token endpoint is implemented and dispatches
-		// this grant. What is missing is an auth_req_id, and a default 26.7.1
-		// mints none - see the CIBA block further down. The client_id was
-		// admin-cli, which has the CIBA grant disabled and so could never have
-		// reached this body either.
+		// The one of the five that is still unreachable, and it is the only one
+		// whose Reason survived this cut unchanged. The token endpoint
+		// dispatches the grant; what is missing is an auth_req_id, and a default
+		// 26.7.1 mints none - see the CIBA block further down.
 		Reason:  "a default 26.7.1 has no CIBA authentication channel, so no auth_req_id can be obtained to redeem",
 		Fixture: "", // needs an auth_req_id, which needs an external authentication channel endpoint
 		Request: Request{
@@ -822,20 +821,34 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: token exchange",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the token-exchange grant is not implemented",
-		Fixture: "", // token exchange needs a previously issued token and is a feature that must be explicitly enabled
+		Status: Implemented,
+		// The Fixture comment here read "token exchange needs a previously
+		// issued token and is a feature that must be explicitly enabled", and
+		// the second half was about the wrong feature. `GET /admin/serverinfo`
+		// on 26.7.1 reports `TOKEN_EXCHANGE` and `TOKEN_EXCHANGE_DELEGATION` as
+		// disabled previews and **`TOKEN_EXCHANGE_STANDARD_V2` as `DEFAULT` and
+		// enabled**. The disabled one is the legacy exchange; this grant type
+		// reaches the standard one, and its gate is a client attribute.
+		Fixture: "token-exchange",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
 			Form: map[string]string{
 				"grant_type":         "urn:ietf:params:oauth:grant-type:token-exchange",
-				"client_id":          "admin-cli",
-				"subject_token":      "REPLACE-WITH-A-REAL-TOKEN",
+				"client_id":          "gloak-probe-exchange",
+				"client_secret":      "{{client_secret}}",
+				"subject_token":      "{{subject_token}}",
 				"subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
+		// Eight keys, not nine: no refresh_token and no id_token even though the
+		// subject token was granted openid, `refresh_expires_in` 0 rather than
+		// absent, and an `issued_token_type` after `scope` that no other grant
+		// emits. session_state is the **subject's** session rather than a new
+		// one, which is why it is masked here and not compared to anything.
+		Volatile:       []string{"access_token", "session_state"},
+		UnorderedWords: []string{"scope"},
 	},
 	{
 		ID: "oidc/token/jwt-authorization-grant",
@@ -844,9 +857,19 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: JWT bearer authorization grant",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "the jwt-bearer grant is not implemented",
-		Fixture: "", // needs a client configured to trust a signed JWT assertion, which no bootstrapped client has
+		Status: Implemented,
+		// Reachable exactly as it was already written, and nobody had sent it.
+		// A literal placeholder assertion on admin-cli answers the second rung
+		// of a six-rung ladder, `The provided assertion is not a valid JWT`, and
+		// never reaches the public-client check behind it.
+		//
+		// **The happy path is out of reach on any default container**, not only
+		// on this one: the grant needs an identity provider whose issuer matches
+		// the assertion's, and creating one is
+		// POST /admin/realms/{r}/identity-provider/instances. So the six
+		// refusals are the whole of this grant here, the same shape as CIBA's
+		// 503, and the last of them is a contract rather than a stub.
+		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
@@ -865,9 +888,17 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: DPoP-bound tokens",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "DPoP is not implemented",
-		Fixture: "", // needs a client configured to require DPoP, which no bootstrapped client has, and a proof JWT bound to the request
+		Status: Pending,
+		// **"DPoP is not implemented" was true of Gloak and wrong about why this
+		// case is Pending.** DPoP is a `DEFAULT` feature on 26.7.1 and the grant
+		// works: a proof signed ES256 answers 200 with `token_type: DPoP` and a
+		// `cnf.jkt` on the access *and* refresh tokens. What cannot be expressed
+		// is the request, for two independent measured reasons - a proof carries
+		// an `iat` and is refused outside a window of tens of seconds, and its
+		// `jti` is single-use, so a literal could not be recorded and replayed
+		// even seconds later. The harness is the limit, not the container.
+		Reason:  "a DPoP proof carries a per-request iat and a single-use jti, so no literal proof can be recorded and replayed",
+		Fixture: "", // needs a proof JWT minted per request, which no Case.Request can express
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
@@ -885,6 +916,40 @@ var oidcPending = []Case{
 		Volatile: []string{
 			"access_token", "refresh_token", "id_token", "session_state",
 		},
+	},
+	{
+		ID: "oidc/token/dpop-header-invalid",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Token endpoint: DPoP-bound tokens",
+			Retrieved: "2026-08-31",
+		},
+		// Recorded rather than Pending: this half of DPoP **is** expressible as
+		// a literal, and measuring it costs nothing while leaving the contract
+		// in the repository for whoever implements the rest.
+		//
+		// It is also the surprising half. The client is `admin-cli`, which
+		// carries no `dpop.bound.access.tokens` attribute at all, and the header
+		// is still validated - so DPoP verification is **opportunistic**, not
+		// switched on per client. Gloak ignores the header and answers 200 with
+		// tokens, which is the divergence this case names.
+		Status:  Recorded,
+		Reason:  "DPoP is not implemented; Gloak ignores the header and issues an unbound token",
+		Fixture: "bootstrap",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Headers: map[string]string{
+				"DPoP": "not-a-proof",
+			},
+			Form: map[string]string{
+				"grant_type": "password",
+				"client_id":  "admin-cli",
+				"username":   "admin",
+				"password":   "admin",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
 	},
 	{
 		ID: "oidc/token/wrong-password",
@@ -2667,6 +2732,24 @@ var oidcPending = []Case{
 	},
 
 	// --- Dynamic client registration ---
+	//
+	// All six of these were Pending with the Reason "dynamic client
+	// registration is not implemented" and a Fixture comment saying the five
+	// non-anonymous ones needed "an initial access token, which the bootstrap
+	// fixture has no admin API access to mint".
+	//
+	// **They never needed one.** Measured 2026-08-31: an ordinary
+	// administrator's access token registers a client, and the registration
+	// access token it mints carries the same `registration_auth:"authenticated"`
+	// an initial access token's does. So the five run on fixtures built out of
+	// the admin token this catalogue has had since P1, and
+	// POST /admin/realms/{r}/clients-initial-access is not on the path at all.
+	//
+	// Two of the six used to be the same request. `read-client` now reads with
+	// the **administrator's** token and `with-registration-access-token` with
+	// the client's own, which is measured to produce two different bodies: the
+	// token-holder's carries `registration_access_token` and the
+	// administrator's does not.
 	{
 		ID: "oidc/registration/create-client",
 		Doc: Doc{
@@ -2674,20 +2757,31 @@ var oidcPending = []Case{
 			Section:   "Dynamic client registration",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "dynamic client registration is not implemented",
-		Fixture: "", // needs an initial access token, which the bootstrap fixture has no admin API access to mint
+		Status:  Implemented,
+		Fixture: "admin-token",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/clients-registrations/openid-connect",
 			Headers: map[string]string{
-				"Authorization": "Bearer REPLACE-WITH-A-REAL-INITIAL-ACCESS-TOKEN",
+				"Authorization": "Bearer {{access_token}}",
 				"Content-Type":  "application/json",
 			},
-			Body: []byte(`{"client_name":"gloak-probe","redirect_uris":["http://localhost:8080/admin/master/console/"]}`),
+			Body: []byte(`{"client_name":"gloak-probe-create","redirect_uris":["http://localhost:8080/admin/master/console/"]}`),
 		},
-		AssertHeaders: []string{"Content-Type"},
-		Volatile:      []string{"client_id", "client_secret", "registration_access_token", "registration_client_uri", "client_id_issued_at", "client_secret_expires_at"},
+		// Location is asserted rather than merely present: it is the one
+		// response on the protocol side that carries one, and everything before
+		// the minted UUID is contract. This is the **eighth** create measured
+		// for the "a create's Location ends in the new object's id" rule and the
+		// fifth that ends in a UUID.
+		AssertHeaders:       []string{"Content-Type", "Location"},
+		VolatileTailHeaders: []string{"Location"},
+		// Five values, and no more. client_secret_expires_at is a constant 0 and
+		// was on this list; masking it would have asserted its type and nothing
+		// else, which is the inert mask F46 is about.
+		Volatile: []string{
+			"client_id", "client_secret", "registration_access_token",
+			"registration_client_uri", "client_id_issued_at",
+		},
 	},
 	{
 		ID: "oidc/registration/read-client",
@@ -2696,18 +2790,38 @@ var oidcPending = []Case{
 			Section:   "Dynamic client registration",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "dynamic client registration is not implemented",
-		Fixture: "", // needs a client created via registration and its registration access token
+		Status:  Implemented,
+		Fixture: "registration-created",
+		// The **administrator's** read, which is the shape without
+		// registration_access_token. Its sibling below is the same route read
+		// with the client's own token, which carries it.
 		Request: Request{
-			Method: http.MethodGet,
-			Path:   "/realms/master/clients-registrations/openid-connect/gloak-probe",
-			Headers: map[string]string{
-				"Authorization": "Bearer REPLACE-WITH-A-REAL-REGISTRATION-ACCESS-TOKEN",
-			},
+			Method:  http.MethodGet,
+			Path:    "/realms/master/clients-registrations/openid-connect/{{registered_client_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type"},
-		Volatile:      []string{"client_id", "client_secret", "registration_access_token", "registration_client_uri", "client_id_issued_at", "client_secret_expires_at"},
+		// Nothing is masked. The client id, the secret and the registration
+		// token are all captured by the fixture, so ReplaceCaptured rewrites
+		// them - inside registration_client_uri too, which therefore stays
+		// asserted apart from the id. client_id_issued_at is absent on a read,
+		// which is itself part of what this golden pins.
+	},
+	{
+		ID: "oidc/registration/with-registration-access-token",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Dynamic client registration: authenticating subsequent requests",
+			Retrieved: "2026-08-20",
+		},
+		Status:  Implemented,
+		Fixture: "registration-created",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/realms/master/clients-registrations/openid-connect/{{registered_client_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{registration_access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
 	},
 	{
 		ID: "oidc/registration/update-client",
@@ -2716,20 +2830,24 @@ var oidcPending = []Case{
 			Section:   "Dynamic client registration",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "dynamic client registration is not implemented",
-		Fixture: "", // needs a client created via registration and its registration access token
+		Status:  Implemented,
+		Fixture: "registration-updated",
 		Request: Request{
 			Method: http.MethodPut,
-			Path:   "/realms/master/clients-registrations/openid-connect/gloak-probe",
+			Path:   "/realms/master/clients-registrations/openid-connect/{{registered_client_id}}",
 			Headers: map[string]string{
-				"Authorization": "Bearer REPLACE-WITH-A-REAL-REGISTRATION-ACCESS-TOKEN",
+				"Authorization": "Bearer {{registration_access_token}}",
 				"Content-Type":  "application/json",
 			},
-			Body: []byte(`{"client_id":"gloak-probe","client_name":"gloak-probe-renamed","redirect_uris":["http://localhost:8080/admin/master/console/"]}`),
+			Body: []byte(`{"client_id":"{{registered_client_id}}","client_name":"gloak-probe-registered-renamed",` +
+				`"redirect_uris":["http://localhost:8080/admin/master/console/"]}`),
 		},
 		AssertHeaders: []string{"Content-Type"},
-		Volatile:      []string{"client_id", "client_secret", "registration_access_token", "registration_client_uri", "client_id_issued_at", "client_secret_expires_at"},
+		// One mask, and it is the one the update earns: **the PUT rotates the
+		// registration access token**, so the value in this body is a new one
+		// the fixture never saw and the one it presented is dead. A GET does
+		// not rotate it, which is why the two reads above mask nothing.
+		Volatile: []string{"registration_access_token"},
 	},
 	{
 		ID: "oidc/registration/delete-client",
@@ -2738,16 +2856,18 @@ var oidcPending = []Case{
 			Section:   "Dynamic client registration",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "dynamic client registration is not implemented",
-		Fixture: "", // needs a client created via registration and its registration access token
+		Status:  Implemented,
+		Fixture: "registration-deleted",
 		Request: Request{
-			Method: http.MethodDelete,
-			Path:   "/realms/master/clients-registrations/openid-connect/gloak-probe",
-			Headers: map[string]string{
-				"Authorization": "Bearer REPLACE-WITH-A-REAL-REGISTRATION-ACCESS-TOKEN",
-			},
+			Method:  http.MethodDelete,
+			Path:    "/realms/master/clients-registrations/openid-connect/{{registered_client_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{registration_access_token}}"},
 		},
+		// The 204 sends four of the five security headers. That is the
+		// Content-Type rule rather than a rule about deletes: this request
+		// declares none, so X-Frame-Options is omitted. Pinned as a negative,
+		// because AssertHeaders can never catch a header that should be absent.
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Type", "Cache-Control"},
 	},
 	{
 		ID: "oidc/registration/without-initial-access-token",
@@ -2756,8 +2876,7 @@ var oidcPending = []Case{
 			Section:   "Dynamic client registration: anonymous registration",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
-		Reason:  "dynamic client registration is not implemented",
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
@@ -2770,23 +2889,192 @@ var oidcPending = []Case{
 		AssertHeaders: []string{"Content-Type"},
 	},
 	{
-		ID: "oidc/registration/with-registration-access-token",
+		ID: "oidc/registration/forbidden-caller",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Dynamic client registration: anonymous registration",
+			Retrieved: "2026-08-31",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		// The **second** 403 this endpoint has, and the pair is the point: a
+		// caller presenting no bearer token at all gets the Trusted Hosts
+		// sentence above, and one presenting a valid access token without the
+		// role gets `Forbidden`. admin-cli's own token is the cheapest way to
+		// reach it - it authenticates and it is not the administrator's, so it
+		// holds no create-client.
+		//
+		// It is the refresh token that is sent, not the access token, because
+		// the administrator's access token *does* open this endpoint. The
+		// refresh token authenticates as the wrong kind and answers a third
+		// body again.
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/clients-registrations/openid-connect",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{refresh_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"client_name":"gloak-probe-forbidden"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "oidc/registration/failed-decode",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
 			Section:   "Dynamic client registration: authenticating subsequent requests",
-			Retrieved: "2026-08-20",
+			Retrieved: "2026-08-31",
 		},
-		Status:  Pending,
-		Reason:  "dynamic client registration is not implemented",
-		Fixture: "", // needs the per-client registration access token issued at creation time
+		Status:  Implemented,
+		Fixture: "bootstrap",
+		// A bearer that does not verify. The description is measured to be
+		// wider than it reads - a **well-formed JWT with a wrong signature**
+		// answers it too - so "decode" here means "verify".
 		Request: Request{
-			Method: http.MethodGet,
-			Path:   "/realms/master/clients-registrations/openid-connect/gloak-probe",
+			Method: http.MethodPost,
+			Path:   "/realms/master/clients-registrations/openid-connect",
 			Headers: map[string]string{
-				"Authorization": "Bearer REPLACE-WITH-A-REAL-REGISTRATION-ACCESS-TOKEN",
+				"Authorization": "Bearer not-a-token",
+				"Content-Type":  "application/json",
 			},
+			Body: []byte(`{"client_name":"gloak-probe-decode"}`),
 		},
 		AssertHeaders: []string{"Content-Type"},
-		Volatile:      []string{"client_id", "client_secret", "registration_access_token", "registration_client_uri", "client_id_issued_at", "client_secret_expires_at"},
+	},
+	{
+		ID: "oidc/registration/client-identifier-included",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Dynamic client registration",
+			Retrieved: "2026-08-31",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		// A create naming its own client_id is refused, which is why every
+		// registered client is addressed by a UUID and why the three cases
+		// above capture one rather than spelling it.
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/clients-registrations/openid-connect",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"client_id":"gloak-probe-named","client_name":"gloak-probe-named"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "oidc/registration/unsupported-media-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Dynamic client registration",
+			Retrieved: "2026-08-31",
+		},
+		Status:  Implemented,
+		Fixture: "bootstrap",
+		// **No Authorization header and no Content-Type**, and the answer is
+		// about the Content-Type. That is what says the body is examined before
+		// the caller is, which is the opposite order to every other guarded
+		// route in this project. The body is a form so buildRequest sends no
+		// Content-Type of its own.
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/clients-registrations/openid-connect",
+			Body:   []byte(`{"client_name":"gloak-probe-media"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "oidc/registration/malformed-json",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Dynamic client registration",
+			Retrieved: "2026-08-31",
+		},
+		Status:  Implemented,
+		Fixture: "bootstrap",
+		// The other half of the same order: no credentials, unparseable body,
+		// and the answer is about the JSON. On the protocol side the shape is
+		// the RFC 6749 one, where the Admin API's four spellings of this are
+		// split between `unknown_error`, `invalid_request`,
+		// `HTTP 400 Bad Request` and `unable to read contents from stream`.
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/realms/master/clients-registrations/openid-connect",
+			Headers: map[string]string{"Content-Type": "application/json"},
+			Body:    []byte(`{`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "oidc/registration/unknown-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Dynamic client registration: authenticating subsequent requests",
+			Retrieved: "2026-08-31",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		// `Client not found` is the Admin API's spelling (2) of twenty-one, and
+		// here it arrives in the RFC 6749 shape with an `invalid_request` code
+		// rather than as an `errorMessage`. Same sentence, different envelope,
+		// different surface.
+		//
+		// It is a 404 **only because the caller holds a role**: the same request
+		// with no bearer is a 401, and with a bearer holding nothing a 403.
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/realms/master/clients-registrations/openid-connect/gloak-probe-absent",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "oidc/registration/unauthenticated-read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Dynamic client registration: authenticating subsequent requests",
+			Retrieved: "2026-08-31",
+		},
+		Status:  Implemented,
+		Fixture: "bootstrap",
+		// The item path's answer to no credentials, and it is **not** the
+		// collection's. A create with no bearer is told about the Trusted Hosts
+		// policy; a read is told it is not authorised, and a PUT or a DELETE is
+		// told the same thing in a different sentence. Three bodies for one
+		// condition, split by route and then by verb.
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/clients-registrations/openid-connect/admin-cli",
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "oidc/registration/bootstrapped-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Dynamic client registration",
+			Retrieved: "2026-08-31",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		// **The read is not limited to registered clients.** admin-cli comes
+		// back in the OIDC shape, and it is the client that says
+		// token_endpoint_auth_method follows clientAuthenticatorType rather than
+		// publicClient: admin-cli is public, reads back `client_secret_basic`,
+		// carries `client_secret_expires_at` and carries no `client_secret`.
+		// Its client_name is the theme message key, echoed raw.
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/realms/master/clients-registrations/openid-connect/admin-cli",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+		// The client's optional scope list is one of the two whose order was
+		// measured to move between container starts. See
+		// oidc/token/password-grant-admin-cli.
+		UnorderedWords: []string{"scope"},
 	},
 }

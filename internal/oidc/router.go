@@ -32,6 +32,11 @@ type handler struct {
 	// revoke it through the Admin API, so this one is a divergence rather than
 	// the faithful model. See internal/oidc/authsession.go.
 	consents *consentStore
+	// registrations holds which registration access token is current for a
+	// client. **The registered client itself is persisted** through
+	// store.ClientRepo; only the token's identity is in memory, and
+	// internal/oidc/registrationstore.go says why and what it costs.
+	registrations *registrationStore
 	// httpClient is the one place this package calls *out*, and it exists for
 	// back-channel logout alone. Nil means the default in
 	// backchannelClient, whose timeout is measured; a test stands up an
@@ -70,7 +75,8 @@ func NewRouter(s store.Store, k *keys.Manager, issuerBase string) http.Handler {
 // bodies and adding a third would be a divergence.
 func Register(mux *http.ServeMux, s store.Store, k *keys.Manager, issuerBase string) {
 	h := &handler{store: s, keys: k, issuerBase: issuerBase,
-		auth: newAuthStore(), device: newDeviceStore(), consents: newConsentStore()}
+		auth: newAuthStore(), device: newDeviceStore(), consents: newConsentStore(),
+		registrations: newRegistrationStore()}
 	h.register(mux)
 }
 
@@ -157,6 +163,27 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/userinfo", h.userinfo)
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/token/introspect", h.introspect)
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/revoke", h.revoke)
+	// Dynamic client registration, the `openid-connect` provider.
+	//
+	// **Only that one provider is registered.** A default 26.7.1 serves four -
+	// `default`, `install` and `saml2-entity-descriptor` beside it - and they
+	// do not agree about verbs: `install` answers 405 to a POST and
+	// `saml2-entity-descriptor` answers 405 to a GET. An unknown provider is
+	// its own 404, `{"error":"Client registration provider not found"}`.
+	// Registering a `{provider}` wildcard here would let Gloak send that
+	// measured string for `default` and `install`, which exist - a measured
+	// body for the wrong condition - so the three fall through to
+	// WithKeycloakFallbacks instead and are filed as a divergence.
+	//
+	// The verbs on the paths that *are* registered were measured too:
+	// GET, PUT and DELETE on the collection answer the same
+	// `{"error":"HTTP 404 Not Found"}` WithKeycloakFallbacks already sends,
+	// so three of the five agree by construction; PATCH and HEAD answer a real
+	// 405, which is another pair for follow-up F31 and is not changed here.
+	mux.HandleFunc("POST /realms/{realm}/clients-registrations/openid-connect", h.registerClient)
+	mux.HandleFunc("GET /realms/{realm}/clients-registrations/openid-connect/{clientId}", h.readRegisteredClient)
+	mux.HandleFunc("PUT /realms/{realm}/clients-registrations/openid-connect/{clientId}", h.updateRegisteredClient)
+	mux.HandleFunc("DELETE /realms/{realm}/clients-registrations/openid-connect/{clientId}", h.deleteRegisteredClient)
 	mux.HandleFunc("GET /realms/{realm}", h.realmInfo)
 }
 
