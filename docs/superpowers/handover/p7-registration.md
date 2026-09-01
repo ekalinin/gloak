@@ -617,7 +617,7 @@ Seven, and three of them are counted claims.
 
 Nothing in the observed document is contradicted, because it has **nothing at
 all** about `/clients-registrations`. That is worth saying rather than leaving as
-a silence: the endpoint's contract now lives in thirteen goldens, this handover
+a silence: the endpoint's contract now lives in fourteen goldens, this handover
 and `internal/oidc/registration.go`'s comments, and the observed document is one
 of the files this cut may not edit.
 
@@ -689,13 +689,13 @@ Measured with `TestCoverage` on the branch point (`969fcc7`) and on the tip:
 
 ```
                                         before            after
-oidc/registration                        0 of 6         13 of 13
+oidc/registration                        0 of 6         14 of 14
 oidc/token                              16 of 21        19 of 22
-total                             311 of 526        327 of 544
+total                             311 of 526        328 of 535
 ```
 
-`+16` behaviours served, `+18` denominator. The denominator grows because seven
-of the thirteen registration cases and one of the token ones are new: six
+`+17` behaviours served, `+9` denominator. The denominator grows because eight
+of the fourteen registration cases and one of the token ones are new: eight
 registration refusals the six original cases did not name, plus
 `oidc/token/dpop-header-invalid`, which is `Recorded` and therefore counts
 against the denominator and not for the numerator - honestly, since Gloak does
@@ -724,10 +724,91 @@ it and both a single entry:
 
 ## 6. Mutation testing
 
-One mutation per claim, each run against the single named test and reverted from
-a copy rather than with `git checkout`.
+Forty-one mutations, one per claim, each run against the single named test and
+reverted from a copy rather than with `git checkout`. **Thirty-eight were killed
+on the first run and three survived**, and two of the three turned out to be
+findings about the *server* rather than only about the test.
 
-*(filled in below once the pass has run)*
+### Survivor 1: an anonymous caller cannot show an ordering
+
+Swapping the decode and the caller resolution in `registerClient` passed
+`TestTheBodyIsJudgedBeforeTheCaller`. The test sent **no Authorization header**,
+and an anonymous caller writes nothing on the way through - `registrationCaller`
+returns it and lets the handler decide - so moving the decode behind it changed
+no byte of either answer.
+
+The request that tells the two orders apart is one whose credential **would**
+have written a refusal. Sent to the live container:
+
+```
+garbage bearer + text/plain        415  the Content-Type still wins
+garbage bearer + `{`               400  the JSON still wins
+garbage bearer + a good body       401  Failed decode token
+PUT, garbage bearer + text/plain   415  the update behaves the same way
+```
+
+So the implementation was right and the test could not see it. **Fixed on the
+branch**: the test now sends a garbage bearer, carries the 401 as its control,
+and covers the `PUT` as well. The mutation dies, and so does the same swap
+inside `updateRegisteredClient`, which nothing had tried.
+
+This is the shape cut A hit on CIBA: a suite that breaks one thing per case
+passes an implementation whose *order* is wrong.
+
+### Survivor 2: a mutation that changes nothing observable
+
+Setting `IncludeIDToken: true` in `tokenExchangeGrant` passed
+`TestTokenExchangeAnswersEightKeysNotNine`. It is **equivalent**:
+`exchangeResponse` has no `id_token` field, so the ID token the issuer mints is
+dropped before it reaches the wire. The line is documentation, and what enforces
+the measured absence is the response type.
+
+Nothing was changed to make it die, because making it die would mean adding a
+field this response must not have. The test now asserts over the **raw body**
+that neither `id_token` nor `refresh_token` appears, which is what would catch
+the field being added later - the failure the equivalence is hiding.
+
+### Survivor 3: the test could not see the rule it was written for, and the rule was wrong
+
+`TestTheAssertionPredicateIsStructural` passed a mutation that accepted a
+**two**-part assertion. Reading why: all five of its refused inputs were refused
+for their *payload* - `a.b.c`'s middle part is not JSON, `aGVsbG8.d29ybGQ`'s is
+not either - so the part-count check and the JSON check could never be told
+apart. Every probe that had been sent at the live container had the same defect.
+
+The distinguishing probe is a two-part string whose second part **is** base64url
+JSON, and it says the implementation was wrong:
+
+```
+one part                           The provided assertion is not a valid JWT
+two parts, a JSON object payload   accepted - reaches Missing claim: sub
+three parts                        accepted
+three parts, an empty signature    accepted
+four parts, five parts             The provided assertion is not a valid JWT
+an empty header or payload part    The provided assertion is not a valid JWT
+a payload that is a JSON array     The provided assertion is not a valid JWT
+```
+
+So the signature is **optional**, an empty one is fine, and the two parts in
+front of it are not. **Fixed on the branch**, and the test is now the fourteen
+rows above rather than five that all failed the same way.
+
+The same probe found **a seventh rung on the ladder**: an assertion carrying
+`iss` and no `sub` answers `Missing claim: sub`, which no earlier probe had seen
+because every one of them sent both claims. It is checked after `iss` and before
+the identity provider lookup. Implemented, and both adjacencies are pinned.
+
+### What the tests still do not pin
+
+- **`registrationStore.holds` refusing an empty jti** is defence in depth and
+  unreachable: `ParseRegistration` already refuses a token whose `jti` is empty,
+  so no request can get there. Written down rather than tested.
+- **`deleteRegisteredClient` calling `forget`** cannot be observed either: the
+  client is gone by then, so the entry it leaves behind can never be matched
+  against a client id again. It is a leak rather than a behaviour, and a
+  mutation removing it changes nothing.
+- **The `Content-Type` header present with an empty value.** Keycloak answers a
+  500 HTML page; Gloak treats it as absent. Section 4 has it.
 
 ## 7. Two things that would have gone wrong quietly
 

@@ -24,7 +24,7 @@ import (
 // device grant's do: **most of what was measured here is an order or a pair of
 // answers to one condition**, and a golden holds one request at one moment.
 //
-// The catalogue's thirteen registration cases each break exactly one thing.
+// The catalogue's fourteen registration cases each break exactly one thing.
 // What they cannot say is that the Content-Type check runs *before* the caller
 // is judged, that the 401 sentence splits by verb, that a PUT rotates the
 // registration access token and a GET does not, or that a create naming
@@ -274,10 +274,17 @@ func TestAnEmptyBearerCountsAsNone(t *testing.T) {
 }
 
 // TestTheBodyIsJudgedBeforeTheCaller is the order that is the opposite of every
-// other guarded route in this project, and it is only visible from a request
-// that is wrong in two ways: no credentials **and** a bad body.
+// other guarded route in this project.
+//
+// **The credential has to be one that would have written a refusal.** The first
+// version of this test sent no Authorization header at all, and a mutation that
+// resolved the caller *first* survived it: an anonymous caller writes nothing on
+// the way through, so moving the decode behind it changed no byte. A garbage
+// bearer is the request that tells the two orders apart, because it produces a
+// 401 - and the measurement says the 415 and the 400 still win.
 func TestTheBodyIsJudgedBeforeTheCaller(t *testing.T) {
 	h, _, _, _ := registrationServer(t)
+	const garbage = "not-a-token"
 
 	// A Content-Type that is present and refused. An **absent** one is
 	// accepted, so this half of the order needs a header that is wrong rather
@@ -285,15 +292,26 @@ func TestTheBodyIsJudgedBeforeTheCaller(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, registrationPath,
 		strings.NewReader(`{"client_name":"gloak-probe-media"}`))
 	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("Authorization", "Bearer "+garbage)
 	badType := httptest.NewRecorder()
 	h.ServeHTTP(badType, req)
 	if badType.Code != http.StatusUnsupportedMediaType {
-		t.Errorf("a refused Content-Type and no credentials: want 415, got %d: %s",
+		t.Errorf("a refused Content-Type beats a bearer that does not verify: want 415, got %d: %s",
 			badType.Code, badType.Body)
 	}
 
-	badJSON := registerJSON(t, h, "", `{`)
+	badJSON := registerJSON(t, h, garbage, `{`)
 	wantError(t, badJSON, http.StatusBadRequest, authErrInvalidRequest, descCannotParseJSON)
+
+	// And the control: the same bearer with a body that is fine reaches the
+	// 401, so the two above are the body winning rather than the bearer never
+	// being looked at.
+	good := registerJSON(t, h, garbage, `{"client_name":"gloak-probe-control"}`)
+	wantError(t, good, http.StatusUnauthorized, errInvalidToken, descFailedDecode)
+
+	// The update decodes before the caller too, measured on the same pair.
+	put := registrationRequestOf(t, h, http.MethodPut, registrationPath+"/admin-cli", garbage, `{`, true)
+	wantError(t, put, http.StatusBadRequest, authErrInvalidRequest, descCannotParseJSON)
 }
 
 // TestTheConsumedMediaTypesAreAMatchNotAPrefix is the eight-value sweep. The

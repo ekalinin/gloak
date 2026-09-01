@@ -128,6 +128,18 @@ func TestTokenExchangeAnswersEightKeysNotNine(t *testing.T) {
 	if body.TokenType != "Bearer" {
 		t.Errorf("token_type: got %q", body.TokenType)
 	}
+	// The absence of an id_token is asserted over the raw body rather than by
+	// the struct, and that is a mutation's doing: setting IncludeIDToken true in
+	// tokenExchangeGrant survived, because exchangeResponse has no such field
+	// and the token it minted was simply dropped. The mutation is equivalent -
+	// nothing observable moves - and this is what would catch the field being
+	// added. See the mutation section of
+	// docs/superpowers/handover/p7-registration.md.
+	for _, absent := range []string{"id_token", "refresh_token"} {
+		if strings.Contains(w.Body.String(), absent) {
+			t.Errorf("the exchange body must not carry %s", absent)
+		}
+	}
 }
 
 // TestTheExchangedTokenKeepsTheSubjectsSession is the claim a response-shape
@@ -315,8 +327,18 @@ func TestJWTBearerRefusesInTheMeasuredOrder(t *testing.T) {
 			descAssertionMissingIS,
 		},
 		{
+			// The rung a mutation found: the first sweep of this ladder always
+			// sent sub beside iss, so an assertion carrying only iss had never
+			// been issued.
+			"a missing sub, with an iss that names nothing",
+			url.Values{"grant_type": {grantJWTBearer}, "client_id": {"jb-on"},
+				"client_secret": {"s3cret"},
+				"assertion":     {assertion(`{"iss":"https://issuer.example.com"}`)}},
+			descAssertionMissingSub,
+		},
+		{
 			// The end of the road on any default deployment.
-			"an iss naming no identity provider",
+			"an iss and a sub naming no identity provider",
 			url.Values{"grant_type": {grantJWTBearer}, "client_id": {"jb-on"},
 				"client_secret": {"s3cret"}, "assertion": {good}},
 			descNoIdentityProvider,
@@ -357,18 +379,50 @@ func TestMissingParameterAssertionHasNoSpace(t *testing.T) {
 	}
 }
 
-// TestTheAssertionPredicateIsStructural pins what "a valid JWT" means here:
-// three dot-separated parts whose middle one is base64url of a JSON object,
-// with nothing checked about the signature or the expiry.
+// TestTheAssertionPredicateIsStructural pins what "a valid JWT" means here.
+//
+// **This test passed a mutation of the very rule it was written to establish.**
+// Its first version listed five refused assertions and every one of them was
+// refused for its *payload* - `a.b.c`'s `b` is not JSON, and so on - so a
+// mutation that accepted a two-part assertion changed none of them. Reading the
+// hole led to a probe that had never been sent, and the probe said the
+// implementation was wrong: **two parts are accepted**, and only the part count
+// outside two-or-three is refused. Every row below is now a live measurement.
 func TestTheAssertionPredicateIsStructural(t *testing.T) {
-	for _, raw := range []string{"a.b.c", "aGVsbG8.d29ybGQ", "a.b.c.d", "", "not-a-jwt"} {
-		if _, ok := assertionClaims(raw); ok {
-			t.Errorf("%q must not parse", raw)
+	b := func(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
+	header := b(`{"alg":"RS256","typ":"JWT"}`)
+	payload := b(`{"iss":"https://issuer.example.com","sub":"s"}`)
+
+	for _, tc := range []struct {
+		name     string
+		raw      string
+		accepted bool
+	}{
+		{"one part", payload, false},
+		// The row a "exactly three parts" check gets wrong, and the row the
+		// first version of this test could not see.
+		{"two parts", header + "." + payload, true},
+		{"three parts", header + "." + payload + ".sig", true},
+		{"three parts, an empty signature", header + "." + payload + ".", true},
+		{"four parts", header + "." + payload + ".sig.extra", false},
+		{"five parts", header + "." + payload + ".a.b.c", false},
+		{"an empty header", "." + payload, false},
+		{"an empty payload", header + ".", false},
+		{"a payload that is not base64url", header + ".!!!!", false},
+		{"a payload that is a JSON array", header + "." + b(`[1,2]`), false},
+		{"a.b.c", "a.b.c", false},
+		{"two parts, neither JSON", "aGVsbG8.d29ybGQ", false},
+		{"the empty string", "", false},
+		{"no dots at all", "not-a-jwt", false},
+	} {
+		if _, ok := assertionClaims(tc.raw); ok != tc.accepted {
+			t.Errorf("%s: want accepted=%v, got %v", tc.name, tc.accepted, ok)
 		}
 	}
+
 	// An expired assertion still parses: expiry is not checked in front of the
 	// identity provider lookup, measured.
-	expired := assertion(`{"iss":"https://issuer.example.com","exp":1}`)
+	expired := assertion(`{"iss":"https://issuer.example.com","sub":"s","exp":1}`)
 	claims, ok := assertionClaims(expired)
 	if !ok || claims.Iss != "https://issuer.example.com" {
 		t.Errorf("an expired assertion must still parse, got ok=%v iss=%q", ok, claims.Iss)
