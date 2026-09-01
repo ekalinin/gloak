@@ -728,6 +728,40 @@ func TestScopeSubListingsAnswerAnEmptyArray(t *testing.T) {
 	}
 }
 
+// TestWriteEmptyStatusOmitsDateHeader is the one assertion in this file that
+// cannot be made through httptest.NewRecorder, and it exists because a
+// mutation found the hole.
+//
+// Deleting `w.Header()["Date"] = nil` from writeEmptyStatus passed **every
+// test in internal/admin and every conformance case in this chapter**, because
+// a ResponseRecorder never adds a Date header itself and so cannot tell a
+// suppressed one from one net/http would have added. That is F54's blind spot
+// exactly, on a fourth writer: internal/httpx has three of these tests, one
+// per writer, and this is the fourth writer.
+//
+// A real httptest.NewServer is what makes the difference - net/http adds Date
+// automatically unless the handler suppresses it, and Keycloak 26.7.1 sends
+// none on any response.
+func TestWriteEmptyStatusOmitsDateHeader(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeEmptyStatus(w, r, http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("want 404, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Date"); got != "" {
+		t.Fatalf("want no Date header, got %q", got)
+	}
+}
+
 // TestTurningTheFlagOffDestroysTheScopes. The resource server's row is the
 // client's authorizationServicesEnabled flag, and the scopes hang off it - so
 // a PUT that omits the flag takes them with it, and turning it on again gives
