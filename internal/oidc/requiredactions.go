@@ -235,7 +235,10 @@ func (h *handler) serveStep(w http.ResponseWriter, realm *model.Realm, sess *aut
 		// neither does Gloak, so this is the answer for every realm this project
 		// can serve - the same standing that CIBA's 503 has, and the same
 		// standing writeRegistrationPage's 400 has.
-		httpx.WriteThemeErrorPage(w, http.StatusInternalServerError, loginActionCacheControl)
+		// The placeholder body, for writeLoginActionErrorPage's reason: the
+		// sentence is measured and the chrome is not.
+		httpx.WriteThemePage(w, http.StatusInternalServerError, loginActionCacheControl,
+			httpx.ThemeErrorTitle)
 		return
 	}
 	spec := requiredActionTable[step]

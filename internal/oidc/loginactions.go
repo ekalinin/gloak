@@ -88,7 +88,7 @@ func (h *handler) loginActions(w http.ResponseWriter, r *http.Request) {
 	// Step 3. The client has to resolve **and be the tab's own**. Measured: a
 	// request naming a different real client answers the same 400 page an
 	// unknown one does, so this is not only a lookup.
-	client, ok := h.resolveAuthClient(r, realm, q.Get("client_id"))
+	client, ok := h.authClient(r, realm, q.Get("client_id"))
 	if !ok || client.ClientID != tab.ClientID {
 		h.writeLoginActionErrorPage(w)
 		return
@@ -196,7 +196,7 @@ func (h *handler) restartRecord(r *http.Request, realm *model.Realm) (*restartRe
 // where the same request with no cookies at all answers the restart-cookie
 // page. So the restart needs the client_id the request carried.
 func (h *handler) writeRestartRedirect(w http.ResponseWriter, r *http.Request, realm *model.Realm, rec *restartRecord, q url.Values) {
-	client, ok := h.resolveAuthClient(r, realm, q.Get("client_id"))
+	client, ok := h.authClient(r, realm, q.Get("client_id"))
 	if !ok {
 		h.writeLoginActionErrorPage(w)
 		return
@@ -248,7 +248,7 @@ func (h *handler) writeRestartRedirect(w http.ResponseWriter, r *http.Request, r
 // reports false when it cannot address the client, so the caller falls through
 // to the page rather than inventing a redirect.
 func (h *handler) writeExpiredAuthentication(w http.ResponseWriter, r *http.Request, realm *model.Realm, q url.Values) bool {
-	client, ok := h.resolveAuthClient(r, realm, q.Get("client_id"))
+	client, ok := h.authClient(r, realm, q.Get("client_id"))
 	if !ok {
 		return false
 	}
@@ -545,11 +545,19 @@ func (h *handler) loginActionURL(realm *model.Realm, tab *authTab, sessionCode s
 // prose Gloak does not serve yet: "Invalid Request" for an unparseable
 // client_data, "An error occurred, please login again through your
 // application." for a client that does not resolve, and "Restart login cookie
-// not found. ..." when there is nothing to restart from. The branch that was
-// taken is guarded by internal/oidc's own tests; the prose is P13's later work,
-// the same arrangement F67 records for the logout pages.
+// not found. It may have expired; it may have been deleted or cookies are
+// disabled in your browser. If cookies are disabled then enable them. Click
+// Back to Application to login again." when there is nothing to restart from.
+//
+// **This page is still the placeholder body**, deliberately, where /auth's and
+// /logout's are the theme's real markup as of 2026-09-01. Twelve call sites
+// across three files reach this writer and no golden compares any of them, so
+// mapping each to one of the three sentences would be twelve unpinned
+// judgements. The chrome would be unpinned too: nothing has measured which
+// client this page's restart URL names. It is F109's family and it closes when
+// somebody measures the twelve, not when somebody guesses them.
 func (h *handler) writeLoginActionErrorPage(w http.ResponseWriter) {
-	httpx.WriteThemeErrorPage(w, http.StatusBadRequest, loginActionCacheControl)
+	httpx.WriteThemePage(w, http.StatusBadRequest, loginActionCacheControl, httpx.ThemeErrorTitle)
 }
 
 // startSessionWithID is startSession with the session id supplied rather than

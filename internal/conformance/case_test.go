@@ -31,11 +31,10 @@ func TestGoldenIsAssertedFollowsTheStatus(t *testing.T) {
 // than off three constructed cases, so that a status added later without a rule
 // here fails rather than passing by default.
 //
-// Seven Pending cases carry a golden today. Four of them are the login-theme
-// pages whose whole body churns per container start; the other three are stable
-// bodies that were measured and parked. Every one of them has to come back
-// false, or `make record` is rewriting a file no test reads. Which seven, and
-// why each is kept, is parkedGoldens.
+// **One** Pending case carries a golden today, counted from parkedGoldens
+// rather than from this sentence, which has been wrong on the number three
+// times. It has to come back false, or `make record` is rewriting a file no
+// test reads. Which one, and why it is kept, is parkedGoldens.
 func TestNoPendingGoldenIsCompared(t *testing.T) {
 	parked := 0
 	for _, c := range Catalog {
@@ -52,6 +51,11 @@ func TestNoPendingGoldenIsCompared(t *testing.T) {
 	}
 	// A rule about parked goldens over a catalogue holding none asserts
 	// nothing. The pollution guard fails the same way for the same reason.
+	//
+	// **This is one promotion away from firing**, since 2026-09-01 left exactly
+	// one parked golden. When the last one goes, delete this test rather than
+	// loosening it: a guard that has nothing to guard is worse than none,
+	// because it reads as though something is still being checked.
 	if parked == 0 {
 		t.Fatal("no Pending case has a golden, so this test has stopped checking anything; " +
 			"either they were all promoted or the goldens were removed, and both are worth reading about")
@@ -74,41 +78,27 @@ func TestNoPendingGoldenIsCompared(t *testing.T) {
 // verifier requires it *not* to match - and it is a one-word edit a reviewer
 // sees in the diff. There is no flag, here or in the recorder (F69).
 //
-// An eighth cannot appear by accident: a Pending case that grows a golden file
+// A second cannot appear by accident: a Pending case that grows a golden file
 // without an entry here fails, and an entry naming a case that is no longer
 // Pending, or whose file has gone, fails too. So the list can only be changed
 // on purpose, and changing it is where the reason gets written down.
+//
+// **Seven of the eight left on 2026-09-01** and are gone rather than moved,
+// because their cases are Implemented and a compared golden is the opposite of
+// a parked one. What let them go was one substitution pass -
+// ReplaceThemeResource - plus the theme's markup. The reasoning that had kept
+// them is worth keeping: a cut wrote that pass, measured **prompt-create's**
+// diff, found the resource segment was one churn source of three, called it a
+// third of the problem and reverted. That was true of prompt-create and false
+// of the other seven, where the segment was the whole of it. A judgement made
+// from one example and generalised.
 var parkedGoldens = map[string]string{
-	"oidc/authorization/invalid-redirect-uri": "the keycloak.v2 theme's 400 error page; the /resources/<hash>/ " +
-		"segment in the body is minted per container start, so these bytes are one container's rather than " +
-		"a reproducible value - read the page's shape, its status and its headers, not that segment",
-	"oidc/authorization/unknown-client-id": "the same theme page for the other half of the page family, " +
-		"kept because the two differ in their instruction and nothing else",
-	"oidc/logout/invalid-post-logout-redirect-uri": "the logout endpoint's copy of that page, which is the " +
-		"only record in the repository that it carries Cache-Control: no-cache where the authorization " +
-		"endpoint's carries none",
-	"oidc/logout/invalid-id-token-hint": "the third instruction the 400 page serves, and the one that pins " +
-		"the hint being judged before the redirect URI",
-	// The device and CIBA entries were here until 2026-08-30 and both are gone
-	// rather than moved: their cases are Implemented, so their goldens are
-	// compared and the whole point of parking is that nothing compares them.
-	// The device one's request has moved too - it measured the refusal on
-	// admin-cli, which is now oidc/device/grant-disabled's, while
-	// oidc/device/authorization-request measures the grant with a client that
-	// has it on.
-	"oidc/authorization/prompt-create": "the registration page, and the one record that /auth's " +
-		"own page family disagrees with itself about Cache-Control - this one sends it where the " +
-		"400 beside it does not",
-	"oidc/authorization/max-age-invalid": "the other half of that pair, and the reason the " +
-		"variable is the rejection rather than the endpoint",
-	"oidc/device/verification-page": "the page whose own form cannot be submitted, because the two " +
-		"device paths are one endpoint - read it for the form's action, which is the measurement",
-	"oidc/device/status-page": "the end of a completed device login, kept for its two headings",
-	// The dynamic-registration entry was here until 2026-08-31 and is gone
-	// rather than moved, for the same reason the device and CIBA ones went:
-	// oidc/registration/without-initial-access-token is Implemented, so its
-	// golden is compared, and the whole point of parking is that nothing
-	// compares it. Nine parked goldens are eight.
+	"oidc/authorization/prompt-create": "the registration page, and the one of the eight theme " +
+		"goldens that is still a measurement rather than a contract. Its markup is served; what is not " +
+		"comparable is two values inside the body, the tab_id in the restart URL and the authentication " +
+		"session's hash inside checkAuthSession(...), both minted by this request. Read it for the page's " +
+		"shape and for its Cache-Control - it is the record that /auth's own page family disagrees with " +
+		"itself, sending one where max-age-invalid beside it sends none - and not for those two values",
 }
 
 // TestEveryParkedGoldenIsDeclared enforces F72 in both directions.

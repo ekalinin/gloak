@@ -443,29 +443,27 @@ func WriteThemeConsentPage(w http.ResponseWriter, action, clientID, code string)
 //
 // message is the feedback line an unusable code produces: measured "Invalid
 // code, please try again." for both a well-formed unknown code and a malformed
-// one, and empty on the first render.
-func WriteThemeDeviceCodePage(w http.ResponseWriter, action, message string) {
-	var body strings.Builder
-	body.WriteString(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
-		`<title>Sign in to Keycloak</title></head><body>` +
-		`<h1 id="kc-page-title">` + DevicePageTitle + `</h1>`)
-	if message != "" {
-		body.WriteString(`<span class="kc-feedback-text">` + html.EscapeString(message) + `</span>`)
-	}
-	body.WriteString(`<form id="kc-user-verify-device-user-code-form" action="` +
-		html.EscapeString(action) + `" method="post">` +
-		`<input id="device_user_code" name="device_user_code" value="" type="text" autocomplete="off"/>` +
-		`</form></body></html>`)
-	writeThemeHTML(w, http.StatusOK, "no-store, must-revalidate, max-age=0", body.String())
+// one, and empty on the first render. It is rendered in the alert block
+// keycloak.v2 puts it in, not beside the heading.
+func WriteThemeDeviceCodePage(w http.ResponseWriter, action string, c ThemeChrome, message string) {
+	writeThemeHTML(w, http.StatusOK, "no-store, must-revalidate, max-age=0",
+		themeDeviceVerifyBody(c, action, message))
 }
 
-// themePageBody is Gloak's placeholder for a page the login theme renders.
+// themePageBody is Gloak's placeholder for a page the login theme renders and
+// this project has not measured.
 //
-// Keycloak serves 3574 to 4645 bytes of keycloak.v2 Freemarker output here,
-// carrying a /resources/<hash>/ cache-busting segment regenerated on every
-// container start. Several conformance cases are Pending against exactly that
-// churn and stay Pending until P13 builds themes. What Gloak reproduces today
-// is the response's **envelope**, which is measured and stable.
+// Keycloak serves 3572 to 4692 bytes of keycloak.v2 Freemarker output here,
+// carrying a /resources/<version>/ cache-busting segment. Eight of those pages
+// are measured and are built in theme.go; the rest are still this. The list of
+// what is still a placeholder is short and worth naming, because each is a page
+// somebody could measure in an hour: the logout confirmation, "You are logged
+// out", "Page has expired", the consent page and the five required-action
+// pages.
+//
+// Giving those the real chrome under an invented instruction would be writing
+// an observable value from memory, which is the one rule this project puts
+// above every other - so the placeholder stays until each is read off a server.
 //
 // The title is a parameter because the measured pages are not all the error
 // page: `/logout` serves "Logging out" and "You are logged out" with 200s
@@ -511,8 +509,28 @@ const ThemeErrorTitle = "We are sorry..."
 // So "the theme error page sends no Cache-Control" is a fact about `/auth` and
 // not about the page. Callers pass "" for no header. Hard-coding either value
 // here breaks the other endpoint.
-func WriteThemeErrorPage(w http.ResponseWriter, status int, cacheControl string) {
-	WriteThemePage(w, status, cacheControl, ThemeErrorTitle)
+//
+// instruction is the sentence the page's one <p class="instruction"> carries,
+// and it is the whole of what one rejection has that another does not. Thirteen
+// spellings have been measured across four endpoints; they live at the call
+// sites, because which one a request gets is the handler's decision and not
+// this package's. F67 was the gap this closes: three logout rejections shared
+// one placeholder.
+func WriteThemeErrorPage(w http.ResponseWriter, status int, cacheControl string,
+	c ThemeChrome, instruction string) {
+	writeThemeHTML(w, status, cacheControl, themeErrorPageBody(c, instruction))
+}
+
+// WriteThemeInfoPage writes the login-info template, which is the error page
+// with a different data-page-id, a different heading indentation and
+// kc-info-message in place of kc-error-message.
+//
+// The device status page is its only measured user, and it is the reason the
+// title is a parameter: that one page has **two** headings, decided by whether
+// `error=` is non-empty, and three instructions.
+func WriteThemeInfoPage(w http.ResponseWriter, status int, cacheControl string,
+	c ThemeChrome, title, instruction string) {
+	writeThemeHTML(w, status, cacheControl, themeInfoPageBody(c, title, instruction))
 }
 
 // WriteThemePage writes the envelope every page the login theme renders shares,
