@@ -57,6 +57,15 @@ type componentRepresentation struct {
 // function can place because a collision chains in an insertion order nothing
 // observable reveals. Nothing in this cut serves it - `POST /components` is not
 // built - and it is recorded rather than approximated.
+//
+// **No body this package serves can tell the two functions apart**, and that is
+// not a reason to relax: every config a default install has holds nought, one
+// or two keys, and the two agree on all of those. A mutation swapping this call
+// for SizedKeyOrder survived components_test.go's whole file. The claim
+// therefore lives where the discriminating measurements do -
+// javamap.TestKeyOrderReproducesAComponentsConfig and its counted counterpart -
+// and the call here is right because those vectors say which constructor it is,
+// not because anything here would notice.
 type componentConfig []model.ComponentConfigEntry
 
 func (c componentConfig) MarshalJSON() ([]byte, error) {

@@ -836,3 +836,145 @@ func TestSizedKeyOrderHandlesTheEmptyAndSingleCases(t *testing.T) {
 		t.Fatalf("one key produced %v", got)
 	}
 }
+
+// componentConfigVectors are the key orders `GET /admin/realms/{realm}/components`
+// serialises a component's `config` in, measured on a live Keycloak 26.7.1 on
+// 2026-09-01 by creating one component per row and reading it back.
+//
+// **They are here rather than in internal/admin because nothing internal/admin
+// serves can distinguish the two constructors.** Every config a default install
+// has holds nought, one or two keys, and KeyOrder and SizedKeyOrder agree on all
+// of those - which a mutation of the component serialiser demonstrated by
+// surviving its own test. Reaching a discriminating key set means
+// `POST /components`, which this cut does not build, so the claim lives with the
+// vectors that carry it.
+//
+// The claim is that a component's config is the **no-argument** HashMap, which
+// is the opposite of a protocol mapper's and of an identity provider's.
+var componentConfigVectors = []struct {
+	name string
+	want []string
+}{
+	// rsa-generated, five of its declared properties.
+	{"rsa-generated x5", []string{"keySize", "active", "priority", "enabled", "algorithm"}},
+	{"rsa-generated x4", []string{"active", "priority", "enabled", "algorithm"}},
+	{"rsa-generated x3", []string{"active", "priority", "enabled"}},
+	{"rsa-generated x2", []string{"priority", "enabled"}},
+	{"hmac-generated x5", []string{"active", "secretSize", "priority", "enabled", "algorithm"}},
+	{"aes-generated x4", []string{"active", "secretSize", "priority", "enabled"}},
+}
+
+func TestKeyOrderReproducesAComponentsConfig(t *testing.T) {
+	for _, c := range componentConfigVectors {
+		t.Run(c.name, func(t *testing.T) {
+			in := slices.Sorted(slices.Values(c.want))
+			if got := javamap.KeyOrder(in); !slices.Equal(got, c.want) {
+				t.Fatalf("want %v, got %v", c.want, got)
+			}
+		})
+	}
+}
+
+// TestSizedKeyOrderIsWrongOnTwoComponentConfigs is the other half, and it is
+// what makes the six above evidence about *which* constructor rather than only
+// about the bucket rule.
+//
+// Two of the six are placed by both functions - the two whose key count happens
+// to give the sized constructor the same table - so a cut that measured only
+// those would have had no evidence either way. The count is pinned so the
+// package cannot quietly start claiming both.
+func TestSizedKeyOrderIsWrongOnTwoComponentConfigs(t *testing.T) {
+	var wrong []string
+	for _, c := range componentConfigVectors {
+		in := slices.Sorted(slices.Values(c.want))
+		if !slices.Equal(javamap.SizedKeyOrder(len(in), in), c.want) {
+			wrong = append(wrong, c.name)
+		}
+	}
+	if len(wrong) != 2 {
+		t.Fatalf("want SizedKeyOrder wrong on 2 of the %d component configs, got %d: %v",
+			len(componentConfigVectors), len(wrong), wrong)
+	}
+}
+
+// identityProviderConfigVectors are the key orders
+// `GET .../identity-provider/instances/{alias}` serialises a provider's
+// `config` in, measured the same way on the same container and the same day.
+//
+// **They go the other way**: this map is the sized constructor, the one a
+// protocol mapper's config uses, where the component config next door is the
+// no-argument one. Two neighbouring families, one function apart, and a shared
+// serialiser is wrong on whichever it was not written for.
+//
+// Each vector carries the order the keys were **sent** as well as the order
+// they came back in, and the two are not interchangeable: `k1..k10` collides
+// and a chain is insertion order, so feeding it the sorted set - which puts
+// `k10` second - produces a different and equally correct answer. The component
+// vectors above can be sorted because none of them collides; these cannot.
+//
+// The four-key row is the sharpest: `{clientId, clientSecret, authorizationUrl,
+// tokenUrl}` is what a real OIDC broker carries, and KeyOrder puts clientId
+// first where the server puts clientSecret.
+var identityProviderConfigVectors = []struct {
+	name string
+	in   []string
+	want []string
+}{
+	{"clientId and clientSecret",
+		[]string{"clientId", "clientSecret"},
+		[]string{"clientSecret", "clientId"}},
+	{"an OIDC broker's four",
+		[]string{"clientId", "clientSecret", "authorizationUrl", "tokenUrl"},
+		[]string{"clientSecret", "clientId", "tokenUrl", "authorizationUrl"}},
+	{"an OIDC broker's seven",
+		[]string{"clientId", "clientSecret", "authorizationUrl", "tokenUrl",
+			"userInfoUrl", "logoutUrl", "issuer"},
+		[]string{"userInfoUrl", "clientId", "tokenUrl", "authorizationUrl",
+			"logoutUrl", "clientSecret", "issuer"}},
+	{"zz aa mm",
+		[]string{"zz", "aa", "mm"}, []string{"zz", "aa", "mm"}},
+	{"aa mm zz",
+		[]string{"aa", "mm", "zz"}, []string{"aa", "mm", "zz"}},
+	{"five letters",
+		[]string{"a", "b", "c", "d", "e"}, []string{"a", "b", "c", "d", "e"}},
+	{"six letters",
+		[]string{"a", "b", "c", "d", "e", "f"}, []string{"a", "b", "c", "d", "e", "f"}},
+	{"nine k-keys",
+		[]string{"k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9"},
+		[]string{"k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9"}},
+	{"ten k-keys",
+		[]string{"k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9", "k10"},
+		[]string{"k1", "k2", "k3", "k4", "k5", "k6", "k10", "k7", "k8", "k9"}},
+}
+
+func TestSizedKeyOrderReproducesAnIdentityProvidersConfig(t *testing.T) {
+	for _, c := range identityProviderConfigVectors {
+		t.Run(c.name, func(t *testing.T) {
+			if got := javamap.SizedKeyOrder(len(c.in), slices.Clone(c.in)); !slices.Equal(got, c.want) {
+				t.Fatalf("want %v, got %v", c.want, got)
+			}
+		})
+	}
+}
+
+// TestKeyOrderIsWrongOnFourIdentityProviderConfigs is the half that says the
+// family uses the sized constructor rather than agreeing with the components by
+// coincidence.
+//
+// **Five of the nine do not discriminate**, and that is the point of counting:
+// a cut that measured only those five would have had no evidence either way and
+// no way of noticing. The count is pinned so the package cannot quietly start
+// claiming both constructors for one family, which is what
+// TestKeyOrderIsWrongOnHalfTheMapperConfigs already guards next door.
+func TestKeyOrderIsWrongOnFourIdentityProviderConfigs(t *testing.T) {
+	var wrong []string
+	for _, c := range identityProviderConfigVectors {
+		if !slices.Equal(javamap.KeyOrder(slices.Clone(c.in)), c.want) {
+			wrong = append(wrong, c.name)
+		}
+	}
+	if len(wrong) != 4 {
+		t.Fatalf("want KeyOrder wrong on 4 of the %d identity provider configs, got %d: %v",
+			len(identityProviderConfigVectors), len(wrong), wrong)
+	}
+}
