@@ -49,13 +49,24 @@ type resourceServerRepresentation struct {
 // of the three omissions are strings that a client could legitimately hold
 // empty, so omitempty would be a guess. Measured on a resource server holding
 // four scopes, where the two bodies differ in both directions at once.
+//
+// **`resources` was `[]struct{}` until P10's third cut and that was wrong.**
+// Nothing had caught it because no fixture had a resource to put in it: the
+// first two cuts served no route that could create one, so the only value the
+// key ever took was the empty array. It carries the export view of every
+// resource - the representation minus `_id` and `owner`, with each inline scope
+// reduced to its name - in **creation order**, which is the same order the
+// scopes beside it come back in. `policies` is still `[]struct{}` for the
+// reason `resources` used to be, and that reason is now load-bearing rather
+// than accidental: this cut serves no route that creates a policy, so the
+// empty array is a fact about the store and not a placeholder.
 type settingsRepresentation struct {
-	AllowRemoteResourceManagement bool                       `json:"allowRemoteResourceManagement"`
-	PolicyEnforcementMode         string                     `json:"policyEnforcementMode"`
-	Resources                     []struct{}                 `json:"resources"`
-	Policies                      []struct{}                 `json:"policies"`
-	Scopes                        []authzScopeRepresentation `json:"scopes"`
-	DecisionStrategy              string                     `json:"decisionStrategy"`
+	AllowRemoteResourceManagement bool                          `json:"allowRemoteResourceManagement"`
+	PolicyEnforcementMode         string                        `json:"policyEnforcementMode"`
+	Resources                     []authzResourceRepresentation `json:"resources"`
+	Policies                      []struct{}                    `json:"policies"`
+	Scopes                        []authzScopeRepresentation    `json:"scopes"`
+	DecisionStrategy              string                        `json:"decisionStrategy"`
 }
 
 // authzScopeRepresentation is a scope as the read, the listing, the search and
@@ -164,16 +175,33 @@ func (h *handler) readResourceServerSettings(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	exported := []authzScopeRepresentation{}
+	byID := make(map[string]*model.AuthzScope, len(scopes))
 	for _, s := range scopes {
+		byID[s.ID] = s
 		e := scopeRepresentationOf(s)
 		// The one difference from every other view of a scope.
 		e.ID = ""
 		exported = append(exported, e)
 	}
+	// The resources come back in creation order too, which is what
+	// store.ListResources returns - the listing beside it is the one that
+	// sorts. Their export view drops `_id` and `owner` and keeps `type`,
+	// `displayName` and `icon_uri`, all four halves measured on one resource
+	// carrying all of them.
+	resources, err := h.store.Authz().ListResources(r.Context(), a.client.ID)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	exportedResources := []authzResourceRepresentation{}
+	for _, res := range resources {
+		exportedResources = append(exportedResources, authzResourceRepresentationOf(
+			res, a.client.ID, a.client.ClientID, byID, authzResourceExported))
+	}
 	httpx.WriteJSONCharset(w, http.StatusOK, settingsRepresentation{
 		AllowRemoteResourceManagement: a.rs.AllowRemoteResourceManagement,
 		PolicyEnforcementMode:         a.rs.PolicyEnforcementMode,
-		Resources:                     []struct{}{},
+		Resources:                     exportedResources,
 		Policies:                      []struct{}{},
 		Scopes:                        exported,
 		DecisionStrategy:              a.rs.DecisionStrategy,
