@@ -62,14 +62,20 @@ func TestThemeResourceVersionIsStableWithinAProcess(t *testing.T) {
 // rendered pointing at nothing: measured, a client with no baseUrl gets no
 // <a id="backToApplication"> at all, and an empty href would be a link a person
 // can click.
+//
+// **The realm here is deliberately not "master".** Every conformance case in
+// this repository runs against master, so hard-coding the literal into the
+// restart URL passes all seven theme goldens - a mutation doing exactly that
+// survived the whole suite on 2026-09-01 and is caught here and nowhere else.
 func TestThemeErrorPageCarriesTheChrome(t *testing.T) {
+	const realm = "gloak-probe-other"
 	with := recordThemeError(httpx.ThemeChrome{
-		Realm:             "master",
+		Realm:             realm,
 		RestartParams:     "client_id=probe&",
 		BackToApplication: "http://abs.example/home",
 	}, "Invalid parameter: redirect_uri")
 	for _, want := range []string{
-		`"/realms/master/login-actions/restart?client_id=probe&skip_logout=true"`,
+		`"/realms/` + realm + `/login-actions/restart?client_id=probe&skip_logout=true"`,
 		`<p><a id="backToApplication" href="http://abs.example/home">`,
 		`<p class="instruction">Invalid parameter: redirect_uri</p>`,
 		`data-page-id="login-error"`,
@@ -78,9 +84,12 @@ func TestThemeErrorPageCarriesTheChrome(t *testing.T) {
 			t.Errorf("page is missing %s", want)
 		}
 	}
+	if strings.Contains(with, "/realms/master/") {
+		t.Error("the page names master, which is not the realm it was given")
+	}
 
-	without := recordThemeError(httpx.ThemeChrome{Realm: "master"}, "Client not found.")
-	if !strings.Contains(without, `"/realms/master/login-actions/restart?skip_logout=true"`) {
+	without := recordThemeError(httpx.ThemeChrome{Realm: realm}, "Client not found.")
+	if !strings.Contains(without, `"/realms/`+realm+`/login-actions/restart?skip_logout=true"`) {
 		t.Error("a page naming no client still has to have a restart URL")
 	}
 	if strings.Contains(without, "backToApplication") {

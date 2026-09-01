@@ -308,6 +308,42 @@ func TestDeviceVerifyFormActionIsTheSameOnBothPaths(t *testing.T) {
 	}
 }
 
+// TestDeviceVerifyPageCarriesTheFeedbackAlert.
+//
+// An unusable user code adds a pf-v5-c-alert block above the form, and it is
+// the only page in this cut that can produce one, so no golden covers it. The
+// measured page is 5105 bytes against the plain 4692, and the whole of the
+// difference is this block - including three runs of trailing whitespace inside
+// the icon div, which are Freemarker directives that expanded to nothing and
+// are bytes like any other.
+func TestDeviceVerifyPageCarriesTheFeedbackAlert(t *testing.T) {
+	h := authServer(t)
+	plain := httptest.NewRecorder()
+	h.ServeHTTP(plain, httptest.NewRequest(http.MethodGet, "/realms/master/device", nil))
+
+	bad := httptest.NewRecorder()
+	h.ServeHTTP(bad, httptest.NewRequest(http.MethodGet,
+		"/realms/master/device?user_code=AAAA-AAAA", nil))
+	if bad.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", bad.Code)
+	}
+	want := `            <div class="pf-v5-c-alert pf-m-inline pf-v5-u-mb-md pf-m-danger">
+                <div class="pf-v5-c-alert__icon">
+                    ` + "\n" + `                    ` + "\n" + `                    <span class="fa fa-fw fa-exclamation-circle"></span>
+                    ` + "\n" + `                </div>
+                <span class="pf-v5-c-alert__title kc-feedback-text">Invalid code, please try again.</span>
+            </div>
+`
+	if !strings.Contains(bad.Body.String(), want) {
+		t.Errorf("the alert block is not the measured markup:\n%s", bad.Body.String())
+	}
+	// The plain render has no alert at all, which is what makes the block a
+	// difference rather than an always-empty container.
+	if strings.Contains(plain.Body.String(), "pf-v5-c-alert") {
+		t.Error("the first render carries an alert block")
+	}
+}
+
 // TestUnparseableBodyIsA500 pins the answer that is **not** a page.
 //
 // Measured 2026-09-01 on POST /auth and POST /logout with a body holding a bad
