@@ -1,0 +1,11 @@
+# GET /admin/realms/master/clients/{{client_uuid}}/authz/resource-server/settings
+HTTP/1.1 200 OK
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"allowRemoteResourceManagement":true,"policyEnforcementMode":"ENFORCING","resources":[],"policies":[],"scopes":[{"name":"gloak-probe-zulu"},{"name":"gloak-probe-yankee"},{"name":"gloak-probe-xray"},{"name":"gloak-probe-whiskey"},{"name":"gloak-probe-Zebra"}],"decisionStrategy":"UNANIMOUS"}
