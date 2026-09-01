@@ -1,0 +1,12 @@
+# GET /admin/realms/master/components
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"id":"{{string}}","name":"aes-generated","providerId":"aes-generated","providerType":"org.keycloak.keys.KeyProvider","parentId":"{{string}}","config":{"priority":["100"]}},{"id":"{{string}}","name":"hmac-generated-hs512","providerId":"hmac-generated","providerType":"org.keycloak.keys.KeyProvider","parentId":"{{string}}","config":{"priority":["100"],"algorithm":["HS512"]}},{"id":"{{string}}","name":"rsa-enc-generated","providerId":"rsa-enc-generated","providerType":"org.keycloak.keys.KeyProvider","parentId":"{{string}}","config":{"priority":["100"],"algorithm":["RSA-OAEP"]}},{"id":"{{string}}","name":"rsa-generated","providerId":"rsa-generated","providerType":"org.keycloak.keys.KeyProvider","parentId":"{{string}}","config":{"priority":["100"]}}]

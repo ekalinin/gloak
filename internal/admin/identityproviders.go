@@ -61,9 +61,9 @@ type identityProviderRepresentation struct {
 	FirstBrokerLoginFlowAlias string                 `json:"firstBrokerLoginFlowAlias,omitempty"`
 	Config                    identityProviderConfig `json:"config"`
 	// Types is a pointer so that briefRepresentation=true can drop the key
-	// outright. Measured: the listing under that parameter answers
-	// `{alias, internalId, providerId, enabled, config}` and no `types`, while
-	// the single read **ignores** the parameter and always sends it.
+	// outright, which is one of the four things that parameter does - see
+	// identityProviderRepresentationOf. The single read **ignores** it and
+	// always sends the full shape.
 	Types *[]string `json:"types,omitempty"`
 }
 
@@ -114,30 +114,47 @@ const identityProviderSecretMask = "**********"
 
 // identityProviderRepresentationOf converts a stored provider for the wire.
 //
-// brief drops the `types` array, which is the only thing briefRepresentation
-// does on this family.
+// **The brief shape is six keys and it is not the full shape minus one.**
+// Measured 2026-09-01 on a provider carrying a displayName, `trustEmail` and
+// four config entries:
+//
+//	default                    alias displayName internalId providerId enabled
+//	                           trustEmail config(4 entries) types
+//	briefRepresentation=true   alias displayName internalId providerId enabled
+//	                           config({})
+//
+// So it drops the six tri-state flags, `firstBrokerLoginFlowAlias`, `types`
+// **and the config's contents** - the key stays and is emptied, which is a
+// third thing again. The first reading of this parameter was "it drops types",
+// taken on providers that happened to carry no config and no flags; the probe
+// that refutes it is a provider that carries both, and it was **a recorded
+// golden that sent it** rather than a hand probe.
+//
+// `briefRepresentation=false` is byte-identical to the default.
 func identityProviderRepresentationOf(p *model.IdentityProvider, brief bool) identityProviderRepresentation {
 	rep := identityProviderRepresentation{
-		DisplayName:               p.DisplayName,
-		InternalID:                p.InternalID,
-		ProviderID:                p.ProviderID,
-		Enabled:                   p.Enabled,
-		TrustEmail:                p.TrustEmail,
-		StoreToken:                p.StoreToken,
-		AddReadTokenRoleOnCreate:  p.AddReadTokenRoleOnCreate,
-		AuthenticateByDefault:     p.AuthenticateByDefault,
-		LinkOnly:                  p.LinkOnly,
-		HideOnLogin:               p.HideOnLogin,
-		FirstBrokerLoginFlowAlias: p.FirstBrokerLoginFlowAlias,
-		Config:                    orderIdentityProviderConfig(p.Config),
+		DisplayName: p.DisplayName,
+		InternalID:  p.InternalID,
+		ProviderID:  p.ProviderID,
+		Enabled:     p.Enabled,
+		Config:      identityProviderConfig{},
 	}
 	if p.Alias != nil {
 		rep.Alias = *p.Alias
 	}
-	if !brief {
-		types := model.IdentityProviderTypes(p.ProviderID)
-		rep.Types = &types
+	if brief {
+		return rep
 	}
+	rep.TrustEmail = p.TrustEmail
+	rep.StoreToken = p.StoreToken
+	rep.AddReadTokenRoleOnCreate = p.AddReadTokenRoleOnCreate
+	rep.AuthenticateByDefault = p.AuthenticateByDefault
+	rep.LinkOnly = p.LinkOnly
+	rep.HideOnLogin = p.HideOnLogin
+	rep.FirstBrokerLoginFlowAlias = p.FirstBrokerLoginFlowAlias
+	rep.Config = orderIdentityProviderConfig(p.Config)
+	types := model.IdentityProviderTypes(p.ProviderID)
+	rep.Types = &types
 	return rep
 }
 
@@ -192,10 +209,12 @@ func (h *handler) listIdentityProviders(w http.ResponseWriter, r *http.Request, 
 	providers = filterIdentityProviders(providers, q.Get("search"))
 	providers = pageIdentityProviders(providers, first, max)
 
-	// **briefRepresentation defaults to false here.** It is true on the role
-	// listing and on the organization listing and false on the user listing;
-	// this is the fourth listing to be measured for it and the second to
-	// default false. One shared helper would get one of them wrong.
+	// **briefRepresentation defaults to false here**, and what it does when it
+	// is true is a six-key shape rather than one dropped field - see
+	// identityProviderRepresentationOf. It is true on the role listing and on
+	// the organization listing and false on the user listing; this is the
+	// fourth listing measured for it and the second to default false. One
+	// shared helper would get one of them wrong.
 	brief := q.Get("briefRepresentation") == "true"
 	out := make([]identityProviderRepresentation, 0, len(providers))
 	for _, p := range providers {

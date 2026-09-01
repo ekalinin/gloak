@@ -1,0 +1,12 @@
+# GET /admin/realms/master/identity-provider/instances
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"alias":"gloak-probe-idp-aaa","internalId":"1de07000-0000-4000-8000-000000000012","providerId":"github","enabled":true,"config":{"clientSecret":"**********","clientId":"gloak-probe-cid"},"types":[]},{"alias":"gloak-probe-idp-full","displayName":"Full Probe","internalId":"1de07000-0000-4000-8000-000000000001","providerId":"oidc","enabled":true,"trustEmail":true,"storeToken":true,"addReadTokenRoleOnCreate":true,"authenticateByDefault":true,"linkOnly":true,"hideOnLogin":true,"firstBrokerLoginFlowAlias":"first broker login","config":{"clientSecret":"**********","clientId":"gloak-probe-cid","tokenUrl":"https://example.test/token","authorizationUrl":"https://example.test/auth"},"types":["USER_AUTHENTICATION","CLIENT_ASSERTION","TRUST_MATERIAL","EXCHANGE_EXTERNAL_TOKEN","JWT_AUTHORIZATION_GRANT"]},{"alias":"gloak-probe-idp-min","internalId":"1de07000-0000-4000-8000-000000000002","providerId":"oidc","enabled":true,"config":{},"types":["USER_AUTHENTICATION","CLIENT_ASSERTION","TRUST_MATERIAL","EXCHANGE_EXTERNAL_TOKEN","JWT_AUTHORIZATION_GRANT"]},{"alias":"gloak-probe-idp-mmm","internalId":"1de07000-0000-4000-8000-000000000011","providerId":"github","enabled":true,"config":{"clientSecret":"**********","clientId":"gloak-probe-cid"},"types":[]},{"alias":"gloak-probe-idp-zzz","internalId":"1de07000-0000-4000-8000-000000000010","providerId":"github","enabled":true,"config":{"clientSecret":"**********","clientId":"gloak-probe-cid"},"types":[]}]

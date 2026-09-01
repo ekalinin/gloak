@@ -10361,15 +10361,21 @@ var adminCases = []Case{
 		// that the golden asserts the sort rather than the insertion order.
 		// No Unordered mask: this order is reproducible and asserting it is the
 		// point.
+		//
+		// **PristineRealm**, because the body is the realm's whole set of
+		// providers and the recorder shares one container: without it this
+		// golden holds whatever the fixtures of the cases beside it created,
+		// which is what the first recording of it did.
 		ID: "admin/identity-providers/list",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Identity Providers: list the instances",
 			Retrieved: "2026-09-01",
 		},
-		Status:    Implemented,
-		Operation: "GET /admin/realms/{realm}/identity-provider/instances",
-		Fixture:   "idp-listing",
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/identity-provider/instances",
+		PristineRealm: true,
+		Fixture:       "idp-listing",
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/admin/realms/master/identity-provider/instances",
@@ -10378,18 +10384,25 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 	},
 	{
-		// `briefRepresentation=true` **drops `types` and nothing else**, and
-		// its default on this listing is false - the third default this one
-		// parameter has in this API. The case beside it is the same request
-		// without the parameter.
+		// **`briefRepresentation=true` answers a six-key shape**, not the full
+		// one minus a field: it drops the six tri-state flags,
+		// `firstBrokerLoginFlowAlias` and `types`, and **empties `config`**
+		// while keeping the key. The default on this listing is false - the
+		// third default this one parameter has in this API.
+		//
+		// The first reading of it was "it drops types", from probes on
+		// providers that carried neither a config nor a flag. **This golden is
+		// what refuted it**: the fixture's providers carry both, and the
+		// recording sent the request no hand probe had.
 		ID: "admin/identity-providers/list-brief",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Identity Providers: the listing under briefRepresentation",
 			Retrieved: "2026-09-01",
 		},
-		Status:  Implemented,
-		Fixture: "idp-listing",
+		Status:        Implemented,
+		PristineRealm: true,
+		Fixture:       "idp-listing",
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/admin/realms/master/identity-provider/instances",
@@ -10410,8 +10423,9 @@ var adminCases = []Case{
 			Section:   "Identity Providers: the listing under search",
 			Retrieved: "2026-09-01",
 		},
-		Status:  Implemented,
-		Fixture: "idp-listing",
+		Status:        Implemented,
+		PristineRealm: true,
+		Fixture:       "idp-listing",
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/admin/realms/master/identity-provider/instances",
@@ -10474,10 +10488,9 @@ var adminCases = []Case{
 			Section:   "Identity Providers: create an instance",
 			Retrieved: "2026-09-01",
 		},
-		Status:        Implemented,
-		Operation:     "POST /admin/realms/{realm}/identity-provider/instances",
-		PristineRealm: true,
-		Fixture:       "admin-token",
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/identity-provider/instances",
+		Fixture:   "admin-token",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/admin/realms/master/identity-provider/instances",
@@ -10627,8 +10640,9 @@ var adminCases = []Case{
 			Section:   "Identity Providers: the listing after a PUT whose body has no alias",
 			Retrieved: "2026-09-01",
 		},
-		Status:  Implemented,
-		Fixture: "idp-stranded",
+		Status:        Implemented,
+		PristineRealm: true,
+		Fixture:       "idp-stranded",
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/admin/realms/master/identity-provider/instances",
@@ -10669,10 +10683,9 @@ var adminCases = []Case{
 			Section:   "Identity Providers: delete an instance",
 			Retrieved: "2026-09-01",
 		},
-		Status:        Implemented,
-		Operation:     "DELETE /admin/realms/{realm}/identity-provider/instances/{alias}",
-		PristineRealm: true,
-		Fixture:       "idp-minimal",
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/identity-provider/instances/{alias}",
+		Fixture:   "idp-minimal",
 		Request: Request{
 			Method:  http.MethodDelete,
 			Path:    "/admin/realms/master/identity-provider/instances/gloak-probe-idp-min",

@@ -1,0 +1,11 @@
+# POST /admin/realms/master/identity-provider/instances
+HTTP/1.1 409 Conflict
+Content-Length: {{volatile}}
+Content-Type: application/json
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"errorMessage":"Identity Provider gloak-probe-idp-min already exists"}
