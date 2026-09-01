@@ -559,6 +559,11 @@ func matches(value, want string, exact bool) bool {
 // a pattern whose last literal run is neither at the end of the value nor
 // followed by a `*` can tell the two apart. That is why this stood for a week.
 //
+// That is Keycloak's rule and it is the reason this function has the shape it
+// has; it is **not** a description of the steps below. The body expresses the
+// trailing `%` by anchoring the head and not the tail rather than by appending
+// anything - see the comment on the walk.
+//
 // **The role listing does not share it.** The same `search=*bbc` against a role
 // named `xabbcx` answers `[]`, and so do `xa*`, `*abbcx`, `*abb*` and `x*x`
 // while the bare `xabbcx` matches - so `*` is a literal there and a wildcard
@@ -578,16 +583,28 @@ func matchesSearch(value, term string) bool {
 	if len(term) >= 2 && strings.HasPrefix(term, `"`) && strings.HasSuffix(term, `"`) {
 		return value == strings.Trim(term, `"`)
 	}
-	// The implied trailing wildcard. It is added to the *pattern* rather than
-	// handled as a special case below, because that is what makes `*bbc` a
-	// substring match and not a suffix one.
-	if !strings.HasSuffix(term, "*") {
-		term += "*"
-	}
-
-	// Walk the literal runs between the wildcards in order. The first run must
-	// sit at the start unless the term opens with *; there is no tail run to
-	// anchor, because the pattern is now guaranteed to end in one.
+	// Walk the literal runs between the wildcards in order. **The head is
+	// anchored and the tail deliberately is not**, and that asymmetry is the
+	// whole of the implied trailing `%`: the first run must sit at the start
+	// unless the term opens with `*`, and every later run is found by a forward
+	// scan that does not care what follows it. So `bbc` is a prefix and `*bbc`
+	// is a substring.
+	//
+	// There was a `term += "*"` here until 2026-09-01, with a comment claiming
+	// it was what made `*bbc` a substring match. **It was a no-op.** Appending a
+	// `*` only adds a trailing empty run, which the loop below skips, so every
+	// term - `bbc`, `*bbc`, `a*b`, one already ending in `*`, the empty one -
+	// took the identical path with and without it; deleting the three lines
+	// changed no test. The tail anchor removed in the same commit is what
+	// carried the rule, and the comment named the wrong half.
+	//
+	// **The two blocks also masked each other**, which is how this survived a
+	// mutation pass. With the append present the last run is always empty, so a
+	// restored tail anchor is unreachable and looks harmless; with the append
+	// gone the anchor is what the `*bbc` probe fails on.
+	//
+	// The empty run is skipped rather than matched, which is what lets `a**b`
+	// and a term ending in `*` through.
 	parts := strings.Split(term, "*")
 	if head := parts[0]; head != "" {
 		if !strings.HasPrefix(value, head) {
