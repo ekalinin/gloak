@@ -137,9 +137,12 @@ func TestRecordedCaseRules(t *testing.T) {
 // namedOutsideTheConvention and parkedGoldens take, and it buys the same thing -
 // every line here was checked once, by a person, against the router.
 //
-// The path is spelled for the master realm because that is what every case in
-// the catalogue addresses, and because the probe needs a literal path rather
-// than a pattern.
+// The path is spelled for the master realm because the probe needs a literal
+// path rather than a pattern, and master is the one realm that is certainly
+// there. This used to say it was spelled that way "because that is what every
+// case in the catalogue addresses", which has been false since P4: sixty-six
+// cases address a realm their fixture created, and the claim that they do not
+// is what F142 was written on.
 var unservedEndpointPhrases = map[string]string{
 	"the token endpoint is not implemented":                      "/realms/master/protocol/openid-connect/token",
 	"the authorization endpoint is not implemented":              "/realms/master/protocol/openid-connect/auth",
@@ -572,6 +575,145 @@ func TestEveryCreatedObjectCarriesTheProbePrefix(t *testing.T) {
 	for _, entry := range stale {
 		t.Errorf("namedOutsideTheConvention excuses %q and nothing creates it any more; "+
 			"drop the entry rather than leaving a reason nobody has re-read", entry)
+	}
+}
+
+// realmOf is the realm segment a case's path addresses, on either API surface,
+// and "" for the handful of paths that name no realm at all - /admin/realms,
+// /nosuchpath, and the captured login action.
+func realmOf(path string) string {
+	for _, prefix := range []string{"/admin/realms/", "/realms/"} {
+		if rest, ok := strings.CutPrefix(path, prefix); ok {
+			return strings.SplitN(rest, "/", 2)[0]
+		}
+	}
+	return ""
+}
+
+// TestSecondRealmCasesAddressARealmTheyCreate is the first half of what makes
+// Case.SecondRealm a declaration a test can falsify.
+//
+// The flag says "this case re-measures a covered behaviour against a realm that
+// is not master". A case carrying it and still addressing master would be
+// counted out of the parity denominator for nothing, and would pin exactly what
+// F142 says the catalogue cannot see.
+//
+// The realm has to be one the case's **own fixture** creates, not merely one
+// some fixture creates: the verifier builds a fresh handler per case and runs
+// that case's fixture on it, so a realm another fixture made does not exist on
+// the side being compared. createdObjects already reads every creation body in
+// the recording, so this costs a lookup rather than a second list.
+func TestSecondRealmCasesAddressARealmTheyCreate(t *testing.T) {
+	created := createdObjects()
+	declared := 0
+	for _, c := range Catalog {
+		if !c.SecondRealm {
+			continue
+		}
+		declared++
+		realm := realmOf(c.Request.Path)
+		if realm == "" || realm == "master" {
+			t.Errorf("%q declares SecondRealm and addresses %q, which is not a second realm",
+				c.ID, c.Request.Path)
+			continue
+		}
+		mine := slices.Contains(created, createdObject{key: "realm", name: realm, creator: c.Fixture})
+		if !mine {
+			t.Errorf("%q addresses realm %q and its own fixture %q does not create it - "+
+				"the verifier runs that fixture and nothing else, so the realm would not be there",
+				c.ID, realm, c.Fixture)
+		}
+	}
+	if declared == 0 {
+		t.Fatal("no case declares SecondRealm, so this test asserts nothing and " +
+			"nothing in the catalogue can tell a realm-derived value from the literal master")
+	}
+}
+
+// secondRealmGoldenFaults is what a SecondRealm golden must not have: a
+// response that does not carry the realm it addressed, or that carries master
+// anywhere.
+//
+// It reads the response rather than the whole file. The first line of a golden
+// is the request line as a comment, and it always holds the realm, so a check
+// over the whole file would pass on a body that pinned nothing.
+//
+// "master" is refused as a bare substring on purpose. On a realm created
+// through POST /admin/realms nothing legitimately says it: the admin role
+// container is realm-management rather than master-realm, and the default role
+// is default-roles-<realm>. If a later case does have an honest reason to hold
+// it, the reason belongs beside that case rather than in a wider match here.
+//
+// It is a function so TestSecondRealmGoldenGuardCanFail can feed it a body
+// known to be wrong. A guard nothing can make fail is the failure mode this
+// file exists to prevent.
+func secondRealmGoldenFaults(raw []byte, realm string) []string {
+	response := raw
+	if i := bytes.IndexByte(response, '\n'); i >= 0 {
+		response = response[i+1:]
+	}
+	var out []string
+	if !bytes.Contains(response, []byte(realm)) {
+		out = append(out, "the response does not name "+realm+", so nothing in it is realm-derived")
+	}
+	if bytes.Contains(response, []byte("master")) {
+		out = append(out, "the response holds \"master\", which this realm has no reason to say")
+	}
+	return out
+}
+
+// TestSecondRealmGoldenPinsItsRealmName is the second half, and the one that
+// does F142's job.
+//
+// A second-realm case exists to make a hard-coded "master" fail. One whose
+// golden holds neither the realm's name nor master pins nothing about the
+// realm at all, and is the harness equivalent of a mask that changes nothing -
+// worse than none, because it reads as though the question had been answered.
+//
+// The negative half catches the other direction: a re-record that wrote master
+// into a second-realm golden has recorded the divergence as the contract, which
+// is the most dangerous thing a recording can do.
+func TestSecondRealmGoldenPinsItsRealmName(t *testing.T) {
+	checked := 0
+	for _, c := range Catalog {
+		if !c.SecondRealm {
+			continue
+		}
+		raw, err := os.ReadFile(GoldenPath(goldenDir, c.ID))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue // a Pending second-realm case has no golden yet
+		}
+		if err != nil {
+			t.Errorf("%q: %v", c.ID, err)
+			continue
+		}
+		checked++
+		for _, fault := range secondRealmGoldenFaults(raw, realmOf(c.Request.Path)) {
+			t.Errorf("%q: %s", c.ID, fault)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no second-realm golden was checked, so this test asserts nothing")
+	}
+}
+
+// TestSecondRealmGoldenGuardCanFail proves both halves of the check above can
+// report, since a golden that passes it looks exactly like one nothing reads.
+func TestSecondRealmGoldenGuardCanFail(t *testing.T) {
+	const realm = "gloak-probe-second"
+	silent := []byte("# GET /realms/" + realm + "/x\nHTTP/1.1 204 No Content\n\n")
+	if got := secondRealmGoldenFaults(silent, realm); len(got) != 1 {
+		t.Errorf("a response naming no realm at all went unreported: %v", got)
+	}
+	leaked := []byte("# GET /realms/" + realm + "/x\nHTTP/1.1 200 OK\n\n" +
+		`{"issuer":"{{issuer}}/realms/master","realm":"` + realm + `"}`)
+	if got := secondRealmGoldenFaults(leaked, realm); len(got) != 1 {
+		t.Errorf("a response holding master went unreported: %v", got)
+	}
+	clean := []byte("# GET /realms/" + realm + "/x\nHTTP/1.1 200 OK\n\n" +
+		`{"issuer":"{{issuer}}/realms/` + realm + `"}`)
+	if got := secondRealmGoldenFaults(clean, realm); len(got) != 0 {
+		t.Errorf("a correct second-realm golden was reported: %v", got)
 	}
 }
 

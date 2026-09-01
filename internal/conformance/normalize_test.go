@@ -560,8 +560,12 @@ func TestThemeResourceAppearsOnlyInTheThemePages(t *testing.T) {
 	// segment seven times, and prompt-create carries an eighth because its
 	// checkAuthSession import is a second script tag.
 	want := map[string]int{
-		"oidc/authorization/invalid-redirect-uri":      7,
-		"oidc/authorization/unknown-client-id":         7,
+		"oidc/authorization/invalid-redirect-uri": 7,
+		"oidc/authorization/unknown-client-id":    7,
+		// The ninth, and the same page as unknown-client-id served for a realm
+		// that is not master: the segment count is a property of the head, not
+		// of the realm, so it is seven here too.
+		"oidc/authorization/second-realm-error-page":   7,
 		"oidc/authorization/max-age-invalid":           7,
 		"oidc/authorization/prompt-create":             8,
 		"oidc/logout/invalid-post-logout-redirect-uri": 7,

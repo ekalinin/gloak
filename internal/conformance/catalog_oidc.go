@@ -395,4 +395,146 @@ var oidcCore = []Case{
 			"X-Robots-Tag",
 		},
 	},
+
+	// --- The same behaviours, measured against a realm that is not master ---
+	//
+	// Every case above spells master into its path, and fifty-eight of the
+	// sixty goldens that carry a realm name in their *response* do too, so a
+	// handler answering with the literal compares equal to one deriving it from
+	// the request. That is F142, found by a mutation that hard-coded master into
+	// the theme page's restart URL and passed the whole tree.
+	//
+	// These four address a realm their fixture created. Nothing here needed
+	// building: realmFixture has made realms through POST /admin/realms since
+	// P4, and ReplaceIssuer rewrites the base URL and not the realm segment, so
+	// the name stays asserted in the golden. See Case.SecondRealm for what the
+	// flag does and for why it is a declaration rather than something read off
+	// the path.
+	//
+	// All four measured on 2026-09-01 against a live 26.7.1 on port 8155, with
+	// the realm created through the API rather than bootstrapped - which is not
+	// the same thing as master under another name, and one of the four proves
+	// it.
+	{
+		ID: "oidc/discovery/second-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Keycloak server OIDC endpoints: well-known configuration endpoint",
+			Retrieved: "2026-08-20",
+		},
+		Status:      Implemented,
+		SecondRealm: true,
+		Fixture:     "second-realm",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/gloak-probe-second/.well-known/openid-configuration",
+		},
+		AssertHeaders: []string{
+			"Cache-Control",
+			"Content-Type",
+			"Referrer-Policy",
+			"Strict-Transport-Security",
+			"X-Content-Type-Options",
+			"X-Frame-Options",
+			"X-Robots-Tag",
+		},
+		// Measured: a created realm's document is byte-identical to master's
+		// with the realm name swapped, every one of the thirty-odd URLs
+		// included - and differs in exactly one thing, which is the same thing
+		// the master case already masks. scopes_supported is a Java set whose
+		// iteration order is fixed at startup, and the two realms' orders
+		// disagree on one container.
+		Unordered: []string{"scopes_supported"},
+	},
+	{
+		ID: "realm/info/second-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs/26.7.1/server_admin/index.html",
+			Section:   "Realm public information endpoint used by adapters",
+			Retrieved: "2026-08-20",
+		},
+		Status:      Implemented,
+		SecondRealm: true,
+		Fixture:     "second-realm",
+		Request:     Request{Method: http.MethodGet, Path: "/realms/gloak-probe-second"},
+		AssertHeaders: []string{
+			"Cache-Control",
+			"Content-Type",
+			"Referrer-Policy",
+			"Strict-Transport-Security",
+			"X-Content-Type-Options",
+			"X-Frame-Options",
+			"X-Robots-Tag",
+		},
+		// Three of the five keys follow the realm - realm, token-service and
+		// account-service - and tokens-not-before does not. public_key is the
+		// realm's own key rather than master's, which is what makes this case
+		// worth having beside the sibling above: the body proves the realm was
+		// resolved and not assumed.
+		Volatile: []string{"public_key"},
+	},
+	{
+		ID: "oidc/userinfo/second-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Userinfo endpoint",
+			Retrieved: "2026-08-20",
+		},
+		Status:      Implemented,
+		SecondRealm: true,
+		Fixture:     "second-realm",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/gloak-probe-second/protocol/openid-connect/userinfo",
+		},
+		// WWW-Authenticate is the point: the challenge carries
+		// realm="gloak-probe-second", and httpx.WriteBearerChallenge is the one
+		// place that decides it. The master sibling asserts the same header and
+		// cannot tell a derived value from the literal.
+		AssertHeaders:       []string{"Content-Type", "WWW-Authenticate"},
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
+	},
+	{
+		ID: "oidc/authorization/second-realm-error-page",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authorization endpoint: client validation",
+			Retrieved: "2026-08-20",
+		},
+		Status: Recorded,
+		// The page carries **three** realm-derived values, not the one F142
+		// went looking for. The restart URL's path is the third; the first two
+		// are the <title> and the header brand, and Gloak serves both as
+		// master's constants:
+		//
+		//	<title>Sign in to gloak-probe-second</title>       Gloak: Sign in to Keycloak
+		//	class="pf-v5-c-brand">gloak-probe-second</div>     Gloak: <div class="kc-logo-text"><span>Keycloak</span></div>
+		//
+		// Measured 2026-09-01. They are the realm's displayName and
+		// displayNameHtml; a realm created through POST /admin/realms carries
+		// neither, so Keycloak falls back to the realm name in both places and
+		// the kc-logo-text wrapper - which is displayNameHtml's - disappears
+		// with it. internal/httpx/theme.go hard-codes master's.
+		//
+		// It is Recorded rather than Pending because the bytes are measured and
+		// the endpoint is served: only these two values are wrong. Nothing in
+		// the page is per-request - the /resources/<version>/ segment is minted
+		// with the database and ReplaceThemeResource handles it - so the rule
+		// that such a page cannot be Recorded does not bite.
+		Reason:      "the theme page's title and header brand are served as master's displayName and displayNameHtml rather than following the realm",
+		SecondRealm: true,
+		Fixture:     "second-realm",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/gloak-probe-second/protocol/openid-connect/auth",
+			Query: map[string]string{
+				"response_type": "code",
+				"client_id":     "nosuchclient",
+				"redirect_uri":  "https://client.example.com/callback",
+				"scope":         "openid",
+				"state":         "xyz123",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
 }

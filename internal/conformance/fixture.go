@@ -568,6 +568,16 @@ var Fixtures = map[string]Fixture{
 	"admin-token-realm-update": realmFixture("gloak-probe-realm-update"),
 	"admin-token-realm-delete": realmFixture("gloak-probe-realm-delete"),
 
+	// One realm for the protocol-side cases that measure what a handler
+	// derives from the realm name - see Case.SecondRealm and F142. They only
+	// read, so unlike the three above they can share a realm, and sharing one
+	// is what keeps the recorder to a single extra create.
+	//
+	// It is realmFixture unchanged. The whole of "a second realm in the
+	// harness" was already here; what F142 was missing was cases addressing
+	// one on the protocol side.
+	"second-realm": realmFixture("gloak-probe-second"),
+
 	// P4's second cut. The default groups and the read by path live in a realm
 	// of their own rather than in master, so master's own group goldens - which
 	// are PristineRealm - stay untouched by them.

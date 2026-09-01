@@ -48,6 +48,9 @@ func TestCoverage(t *testing.T) {
 			t.Errorf("%q reports under chapter %q, which is not declared", c.ID, chapterOf(c.ID))
 			continue
 		}
+		if !countsTowardsParity(c) {
+			continue
+		}
 		tl.cases = append(tl.cases, c)
 		if _, err := os.Stat(GoldenPath(goldenDir, c.ID)); !errors.Is(err, fs.ErrNotExist) {
 			tl.hasGolden++
@@ -115,6 +118,82 @@ func TestCoverage(t *testing.T) {
 		}
 		sort.Strings(tl.pendingIDs)
 		t.Logf("pending in %s:\n  %s", ch.Name, strings.Join(tl.pendingIDs, "\n  "))
+	}
+}
+
+// countsTowardsParity reports whether c is a behaviour the meter counts.
+//
+// A protocol chapter's denominator is the catalogue's own case count, which is
+// the weakest of the two denominators this report uses and the one Chapter's
+// doc comment warns about: it measures diligence as much as coverage. A
+// SecondRealm case is the same behaviour as its master sibling, measured again
+// against another realm to pin what the handler derives from the realm name -
+// see Case.SecondRealm. Counting it would add one to the numerator and one to
+// the denominator and make Gloak read as serving one more behaviour than it
+// does.
+//
+// The admin chapters count operations rather than cases, so they were never
+// exposed to this: the two second-realm cases that predate the flag,
+// admin/organizations/create and admin/realms-admin/read, name operations
+// already counted and moved nothing.
+//
+// TestSecondRealmCasesAreOutsideTheParityDenominator is what checks the meter
+// uses this rather than only that the predicate exists.
+func countsTowardsParity(c Case) bool { return !c.SecondRealm }
+
+// TestSecondRealmCasesAreOutsideTheParityDenominator reads the meter's own
+// report rather than the predicate, because the mistake worth catching is the
+// tally forgetting to ask.
+//
+// It checks the catalogue-counted chapters only: those are the ones whose
+// denominator is a case count and therefore the only ones a second-realm case
+// could move.
+func TestSecondRealmCasesAreOutsideTheParityDenominator(t *testing.T) {
+	byCaseCount := map[string]bool{}
+	for _, ch := range Chapters {
+		if ch.Enumerated && ch.OpenAPITag == "" {
+			byCaseCount[ch.Name] = true
+		}
+	}
+	want := map[string]int{}
+	inACountedChapter := 0
+	for _, c := range Catalog {
+		chapter := chapterOf(c.ID)
+		if !byCaseCount[chapter] {
+			continue
+		}
+		if c.SecondRealm {
+			inACountedChapter++
+			continue
+		}
+		want[chapter]++
+	}
+	if inACountedChapter == 0 {
+		t.Fatal("no SecondRealm case reports under a chapter whose denominator is a case count, " +
+			"so the exclusion cannot change a number and this test asserts nothing")
+	}
+
+	path := filepath.Join(t.TempDir(), "parity.tsv")
+	t.Setenv("GLOAK_PARITY_REPORT", path)
+	t.Run("meter", TestCoverage)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read report: %v", err)
+	}
+	for _, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n")[1:] {
+		f := strings.Split(line, "\t")
+		if len(f) != 5 || !byCaseCount[f[0]] {
+			continue
+		}
+		documented, err := strconv.Atoi(f[3])
+		if err != nil {
+			t.Fatalf("chapter %q documented %q: %v", f[0], f[3], err)
+		}
+		if documented != want[f[0]] {
+			t.Errorf("chapter %q documents %d behaviours and holds %d cases that count; "+
+				"a second-realm re-measurement is being counted as a behaviour of its own",
+				f[0], documented, want[f[0]])
+		}
 	}
 }
 

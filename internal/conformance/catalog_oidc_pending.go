@@ -2006,7 +2006,27 @@ var oidcPending = []Case{
 		// username, token_type and active appended. It was Recorded until F18
 		// resolved roles at issuance, and the alarm that says so is what
 		// promoted it.
-		Fixture: "confidential-user-token",
+		//
+		// **It enumerates a realm-wide set and nobody had noticed**, which is
+		// F53's question answered by example for the third time. `aud` and
+		// `resource_access` name every admin container the subject holds roles
+		// on, and the bootstrapped administrator holds `create-realm`, so
+		// **every realm any fixture creates adds a key to this body** - the
+		// realm's own `<name>-realm` client, with all 21 roles under it. The
+		// golden was clean only because every realm-creating fixture in the
+		// catalogue lived in adminCases and ran after it; the first one added
+		// ahead of it, in 2026-09-01's second-realm cut, moved this golden and
+		// nothing else.
+		//
+		// Ordering cannot carry that, which is exactly what PristineRealm's own
+		// doc comment says. TestNoGoldenHoldsAnObjectItDidNotCreate did **not**
+		// see it either: the realm arrives here as the derived client name
+		// `gloak-probe-second-realm`, a key of `resource_access` and an element
+		// of `aud`, and that guard looks for `"realm":"<name>"`. TestConformance
+		// caught it one step later, which is the step the ratchet exists to
+		// precede.
+		PristineRealm: true,
+		Fixture:       "confidential-user-token",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token/introspect",
