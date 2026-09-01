@@ -437,6 +437,32 @@ var Fixtures = map[string]Fixture{
 	// every earlier check has to pass before the unconfigured authentication
 	// channel is the thing that fails.
 	"ciba-client": deviceClientFixture("gloak-probe-ciba", cibaGrantAttribute),
+	// A device authorization taken through the browser and **approved**, so the
+	// case's own request is the poll that gets tokens. It is device-denied with
+	// one form field removed: the consent endpoint reads `cancel` and nothing
+	// else, so a POST carrying only the hidden `code` is an approval.
+	"device-approved": deviceApprovedFixture(),
+
+	// Dynamic client registration. Every one of these registers its client
+	// through an **administrator's access token**, which is measured to work:
+	// an initial access token is not needed, and minting one would mean
+	// POST /admin/realms/{r}/clients-initial-access, which Gloak does not
+	// serve, so the fixture would fail on the verifier rather than the case.
+	//
+	// The registered client's id is a **server-minted UUID** - a create naming
+	// a client_id is refused - so the three cases that address one capture it
+	// rather than spelling it. The registration access token and the secret are
+	// captured for the same reason and because ReplaceCaptured then keeps them
+	// out of the goldens.
+	"registration-created": registrationFixture("gloak-probe-registered"),
+	"registration-updated": registrationFixture("gloak-probe-registered-update"),
+	"registration-deleted": registrationFixture("gloak-probe-registered-delete"),
+
+	// A confidential client with standard token exchange switched on, plus a
+	// token for it to exchange. The attribute is the gate:
+	// TOKEN_EXCHANGE_STANDARD_V2 is enabled on a default 26.7.1 and the client
+	// still has to ask for it.
+	"token-exchange": tokenExchangeFixture(),
 
 	// A realm role created through the API, for the cases that read one back.
 	// Location names it by name rather than by id, so nothing needs capturing:
@@ -4559,7 +4585,29 @@ func authActionWriteFixture(realm, method, path, body string) Fixture {
 // to check it**: what the fixture reproduces is the request the page makes, not
 // the smallest request that works.
 func deviceDeniedFixture() Fixture {
-	const clientID = "gloak-probe-device-denied"
+	return deviceBrowserFixture("gloak-probe-device-denied",
+		map[string]string{"code": "{{consent_code}}", "cancel": "No"})
+}
+
+// deviceApprovedFixture is deviceDeniedFixture with the `cancel` field removed,
+// so the case's own request is the poll that gets tokens.
+//
+// **One field, not one flag.** The consent endpoint reads `cancel` and nothing
+// else: a POST with no buttons at all is an approval, and `accept` beside
+// `cancel` is a denial. So the approval is expressed by sending less rather
+// than by sending a different value, which is measured and is the opposite of
+// what the form suggests.
+//
+// It is what makes oidc/token/device-code-grant recordable. That case's Reason
+// said a completed device authorization "needs the device verification and
+// consent pages, which are not implemented"; the pages landed with
+// device-denied and the Reason outlived them.
+func deviceApprovedFixture() Fixture {
+	return deviceBrowserFixture("gloak-probe-device-approved",
+		map[string]string{"code": "{{consent_code}}"})
+}
+
+func deviceBrowserFixture(clientID string, consent map[string]string) Fixture {
 	steps := append(deviceClientSteps(clientID, ""), deviceAuthorizationStep(clientID))
 	return Fixture{State: "bootstrap", Steps: append(steps,
 		Step{
@@ -4611,11 +4659,94 @@ func deviceDeniedFixture() Fixture {
 			Request: Request{
 				Method: http.MethodPost,
 				Path:   "{{consent_action}}",
-				Form:   map[string]string{"code": "{{consent_code}}", "cancel": "No"},
+				Form:   consent,
 			},
 			ExpectStatus: []int{http.StatusFound},
 		},
 	)}
+}
+
+// registrationFixture registers one client and captures the three per-request
+// values a later request needs: the server-minted client_id, the registration
+// access token, and the secret.
+//
+// **The credential is an administrator's access token**, measured to be
+// accepted by this endpoint. The initial access token the documentation
+// describes would have to be minted through
+// POST /admin/realms/{r}/clients-initial-access, an Admin API route Gloak does
+// not serve, so a fixture built that way would fail on the verifier before the
+// case ran.
+//
+// The secret is captured although nothing sends it back, and that is
+// deliberate: ReplaceCaptured rewrites a captured value wherever it appears in
+// a recorded body, so capturing it is what keeps a live client secret out of
+// the goldens while leaving the key's presence and position asserted. Masking
+// it as Volatile instead would assert only that it is a string.
+//
+// Each caller passes a client_name no other fixture uses. The recorder shares
+// one container, so two fixtures registering under one name would leave two
+// clients behind - and unlike the admin creates there is no 409 to notice it
+// with, because the clientId is minted per request and cannot collide.
+func registrationFixture(name string) Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method: http.MethodPost,
+					Path:   "/realms/master/clients-registrations/openid-connect",
+					Headers: map[string]string{
+						"Authorization": "Bearer {{access_token}}",
+						"Content-Type":  "application/json",
+					},
+					Body: []byte(`{"client_name":"` + name +
+						`","redirect_uris":["http://localhost:9999/callback"]}`),
+				},
+				Capture: map[string]string{
+					"registered_client_id":      "client_id",
+					"registration_access_token": "registration_access_token",
+					"registered_client_secret":  "client_secret",
+				},
+			},
+		},
+	}
+}
+
+// tokenExchangeFixture is a confidential client with standard token exchange
+// switched on, and one of its access tokens for the case to exchange.
+//
+// The gate is the client attribute rather than a feature flag:
+// TOKEN_EXCHANGE_STANDARD_V2 is `"type":"DEFAULT"` and enabled on a default
+// 26.7.1, where the `TOKEN_EXCHANGE` preview beside it is not - and the
+// disabled one is the legacy exchange, not this grant.
+//
+// The subject token is obtained with the openid scope so the exchanged token's
+// scope has three words rather than two, which is what makes UnorderedWords
+// worth declaring on the case: the scope's word order is not stable across
+// container starts.
+// **The secret is captured rather than chosen.** A create naming one is
+// measured to be ignored - the server mints its own - which is why
+// confidentialClientFixture exists and why this reuses it rather than spelling a
+// literal into both the fixture and the case.
+func tokenExchangeFixture() Fixture {
+	const clientID = "gloak-probe-exchange"
+	body := `{"clientId":"` + clientID + `","enabled":true,"publicClient":false,` +
+		`"standardFlowEnabled":true,"directAccessGrantsEnabled":true,` +
+		`"redirectUris":["` + browserRedirectURI + `"],` +
+		`"attributes":{"standard.token.exchange.enabled":"true"}}`
+	return confidentialClientFixture(clientID, body, Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type": "password", "client_id": clientID,
+				"client_secret": "{{client_secret}}",
+				"username":      "admin", "password": "admin", "scope": "openid",
+			},
+		},
+		Capture: map[string]string{"subject_token": "access_token"},
+	})
 }
 
 // organizationRealmFixture is realmFixture with the organizations flag in the

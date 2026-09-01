@@ -104,8 +104,11 @@ var parkedGoldens = map[string]string{
 	"oidc/device/verification-page": "the page whose own form cannot be submitted, because the two " +
 		"device paths are one endpoint - read it for the form's action, which is the measurement",
 	"oidc/device/status-page": "the end of a completed device login, kept for its two headings",
-	"oidc/registration/without-initial-access-token": "a reproducible body naming the 'Trusted Hosts' policy, " +
-		"which is why anonymous registration is 403 rather than 401 on a default 26.7.1",
+	// The dynamic-registration entry was here until 2026-08-31 and is gone
+	// rather than moved, for the same reason the device and CIBA ones went:
+	// oidc/registration/without-initial-access-token is Implemented, so its
+	// golden is compared, and the whole point of parking is that nothing
+	// compares it. Nine parked goldens are eight.
 }
 
 // TestEveryParkedGoldenIsDeclared enforces F72 in both directions.

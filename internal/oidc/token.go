@@ -138,7 +138,7 @@ func (h *handler) token(w http.ResponseWriter, r *http.Request) {
 	}
 	switch grantType {
 	case grantPassword, grantRefreshToken, grantClientCredentials, grantAuthorizationCode,
-		grantDeviceCode, grantCIBA:
+		grantDeviceCode, grantCIBA, grantTokenExchange, grantJWTBearer:
 	default:
 		httpx.WriteOAuthError(w, http.StatusBadRequest,
 			"unsupported_grant_type", "Unsupported grant_type")
@@ -184,6 +184,13 @@ func (h *handler) token(w http.ResponseWriter, r *http.Request) {
 		// No keys are needed: every answer a default deployment can give to
 		// this grant is a refusal. See internal/oidc/ciba.go.
 		h.cibaGrant(w, r, client)
+	case grantTokenExchange:
+		h.tokenExchangeGrant(w, r, realm, client, k)
+	case grantJWTBearer:
+		// No keys either, and for the same reason as CIBA: a default
+		// deployment has no identity provider to trust an assertion from, so
+		// every answer is a refusal. See internal/oidc/jwtbearer.go.
+		h.jwtBearerGrant(w, r, client)
 	}
 }
 
