@@ -2103,3 +2103,84 @@ func (r *authzRepo) DeleteByClientID(ctx context.Context, clientID string) error
 		`DELETE FROM authz_resource_server WHERE client_id = $1`, clientID)
 	return classify(err)
 }
+
+// authzScopeColumns is the read order every scope query uses, matching
+// scanAuthzScope.
+const authzScopeColumns = `id, resource_server_id, name, icon_uri, display_name, ordinal`
+
+// CreateScope assigns the ordinal from the resource server's own maximum, the
+// way AddRealmDefault does. The ordinal is the settings export's order and
+// nothing else reads it.
+func (r *authzRepo) CreateScope(ctx context.Context, s *model.AuthzScope) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO authz_scope (id, resource_server_id, name, icon_uri, display_name, ordinal)
+		 SELECT $1, $2, $3, $4, $5, COALESCE(MAX(ordinal), -1) + 1
+		 FROM authz_scope WHERE resource_server_id = $6`,
+		s.ID, s.ClientID, s.Name, s.IconURI, s.DisplayName, s.ClientID)
+	return classify(err)
+}
+
+// UpdateScope leaves the ordinal alone: a PUT was measured leaving the
+// settings export's order unchanged, so the row keeps the position its create
+// gave it.
+func (r *authzRepo) UpdateScope(ctx context.Context, s *model.AuthzScope) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE authz_scope SET name = $1, icon_uri = $2, display_name = $3
+		 WHERE id = $4 AND resource_server_id = $5`,
+		s.Name, s.IconURI, s.DisplayName, s.ID, s.ClientID)
+	return classify(err)
+}
+
+func (r *authzRepo) DeleteScope(ctx context.Context, clientID, scopeID string) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM authz_scope WHERE id = $1 AND resource_server_id = $2`, scopeID, clientID)
+	if err != nil {
+		return classify(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (r *authzRepo) ScopeByID(ctx context.Context, clientID, scopeID string) (*model.AuthzScope, error) {
+	return scanAuthzScope(r.pool.QueryRow(ctx,
+		`SELECT `+authzScopeColumns+` FROM authz_scope
+		 WHERE id = $1 AND resource_server_id = $2`, scopeID, clientID))
+}
+
+func (r *authzRepo) ScopeByName(ctx context.Context, clientID, name string) (*model.AuthzScope, error) {
+	return scanAuthzScope(r.pool.QueryRow(ctx,
+		`SELECT `+authzScopeColumns+` FROM authz_scope
+		 WHERE resource_server_id = $1 AND name = $2`, clientID, name))
+}
+
+// ListScopes orders by ordinal, which is creation order and which is what
+// GET .../settings serves. The listing's name order is applied above this
+// layer; see store.AuthzRepo.
+func (r *authzRepo) ListScopes(ctx context.Context, clientID string) ([]*model.AuthzScope, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+authzScopeColumns+` FROM authz_scope
+		 WHERE resource_server_id = $1 ORDER BY ordinal`, clientID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	defer rows.Close()
+	out := []*model.AuthzScope{}
+	for rows.Next() {
+		s := &model.AuthzScope{}
+		if err := rows.Scan(&s.ID, &s.ClientID, &s.Name, &s.IconURI, &s.DisplayName, &s.Ordinal); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, classify(rows.Err())
+}
+
+func scanAuthzScope(row pgx.Row) (*model.AuthzScope, error) {
+	s := &model.AuthzScope{}
+	if err := row.Scan(&s.ID, &s.ClientID, &s.Name, &s.IconURI, &s.DisplayName, &s.Ordinal); err != nil {
+		return nil, classify(err)
+	}
+	return s, nil
+}

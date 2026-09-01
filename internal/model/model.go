@@ -514,6 +514,33 @@ func DefaultAuthzResourceServer(clientID string) *AuthzResourceServer {
 	}
 }
 
+// AuthzScope is one authorization scope of a resource server.
+//
+// ID is a free string rather than a UUID, measured 2026-09-01:
+// `POST .../scope` with `{"id":"zzz","name":"idshape"}` answered 201 and
+// created a scope whose id is `zzz`. So nothing here parses or generates a
+// UUID for a body that named one.
+//
+// Ordinal is the order the scope was created in, and it is state rather than
+// presentation because **one set of scopes has two reads and two orders**:
+// `GET .../scope` comes back sorted by name and `GET .../settings` comes back
+// in creation order. Four scopes created zulu, yankee, xray, whiskey - the
+// reverse of name order - came back that way from the export and the other way
+// from the listing, and deleting xray and recreating it moved it to the end of
+// the export. Sorting in the store would make the listing right and the export
+// wrong.
+//
+// There is no ResourceServerID separate from a client id: a resource server is
+// keyed by its client's UUID, which is what AuthzResourceServer.ClientID holds.
+type AuthzScope struct {
+	ID          string
+	ClientID    string
+	Name        string
+	IconURI     string
+	DisplayName string
+	Ordinal     int
+}
+
 // Organization is a realm's organization: a name, an immutable alias, a set of
 // e-mail domains and a multivalued attribute map.
 //

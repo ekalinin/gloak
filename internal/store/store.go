@@ -87,6 +87,33 @@ type AuthzRepo interface {
 	// PUT /clients/{uuid} sending `"authorizationServicesEnabled":false` twice
 	// answers 204 both times.
 	DeleteByClientID(ctx context.Context, clientID string) error
+
+	// CreateScope inserts a scope, assigning it the next ordinal within its
+	// resource server. A name another scope of the same resource server
+	// already holds is ErrConflict, which internal/admin turns into the
+	// measured 409 `Duplicate resource error`.
+	CreateScope(ctx context.Context, s *model.AuthzScope) error
+	// UpdateScope replaces a scope's three fields. It does not move its
+	// ordinal: a PUT was measured leaving the settings export's order alone.
+	UpdateScope(ctx context.Context, s *model.AuthzScope) error
+	// DeleteScope removes one, ErrNotFound when the resource server has no
+	// such scope. The 404 that becomes has an **empty body and no
+	// Content-Type**, which is not one of the twenty-one spellings of
+	// not-found but the absence of one - see writeAuthzScopeNotFound.
+	DeleteScope(ctx context.Context, clientID, scopeID string) error
+	// ScopeByID and ScopeByName both take the client id, because a scope is
+	// addressed within its resource server and not globally: rs1's scope id
+	// read through rs2 is a 404, and one name exists in two resource servers
+	// at once. Both measured 2026-09-01.
+	ScopeByID(ctx context.Context, clientID, scopeID string) (*model.AuthzScope, error)
+	ScopeByName(ctx context.Context, clientID, name string) (*model.AuthzScope, error)
+	// ListScopes returns every scope of one resource server **in creation
+	// order**, which is what GET .../settings serves. The listing beside it is
+	// sorted by name, and the sort, the two filters and the paging all run in
+	// internal/admin over what this returns - OrganizationRepo's precedent,
+	// and here it is what lets one set of rows have two measured orders
+	// without two queries.
+	ListScopes(ctx context.Context, clientID string) ([]*model.AuthzScope, error)
 }
 
 // OrganizationRepo stores a realm's organizations.

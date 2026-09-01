@@ -8,6 +8,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/ekalinin/gloak/internal/model"
@@ -2316,6 +2317,139 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 		if _, err := s.Authz().ByClientID(ctx, client.ID); !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("after the client is deleted: want ErrNotFound, got %v", err)
+		}
+	})
+
+	// The scope half of AuthzRepo. The assertion that matters most is the
+	// **order**: ListScopes has to come back in creation order, because
+	// GET .../settings serves that and GET .../scope sorts by name above this
+	// layer. A driver that added an ORDER BY name would make the listing look
+	// right and the export wrong, and only this subtest and one golden can see
+	// it.
+	t.Run("authorization scopes keep creation order and are scoped per resource server", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := newRealm(t, s)
+		mk := func(clientID string) *model.Client {
+			t.Helper()
+			c := &model.Client{ID: model.NewID(), RealmID: realm.ID, ClientID: clientID, Enabled: true}
+			if err := s.Clients().Create(ctx, c); err != nil {
+				t.Fatalf("Clients().Create %s: %v", clientID, err)
+			}
+			if err := s.Authz().Upsert(ctx, model.DefaultAuthzResourceServer(c.ID)); err != nil {
+				t.Fatalf("Upsert %s: %v", clientID, err)
+			}
+			return c
+		}
+		one, two := mk("authz-scope-one"), mk("authz-scope-two")
+
+		if got, err := s.Authz().ListScopes(ctx, one.ID); err != nil || len(got) != 0 {
+			t.Fatalf("ListScopes on an empty resource server: got %v, %v", got, err)
+		}
+
+		// Created in the reverse of name order on purpose: this is the
+		// measured shape - zulu, yankee, xray, whiskey came back that way from
+		// the export - and a sorted ListScopes passes a suite that creates
+		// them alphabetically.
+		names := []string{"zulu", "yankee", "xray", "whiskey"}
+		ids := map[string]string{}
+		for _, n := range names {
+			sc := &model.AuthzScope{ID: model.NewID(), ClientID: one.ID, Name: n}
+			if err := s.Authz().CreateScope(ctx, sc); err != nil {
+				t.Fatalf("CreateScope %s: %v", n, err)
+			}
+			ids[n] = sc.ID
+		}
+		assertOrder := func(what string, want []string) {
+			t.Helper()
+			got, err := s.Authz().ListScopes(ctx, one.ID)
+			if err != nil {
+				t.Fatalf("%s ListScopes: %v", what, err)
+			}
+			var names []string
+			for _, sc := range got {
+				names = append(names, sc.Name)
+			}
+			if strings.Join(names, ",") != strings.Join(want, ",") {
+				t.Errorf("%s: order %v, want %v", what, names, want)
+			}
+		}
+		assertOrder("after four creates", names)
+
+		// A name another resource server holds is not a conflict, and its id
+		// is invisible from here. Both measured: `alpha` exists in two
+		// resource servers at once, and one server's scope id read through the
+		// other is a 404.
+		shared := &model.AuthzScope{ID: model.NewID(), ClientID: two.ID, Name: "zulu"}
+		if err := s.Authz().CreateScope(ctx, shared); err != nil {
+			t.Errorf("CreateScope of a name the other resource server holds: %v", err)
+		}
+		if _, err := s.Authz().ScopeByID(ctx, one.ID, shared.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("ScopeByID across resource servers: want ErrNotFound, got %v", err)
+		}
+		if _, err := s.Authz().ScopeByName(ctx, one.ID, "nothing"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("ScopeByName miss: want ErrNotFound, got %v", err)
+		}
+
+		// A name this resource server already holds is ErrConflict, which is
+		// what internal/admin turns into the 409.
+		dup := &model.AuthzScope{ID: model.NewID(), ClientID: one.ID, Name: "zulu"}
+		if err := s.Authz().CreateScope(ctx, dup); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("CreateScope of a duplicate name: want ErrConflict, got %v", err)
+		}
+
+		// An update replaces the three fields and leaves the ordinal alone.
+		got, err := s.Authz().ScopeByID(ctx, one.ID, ids["xray"])
+		if err != nil {
+			t.Fatalf("ScopeByID: %v", err)
+		}
+		got.Name, got.IconURI, got.DisplayName = "xray-renamed", "http://i/x", "X"
+		if err := s.Authz().UpdateScope(ctx, got); err != nil {
+			t.Fatalf("UpdateScope: %v", err)
+		}
+		back, err := s.Authz().ScopeByName(ctx, one.ID, "xray-renamed")
+		if err != nil {
+			t.Fatalf("ScopeByName after update: %v", err)
+		}
+		if back.IconURI != "http://i/x" || back.DisplayName != "X" || back.ID != ids["xray"] {
+			t.Errorf("after update: %+v", back)
+		}
+		assertOrder("after a rename", []string{"zulu", "yankee", "xray-renamed", "whiskey"})
+
+		// Delete reports ErrNotFound for a scope this resource server does not
+		// have - unlike DeleteByClientID, which is idempotent, because the two
+		// answer different measured statuses: an unknown scope is a 404 and a
+		// repeated flag-off is a 204.
+		if err := s.Authz().DeleteScope(ctx, one.ID, ids["xray"]); err != nil {
+			t.Fatalf("DeleteScope: %v", err)
+		}
+		if err := s.Authz().DeleteScope(ctx, one.ID, ids["xray"]); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("second DeleteScope: want ErrNotFound, got %v", err)
+		}
+		if err := s.Authz().DeleteScope(ctx, one.ID, shared.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("DeleteScope across resource servers: want ErrNotFound, got %v", err)
+		}
+
+		// A recreated scope goes to the **end** of the export's order, not
+		// back to where it was. Measured by deleting xray and recreating it.
+		again := &model.AuthzScope{ID: model.NewID(), ClientID: one.ID, Name: "xray"}
+		if err := s.Authz().CreateScope(ctx, again); err != nil {
+			t.Fatalf("CreateScope after delete: %v", err)
+		}
+		assertOrder("after delete and recreate", []string{"zulu", "yankee", "whiskey", "xray"})
+
+		// The scopes cascade with the resource server, which cascades with the
+		// client. Turning the flag off destroys the settings, measured, and it
+		// has to destroy the scopes with them.
+		if err := s.Authz().DeleteByClientID(ctx, one.ID); err != nil {
+			t.Fatalf("DeleteByClientID: %v", err)
+		}
+		if got, err := s.Authz().ListScopes(ctx, one.ID); err != nil || len(got) != 0 {
+			t.Errorf("after the flag goes off: got %v, %v", got, err)
+		}
+		// The other resource server is untouched by that.
+		if got, err := s.Authz().ListScopes(ctx, two.ID); err != nil || len(got) != 1 {
+			t.Errorf("the neighbouring resource server: got %v, %v", got, err)
 		}
 	})
 }
