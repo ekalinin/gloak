@@ -502,8 +502,16 @@ leave a realm in a state Keycloak cannot reach. That is the argument migration
 chapter                    before    after
 admin/identity-providers    2/17      9/17
 admin/component             0/6       2/6
-total                     336/535   345/535
+total                     343/535   352/535
 ```
+
+**`main` was merged mid-flight**, at P13's theme markup (`9367239`), after the
+goldens were recorded. Every finding above was re-checked against it and none
+moves: P13's changes are in `internal/oidc`, `internal/httpx`'s theme writers and
+the conformance normaliser, and none of the five response writers this cut uses
+is among them. The whole suite, the conformance run and the kcadm oracle are
+green on the merged tree, and the chapter numbers are identical before and after
+the merge - only the total moved, by P13's own seven.
 
 The nine are the identity provider listing, create, read, update, delete, export
 and reload-keys, and the component listing and single read. The two already
