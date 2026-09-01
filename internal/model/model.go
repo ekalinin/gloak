@@ -541,6 +541,83 @@ type AuthzScope struct {
 	Ordinal     int
 }
 
+// AuthzResource is one protected resource of a resource server.
+//
+// **Its wire name for the id is `_id`, and `id` is refused.** The strict
+// decoder says so: `POST .../resource` with `{"id":"x"}` answers
+// `Unrecognized field "id"`, where `{"_id":"x"}` is a 201 creating a resource
+// with exactly that id. So the body's id wins here as it does on the scope
+// create, and nothing parses or generates a UUID for a body that named one.
+//
+// **Three of its fields are collections and no two of them are ordered by the
+// same rule**, measured 2026-09-01 on one container:
+//
+//   - URIs is a Java HashSet of strings. `["/z","/a","/m"]` came back
+//     `["/a","/z","/m"]` and a repeated entry collapses. Two uris in one
+//     bucket chain in **request** order: `["aa","bb","zz"]` came back
+//     `aa, bb, zz` and `["zz","bb","aa"]` came back `zz, bb, aa`.
+//   - Attributes is a Java HashMap whose chain runs the **other** way. The
+//     same six keys, one field apart on the same body: `{"aa","bb","zz"}` came
+//     back `zz, bb, aa` and `{"zz","bb","aa"}` came back `aa, bb, zz`. All six
+//     hash to bucket 0 at every table size - a two-letter string of one
+//     repeated character has a hashCode that is a multiple of 32 - so the
+//     bucket says nothing there and the chain says everything.
+//   - ScopeIDs is a set keyed on the scope's **name**: the same three names
+//     came back in the same order from two resource servers holding different
+//     scope ids.
+//
+// All three are slices for OrganizationAttribute's stated reason - the wire
+// order is the order it arrived in and a Go map would sort it - and the
+// serialiser in internal/admin decides the bucket order from them.
+//
+// Ordinal is creation order, which is what `GET .../settings` serves; the
+// listing beside it sorts by name. That is the scope family's two-orders rule
+// holding on a second family, and it is why sorting in the store would make one
+// of the two reads wrong.
+type AuthzResource struct {
+	ID       string
+	ClientID string
+	Name     string
+	// DisplayName, Type and IconURI are omitted from every representation when
+	// empty - measured on a resource created with only a name - so absent and
+	// empty are one state on the wire.
+	DisplayName string
+	Type        string
+	// IconURI is spelled `icon_uri` on the wire and `iconUri` is **refused**,
+	// which is the opposite of every other object in this API.
+	IconURI            string
+	OwnerManagedAccess bool
+	URIs               []string
+	Attributes         []AuthzResourceAttribute
+	ScopeIDs           []string
+	Ordinal            int
+}
+
+// AuthzResourceAttribute is one attribute name and its values, the shape
+// OrganizationAttribute already uses for a multivalued Java map.
+//
+// A scalar value is accepted on the wire and coerced: `{"k":"v"}` came back
+// `{"k":["v"]}`, so the model holds only the multivalued form.
+type AuthzResourceAttribute struct {
+	Name   string
+	Values []string
+}
+
+// AddAttribute appends one value under name, starting a new entry when the name
+// is new and extending the existing one otherwise.
+//
+// It is on the model rather than in a driver for Organization.AddAttribute's
+// reason: both drivers rebuild the same slice from the same ordered rows.
+func (r *AuthzResource) AddAttribute(name, value string) {
+	for i := range r.Attributes {
+		if r.Attributes[i].Name == name {
+			r.Attributes[i].Values = append(r.Attributes[i].Values, value)
+			return
+		}
+	}
+	r.Attributes = append(r.Attributes, AuthzResourceAttribute{Name: name, Values: []string{value}})
+}
+
 // Organization is a realm's organization: a name, an immutable alias, a set of
 // e-mail domains and a multivalued attribute map.
 //

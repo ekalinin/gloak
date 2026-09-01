@@ -173,6 +173,44 @@ type AuthzRepo interface {
 	// and here it is what lets one set of rows have two measured orders
 	// without two queries.
 	ListScopes(ctx context.Context, clientID string) ([]*model.AuthzScope, error)
+
+	// CreateResource inserts a resource, assigning it the next ordinal within
+	// its resource server. A name another resource of the same resource server
+	// already holds is ErrConflict, which internal/admin turns into the
+	// measured 409 `Resource with name [x] already exists.` - **not** the
+	// `Duplicate resource error` the scope create answers. Two creates on one
+	// resource server, two 409 bodies.
+	CreateResource(ctx context.Context, res *model.AuthzResource) error
+	// UpdateResource replaces every field and every child row. It does not
+	// move the ordinal, for the reason UpdateScope does not: the settings
+	// export's order was measured surviving a PUT.
+	//
+	// **Attributes absent is not the same as Attributes empty**, and the
+	// difference is decided in internal/admin rather than here: a PUT omitting
+	// `attributes` keeps what is stored and one sending `{}` clears it. The
+	// handler passes whichever set should end up stored, so this method always
+	// replaces.
+	UpdateResource(ctx context.Context, res *model.AuthzResource) error
+	// DeleteResource removes one, ErrNotFound when the resource server has no
+	// such resource. The 404 that becomes carries a **JSON body** and no
+	// Cache-Control, which is the opposite of the scope family's empty-bodied
+	// 404 one path segment away.
+	DeleteResource(ctx context.Context, clientID, resourceID string) error
+	// ResourceByID and ResourceByName both take the client id, because a
+	// resource is addressed within its resource server: one server's resource
+	// id read through another is a 404 and one name exists in two servers at
+	// once. Both measured 2026-09-01, and the id is global all the same - a
+	// create naming an id another server holds is a 409.
+	ResourceByID(ctx context.Context, clientID, resourceID string) (*model.AuthzResource, error)
+	ResourceByName(ctx context.Context, clientID, name string) (*model.AuthzResource, error)
+	// ListResources returns every resource of one resource server **in creation
+	// order**, which is what GET .../settings serves and also what
+	// GET .../scope/{id}/resources serves. The listing beside them sorts by
+	// name, and the sort, the six filters, the two modifiers and the two bounds
+	// all run in internal/admin over what this returns - ListScopes' precedent,
+	// and it is what lets one set of rows have three measured consumers without
+	// three queries.
+	ListResources(ctx context.Context, clientID string) ([]*model.AuthzResource, error)
 }
 
 // OrganizationRepo stores a realm's organizations.

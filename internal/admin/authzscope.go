@@ -436,36 +436,63 @@ func (h *handler) deleteAuthzScope(w http.ResponseWriter, r *http.Request, rc *r
 // GET .../scope/{scope-id}/permissions and .../resources.
 //
 // Both resolve the scope - an unknown one is the same empty 404 with
-// `Cache-Control: no-cache` that the read beside them answers - and both then
-// answer `[]`.
+// `Cache-Control: no-cache` that the read beside them answers.
 //
-// **The `[]` is the measured answer and not a stub, for exactly as long as
-// Gloak has no permissions and no resources**, which is every state it can
-// reach until P10's third cut. There is no route that creates either, so the
-// empty array is a fact about the store rather than a placeholder. The half of
-// these two routes that is real behaviour today is the 404, and it is the half
-// a case can see move.
+// **The two stopped agreeing when P10's third cut landed, exactly as the
+// comment here predicted they would.** `/resources` lists every resource naming
+// the scope and `/permissions` still answers `[]`. That is why they were two
+// named handlers over one body rather than one handler registered twice.
 func (h *handler) listAuthzScopePermissions(w http.ResponseWriter, r *http.Request, rc *reqContext, a *authzContext) {
-	h.listAuthzScopeAssociations(w, r, a)
-}
-
-func (h *handler) listAuthzScopeResources(w http.ResponseWriter, r *http.Request, rc *reqContext, a *authzContext) {
-	h.listAuthzScopeAssociations(w, r, a)
-}
-
-// listAuthzScopeAssociations is the shared body of the two above. They are two
-// named handlers over it rather than one registered twice because the two
-// routes stop agreeing the moment either family exists, and a single handler
-// would have to be split then - the same reason the two provider catalogues
-// are *not* split, inverted: those are measured byte-identical and these are
-// measured identical only on an empty store.
-func (h *handler) listAuthzScopeAssociations(w http.ResponseWriter, r *http.Request, a *authzContext) {
 	// Set before the lookup: the 404 carries it too, as the plain read's does.
 	w.Header().Set("Cache-Control", "no-cache")
 	if _, ok := h.authzScopeFromPath(w, r, a); !ok {
 		return
 	}
+	// **The `[]` is the measured answer and not a stub, for exactly as long as
+	// Gloak has no permissions.** There is no route that creates one, so the
+	// empty array is a fact about the store rather than a placeholder. The half
+	// of this route that is real behaviour today is the 404.
 	writeAdminJSON(w, []struct{}{})
+}
+
+// listAuthzScopeResources serves GET .../scope/{scope-id}/resources.
+//
+// **Its entry is two keys and `name` comes first**: `{"name":...,"_id":...}`,
+// measured 2026-09-01. That is neither the resource representation nor either
+// of the three shapes a scope takes inside a resource - it is a fourth
+// two-key body on this family, and the only one in the whole API that puts a
+// name ahead of an id.
+//
+// The rows come back in **creation order**, which is what store.ListResources
+// returns; the resource listing is the one that sorts.
+func (h *handler) listAuthzScopeResources(w http.ResponseWriter, r *http.Request, rc *reqContext, a *authzContext) {
+	w.Header().Set("Cache-Control", "no-cache")
+	s, ok := h.authzScopeFromPath(w, r, a)
+	if !ok {
+		return
+	}
+	resources, err := h.store.Authz().ListResources(r.Context(), a.client.ID)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	out := []authzScopeResourceRef{}
+	for _, res := range resources {
+		for _, id := range res.ScopeIDs {
+			if id == s.ID {
+				out = append(out, authzScopeResourceRef{Name: res.Name, ID: res.ID})
+				break
+			}
+		}
+	}
+	writeAdminJSON(w, out)
+}
+
+// authzScopeResourceRef is one entry of GET .../scope/{scope-id}/resources.
+// See the handler for why the field order is what it is.
+type authzScopeResourceRef struct {
+	Name string `json:"name"`
+	ID   string `json:"_id"`
 }
 
 // authzScopeFromPath resolves the {scope-id} segment.
@@ -525,6 +552,15 @@ func decodeAuthzScopeBody(w http.ResponseWriter, r *http.Request) (authzScopeBod
 // of the five, which is false in both directions - this endpoint sends them,
 // and so does the repository's own committed golden for
 // `PUT /default-default-client-scopes/{id}`.
+//
+// **The reason that exception now gives is wrong too**, corrected 2026-09-01 by
+// P10's third cut. It says the variable is an empty response body and cites
+// `PUT .../scope/{id}` as the half that "answers with nothing in it"; that 409
+// answers with 67 bytes in it, which its own golden
+// (`admin/authz-resource-server/scope-put-conflict.http`) has recorded since
+// the day the sentence was written. The resource family reproduces the same
+// split - a POST's 409 keeps the five and a PUT's drops them, both with
+// bodies - so the variable is the endpoint or the verb and not the emptiness.
 func writeAuthzScopeConflict(w http.ResponseWriter) {
 	httpx.WriteOAuthError(w, http.StatusConflict, "conflict", "Duplicate resource error")
 }

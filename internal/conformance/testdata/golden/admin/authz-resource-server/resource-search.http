@@ -1,0 +1,12 @@
+# GET /admin/realms/master/clients/{{client_uuid}}/authz/resource-server/resource/search
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"name":"gloak-probe-solo","owner":{"id":"{{client_uuid}}","name":"gloak-probe-authz-rs-srch"},"ownerManagedAccess":false,"attributes":{},"_id":"5e50a5ce-0000-4000-8000-00000000f701","uris":[]}

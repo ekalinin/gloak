@@ -2453,6 +2453,195 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	// The resource half of AuthzRepo. Three things here are the assertions and
+	// the rest is round-tripping:
+	//
+	//   - **ListResources comes back in creation order**, for ListScopes'
+	//     reason on a second family: GET .../settings serves that order and
+	//     GET .../resource sorts by name above this layer.
+	//   - **URIs and Attributes keep the order they were given.** The two were
+	//     measured chaining in opposite directions inside one Java collection
+	//     each, so neither can be recovered from a sort and neither can be
+	//     recovered from the other. A driver that returned them in primary-key
+	//     order would pass every test that creates them alphabetically.
+	//   - **A resource id is global and a resource name is per resource
+	//     server**, which is what makes the cross-server lookups a not-found
+	//     and the same name in two servers a success.
+	t.Run("authorization resources keep creation order and their two collection orders", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := newRealm(t, s)
+		mk := func(clientID string) *model.Client {
+			t.Helper()
+			c := &model.Client{ID: model.NewID(), RealmID: realm.ID, ClientID: clientID, Enabled: true}
+			if err := s.Clients().Create(ctx, c); err != nil {
+				t.Fatalf("Clients().Create %s: %v", clientID, err)
+			}
+			if err := s.Authz().Upsert(ctx, model.DefaultAuthzResourceServer(c.ID)); err != nil {
+				t.Fatalf("Upsert %s: %v", clientID, err)
+			}
+			return c
+		}
+		one, two := mk("authz-res-one"), mk("authz-res-two")
+
+		if got, err := s.Authz().ListResources(ctx, one.ID); err != nil || len(got) != 0 {
+			t.Fatalf("ListResources on an empty resource server: got %v, %v", got, err)
+		}
+
+		scope := &model.AuthzScope{ID: model.NewID(), ClientID: one.ID, Name: "sc"}
+		if err := s.Authz().CreateScope(ctx, scope); err != nil {
+			t.Fatalf("CreateScope: %v", err)
+		}
+
+		// Created in the reverse of name order, for the reason the scope
+		// subtest above gives.
+		names := []string{"zulu", "yankee", "xray"}
+		ids := map[string]string{}
+		for _, n := range names {
+			res := &model.AuthzResource{ID: model.NewID(), ClientID: one.ID, Name: n}
+			if err := s.Authz().CreateResource(ctx, res); err != nil {
+				t.Fatalf("CreateResource %s: %v", n, err)
+			}
+			ids[n] = res.ID
+		}
+		assertOrder := func(what string, want []string) {
+			t.Helper()
+			got, err := s.Authz().ListResources(ctx, one.ID)
+			if err != nil {
+				t.Fatalf("ListResources %s: %v", what, err)
+			}
+			have := make([]string, 0, len(got))
+			for _, res := range got {
+				have = append(have, res.Name)
+			}
+			if !slices.Equal(have, want) {
+				t.Errorf("ListResources %s: got %v, want %v", what, have, want)
+			}
+		}
+		assertOrder("after the creates", names)
+
+		// The two collection orders. `/z, /a, /m` and `zz, aa, mm` are given
+		// in an order that is neither sorted nor reverse-sorted, so a driver
+		// that sorted either would be caught whichever direction it sorted in.
+		full := &model.AuthzResource{
+			ID: model.NewID(), ClientID: one.ID, Name: "full",
+			DisplayName: "Full", Type: "urn:t", IconURI: "http://i",
+			OwnerManagedAccess: true,
+			URIs:               []string{"/z", "/a", "/m"},
+			Attributes: []model.AuthzResourceAttribute{
+				{Name: "zz", Values: []string{"1", "2"}},
+				{Name: "aa", Values: []string{"3"}},
+				{Name: "mm", Values: []string{"4"}},
+			},
+			ScopeIDs: []string{scope.ID},
+		}
+		if err := s.Authz().CreateResource(ctx, full); err != nil {
+			t.Fatalf("CreateResource full: %v", err)
+		}
+		back, err := s.Authz().ResourceByID(ctx, one.ID, full.ID)
+		if err != nil {
+			t.Fatalf("ResourceByID: %v", err)
+		}
+		if !slices.Equal(back.URIs, []string{"/z", "/a", "/m"}) {
+			t.Errorf("URIs: got %v, want the order they were written in", back.URIs)
+		}
+		if len(back.Attributes) != 3 ||
+			back.Attributes[0].Name != "zz" || back.Attributes[1].Name != "aa" ||
+			back.Attributes[2].Name != "mm" {
+			t.Errorf("Attributes: got %v, want zz, aa, mm", back.Attributes)
+		}
+		if !slices.Equal(back.Attributes[0].Values, []string{"1", "2"}) {
+			t.Errorf("a multivalued attribute: got %v", back.Attributes[0].Values)
+		}
+		if !slices.Equal(back.ScopeIDs, []string{scope.ID}) {
+			t.Errorf("ScopeIDs: got %v, want %v", back.ScopeIDs, []string{scope.ID})
+		}
+		if back.DisplayName != "Full" || back.Type != "urn:t" || back.IconURI != "http://i" ||
+			!back.OwnerManagedAccess {
+			t.Errorf("the flat fields did not round-trip: %+v", back)
+		}
+
+		// A name is unique **per resource server** and an id is global.
+		if err := s.Authz().CreateResource(ctx,
+			&model.AuthzResource{ID: model.NewID(), ClientID: two.ID, Name: "zulu"}); err != nil {
+			t.Fatalf("the same name in a second resource server: %v", err)
+		}
+		if err := s.Authz().CreateResource(ctx,
+			&model.AuthzResource{ID: model.NewID(), ClientID: one.ID, Name: "zulu"}); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("a duplicate name: want ErrConflict, got %v", err)
+		}
+		if err := s.Authz().CreateResource(ctx,
+			&model.AuthzResource{ID: ids["zulu"], ClientID: two.ID, Name: "borrowed"}); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("a duplicate id across resource servers: want ErrConflict, got %v", err)
+		}
+		if _, err := s.Authz().ResourceByID(ctx, two.ID, ids["zulu"]); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("ResourceByID across resource servers: want ErrNotFound, got %v", err)
+		}
+		if _, err := s.Authz().ResourceByName(ctx, one.ID, "nothing"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("ResourceByName on a name nobody holds: want ErrNotFound, got %v", err)
+		}
+
+		// The update replaces the children outright and leaves the ordinal
+		// alone. `full` was created fourth and stays fourth.
+		full.Name = "full-renamed"
+		full.URIs = []string{"/only"}
+		full.Attributes = nil
+		full.ScopeIDs = nil
+		if err := s.Authz().UpdateResource(ctx, full); err != nil {
+			t.Fatalf("UpdateResource: %v", err)
+		}
+		back, err = s.Authz().ResourceByName(ctx, one.ID, "full-renamed")
+		if err != nil {
+			t.Fatalf("ResourceByName after the update: %v", err)
+		}
+		if !slices.Equal(back.URIs, []string{"/only"}) || len(back.Attributes) != 0 ||
+			len(back.ScopeIDs) != 0 {
+			t.Errorf("the update did not replace the children: %+v", back)
+		}
+		assertOrder("after the update", append(slices.Clone(names), "full-renamed"))
+
+		if err := s.Authz().UpdateResource(ctx,
+			&model.AuthzResource{ID: "nobody", ClientID: one.ID, Name: "x"}); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("UpdateResource on an id nobody holds: want ErrNotFound, got %v", err)
+		}
+		if err := s.Authz().DeleteResource(ctx, one.ID, ids["xray"]); err != nil {
+			t.Fatalf("DeleteResource: %v", err)
+		}
+		if err := s.Authz().DeleteResource(ctx, one.ID, ids["xray"]); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("DeleteResource twice: want ErrNotFound, got %v", err)
+		}
+
+		// Deleting a scope takes the link with it and leaves the resource.
+		linked := &model.AuthzResource{
+			ID: model.NewID(), ClientID: one.ID, Name: "linked", ScopeIDs: []string{scope.ID},
+		}
+		if err := s.Authz().CreateResource(ctx, linked); err != nil {
+			t.Fatalf("CreateResource linked: %v", err)
+		}
+		if err := s.Authz().DeleteScope(ctx, one.ID, scope.ID); err != nil {
+			t.Fatalf("DeleteScope: %v", err)
+		}
+		got, err := s.Authz().ResourceByID(ctx, one.ID, linked.ID)
+		if err != nil {
+			t.Fatalf("ResourceByID after the scope went: %v", err)
+		}
+		if len(got.ScopeIDs) != 0 {
+			t.Errorf("a deleted scope left a link behind: %v", got.ScopeIDs)
+		}
+
+		// The resources cascade with the resource server, which cascades with
+		// the client - authz_scope's argument one table along.
+		if err := s.Authz().DeleteByClientID(ctx, one.ID); err != nil {
+			t.Fatalf("DeleteByClientID: %v", err)
+		}
+		if got, err := s.Authz().ListResources(ctx, one.ID); err != nil || len(got) != 0 {
+			t.Errorf("after the flag goes off: got %v, %v", got, err)
+		}
+		if got, err := s.Authz().ListResources(ctx, two.ID); err != nil || len(got) != 1 {
+			t.Errorf("the neighbouring resource server: got %v, %v", got, err)
+		}
+	})
+
 	t.Run("an identity provider round-trips, alias and all", func(t *testing.T) {
 		ctx := context.Background()
 		s := newStore(t)

@@ -1,0 +1,11 @@
+# GET /admin/realms/master/clients/{{client_uuid}}/authz/resource-server/settings
+HTTP/1.1 200 OK
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"allowRemoteResourceManagement":true,"policyEnforcementMode":"ENFORCING","resources":[{"name":"gloak-probe-zulu","type":"urn:gloak:TT","ownerManagedAccess":false,"attributes":{},"uris":[]},{"name":"gloak-probe-yankee","ownerManagedAccess":false,"attributes":{},"uris":[],"scopes":[{"name":"gloak-probe-alpha"}]},{"name":"gloak-probe-xray","ownerManagedAccess":false,"attributes":{},"uris":["/one/two"]},{"name":"gloak-probe-Zebra","ownerManagedAccess":false,"attributes":{},"uris":[]}],"policies":[],"scopes":[{"name":"gloak-probe-alpha","iconUri":"http://example.test/s.png","displayName":"Alpha"}],"decisionStrategy":"UNANIMOUS"}

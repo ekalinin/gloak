@@ -2193,6 +2193,250 @@ func scanAuthzScope(row pgx.Row) (*model.AuthzScope, error) {
 	return s, nil
 }
 
+// authzResourceColumns is the read order every resource query uses, matching
+// the two scanners below.
+const authzResourceColumns = `id, resource_server_id, name, display_name, type, icon_uri,
+	owner_managed_access, ordinal`
+
+// CreateResource writes the row and its three child collections in one
+// transaction, so a resource with uris never exists half-written -
+// organizationRepo.Create's shape, for the same reason.
+func (r *authzRepo) CreateResource(ctx context.Context, res *model.AuthzResource) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO authz_resource
+		   (id, resource_server_id, name, display_name, type, icon_uri, owner_managed_access, ordinal)
+		 SELECT $1, $2, $3, $4, $5, $6, $7, COALESCE(MAX(ordinal), -1) + 1
+		 FROM authz_resource WHERE resource_server_id = $8`,
+		res.ID, res.ClientID, res.Name, res.DisplayName, res.Type, res.IconURI,
+		boolToInt(res.OwnerManagedAccess), res.ClientID); err != nil {
+		return classify(err)
+	}
+	if err := insertAuthzResourceChildren(ctx, tx, res); err != nil {
+		return classify(err)
+	}
+	return tx.Commit(ctx)
+}
+
+// UpdateResource leaves the ordinal alone, the way UpdateScope does: the
+// settings export's order was measured surviving a PUT.
+func (r *authzRepo) UpdateResource(ctx context.Context, res *model.AuthzResource) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx,
+		`UPDATE authz_resource
+		    SET name = $1, display_name = $2, type = $3, icon_uri = $4, owner_managed_access = $5
+		  WHERE id = $6 AND resource_server_id = $7`,
+		res.Name, res.DisplayName, res.Type, res.IconURI,
+		boolToInt(res.OwnerManagedAccess), res.ID, res.ClientID)
+	if err != nil {
+		return classify(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	for _, table := range []string{"authz_resource_uri", "authz_resource_attribute", "authz_resource_scope"} {
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM `+table+` WHERE resource_id = $1`, res.ID); err != nil {
+			return classify(err)
+		}
+	}
+	if err := insertAuthzResourceChildren(ctx, tx, res); err != nil {
+		return classify(err)
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *authzRepo) DeleteResource(ctx context.Context, clientID, resourceID string) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM authz_resource WHERE id = $1 AND resource_server_id = $2`, resourceID, clientID)
+	if err != nil {
+		return classify(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (r *authzRepo) ResourceByID(ctx context.Context, clientID, resourceID string) (*model.AuthzResource, error) {
+	return r.oneAuthzResource(ctx, r.pool.QueryRow(ctx,
+		`SELECT `+authzResourceColumns+` FROM authz_resource
+		 WHERE id = $1 AND resource_server_id = $2`, resourceID, clientID))
+}
+
+func (r *authzRepo) ResourceByName(ctx context.Context, clientID, name string) (*model.AuthzResource, error) {
+	return r.oneAuthzResource(ctx, r.pool.QueryRow(ctx,
+		`SELECT `+authzResourceColumns+` FROM authz_resource
+		 WHERE resource_server_id = $1 AND name = $2`, clientID, name))
+}
+
+// ListResources orders by ordinal, which is creation order and which is what
+// GET .../settings and GET .../scope/{id}/resources both serve. The listing's
+// name order, its six filters and its two bounds are applied above this layer;
+// see store.AuthzRepo.
+func (r *authzRepo) ListResources(ctx context.Context, clientID string) ([]*model.AuthzResource, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+authzResourceColumns+` FROM authz_resource
+		 WHERE resource_server_id = $1 ORDER BY ordinal`, clientID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	out, err := collectAuthzResources(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadAuthzResourceChildren(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *authzRepo) oneAuthzResource(ctx context.Context, row pgx.Row) (*model.AuthzResource, error) {
+	res := &model.AuthzResource{}
+	var owned int
+	if err := row.Scan(&res.ID, &res.ClientID, &res.Name, &res.DisplayName, &res.Type,
+		&res.IconURI, &owned, &res.Ordinal); err != nil {
+		return nil, classify(err)
+	}
+	res.OwnerManagedAccess = owned != 0
+	if err := r.loadAuthzResourceChildren(ctx, []*model.AuthzResource{res}); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+func collectAuthzResources(rows pgx.Rows) ([]*model.AuthzResource, error) {
+	defer rows.Close()
+	out := []*model.AuthzResource{}
+	for rows.Next() {
+		res := &model.AuthzResource{}
+		var owned int
+		if err := rows.Scan(&res.ID, &res.ClientID, &res.Name, &res.DisplayName, &res.Type,
+			&res.IconURI, &owned, &res.Ordinal); err != nil {
+			return nil, err
+		}
+		res.OwnerManagedAccess = owned != 0
+		out = append(out, res)
+	}
+	return out, classify(rows.Err())
+}
+
+// insertAuthzResourceChildren writes the uris, the attributes and the scope
+// links. All three carry an ordinal because all three came off the wire in an
+// order a Go map or a Go set would lose - and the uris and the attributes were
+// measured chaining in **opposite** directions, so neither can be rebuilt from
+// the other.
+func insertAuthzResourceChildren(ctx context.Context, tx pgx.Tx, res *model.AuthzResource) error {
+	for i, u := range res.URIs {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO authz_resource_uri (resource_id, value, ordinal) VALUES ($1, $2, $3)`,
+			res.ID, u, i); err != nil {
+			return err
+		}
+	}
+	for i, a := range res.Attributes {
+		for j, v := range a.Values {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO authz_resource_attribute (resource_id, name, value, ordinal)
+				 VALUES ($1, $2, $3, $4)`,
+				res.ID, a.Name, v, i*1000+j); err != nil {
+				return err
+			}
+		}
+	}
+	for i, s := range res.ScopeIDs {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO authz_resource_scope (resource_id, scope_id, ordinal) VALUES ($1, $2, $3)`,
+			res.ID, s, i); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// loadAuthzResourceChildren fills URIs, Attributes and ScopeIDs on resources
+// already scanned, one query each for the whole set -
+// loadOrganizationChildren's shape.
+func (r *authzRepo) loadAuthzResourceChildren(ctx context.Context, list []*model.AuthzResource) error {
+	if len(list) == 0 {
+		return nil
+	}
+	byID := make(map[string]*model.AuthzResource, len(list))
+	ids := make([]any, 0, len(list))
+	placeholders := make([]string, 0, len(list))
+	for i, res := range list {
+		byID[res.ID] = res
+		ids = append(ids, res.ID)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", i+1))
+	}
+	in := strings.Join(placeholders, ",")
+
+	rows, err := r.pool.Query(ctx,
+		`SELECT resource_id, value FROM authz_resource_uri
+		  WHERE resource_id IN (`+in+`) ORDER BY resource_id, ordinal`, ids...)
+	if err != nil {
+		return classify(err)
+	}
+	if err := scanAuthzResourceStrings(rows, byID, func(res *model.AuthzResource, v string) {
+		res.URIs = append(res.URIs, v)
+	}); err != nil {
+		return err
+	}
+
+	rows, err = r.pool.Query(ctx,
+		`SELECT resource_id, name, value FROM authz_resource_attribute
+		  WHERE resource_id IN (`+in+`) ORDER BY resource_id, ordinal`, ids...)
+	if err != nil {
+		return classify(err)
+	}
+	if err := scanAuthzResourceAttributes(rows, byID); err != nil {
+		return err
+	}
+
+	rows, err = r.pool.Query(ctx,
+		`SELECT resource_id, scope_id FROM authz_resource_scope
+		  WHERE resource_id IN (`+in+`) ORDER BY resource_id, ordinal`, ids...)
+	if err != nil {
+		return classify(err)
+	}
+	return scanAuthzResourceStrings(rows, byID, func(res *model.AuthzResource, v string) {
+		res.ScopeIDs = append(res.ScopeIDs, v)
+	})
+}
+
+func scanAuthzResourceStrings(rows pgx.Rows, byID map[string]*model.AuthzResource,
+	add func(*model.AuthzResource, string)) error {
+	defer rows.Close()
+	for rows.Next() {
+		var resourceID, value string
+		if err := rows.Scan(&resourceID, &value); err != nil {
+			return err
+		}
+		add(byID[resourceID], value)
+	}
+	return classify(rows.Err())
+}
+
+func scanAuthzResourceAttributes(rows pgx.Rows, byID map[string]*model.AuthzResource) error {
+	defer rows.Close()
+	for rows.Next() {
+		var resourceID, name, value string
+		if err := rows.Scan(&resourceID, &name, &value); err != nil {
+			return err
+		}
+		byID[resourceID].AddAttribute(name, value)
+	}
+	return classify(rows.Err())
+}
+
 type identityProviderRepo struct{ pool *pgxpool.Pool }
 
 // identityProviderColumns is the SELECT list shared by ByAlias and List, so the
