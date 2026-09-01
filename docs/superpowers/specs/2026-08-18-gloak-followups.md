@@ -204,6 +204,27 @@ is a 409 *with* a name. The distinguishing probe was sent by accident, by a role
 sweep that happened to use that body. The pattern this list has recorded twice
 as expensive was caught by luck this time, which is not a method.
 
+**Status, 2026-09-01 (eighth fold).** Two cuts took parity to **336 of 535** and
+closed `oidc/registration` outright, 14 of 14. **F131 through F141** are opened.
+
+The round's lesson is about this list and the document beside it, not about
+Keycloak. **Six counted claims were re-counted and five were wrong**: the
+security-header exceptions, the generic-404 producers, the `Location` tails, the
+strict decoders, the `jti` prefixes and the parked-golden total - which said
+*nine, seven and eight in one paragraph*, because each cut that moved the number
+edited a different sentence of it.
+
+**One of those was refuted by this repository's own committed goldens**, for the
+third time in a week. A cut measured a 409 sending no security headers, wrote
+"a 409 sends none of the five", and the fold carried it -
+`admin/realms-admin/default-default-client-scope-duplicate.http` had been a
+committed 409 carrying all five since P5. The real rule is about the **empty
+body**.
+
+The habit that follows is small and specific: **before writing a rule about
+headers or shapes, grep the goldens for a case that would break it.** The
+evidence is already in the repository and it is cheaper to read than to measure.
+
 One thing that is deliberately **not** filed. P4's handover proposes an entry
 for "a golden that enumerates a realm-wide set without `PristineRealm`", naming
 `admin/role-mapper/group-realm-available`. That case gained the flag in
@@ -3664,7 +3685,10 @@ What it decides lives in the page body, which is P13's, so Gloak reads the
 attribute and does nothing with it. Filed rather than left as an attribute that
 looks honoured.
 
-## F126: `permission/providers` is not filtered to permission providers
+## F126: `permission/providers` is not filtered to permission providers (confirmed)
+
+Confirmed by the second cut and unchanged. Reproduced as measured.
+
 
 It is byte-identical to `policy/providers` - `cmp`-verified. Reproduced as
 measured. Filed because the next reader will assume the two endpoints differ,
@@ -3687,7 +3711,20 @@ Keycloak's own defect, reproduced, the same way `POST /users` with an empty body
 is reproduced. Filed so that a later cut does not "fix" it into the 400 an
 unknown value gets.
 
-## F129: the other twenty-six authorization-services operations
+## F129: the other twenty-six authorization-services operations (partly closed)
+
+**Eight of the twenty-six landed 2026-08-31** - the whole scope family.
+Eighteen remain: resource 9, policy 4, permission 4, import 1.
+
+The cut deliberately did **not** take the three permanently-`[]` listings
+(`GET /resource`, `/policy`, `/permission`), which would have been three cheap
+parity points indistinguishable from stubs. The resource family is keyed `_id`,
+carries an `attributes` Java map - so `javamap` and F95 are both in play - and
+takes eight query parameters; policy and permission need a provider model before
+`POST` means anything; `import` needs all four families first.
+
+What the finding said, kept for the record:
+
 
 The resource server, its two provider catalogues and the twelve refusals are the
 first cut. The scope family was swept in full anyway and its measurements are in
@@ -3703,3 +3740,95 @@ store it needed.
 
 Two cuts have now routed around this repository's missing listing methods. The
 third should add them rather than route again.
+
+## F131: a cross-resource-server scope id collision corrupts the other resource server
+
+Measured on 26.7.1 and reproduced on a fresh pair: reusing a scope id across two
+resource servers leaves the **other** one broken - its listing answers 400 and
+its settings 500.
+
+**Gloak deliberately does not reproduce it.** That makes it the first measured
+behaviour this project has declined to copy, which is a decision worth having on
+the record rather than in a comment: the rule is byte-identical observable
+behaviour, and this is the exception, taken because reproducing data corruption
+is not what "compatible" is for.
+
+If a client is ever found depending on it, this entry is where the argument
+starts.
+
+## F132: nine `WriteHeader(http.StatusCreated)` call sites send a `Date` header
+
+Pre-existing, invisible to the conformance suite - which serves through
+`httptest.ResponseRecorder` and so never sees a `Date` either - and outside the
+cut that found it, because the fix belongs in `internal/httpx`.
+
+This is F54's shape for the fourth time. The rule "Gloak deletes the `Date`
+header on every response" has now been false three times in three different
+writers, each found by somebody reading a socket rather than by a test.
+
+## F133: `writeEmptyStatus` lives in `internal/admin`
+
+It writes no body, so no second marshaller exists and the boundary rule is not
+broken in substance - but `internal/httpx` is where every other writer lives,
+and moving it is a rename. Filed so it is a decision rather than an accident.
+
+## F134: four listings still treat an unparseable bound as no bound
+
+The scope family answers a malformed integer query parameter with a 404, which
+is measured. Four older listings silently treat the same input as an absent
+bound.
+
+Whether Keycloak agrees on those four is unmeasured - the finding is that Gloak
+is inconsistent with itself, which is knowable without a container.
+
+## F135: DPoP is measured in full and not implemented
+
+It works on a default container: `token_type: DPoP` and `cnf.jkt` on both
+tokens. It is **not built**, and deliberately: a proof's `iat` window and its
+single-use `jti` make it unrecordable, and a partial implementation would refuse
+valid proofs.
+
+The contract is in the repository anyway - `oidc/token/dpop-header-invalid` is
+`Recorded` - so the next cut starts from measurements.
+
+## F136: the registration access token's identity is in memory
+
+The registered **client** persists through `store.ClientRepo`, so F75's
+precedent was deliberately not leaned on. What is ephemeral is only the `jti` a
+`PUT` rotates, because `model.Client` has no field for it and `Attributes` is
+serialised into the Admin API's client representation.
+
+A restart kills outstanding registration access tokens.
+
+## F137: Gloak's registration decoder is not strict
+
+Keycloak's is, and it is the only one of the five strict decoders that reports a
+line and column. Gloak ignores unknown fields there.
+
+Filed rather than hidden: the divergence is one field name away from being
+invisible.
+
+## F138: three registration providers and the unknown-provider 404 are unbuilt
+
+`default`, `install` and `saml2-entity-descriptor`. They currently fall through
+to the unmatched-path 404 rather than borrowing a measured string for the wrong
+condition, which is the right failure to have while they are unbuilt.
+
+## F139: a `Content-Type` present with an empty value is a 500 HTML page
+
+On Keycloak. Gloak treats it as absent. Measured, not reproduced, and small
+enough that it would otherwise be forgotten.
+
+## F140: F86's `jti` prefixes are six
+
+The entry says four, a later cut said five, and the count on one container is
+**six**. Counted from the list. The prefixes are a per-grant marker, so the
+count grows with the grants - which is exactly why it should not have been
+written as a number in prose.
+
+## F141: `Case.VolatileTailHeaders` is declared on six cases and ten routes mint a UUID tail
+
+Six of the ten UUID-tailed creates are routes this project already serves. The
+gap is not a defect - the other four either pin their tail through the body's
+`id` or are not served - but the arithmetic is worth having written down, since
+F46's mechanism exists precisely to keep those tails asserted.

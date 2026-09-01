@@ -53,6 +53,12 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   carries plain `application/json`: token, userinfo, certs, discovery,
   introspection, revocation, device. `Accept` is not the variable - five
   spellings including none at all give the same answer.
+  **There are three surfaces, not two**, corrected 2026-09-01: the
+  client-registration family lives under `/realms/{realm}/`, is not the Admin
+  API, and answers the **Admin API's** rule. The list of protocol endpoints
+  above is exactly the set this bullet was drawn from - which is the second time
+  this same bullet has been generalised from the endpoints that happened to have
+  been measured.
   (This bullet said the split was "only on this one endpoint",
   `GET /realms/{realm}`, until 2026-08-30. It was simply the one endpoint of
   that family that had been measured when the line was written, and **the
@@ -68,11 +74,14 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   find matching target resource method"}`, a wrong method on a known path
   answers `{"error":"HTTP 404 Not Found"}`. That is why `withKeycloakFallbacks`
   still tells the two cases apart even though both return the same status.
-  **There are three producers of that second body, not two**: a correct method
-  on a correct path whose *resource is switched off* sends it too - every route
-  under `authz/resource-server` on a client without `authorizationServicesEnabled`,
-  to every caller including one holding no admin role. So the body does not mean
-  "wrong method"; it means "the router found nothing to run".
+  **There are four producers of that second body, not two**: a correct method on
+  a correct path whose *resource is switched off* sends it - every route under
+  `authz/resource-server` on a client without `authorizationServicesEnabled`,
+  to every caller including one holding no admin role - and so does **a
+  malformed integer query parameter**, measured on five listings across four
+  families, which is the first producer reaching a route the caller may
+  legitimately use. So the body does not mean "wrong method"; it means "the
+  router found nothing to run".
 - **That rule is measured too broad, seven times now, and the Admin API alone
   now answers it in three different shapes** - the client scopes answer all four
   wrong verbs 405, the protocol mappers answer `PATCH` alone 405, and the scope
@@ -122,10 +131,22 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `WithKeycloakFallbacks`, so nothing was changed on the strength of it; the
   same sweep also found that **`/auth` is the only one of the four whose
   `OPTIONS` carries an `Allow` header**. See F31.
-  **The fifth, added 2026-08-31: a 409 `Duplicate resource error` sends none of
-  the five.** So the exceptions are decided by the path, the endpoint, the
-  request's `Content-Type`, the method and now the status - five rules, no two
+  **The fifth, corrected 2026-09-01: an empty response body sends none of the
+  five** - not "a 409", which is what this bullet said for a day and which the
+  repository's own goldens had already refuted.
+  `admin/realms-admin/default-default-client-scope-duplicate.http` is a
+  committed 409 `Duplicate resource error` carrying **all five**, and it has
+  been since P5. `POST .../authz/resource-server/scope` with `{}` sends all
+  five; `PUT .../scope/{id}` with `{}` sends none - byte-identical bodies,
+  identical requests, one path segment apart, and the difference is that the
+  second answers with nothing in it.
+  So the exceptions are decided by the path, the endpoint, the request's
+  `Content-Type`, the method and the response's emptiness - five rules, no two
   alike, and a sixth is likelier than a unifying one.
+  **This is the third time in a week a claim here was refuted by this
+  repository's own committed goldens**, and the second time the claim was folded
+  in from a cut that had measured one case and generalised it. Before writing a
+  rule about headers, grep the goldens for a case that would break it.
 - **That rule was wrong once already.** P2's Task 11 recorded it as "a
   successful `DELETE`'s 204 omits it", from four deletes that all happened to
   send no `Content-Type`. When a new 204 disagrees with a header rule, measure
@@ -527,8 +548,16 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   one family and inverted on its neighbour, and the second time the description's
   tag turned out to be the thing that predicts it.
 
-- **A create's `Location` ends in the new object's id on four routes out of
-  seven.** `POST .../clients`, `.../users`, `.../groups` and
+- **A create's `Location` ends in the new object's id on ten routes out of
+  thirteen**, counted from the list on one container rather than incremented.
+  The uuid tails are `POST /clients`, `/users`, `/groups`,
+  `/groups/{id}/children`, `/client-scopes`, `/client-templates`,
+  `/clients-initial-access`, `/components`, `/authentication/flows` and
+  `/realms/{r}/clients-registrations/openid-connect`; the name tails are
+  `POST /roles`, `POST /clients/{uuid}/roles` and `POST /admin/realms`. Two more
+  could not be reached on a default container and are not counted.
+  (This said "four out of seven" until 2026-09-01, and seven was the set that
+  had been measured when it was written.) `POST .../clients`, `.../users`, `.../groups` and
   `.../groups/{id}/children` end in a server-minted UUID; `POST .../roles` and
   `POST .../clients/{id}/roles` end in the **role's name**, and
   `POST /admin/realms` in the **realm's name**. And the child create's
@@ -940,6 +969,49 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **A 415 exists on this API**, and the scope mappings are where it is
   reachable, because they are the first routes whose `DELETE` carries a body.
 
+- **The `X-Frame-Options` rule is about the empty body, not the 204.** The
+  scope family's empty 404s and its 400 follow it exactly, and they are not 204s.
+  A 204 is simply the commonest empty response.
+- **A create's response body is not always a read of what it wrote.**
+  `POST .../authz/resource-server/scope`'s 201 is the **request echoed** -
+  `policies` and `resources` come back and are stored nowhere - so a handler
+  that answers by reading its own write diverges on the fields the store drops.
+- **One set of authorization scopes has two reads and two orders, and both are
+  reproducible.** The settings export is insertion order and the listing beside
+  it sorts byte-wise. One set of rows, two orders, and a shared serialiser gets
+  one of them wrong. (Cut A recorded the export as sorted; it is not.)
+- **`POST .../scope` is an upsert whose key is the body's id when it has one**,
+  and the scope family's `name` means two different things one path segment
+  apart. A scope **id** is unique globally and a scope **name** is unique per
+  resource server - so a cross-resource-server id collision corrupts the *other*
+  resource server on 26.7.1, turning its listing into a 400 and its settings
+  into a 500. Reproduced on a fresh pair. **Gloak deliberately does not copy
+  that one**, which is the first measured behaviour this project has declined to
+  reproduce, and it is filed as a divergence rather than left implicit.
+
+- **A protocol-side family answers the Admin API's charset rule.** Client
+  registration lives under `/realms/{realm}/` and carries `;charset=UTF-8` on
+  every 2xx with a body and plain `application/json` on every error - see the
+  charset bullet, which had to be corrected for it.
+- **The registration endpoint judges the body before the caller.** A refused
+  `Content-Type` is a 415 and a malformed body a 400, both **ahead** of a bearer
+  that does not verify. A test that sends no `Authorization` header at all
+  cannot see this, because an anonymous caller writes nothing on the way
+  through: the distinguishing request is a *garbage* bearer.
+- **Two 403s on one endpoint and the bearer decides which**, and **one 401 with
+  four descriptions, one of which splits by verb.**
+- **A `PUT` rotates the registration access token and a `GET` does not**, and
+  one route answers two different bodies depending on which token asked.
+- **`private_key_jwt` is refused on the way in and produced on the way out**, and
+  `client_secret` and `client_secret_expires_at` are decided by different things
+  - so neither implies the other.
+- **The JWT-bearer assertion predicate is structural and it is not "exactly
+  three parts".** Two parts with a JSON object payload are **accepted**, an
+  empty signature part is fine, four are refused. The signature part is optional
+  and the two in front of it are not. Found by a mutation rather than a probe:
+  every earlier probe of a short assertion also carried a payload that was not
+  JSON, so the length check and the JSON check could not be told apart.
+
 - **A logout that ends a session and a session that ends are two different
   things.** Four paths fire the back-channel notification - `GET /logout` with a
   hint, `POST /logout` with a refresh token, `POST /users/{id}/logout` and
@@ -1008,12 +1080,16 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   the two gates could not share an implementation.
 - **`POST /organizations` reads the body's `id` and discards it**, inverting the
   rule the client and client-scope creates follow.
-- **Four strict JSON decoders, and two families disagree about when the decode
+- **Five strict JSON decoders, and three families disagree about when the decode
   runs.** `POST`/`PUT /organizations` and two of the required-action writes are
   strict. On the required-action `PUT` the decode runs **before** the path's
   alias is resolved; on the organization `PUT` an unknown id answers
   `Organization not found.` for an unknown field and for unparseable JSON alike.
-  Opposite orders on one verb.
+  Opposite orders on one verb. **The fifth is client registration**, and it runs
+  before the *caller* is resolved at all - a third answer rather than a second.
+  It is also the only one that reports a **position**: `Invalid json
+  representation for OIDCClientRepresentation. Unrecognized field "x" at line 1
+  column 56.`, in the bare-error shape.
 - **The `Workflows` tag answers `application/yaml`**, chunked, and is not gated
   by `organizationsEnabled` at all.
 
@@ -1304,12 +1380,14 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
   **The way to ask for a Pending golden back is to promote the case to
   `Recorded`**, which is what `Recorded` already means and which a reviewer sees
   in the diff; there is no flag.
-  **Nine Pending goldens are parked, not four.** The four login-theme pages are
-  the ones that churned; the device, CIBA and dynamic-registration refusals are
-  three more that had been parked without anybody counting them. All seven are
-  declared in `parkedGoldens` with the reason each is kept, and
-  `TestEveryParkedGoldenIsDeclared` refuses an eighth arriving without one, a
-  declaration whose file has gone, and one whose case is no longer `Pending`. A
+  **Eight Pending goldens are parked**, counted from `parkedGoldens` rather than
+  incremented, and each is declared there with the reason it is kept.
+  `TestEveryParkedGoldenIsDeclared` refuses one arriving without a declaration,
+  a declaration whose file has gone, and one whose case is no longer `Pending`.
+  (This bullet said nine, seven and eight **in one paragraph** until 2026-09-01,
+  because each cut that moved the number edited a different sentence of it. A
+  count written in prose beside the list it counts will do that; the list is the
+  answer.) A
   parked golden is a **measurement, not a contract**: read it for what Keycloak
   answered, never for what Gloak must serve. See F72.
   **`Recorded` is the hole this leaves, and it was walked through.**
