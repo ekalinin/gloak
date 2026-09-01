@@ -85,23 +85,26 @@ Working today:
 - back-channel and front-channel logout: the signed logout token posted to each
   client that was in the session, and the four paths that send it where two
   others end a session and notify nobody
-- authorization services: the resource server, its two provider catalogues and
-  the twelve `management/permissions` refusals - which close the roles, the
-  roles-by-id and the groups chapters outright
+- authorization services: the resource server, its two provider catalogues, the
+  scope family and the twelve `management/permissions` refusals - which close
+  the roles, the roles-by-id and the groups chapters outright
+- dynamic client registration in full, and the JWT-bearer and token-exchange
+  grants - where the assertion predicate turned out **not** to be "exactly three
+  parts", found by a mutation rather than by a probe
 - client secrets, service accounts, user credentials and user logout
 - a documentation-derived conformance suite (`internal/conformance`) that checks
   Gloak's responses byte-for-byte against bytes recorded from a live
   Keycloak 26.7.1
 - a parity meter whose denominator comes from Keycloak's own OpenAPI description
-  rather than from a hand-kept list: **311 of 526 enumerated behaviours served**,
+  rather than from a hand-kept list: **336 of 535 enumerated behaviours served**,
   plus four chapters whose surface has not been counted
 - an external oracle: `make oracle` drives Gloak with `kcadm.sh`, Keycloak's own
   admin CLI, which asks for things no recorded case asks for
 
 Not implemented yet: the login page's own markup (the flow is served, the theme
 is not), the authentication flow engine - Gloak walks a hard-coded flow -
-an organization's groups and members, workflows, most of authorization services,
-SAML, user federation, identity brokering, the admin console.
+an organization's groups and members, workflows, DPoP, the rest of authorization
+services, SAML, user federation, identity brokering, the admin console.
 
 Where this is going is `docs/superpowers/specs/2026-08-21-gloak-parity-roadmap.md`:
 fourteen sub-projects with their dependencies and what each closes.
@@ -223,10 +226,10 @@ and stay out of the total rather than being dropped from it silently, which
 would inflate the percentage by hiding the parts nobody has counted. It reads:
 
 ```
-total: 311 of 526 enumerated behaviours served; 4 chapters not enumerated
+total: 336 of 535 enumerated behaviours served; 4 chapters not enumerated
 ```
 
-The denominator is 526 rather than 413 plus a fixed number because the protocol
+The denominator is 535 rather than 413 plus a fixed number because the protocol
 chapters have no OpenAPI source and are counted case by case, so they grow as
 measurements find behaviours nobody had named. It moved from 485 on 2026-08-29
 for the first time since it was set, and again the next day when the logout

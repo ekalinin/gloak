@@ -211,12 +211,14 @@ operations is allocated below; none is left unassigned.
 | **P6** | Sessions and logout in full, **first cut done 2026-08-30** | P3 | back-channel, front-channel, session iframe, offline sessions, Attack Detection 3 | 3 ops + cases |
 | P6 first cut | The RP-initiated logout endpoint | P3 | `oidc/logout` 0->10, and the chapter's denominator 5->14. The estimate before the cut was **+1**, from counting the five cases already in the catalogue; the endpoint has two verbs, two request families per verb and six response shapes | 0 ops |
 | **P7** | Advanced grants, **first cut done 2026-08-30** | P1, P5 | `device` 5, `ciba` 3, `registration` 6, token exchange, JWT bearer, DPoP, PAR | ~20 cases |
+| P7 second cut | Dynamic registration and two grants, **done 2026-09-01** | P7 first cut, P5 | `oidc/registration` 0->14 of 14, `oidc/token` 16->19. The initial access token turned out **not** to be needed: an ordinary admin token registers a client, and a fixture built to mint one would have depended on a route Gloak does not serve | 0 ops |
 | P7 first cut | The device grant's flow, CIBA's refusals | P5 | `oidc/device` 0->11 of 12, `oidc/ciba` 0->10 of 12. The eight cases the catalogue held all measured the grant **disabled**, which is its state on every client of a default install; the two endpoints have twenty-two distinct answers. CIBA cannot complete on a default container at all, which is a measurement rather than a gap | 0 ops |
 | **P8** | Authentication flow engine, **first cut done 2026-08-30** | P3 | Authentication Management 39, required actions, OTP, WebAuthn, brute force | 39 ops |
 | P8 second cut | Required actions enforced at login, **done 2026-08-31** | P8 first cut, P13 | no operations. F104 closed, and it named the smaller half: `internal/oidc` read a user's `requiredActions` on **no** endpoint, so the password grant was handing out tokens too. A temporary password is now temporary | 0 ops |
 | P8 first cut | The SPI registry and required actions | P3 | `admin/authentication-management` 0->18 of 39. The other 21 - `flows`, `executions`, `config` - are **deliberately deferred**: Gloak walks a hard-coded flow, so they would edit a description nothing reads. Named individually in F103 | 18 ops |
 | **P9** | Federation and brokering | P4, P8 | Identity Providers 17, Component 6 | 23 ops |
 | **P10** | Authorization services (UMA 2.0), **first cut done 2026-08-31** | P5 | `authz/resource-server/*` 31, plus **twelve** `management/permissions` operations counted under five other tags - the brief said eight, which was right only for the three chapters that had no other unserved operations | 43 ops |
+| P10 second cut | The scope family, **done 2026-08-31** | P10 first cut | `admin/authz-resource-server` 5->13. Eighteen operations remain; the three permanently-`[]` listings were **deliberately excluded** as parity points indistinguishable from stubs | 8 ops |
 | P10 first cut | The resource server and the twelve refusals | P5 | `admin/authz-resource-server` 0->5, and **three chapters closed outright**: `admin/roles` 28/28, `admin/roles-by-id` 10/10, `admin/groups` 11/11. The gate is the **client's** `authorizationServicesEnabled` and it runs **before** authorization - a fourth gate shape in four families | 17 ops |
 | **P11** | SAML 2.0 | P4 | descriptors, SSO and SLO bindings | not in OpenAPI |
 | **P12** | Organizations and Workflows, **first cut done 2026-08-31** | P4 | Organizations 36, Workflows 9. **The row's 45 is 56**: eleven more operations live under `/organizations/{org-id}/groups/.../role-mappings` and are counted under `Role Mapper` and `Client Role Mappings`, so building this unlocks them. 47 operations live under `/organizations` in all | 56 ops |
@@ -227,10 +229,10 @@ operations is allocated below; none is left unassigned.
 | P13 first cut | The browser login, end to end | P3, P5 | no operations, and the column that matters is `oidc/authorization`'s `recorded` going **4 -> 0**: the chapter no longer holds a case waiting on an endpoint nobody built. The flow is served - authentication session, login form, `/login-actions/authenticate`, authorization code - and the theme's markup is not | 0 ops |
 | **P14** | Operational parity | P4 | events and audit, SMTP, health and metrics, clustering | not in OpenAPI |
 
-Denominator today: **413 Admin API operations plus 113 protocol behaviours, 526
+Denominator today: **413 Admin API operations plus 122 protocol behaviours, 535
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **311** after
-P10's first cut, and **P2, P4 and P5 are complete** - as are the `Roles`,
+surface is not counted and which the report says so about. Served: **336** after
+P7's second cut, and **P2, P4 and P5 are complete** - as are the `Roles`,
 `Roles (by ID)` and `Groups` chapters, which P10 closed by measuring what their
 last operations refuse - up from 8 before P1, 25 after it, 89 after the second cut's
 roles half, 100 after that cut was complete, 109 after the group tree and 113
@@ -257,7 +259,25 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-08-31 (seventh fold).** `make conformance` reports **311 of 526**,
+**Updated 2026-09-01 (eighth fold).** `make conformance` reports **336 of 535**,
+and `oidc/registration` is closed outright, 14 of 14.
+
+The round's lesson is about this project's own documents. **Six counted claims
+were re-counted and five were wrong** - the security-header exceptions, the
+generic-404 producers, the `Location` tails, the strict decoders, the `jti`
+prefixes, and a parked-golden total that said *nine, seven and eight in one
+paragraph* because each cut that moved it edited a different sentence.
+
+One of the five was refuted by **this repository's own committed goldens**, for
+the third time in a week: a cut measured a 409 sending no security headers and
+wrote the rule over "a 409", and a golden carrying all five on exactly that
+status had been committed since P5. The rule is about the **empty body**.
+
+The habit that follows is cheap: **before writing a rule about headers or
+shapes, grep the goldens for a case that would break it.** The evidence is
+already here and reading it costs less than measuring.
+
+**Earlier on 2026-08-31 (seventh fold).** `make conformance` reported **311 of 526**,
 and three chapters are closed outright - `admin/roles` 28/28,
 `admin/roles-by-id` 10/10, `admin/groups` 11/11 - by measuring what their last
 operations *refuse* rather than by building anything.
