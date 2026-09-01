@@ -926,6 +926,47 @@ var Fixtures = map[string]Fixture{
 	"authz-mgmt-client-put":      clientFixture("gloak-probe-authz-mgmt-cput"),
 	"authz-mgmt-client-role":     clientFixture("gloak-probe-authz-mgmt-role"),
 	"authz-mgmt-client-role-put": clientFixture("gloak-probe-authz-mgmt-rput"),
+
+	// ---- P10 second cut: the authorization-services scope family ----------
+	//
+	// Appended at the very end of the map, and the helpers after the last one.
+	//
+	// **Every scope carries a fixed id and no fixture shares one.** The body's
+	// id wins on POST .../scope - the fourth endpoint measured doing so - which
+	// is what lets a case name a scope's id without capturing it, the same
+	// trick the client-scope fixtures use. The ids are globally unique rather
+	// than unique per resource server because a scope id **is** global: a
+	// create naming an id another resource server holds answers 409, measured
+	// 2026-09-01, and it also leaves that other server's listing serving a 400
+	// on 26.7.1 - a defect Gloak does not reproduce and these fixtures must not
+	// walk into.
+	//
+	// The scope sets are created in the **reverse of name order** on purpose.
+	// The listing sorts and the settings export does not, and a set created
+	// alphabetically records identical goldens for both, which would let a
+	// store that sorted in SQL pass.
+	"authz-scope-list":         authzScopeFixture("gloak-probe-authz-sc-list", "10", scopeSeedOutOfOrder),
+	"authz-scope-filter":       authzScopeFixture("gloak-probe-authz-sc-filt", "20", scopeSeedOutOfOrder),
+	"authz-scope-bound":        authzClientFixture("gloak-probe-authz-sc-bound"),
+	"authz-scope-create":       authzClientFixture("gloak-probe-authz-sc-crt"),
+	"authz-scope-conflict":     authzClientFixture("gloak-probe-authz-sc-conf"),
+	"authz-scope-read":         authzScopeFixture("gloak-probe-authz-sc-read", "30", scopeSeedOne),
+	"authz-scope-missing":      authzClientFixture("gloak-probe-authz-sc-miss"),
+	"authz-scope-missing-json": authzClientFixture("gloak-probe-authz-sc-mjson"),
+	"authz-scope-missing-del":  authzClientFixture("gloak-probe-authz-sc-mdel"),
+	"authz-scope-search":       authzScopeFixture("gloak-probe-authz-sc-srch", "40", scopeSeedOne),
+	"authz-scope-search-miss":  authzScopeFixture("gloak-probe-authz-sc-smis", "50", scopeSeedOne),
+	"authz-scope-search-empty": authzScopeFixture("gloak-probe-authz-sc-semp", "60", scopeSeedOne),
+	"authz-scope-put":          authzScopeFixture("gloak-probe-authz-sc-put", "70", scopeSeedFull),
+	// The client whose scope has already been through the PUT, so the case can
+	// read what the 204 cannot show: **the replace dropped iconUri and
+	// displayName**, which a merge would have kept.
+	"authz-scope-put-replaced": authzScopePutFixture("gloak-probe-authz-sc-repl", "80"),
+	"authz-scope-put-conflict": authzScopeFixture("gloak-probe-authz-sc-pcon", "90", scopeSeedOne),
+	"authz-scope-delete":       authzScopeFixture("gloak-probe-authz-sc-del", "a0", scopeSeedOne),
+	"authz-scope-permissions":  authzScopeFixture("gloak-probe-authz-sc-perm", "b0", scopeSeedOne),
+	"authz-scope-resources":    authzScopeFixture("gloak-probe-authz-sc-res", "c0", scopeSeedOne),
+	"authz-scope-settings":     authzScopeFixture("gloak-probe-authz-sc-set", "d0", scopeSeedOutOfOrder),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -4657,5 +4698,96 @@ func organizationFixture(realm, update string) Fixture {
 			},
 		})
 	}
+	return f
+}
+
+// ---- P10 second cut: the authorization-services scope family ---------------
+//
+// Appended after the last helper. Everything below was measured 2026-09-01.
+
+// scopeSeed is one scope a fixture creates: the suffix of its fixed id and the
+// suffix of its name.
+type scopeSeed struct{ idSuffix, name string }
+
+// scopeSeedOutOfOrder is the set that makes the two orders visible.
+//
+// Created zulu, yankee, xray, whiskey, Zebra - the reverse of name order, with
+// one capital in it. Three things need exactly this set:
+//
+//   - the settings export comes back in **creation order**, so a set created
+//     alphabetically would record the same bytes for both reads;
+//   - the listing sorts **byte-wise**, so `Zebra` comes first - a case-folded
+//     sort would put it between `yankee` and `zulu`, and nothing else in the
+//     set can tell those two sorts apart;
+//   - `?name=` is a case-insensitive substring, so `Zebra` is also what says
+//     the filter and the sort disagree about case.
+var scopeSeedOutOfOrder = []scopeSeed{
+	{"01", "zulu"}, {"02", "yankee"}, {"03", "xray"}, {"04", "whiskey"}, {"05", "Zebra"},
+}
+
+// scopeSeedOne is a single scope for the cases that address one by id.
+var scopeSeedOne = []scopeSeed{{"01", "solo"}}
+
+// scopeSeedFull is one scope carrying all three writable fields, for the PUT
+// that then drops two of them.
+var scopeSeedFull = []scopeSeed{{"01", "full"}}
+
+// authzScopeID is the fixed id of one seeded scope.
+//
+// A scope id is **global** rather than per resource server - a create naming an
+// id another resource server already holds is a 409 - so the group segment
+// keeps every fixture's ids apart, and the suffix keeps one fixture's apart
+// from each other.
+func authzScopeID(group, suffix string) string {
+	return "5c0be000-0000-4000-8000-00000000" + group + suffix
+}
+
+// authzScopeFixture is authzClientFixture plus one create per seed, in the
+// order the seeds are given, which is the order the settings export serves.
+//
+// The full body is spelled per seed rather than shared because scopeSeedFull
+// needs an iconUri and a displayName the others must not have: the PUT case's
+// whole assertion is that a replace drops them, and a seed that gave every
+// scope those fields would make the listing golden say so too and hide which
+// read is asserting what.
+func authzScopeFixture(clientID, group string, seeds []scopeSeed) Fixture {
+	f := authzClientFixture(clientID)
+	for _, s := range seeds {
+		body := `{"id":"` + authzScopeID(group, s.idSuffix) + `","name":"gloak-probe-` + s.name + `"`
+		if s.name == "full" {
+			body += `,"iconUri":"http://example.test/icon.png","displayName":"Full"`
+		}
+		body += `}`
+		f.Steps = append(f.Steps, Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(body),
+			},
+		})
+	}
+	return f
+}
+
+// authzScopePutFixture creates a scope carrying all three fields and then PUTs
+// a body naming only its name, so the case after it reads what the 204 cannot
+// show.
+//
+// **The PUT replaces**: iconUri and displayName are gone from the read, where a
+// merge would have kept both. It is the same shape authzClientUpdatedFixture
+// uses on the resource server, and for the same reason - a 204's golden holds
+// no body to assert against.
+func authzScopePutFixture(clientID, group string) Fixture {
+	f := authzScopeFixture(clientID, group, scopeSeedFull)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope/" +
+				authzScopeID(group, "01"),
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`{"name":"gloak-probe-full"}`),
+		},
+	})
 	return f
 }

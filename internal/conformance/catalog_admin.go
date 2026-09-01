@@ -9839,4 +9839,469 @@ var adminCases = []Case{
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},
+
+	// ---- P10 second cut: the authorization-services scope family ----------
+	//
+	// Appended at the very end of the slice. Every value below was measured
+	// against a live 26.7.1 on 2026-09-01, container kc-authzb on port 8141;
+	// docs/superpowers/plans/2026-08-31-p10-authz-cut-b.md carries the sweeps.
+	//
+	// Eight operations, eighteen cases. The extra ten are the pairs: two orders
+	// of one scope set, two meanings of `name`, two 409s that disagree about
+	// the security headers, and two empty-bodied 404s that disagree about
+	// X-Frame-Options. Each of those pairs is a rule that a single case would
+	// record as a body and prove nothing about.
+	{
+		// **Sorted by name, byte-wise.** The fixture creates them zulu,
+		// yankee, xray, whiskey, Zebra, and this golden holds
+		// Zebra, whiskey, xray, yankee, zulu - a case-folded sort would put
+		// Zebra fourth, and the settings case eight rows down holds the same
+		// five in creation order. The two goldens together are the assertion;
+		// either alone is a body.
+		ID: "admin/authz-resource-server/scope-list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: the scope listing",
+			Retrieved: "2026-09-01",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/scope",
+		Fixture:   "authz-scope-list",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		// **No Unordered.** The order is the measurement.
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// `?name=` is a **case-insensitive substring** and `?max=` pages on its
+		// own. `Zebra` in the answer is what says the filter folds case where
+		// the sort beside it does not, and the search case four rows down sends
+		// the same spelling to the other `name` and gets a 204.
+		ID: "admin/authz-resource-server/scope-list-filtered",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: the scope listing's name filter and paging",
+			Retrieved: "2026-09-01",
+		},
+		Status:  Implemented,
+		Fixture: "authz-scope-filter",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope",
+			Query:   map[string]string{"name": "ZE", "max": "1"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **A bound that does not parse is a 404**, and the body is the one
+		// AGENTS.md attributes to an unmatched path, a wrong verb and a
+		// switched-off resource. This is the fourth producer: a route the
+		// caller may use, on a resource server that exists, refused because an
+		// integer parameter could not bind. Measured on this listing and on
+		// GET /roles, /users, /groups and /clients alike.
+		ID: "admin/authz-resource-server/scope-list-bad-bound",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: a scope listing bound that does not parse",
+			Retrieved: "2026-09-01",
+		},
+		Status:  Implemented,
+		Fixture: "authz-scope-bound",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope",
+			Query:   map[string]string{"first": "abc"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **The create's 201 is the request echoed, not a read.** The body
+		// carries `policies` and `resources` back, and no other view of the
+		// same scope has either key - the read case below is the control. The
+		// field order is measured from a create that sent all six in reverse:
+		// id, name, iconUri, policies, resources, displayName.
+		//
+		// **No Location**, which is what AssertAbsentHeaders pins. Four of the
+		// admin creates end their Location in the new object's id and three do
+		// not; this one has none at all.
+		ID: "admin/authz-resource-server/scope-create",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: creating a scope",
+			Retrieved: "2026-09-01",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/scope",
+		Fixture:   "authz-scope-create",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"resources":[],"policies":[],"displayName":"Created",` +
+				`"iconUri":"http://example.test/i.png","name":"gloak-probe-created",` +
+				`"id":"5c0be000-0000-4000-8000-0000000000e1"}`),
+		},
+		AssertHeaders:       []string{"Content-Type", "Cache-Control"},
+		AssertAbsentHeaders: []string{"Location"},
+	},
+	{
+		// **This 409 carries all five security headers and the PUT's carries
+		// none**, on identical bodies one path segment apart. AGENTS.md's fifth
+		// security-header exception says a 409 `Duplicate resource error` sends
+		// none of the five; this case and admin/authz-resource-server/
+		// scope-put-conflict are the pair that refutes it, and the repository's
+		// own admin/realms-admin/default-default-client-scope-duplicate golden
+		// had already been carrying all five since P5.
+		//
+		// The body is `{"iconUri":...}` rather than `{}` on purpose: it carries
+		// a field, so a handler that refused an *empty body* would pass `{}`
+		// and fail here. Only an absent `name` is the 409 - `{"name":""}` is a
+		// 201.
+		ID: "admin/authz-resource-server/scope-create-conflict",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: creating a scope with no name",
+			Retrieved: "2026-09-01",
+		},
+		Status:  Implemented,
+		Fixture: "authz-scope-conflict",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"iconUri":"http://example.test/i.png"}`),
+		},
+		AssertHeaders: []string{
+			"Content-Type", "Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
+		},
+	},
+	{
+		ID: "admin/authz-resource-server/scope-read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: reading one scope",
+			Retrieved: "2026-09-01",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/scope/{scope-id}",
+		Fixture:   "authz-scope-read",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope/" +
+				"5c0be000-0000-4000-8000-000000003001",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **The absence of a spelling, not one of the twenty-one.** No body, no
+		// Content-Type, Content-Length 0 - and `Cache-Control: no-cache`, which
+		// the PUT's and the DELETE's 404 on this same path do not send.
+		//
+		// **X-Frame-Options is absent because the request declared no
+		// Content-Type.** The case below sends the identical request with
+		// `application/json` and gets it. AGENTS.md records that rule for a 204
+		// and names httpx.WriteNoContent as the one place that decides it;
+		// these two cases say the rule is about the empty body rather than the
+		// status.
+		ID: "admin/authz-resource-server/scope-read-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: a scope that does not exist",
+			Retrieved: "2026-09-01",
+		},
+		Status:  Implemented,
+		Fixture: "authz-scope-missing",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope/" +
+				"5c0be000-0000-4000-8000-0000000000ff",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// The same 404 with one header added to the **request**. It is the
+		// distinguishing probe for the case above, and without it that golden
+		// would record an omission with no reason attached.
+		ID: "admin/authz-resource-server/scope-read-missing-json",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: the empty 404 with a JSON Content-Type",
+			Retrieved: "2026-09-01",
+		},
+		Status:  Implemented,
+		Fixture: "authz-scope-missing-json",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope/" +
+				"5c0be000-0000-4000-8000-0000000000ff",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+		},
+		AssertHeaders:       []string{"Cache-Control", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Content-Type"},
+	},
+	{
+		// **200 with a bare object**, not an array of one. And the match is
+		// exact and case-sensitive, which the listing's `name` is not: the
+		// filtered listing case above finds `Zebra` from `ZE`.
+		ID: "admin/authz-resource-server/scope-search",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: the scope search",
+			Retrieved: "2026-09-01",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/scope/search",
+		Fixture:   "authz-scope-search",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope/search",
+			Query:   map[string]string{"name": "gloak-probe-solo"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// A miss is a **204**, and the name sent here differs from the seeded
+		// one only in case. That is what makes the search case-sensitive rather
+		// than merely exact, and no other body can say it.
+		ID: "admin/authz-resource-server/scope-search-miss",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: the scope search is case-sensitive",
+			Retrieved: "2026-09-01",
+		},
+		Status:  Implemented,
+		Fixture: "authz-scope-search-miss",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope/search",
+			Query:   map[string]string{"name": "GLOAK-PROBE-SOLO"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// An absent or empty `name` is a **400 with an empty body**, which is
+		// its own shape on an API with four error bodies: it has none of them.
+		ID: "admin/authz-resource-server/scope-search-no-name",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: the scope search with no name",
+			Retrieved: "2026-09-01",
+		},
+		Status:  Implemented,
+		Fixture: "authz-scope-search-empty",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope/search",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// 204, and **no Cache-Control** - the eighth measured response where
+		// that header is pinned per endpoint rather than per method.
+		// X-Frame-Options is here because the request declares JSON.
+		ID: "admin/authz-resource-server/scope-put",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: updating a scope",
+			Retrieved: "2026-09-01",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/scope/{scope-id}",
+		Fixture:   "authz-scope-put",
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope/" +
+				"5c0be000-0000-4000-8000-000000007001",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-renamed"}`),
+		},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// What the 204 above cannot show: **the PUT replaces**. The fixture's
+		// scope was created with an iconUri and a displayName and the PUT named
+		// only its name; this body has neither. A merge - which is what a
+		// client and a user PUT do - would have kept both.
+		ID: "admin/authz-resource-server/scope-put-replaced",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: a scope PUT replaces rather than merging",
+			Retrieved: "2026-09-01",
+		},
+		Status:  Implemented,
+		Fixture: "authz-scope-put-replaced",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope/" +
+				"5c0be000-0000-4000-8000-000000008001",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The other half of the 409 pair. Same body shape as the create's
+		// conflict case, same request Content-Type, one path segment away -
+		// and **none of the five security headers**. Both causes of this 409
+		// agree with each other, so it is decided per verb on this endpoint.
+		ID: "admin/authz-resource-server/scope-put-conflict",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: updating a scope with no name",
+			Retrieved: "2026-09-01",
+		},
+		Status:  Implemented,
+		Fixture: "authz-scope-put-conflict",
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope/" +
+				"5c0be000-0000-4000-8000-000000009001",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"iconUri":"http://example.test/i.png"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+		AssertAbsentHeaders: []string{
+			"Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
+		},
+	},
+	{
+		// A successful delete: 204, **no Cache-Control**, and no
+		// X-Frame-Options because a DELETE with no body declares no
+		// Content-Type.
+		ID: "admin/authz-resource-server/scope-delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: deleting a scope",
+			Retrieved: "2026-09-01",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/scope/{scope-id}",
+		Fixture:   "authz-scope-delete",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope/" +
+				"5c0be000-0000-4000-8000-00000000a001",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"Cache-Control", "X-Frame-Options"},
+	},
+	{
+		// The delete's 404 sends **no Cache-Control** where the read's sends
+		// no-cache. Two 404s on one path differing in one header, and here the
+		// method is what decides it - which is the opposite of what the
+		// Cache-Control bullet concludes about the six measured deletes, where
+		// every generalisation over the method has failed.
+		ID: "admin/authz-resource-server/scope-delete-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: deleting a scope that does not exist",
+			Retrieved: "2026-09-01",
+		},
+		Status:  Implemented,
+		Fixture: "authz-scope-missing-del",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope/" +
+				"5c0be000-0000-4000-8000-0000000000ff",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control", "X-Frame-Options"},
+	},
+	{
+		// `[]`, and it is the measured answer rather than a stub for exactly as
+		// long as Gloak has no permissions: there is no route that creates one.
+		// The half a case can see move is the 404 for a scope that does not
+		// exist, which the scope-read-missing case above records.
+		ID: "admin/authz-resource-server/scope-permissions",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: a scope's permissions",
+			Retrieved: "2026-09-01",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/scope/{scope-id}/permissions",
+		Fixture:   "authz-scope-permissions",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope/" +
+				"5c0be000-0000-4000-8000-00000000b001/permissions",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/authz-resource-server/scope-resources",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: a scope's resources",
+			Retrieved: "2026-09-01",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/scope/{scope-id}/resources",
+		Fixture:   "authz-scope-resources",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope/" +
+				"5c0be000-0000-4000-8000-00000000c001/resources",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **The settings export's scopes come back in creation order**, where
+		// the listing eighteen rows up sorts the same five by name. The fixture
+		// creates them zulu, yankee, xray, whiskey, Zebra and this golden holds
+		// exactly that, entry by entry stripped of its id and keeping nothing
+		// else - the first cut recorded this order as "neither name order nor
+		// insertion order and not pinned".
+		//
+		// The `admin/authz-resource-server/settings` case above stays: it is
+		// the same body on an **empty** resource server, where the two reads of
+		// a resource server differ only in three leading keys. This one is the
+		// only case in the catalogue that can see the two orders disagree.
+		ID: "admin/authz-resource-server/settings-with-scopes",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: the settings export with scopes in it",
+			Retrieved: "2026-09-01",
+		},
+		Status:  Implemented,
+		Fixture: "authz-scope-settings",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/settings",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
 }

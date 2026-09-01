@@ -1,0 +1,10 @@
+# GET /admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope/5c0be000-0000-4000-8000-0000000000ff
+HTTP/1.1 404 Not Found
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+

@@ -1,0 +1,7 @@
+# DELETE /admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope/5c0be000-0000-4000-8000-00000000a001
+HTTP/1.1 204 No Content
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Robots-Tag: none
+

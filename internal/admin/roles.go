@@ -185,10 +185,17 @@ func filterRoles(roles []*model.Role, search string) []*model.Role {
 // there. q.Get("search") == "" covers both, which is why the gate below reads
 // the value rather than only asking whether the parameter was sent.
 //
-// An unparseable value (first=abc) is treated as no bound, but that is
-// Gloak's own choice, not something measured: the real admin client always
-// sends a well-formed integer or omits the parameter, so a live 26.7.1's
-// behaviour on a malformed one was never probed. Note it still opens the gate,
+// An unparseable value (first=abc) is treated as no bound here, and **that is
+// a measured divergence rather than an open question**. It was probed on
+// 2026-09-01, which is what this comment used to say had never happened:
+// `?first=abc` answers `404 {"error":"HTTP 404 Not Found"}` on this listing, on
+// GET /users, /groups, /clients and the authorization-services scope listing,
+// all five alike, and so do `?first=1.5` and a value that overflows an int.
+// `?first=` is 200 and pages nothing, so an empty value counts as absent.
+// authzIntBound is the one place that reproduces it; wiring it into the four
+// older listings is a follow-up rather than this line's business, and the
+// comment is corrected here so the code does not go on claiming the
+// measurement is missing. Note the malformed value still opens the gate below,
 // because q.Has is about the parameter being sent, not about it parsing.
 func pageRoles(roles []*model.Role, q url.Values) []*model.Role {
 	if q.Get("search") == "" && !(q.Has("first") && q.Has("max")) {

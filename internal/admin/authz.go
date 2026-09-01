@@ -58,15 +58,19 @@ type settingsRepresentation struct {
 	DecisionStrategy              string                     `json:"decisionStrategy"`
 }
 
-// authzScopeRepresentation is one entry of the settings export's scopes array.
+// authzScopeRepresentation is a scope as the read, the listing, the search and
+// the settings export all serve it.
 //
-// Gloak serves no scope-creating route yet - the scope, resource, policy and
-// permission families are P10's second cut - so this is always empty here. It
-// exists because the key must be `[]` rather than absent, which needs a
-// concrete element type, and the measured field order is recorded with it:
-// `id name iconUri displayName`, where a create answered
-// `{"id":...,"name":...,"iconUri":...,"displayName":...}` for a body that sent
-// name, displayName and iconUri in that order. The export drops the `id`.
+// The measured field order is `id name iconUri displayName`, from a create
+// that sent name, displayName and iconUri in that order. **The export is this
+// same body with the id left empty** rather than a type of its own, which is
+// measured rather than assumed: a scope carrying an iconUri and a displayName
+// comes back from GET .../settings with both and without the id, so exactly
+// one key differs between the two views.
+//
+// It is *not* what the create's 201 answers. That body echoes the request's
+// `policies` and `resources` back and no other view of a scope carries them -
+// see authzScopeCreated.
 type authzScopeRepresentation struct {
 	ID          string `json:"id,omitempty"`
 	Name        string `json:"name"`
@@ -143,16 +147,36 @@ func (h *handler) readResourceServer(w http.ResponseWriter, r *http.Request, rc 
 // `.../authz/resource-server` and are 403 here. A read that refuses the view
 // role is the opposite of AGENTS.md's "reads accept the manage role, not just
 // the view role", and the role list is in the router rather than here.
+// **The scopes come back in creation order, where the listing beside them is
+// sorted by name.** Measured 2026-09-01: four scopes created zulu, yankee,
+// xray, whiskey - the reverse of name order - came back that way here and the
+// other way from GET .../scope, and deleting xray and recreating it moved it
+// to the **end**. The first cut recorded this order as "neither name order nor
+// insertion order and not pinned"; it is insertion order, and store.ListScopes
+// returns it so that one set of rows can serve both reads.
+//
+// Each entry is stripped of its `id` and keeps its `iconUri` and
+// `displayName`, measured on scopes carrying both.
 func (h *handler) readResourceServerSettings(w http.ResponseWriter, r *http.Request, rc *reqContext, a *authzContext) {
+	scopes, err := h.store.Authz().ListScopes(r.Context(), a.client.ID)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	exported := []authzScopeRepresentation{}
+	for _, s := range scopes {
+		e := scopeRepresentationOf(s)
+		// The one difference from every other view of a scope.
+		e.ID = ""
+		exported = append(exported, e)
+	}
 	httpx.WriteJSONCharset(w, http.StatusOK, settingsRepresentation{
 		AllowRemoteResourceManagement: a.rs.AllowRemoteResourceManagement,
 		PolicyEnforcementMode:         a.rs.PolicyEnforcementMode,
 		Resources:                     []struct{}{},
 		Policies:                      []struct{}{},
-		// Populated where the other read's is always empty - and empty here
-		// only because Gloak serves no route that creates a scope yet.
-		Scopes:           []authzScopeRepresentation{},
-		DecisionStrategy: a.rs.DecisionStrategy,
+		Scopes:                        exported,
+		DecisionStrategy:              a.rs.DecisionStrategy,
 	})
 }
 

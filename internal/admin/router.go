@@ -130,11 +130,13 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /admin/realms/{realm}/organizations/{orgID}",
 		h.guardOrganization(organizationWriteRoles, h.deleteOrganization))
 
-	// Authorization services. Five operations of the description's thirty-one
-	// untagged ones - the resource server as a resource, and the two provider
-	// catalogues. The other twenty-six are the resource, scope, policy and
-	// permission families, `import` and the two `evaluate` routes, and they are
-	// P10's second cut. See docs/superpowers/plans/2026-08-31-p10-authz-services.md.
+	// Authorization services. Thirteen operations of the description's
+	// thirty-one untagged ones - the resource server as a resource, the two
+	// provider catalogues, and the whole scope family. The eighteen left are
+	// the resource family's nine, the policy and permission families' four
+	// each, and `import`. See
+	// docs/superpowers/plans/2026-08-31-p10-authz-services.md and
+	// docs/superpowers/plans/2026-08-31-p10-authz-cut-b.md.
 	//
 	// **Every one of them sits behind the client's own
 	// authorizationServicesEnabled**, and guardAuthz checks it *before* the
@@ -155,6 +157,28 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+authzPrefix+"/settings", h.guardAuthz(authzWriteRoles, h.readResourceServerSettings))
 	mux.HandleFunc("GET "+authzPrefix+"/policy/providers", h.guardAuthz(authzReadRoles, h.listPolicyProviders))
 	mux.HandleFunc("GET "+authzPrefix+"/permission/providers", h.guardAuthz(authzReadRoles, h.listPolicyProviders))
+
+	// The scope family, eight operations. The role sets are the two above and
+	// were **re-measured** on this family rather than carried over: seven
+	// callers, one single role each, on all eight routes. They came back
+	// identical - the five reads take authzReadRoles and the three writes
+	// authzWriteRoles, with query-clients and manage-realm 403 on every one.
+	// A role set carried over from a neighbouring family has been wrong four
+	// times in this repository, so agreeing was the finding rather than the
+	// assumption.
+	//
+	// `/scope/search` is registered beside `/scope/{scopeID}` and the mux
+	// prefers the literal, which is what makes `search` reachable at all.
+	mux.HandleFunc("GET "+authzPrefix+"/scope", h.guardAuthz(authzReadRoles, h.listAuthzScopes))
+	mux.HandleFunc("POST "+authzPrefix+"/scope", h.guardAuthz(authzWriteRoles, h.createAuthzScope))
+	mux.HandleFunc("GET "+authzPrefix+"/scope/search", h.guardAuthz(authzReadRoles, h.searchAuthzScope))
+	mux.HandleFunc("GET "+authzPrefix+"/scope/{scopeID}", h.guardAuthz(authzReadRoles, h.readAuthzScope))
+	mux.HandleFunc("PUT "+authzPrefix+"/scope/{scopeID}", h.guardAuthz(authzWriteRoles, h.updateAuthzScope))
+	mux.HandleFunc("DELETE "+authzPrefix+"/scope/{scopeID}", h.guardAuthz(authzWriteRoles, h.deleteAuthzScope))
+	mux.HandleFunc("GET "+authzPrefix+"/scope/{scopeID}/permissions",
+		h.guardAuthz(authzReadRoles, h.listAuthzScopePermissions))
+	mux.HandleFunc("GET "+authzPrefix+"/scope/{scopeID}/resources",
+		h.guardAuthz(authzReadRoles, h.listAuthzScopeResources))
 
 	// The twelve `management/permissions` operations. All of them are the same
 	// 501, and they need **three** combinators because the refusal does not sit
