@@ -993,6 +993,15 @@ var Fixtures = map[string]Fixture{
 	"authz-scope-permissions":  authzScopeFixture("gloak-probe-authz-sc-perm", "b0", scopeSeedOne),
 	"authz-scope-resources":    authzScopeFixture("gloak-probe-authz-sc-res", "c0", scopeSeedOne),
 	"authz-scope-settings":     authzScopeFixture("gloak-probe-authz-sc-set", "d0", scopeSeedOutOfOrder),
+
+	// P9. The identity provider fixtures name their own internalId, because the
+	// body's id wins on this create - measured, the third endpoint with that
+	// rule - so a case can assert a whole body rather than mask a minted UUID.
+	"idp-full":     identityProviderFixture(idpFullBody),
+	"idp-minimal":  identityProviderFixture(idpMinimalBody),
+	"idp-listing":  identityProviderListingFixture(),
+	"idp-taken":    identityProviderFixture(idpMinimalBody),
+	"idp-stranded": identityProviderStrandedFixture(),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -4918,6 +4927,116 @@ func authzScopePutFixture(clientID, group string) Fixture {
 				authzScopeID(group, "01"),
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body:    []byte(`{"name":"gloak-probe-full"}`),
+		},
+	})
+	return f
+}
+
+// P9's fixtures. The identity provider bodies are constants rather than
+// arguments because two of them are asserted key for key by a golden, and a
+// body a helper assembled is a body somebody can change without seeing which
+// golden it moves.
+//
+// **Every one names its own internalId**, which is the measurement as well as
+// the convenience: a create carrying `internalId` produces a provider with
+// exactly that id, so nothing here has to mask a minted UUID and the goldens
+// assert real bytes.
+const (
+	// idpFullBody carries every field the type accepts except organizationId,
+	// which is a 400 for any value including the empty string. Two of the
+	// fields in it - updateProfileFirstLoginMode and postBrokerLoginFlowAlias -
+	// are accepted and never echoed, so the golden beside this is what says so.
+	idpFullBody = `{"alias":"gloak-probe-idp-full","displayName":"Full Probe",` +
+		`"internalId":"1de07000-0000-4000-8000-000000000001","providerId":"oidc",` +
+		`"enabled":true,"updateProfileFirstLoginMode":"on","trustEmail":true,` +
+		`"storeToken":true,"addReadTokenRoleOnCreate":true,"authenticateByDefault":true,` +
+		`"linkOnly":true,"hideOnLogin":true,` +
+		`"firstBrokerLoginFlowAlias":"first broker login","postBrokerLoginFlowAlias":"",` +
+		`"config":{"clientId":"gloak-probe-cid","clientSecret":"gloak-probe-secret",` +
+		`"authorizationUrl":"https://example.test/auth","tokenUrl":"https://example.test/token"}}`
+
+	// idpMinimalBody is the other end: alias and providerId and nothing else.
+	// It is what says the six flags are **absent** rather than false and that
+	// `config` is `{}` rather than missing.
+	idpMinimalBody = `{"alias":"gloak-probe-idp-min",` +
+		`"internalId":"1de07000-0000-4000-8000-000000000002","providerId":"oidc"}`
+)
+
+// identityProviderFixture creates one provider from a literal body.
+func identityProviderFixture(body string) Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/identity-provider/instances",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(body),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+		},
+	}
+}
+
+// identityProviderListingFixture creates three providers **out of alias order**,
+// so the listing golden asserts the sort rather than the insertion order. They
+// are created zzz, mmm, aaa and the listing serves aaa, mmm, zzz.
+//
+// The three carry no config, because the listing's own measurement is the order
+// and the two representation goldens carry the field rules.
+func identityProviderListingFixture() Fixture {
+	f := Fixture{State: "bootstrap", Steps: []Step{adminTokenStep()}}
+	for i, alias := range []string{"zzz", "mmm", "aaa"} {
+		f.Steps = append(f.Steps, Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/identity-provider/instances",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"alias":"gloak-probe-idp-` + alias + `",` +
+					`"internalId":"1de07000-0000-4000-8000-00000000001` + string(rune('0'+i)) + `",` +
+					`"providerId":"github","config":{"clientId":"gloak-probe-cid",` +
+					`"clientSecret":"gloak-probe-secret"}}`),
+			},
+			ExpectStatus: idempotentCreate,
+		})
+	}
+	return f
+}
+
+// identityProviderStrandedFixture reproduces Keycloak's own defect so a case
+// can read what the 204 cannot show.
+//
+// A `PUT` whose body carries no `alias` answers 204 and **clears** it: the row
+// then appears in the listing with no `alias` key and nothing can address it
+// again. The rename guard is `Identity Provider alias cannot be changed`, and a
+// null alias is not a change, so the check passes and the write lands.
+//
+// The second provider exists so the golden shows where the stranded row sorts,
+// which is first.
+func identityProviderStrandedFixture() Fixture {
+	f := Fixture{State: "bootstrap", Steps: []Step{adminTokenStep()}}
+	for i, alias := range []string{"strand", "zzz"} {
+		f.Steps = append(f.Steps, Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/identity-provider/instances",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"alias":"gloak-probe-idps-` + alias + `",` +
+					`"internalId":"1de07000-0000-4000-8000-00000000002` + string(rune('0'+i)) + `",` +
+					`"providerId":"oidc"}`),
+			},
+			ExpectStatus: idempotentCreate,
+		})
+	}
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/master/identity-provider/instances/gloak-probe-idps-strand",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`{"providerId":"oidc"}`),
 		},
 	})
 	return f
