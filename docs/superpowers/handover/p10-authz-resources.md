@@ -460,7 +460,10 @@ it here so the next cut does not have to re-measure.
   family and it is the second measurement contradicting this file's fifth
   security-header exception, which says a 409 of that shape sends none. The
   create's message is also the only refusal on the whole authorization-services
-  surface that repeats its input back.
+  surface that repeats its input back. **And the "empty body" reason this file
+  gives for the scope family's version of that split is wrong**: both 409s carry
+  a 67-byte body, so emptiness cannot be what separates them - see §1.10 of
+  `docs/superpowers/handover/p10-authz-resources.md`.
 - **Two 404s on one resource, one path segment apart, and neither is the scope
   family's.** `GET`, `PUT` and `DELETE .../resource/{unknown}` answer
   `{"error":"HTTP 404 Not Found"}` with `application/json` and **no
@@ -495,6 +498,50 @@ it here so the next cut does not have to re-measure.
   `client-scope` are in that catalogue and answer a **500**. Validating against
   the catalogue this repository already ships would refuse one working type and
   admit two that fail.
+
+### 1.10 Lines in AGENTS.md and the observed document these measurements
+contradict
+
+**AGENTS.md's fifth security-header exception is wrong, and this repository's
+own committed goldens have refuted it since the second cut.** The bullet reads:
+
+> **The fifth, corrected 2026-09-01: an empty response body sends none of the
+> five** ... `POST .../authz/resource-server/scope` with `{}` sends all five;
+> `PUT .../scope/{id}` with `{}` sends none - byte-identical bodies, identical
+> requests, one path segment apart, and the difference is that the second
+> answers with nothing in it.
+
+**The second does not answer with nothing in it.**
+`internal/conformance/testdata/golden/admin/authz-resource-server/scope-put-conflict.http`
+is a committed 409 carrying
+`{"error":"conflict","error_description":"Duplicate resource error"}` - 67
+bytes - and none of the five headers. The golden was recorded by the cut that
+wrote the sentence, and the sentence's own citation is what refutes it.
+
+This cut recorded a second, independent instance: `resource-put-conflict.http`
+is the same 67 bytes with the same header set, from a different verb-and-body
+combination on a different family, and `resource-create-conflict.http` beside it
+is a 102-byte 409 carrying **all five**. So three committed goldens now say the
+same thing.
+
+What survives is that an **empty** body sends none - every 204, every empty 404
+and the search's empty 400 on this family agree. What is refuted is that
+emptiness **explains** these two 409s, because neither of them is empty. The
+variable there is the endpoint, and the pattern across the two families is that
+a `POST`'s 409 keeps the five and a `PUT`'s drops them - which is a claim about
+the verb, and this cut has two data points for it rather than a rule.
+
+**This is the fourth time in two weeks a claim in that bullet has been refuted by
+this repository's own goldens, and the second time by the very golden the claim
+cites.** The bullet's own closing sentence - "Before writing a rule about
+headers, grep the goldens for a case that would break it" - was written in the
+same commit as the golden that breaks it.
+
+Nothing else in AGENTS.md or the observed document was contradicted. Two things
+were **confirmed** against a bigger sample rather than refuted, which is worth
+recording because both were single-measurement claims:
+`GET .../authz/resource-server`'s three empty arrays (§2) and `authzIntBound`'s
+404 for an unparseable bound, now on a sixth listing.
 
 ## 3. Follow-up dispositions
 
@@ -550,10 +597,66 @@ with each other has grown.
 by a second family, which strengthens the case for the move rather than the case
 against it. Six of this cut's nine routes reach it.
 
-## 3a. The mutation pass
+## 3a. The mutation pass, and the three survivors
 
-*(filled in below once run)*
+Twenty-four mutations, one per claim, each confirming the **named** test fails
+and each reverted. Twenty-one were killed on the first pass. The three that
+survived are below, and two of them were holes in a test rather than in the
+mutation.
+
+**Survivor 1 - a badly chosen mutation, not a hole.** Adding a `displayName`
+field to `authzInlineScope` left `TestResourceInlineScopeHasThreeShapes` green,
+because nothing fills it: the claim "a resource's inline scope drops the
+displayName" is carried by a **struct that has no such field**, and there is no
+statement to mutate. Re-run as what a careless implementer actually writes - the
+composite literal filling it from the scope - it was killed. The lesson is the
+one this project keeps meeting from the other side: a mutation that changes no
+reachable behaviour proves nothing about the test, and reading it as a survivor
+would have sent somebody looking for a hole that is not there.
+
+**Survivor 2 - a real hole, fixed on the branch.** Folding case in the listing's
+comparator left `TestResourceListingFiltersAndOrders` green. The test's three
+resources were `zulu`, `yankee` and `Xray`, and **`Xray` cannot tell a byte-wise
+sort from a case-folded one** - it leads under both. The golden's set can,
+because the fixture uses `Zebra`, which byte-wise leads and case-folded comes
+second; the package test had been written with a different capital and the
+difference is invisible until somebody mutates the comparator. The test now uses
+`Zebra` and the mutation is killed. **The conformance golden was already right**,
+so nothing shipped wrong - what was wrong is that the package test claimed to
+assert something it could not see.
+
+**Survivor 3 - a real hole, fixed on the branch.** Swapping the create's no-name
+409 writer for the update's left `TestResourceWriteRefusalsAndTheirTwo409s`
+green, because that assertion read the body and the two writers spell the same
+body. What separates them is the five security headers. The test now asserts
+`X-Frame-Options` on that 409 as well, and the mutation is killed. The golden
+`resource-create-no-name.http` had `AssertHeaders: X-Frame-Options` from the
+start, so again nothing shipped wrong and again a package test was asserting less
+than it said.
+
+Both real survivors are the same shape - **a claim about a pair asserted on the
+half the two halves agree about** - and both were invisible to every green run.
 
 ## 4. Parity, before and after
 
-*(filled in below once measured)*
+```
+Parity: 352 -> 361 of 535 (+9)
+
+chapter                         before  after  delta
+admin/authz-resource-server         13     22     +9
+```
+
+The chapter's denominator is thirty-one. Twenty-two are served after this cut -
+the resource server as a resource, the two provider catalogues, the scope
+family's eight and the resource family's nine - and nine are left: policy 4,
+permission 4, import 1.
+
+Two of the twenty-two moved without moving the total, and they are the fixes
+rather than the additions: `GET .../settings` and `GET .../scope/{id}/resources`
+were already counted as served and were already wrong in a way no golden could
+see, because nothing could create a resource to put in either of them. They are
+the reason this cut's diff touches `authz.go` and `authzscope.go` at all.
+
+Twenty-five goldens were recorded and **no existing golden moved**, on a clean
+checkout, twice - once before an id typo in seven case paths was found and once
+after.

@@ -552,6 +552,15 @@ func decodeAuthzScopeBody(w http.ResponseWriter, r *http.Request) (authzScopeBod
 // of the five, which is false in both directions - this endpoint sends them,
 // and so does the repository's own committed golden for
 // `PUT /default-default-client-scopes/{id}`.
+//
+// **The reason that exception now gives is wrong too**, corrected 2026-09-01 by
+// P10's third cut. It says the variable is an empty response body and cites
+// `PUT .../scope/{id}` as the half that "answers with nothing in it"; that 409
+// answers with 67 bytes in it, which its own golden
+// (`admin/authz-resource-server/scope-put-conflict.http`) has recorded since
+// the day the sentence was written. The resource family reproduces the same
+// split - a POST's 409 keeps the five and a PUT's drops them, both with
+// bodies - so the variable is the endpoint or the verb and not the emptiness.
 func writeAuthzScopeConflict(w http.ResponseWriter) {
 	httpx.WriteOAuthError(w, http.StatusConflict, "conflict", "Duplicate resource error")
 }
