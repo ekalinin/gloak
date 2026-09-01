@@ -172,7 +172,7 @@ func TestResourceListingFiltersAndOrders(t *testing.T) {
 	mkResource(t, h, admin, base,
 		`{"_id":"r-yank","name":"yankee","scopes":[{"name":"alpha"}]}`)
 	mkResource(t, h, admin, base,
-		`{"_id":"r-xray","name":"Xray","uris":["/one/two"]}`)
+		`{"_id":"r-zebra","name":"Zebra","uris":["/one/two"]}`)
 
 	names := func(query string) []string {
 		t.Helper()
@@ -196,38 +196,41 @@ func TestResourceListingFiltersAndOrders(t *testing.T) {
 		}
 	}
 
-	// **Sorted by name, byte-wise**: `Xray` leads because a capital sorts
-	// before every lowercase letter. A case-folded sort would put it last.
-	eq("the whole listing", names(""), []string{"Xray", "yankee", "zulu"})
+	// **Sorted by name, byte-wise**: `Zebra` leads because a capital sorts
+	// before every lowercase letter, and a case-folded sort would put it
+	// **second**. `Xray` was the first spelling here and it cannot tell the two
+	// sorts apart - it leads under both - which is exactly the hole a mutation
+	// found: folding case in the comparator left this test green.
+	eq("the whole listing", names(""), []string{"Zebra", "yankee", "zulu"})
 	eq("_id", names("?_id=r-zulu"), []string{"zulu"})
 	// name is a case-insensitive substring; exactName makes it exact.
-	eq("name substring", names("?name=RA"), []string{"Xray"})
-	eq("exactName", names("?name=Xray&exactName=true"), []string{"Xray"})
-	eq("exactName on a substring", names("?name=ra&exactName=true"), nil)
+	eq("name substring", names("?name=EB"), []string{"Zebra"})
+	eq("exactName", names("?name=Zebra&exactName=true"), []string{"Zebra"})
+	eq("exactName on a substring", names("?name=ebra&exactName=true"), nil)
 	// exactName with no name does nothing at all.
-	eq("exactName alone", names("?exactName=true"), []string{"Xray", "yankee", "zulu"})
+	eq("exactName alone", names("?exactName=true"), []string{"Zebra", "yankee", "zulu"})
 	eq("type substring, folded", names("?type=urn:tt"), []string{"zulu"})
 	eq("scope", names("?scope=ALPH"), []string{"yankee"})
-	eq("owner by clientId", names("?owner=gloak-t-res-list"), []string{"Xray", "yankee", "zulu"})
-	eq("owner by uuid", names("?owner="+uuid), []string{"Xray", "yankee", "zulu"})
+	eq("owner by clientId", names("?owner=gloak-t-res-list"), []string{"Zebra", "yankee", "zulu"})
+	eq("owner by uuid", names("?owner="+uuid), []string{"Zebra", "yankee", "zulu"})
 	// The one filter that is not a substring of anything: it does not fold
 	// case and it does not match a prefix.
 	eq("owner folded", names("?owner=GLOAK-T-RES-LIST"), nil)
 	eq("owner as a prefix", names("?owner=gloak-t-res"), nil)
-	eq("uri exact", names("?uri=/one/two"), []string{"Xray"})
+	eq("uri exact", names("?uri=/one/two"), []string{"Zebra"})
 	eq("uri as a prefix", names("?uri=/one"), nil)
 	// Either bound alone pages.
-	eq("max alone", names("?max=1"), []string{"Xray"})
+	eq("max alone", names("?max=1"), []string{"Zebra"})
 	eq("first alone", names("?first=2"), []string{"zulu"})
 	// An unknown parameter is ignored.
-	eq("an unknown parameter", names("?zzz=1"), []string{"Xray", "yankee", "zulu"})
+	eq("an unknown parameter", names("?zzz=1"), []string{"Zebra", "yankee", "zulu"})
 
 	// The export serves the same rows in **creation order**.
 	settings := get(t, h,
 		"/admin/realms/master/clients/"+uuid+"/authz/resource-server/settings", admin).Body.String()
 	zulu, yankee := strings.Index(settings, `"name":"zulu"`), strings.Index(settings, `"name":"yankee"`)
-	xray := strings.Index(settings, `"name":"Xray"`)
-	if !(zulu < yankee && yankee < xray) {
+	zebra := strings.Index(settings, `"name":"Zebra"`)
+	if !(zulu < yankee && yankee < zebra) {
 		t.Errorf("the export is not in creation order: %s", settings)
 	}
 }
@@ -357,10 +360,15 @@ func TestResourceWriteRefusalsAndTheirTwo409s(t *testing.T) {
 		t.Error("the update's 409 kept the security headers")
 	}
 
-	// A body with no name: 409 on the create, 500 on the update.
+	// A body with no name: 409 on the create, 500 on the update. **The
+	// create's carries the five security headers too**, which is what says
+	// this 409 and the update's differ in the headers as well as the body -
+	// asserting the body alone left a mutation swapping the two writers
+	// alive, because both spell `Duplicate resource error`.
 	if w := send(t, h, http.MethodPost, base, admin, `{}`); w.Code != http.StatusConflict ||
-		!strings.Contains(w.Body.String(), "Duplicate resource error") {
-		t.Errorf("the create with no name: %d %s", w.Code, w.Body)
+		!strings.Contains(w.Body.String(), "Duplicate resource error") ||
+		w.Header().Get("X-Frame-Options") == "" {
+		t.Errorf("the create with no name: %d %s %v", w.Code, w.Body, w.Header())
 	}
 	if w := send(t, h, http.MethodPut, base+"/other", admin, `{}`); w.Code != http.StatusInternalServerError {
 		t.Errorf("the update with no name: %d %s", w.Code, w.Body)
