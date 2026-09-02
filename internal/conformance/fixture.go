@@ -576,7 +576,22 @@ var Fixtures = map[string]Fixture{
 	// It is realmFixture unchanged. The whole of "a second realm in the
 	// harness" was already here; what F142 was missing was cases addressing
 	// one on the protocol side.
-	"second-realm": realmFixture("gloak-probe-second"),
+	"second-realm": realmFixture(secondRealmName),
+
+	// The two second-realm cases that need a client **inside** that realm,
+	// which is what kept them out of the cut that built the flag. They create
+	// the same realm as the fixture above rather than one each: it is a
+	// read-only realm for all three, the create is idempotent, and one extra
+	// realm on the shared container is one extra admin container inside every
+	// realm-wide body master serves - which is exactly what moved
+	// oidc/introspection/active-refresh-token last time.
+	//
+	// Each still creates the realm itself, because
+	// TestSecondRealmCasesAddressARealmTheyCreate requires the case's **own**
+	// fixture to be the creator: the verifier runs that fixture and nothing
+	// else, so a realm another fixture made would not be there.
+	"second-realm-device":  secondRealmDeviceFixture(),
+	"second-realm-browser": secondRealmBrowserFixture(),
 
 	// P4's second cut. The default groups and the read by path live in a realm
 	// of their own rather than in master, so master's own group goldens - which
@@ -5241,6 +5256,62 @@ func authzResourcePutFixture(clientID, group string) Fixture {
 		},
 	})
 	return f
+}
+
+// secondRealmName is the realm every protocol-side second-realm case addresses.
+//
+// One name for all of them, because the realm is read-only to every one and
+// because a realm is not free: the bootstrapped administrator holds
+// create-realm, so each realm a fixture creates adds a `<realm>-realm` admin
+// container to every realm-wide body master serves. That is what moved
+// oidc/introspection/active-refresh-token when this family arrived.
+const secondRealmName = "gloak-probe-second"
+
+// secondRealmDeviceFixture is the second realm with a device-grant client in
+// it, for the device authorization request - site 15 of the derivation table,
+// and one of the three measured survivors.
+//
+// The client body is deviceClientFixture's, unchanged: what a second realm
+// changes is the path it is created at, not what a device client is.
+func secondRealmDeviceFixture() Fixture {
+	f := realmFixture(secondRealmName)
+	f.Steps = append(f.Steps, clientInRealmStep(secondRealmName,
+		deviceClientBody("gloak-probe-second-device", "")))
+	return f
+}
+
+// secondRealmBrowserFixture is the second realm with a browser client in it,
+// for /auth's error redirect - site 19, and the third survivor.
+//
+// It registers browserRedirectURI, exactly as the master browser fixtures do.
+// That constant's own doc comment says why a client has to be registered at all
+// rather than a bootstrapped one named: none of the six can serve these cases,
+// and in a created realm the six are the same six.
+func secondRealmBrowserFixture() Fixture {
+	f := realmFixture(secondRealmName)
+	f.Steps = append(f.Steps, clientInRealmStep(secondRealmName,
+		browserClientBody("gloak-probe-second-browser", "")))
+	return f
+}
+
+// clientInRealmStep creates a client in a realm the fixture has just made,
+// with the **master** administrator's token - which is measured to work on the
+// Admin API and measured *not* to work on the protocol side's registration
+// endpoint. See TestRegistrationURINamesTheRequestsRealm.
+//
+// The create is idempotent for browserClientSteps' reason: the recorder shares
+// one container and a fixture named by more than one case runs its steps once
+// per case.
+func clientInRealmStep(realm, body string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/" + realm + "/clients",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(body),
+		},
+		ExpectStatus: idempotentCreate,
+	}
 }
 
 // authzScopeResourcesFixture builds the set GET .../scope/{id}/resources needs:

@@ -539,4 +539,105 @@ var oidcCore = []Case{
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},
+
+	// --- The three sites the cut before this one measured and left open ---
+	//
+	// Sites 14, 15 and 19 of the derivation table in
+	// docs/superpowers/handover/harness-second-realm.md §1.2. Three of them
+	// were **measured survivors**: hard-coding master into registrationURI,
+	// into the device grant's verification_uri and into /auth's error-redirect
+	// iss left `go test ./internal/conformance ./internal/oidc
+	// ./internal/httpx` green, all three at once, on 2026-09-01.
+	//
+	// Two of the three are closed here **and** in internal/oidc's
+	// crossrealm_test.go, per site. The third, registrationURI, has no case:
+	// measured 2026-09-02 with a control, a second realm's registration
+	// endpoint refuses master's own administrator with the same
+	// `401 invalid_token / Failed decode token` a garbage bearer gets, and the
+	// two credentials that do open it are an initial access token - an Admin
+	// API route Gloak does not serve - and a registration access token, which
+	// needs a client that is already registered. That site is a package test
+	// and its comment says so.
+	//
+	// oidc/certs/second-realm is deliberately **not** here. Every value in that
+	// response is masked, so it would pin nothing realm-derived and would be
+	// the harness equivalent of a mask that changes nothing.
+	{
+		ID: "oidc/device/second-realm-verification-page",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Device authorization grant: the verification page",
+			Retrieved: "2026-09-02",
+		},
+		Status:      Implemented,
+		SecondRealm: true,
+		Fixture:     "second-realm",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/" + secondRealmName + "/device",
+		},
+		// The form's action is `/realms/<realm>/device`, relative and not the
+		// path the request arrived on - and on master those are three spellings
+		// of one string, which is why the sentence above serveDeviceCodePage
+		// claimed the opposite for a month without any test disagreeing.
+		//
+		// The page carries the chrome too, so this golden pins the title and
+		// the brand a second time. That is not redundant with the error page
+		// beside it: they are two body templates sharing one head.
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "Content-Language"},
+	},
+	{
+		ID: "oidc/device/second-realm-authorization-request",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Device authorization endpoint",
+			Retrieved: "2026-09-02",
+		},
+		Status:      Implemented,
+		SecondRealm: true,
+		Fixture:     "second-realm-device",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/" + secondRealmName + "/protocol/openid-connect/auth/device",
+			Form: map[string]string{
+				"client_id": "gloak-probe-second-device",
+				"scope":     "openid",
+			},
+		},
+		AssertHeaders:       []string{"Content-Type", "Cache-Control"},
+		AssertAbsentHeaders: []string{"Pragma"},
+		// The master sibling's three masks, and verification_uri deliberately
+		// left out of them: it is the value this case exists for.
+		// verification_uri_complete is masked because it carries the user code,
+		// and the two URLs come from one expression, so the unmasked one is
+		// what asserts both.
+		Volatile: []string{"device_code", "user_code", "verification_uri_complete"},
+	},
+	{
+		ID: "oidc/authorization/second-realm-error-redirect",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authorization endpoint: request validation",
+			Retrieved: "2026-09-02",
+		},
+		Status:      Implemented,
+		SecondRealm: true,
+		Fixture:     "second-realm-browser",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/" + secondRealmName + "/protocol/openid-connect/auth",
+			Query: map[string]string{
+				"client_id":    "gloak-probe-second-browser",
+				"redirect_uri": browserRedirectURI,
+				"scope":        "openid",
+				"state":        "xyz123",
+			},
+		},
+		// The iss is the only one of the four query keys a second realm can
+		// tell apart - error, error_description and state are the same bytes
+		// whatever realm asked - and ReplaceIssuer rewrites the base URL and
+		// not the realm segment, so it stays asserted whole.
+		AssertHeaders:       []string{"Location", "Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
+	},
 }
