@@ -1,0 +1,1 @@
+{"name":"StackOverflow","id":"stackoverflow","configProperties":[{"name":"key","label":"Key","helpText":"The Key obtained from Stack Overflow client registration.","type":"String","secret":false,"required":false,"readOnly":false}],"helpText":"","configMetadata":[]}

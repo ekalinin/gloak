@@ -2,7 +2,6 @@ package admin
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -75,13 +74,13 @@ func (c componentConfig) MarshalJSON() ([]byte, error) {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		key, err := json.Marshal(entry.Name)
+		key, err := marshalOrderedValue(entry.Name)
 		if err != nil {
 			return nil, err
 		}
 		b.Write(key)
 		b.WriteByte(':')
-		values, err := json.Marshal(entry.Values)
+		values, err := marshalOrderedValue(entry.Values)
 		if err != nil {
 			return nil, err
 		}
