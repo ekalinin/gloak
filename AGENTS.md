@@ -131,22 +131,36 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `WithKeycloakFallbacks`, so nothing was changed on the strength of it; the
   same sweep also found that **`/auth` is the only one of the four whose
   `OPTIONS` carries an `Allow` header**. See F31.
-  **The fifth, corrected 2026-09-01: an empty response body sends none of the
-  five** - not "a 409", which is what this bullet said for a day and which the
-  repository's own goldens had already refuted.
-  `admin/realms-admin/default-default-client-scope-duplicate.http` is a
-  committed 409 `Duplicate resource error` carrying **all five**, and it has
-  been since P5. `POST .../authz/resource-server/scope` with `{}` sends all
-  five; `PUT .../scope/{id}` with `{}` sends none - byte-identical bodies,
-  identical requests, one path segment apart, and the difference is that the
-  second answers with nothing in it.
-  So the exceptions are decided by the path, the endpoint, the request's
-  `Content-Type`, the method and the response's emptiness - five rules, no two
-  alike, and a sixth is likelier than a unifying one.
-  **This is the third time in a week a claim here was refuted by this
-  repository's own committed goldens**, and the second time the claim was folded
-  in from a cut that had measured one case and generalised it. Before writing a
-  rule about headers, grep the goldens for a case that would break it.
+  **The fifth is not explained, and saying so is the correction of 2026-09-01.**
+  Two committed goldens one path segment apart settle what it is *not*:
+
+  ```
+  scope-create-conflict   POST  Content-Type: application/json  409  67 bytes  five of five
+  scope-put-conflict      PUT   Content-Type: application/json  409  67 bytes  none of five
+  ```
+
+  Same request `Content-Type`, same status, same body length, same family.
+  So the variable is not the status, not the body, and not the request's
+  `Content-Type` - which is exception three and covers five of the six scope
+  goldens on its own. `resource-put-conflict` and `resource-create-conflict`
+  reproduce the split on a second family, so three committed goldens now say it.
+  What **is** true, and is all that is: an empty body sends none of the five -
+  every 204 that omits them, every empty 404 and the resource search's empty 400
+  agree. The two 409s are 67 bytes each, so emptiness cannot be what separates
+  *them*. Across the two families a `POST`'s 409 keeps the five and a `PUT`'s
+  drops them; that is **two data points, not a rule**, and it is written here as
+  a lead rather than as an explanation.
+  So four exceptions are decided by the path, the endpoint, the request's
+  `Content-Type` and the method; the fifth is a measured split nobody has
+  explained, and a sixth is likelier than a unifying one.
+  **This bullet has now been wrong four times, twice refuted by the very golden
+  it cited.** It said "a 409" for a day; then "an empty response body", folded in
+  from a cut that had measured one case and generalised it, while
+  `scope-put-conflict.http` - recorded by that same cut, in that same commit -
+  held the 67 bytes that refute it. Its own closing advice was written in the
+  commit that broke it. **Before writing a rule about headers, grep the goldens
+  for a case that would break it**, and prefer "not explained" to a fifth
+  explanation.
 - **That rule was wrong once already.** P2's Task 11 recorded it as "a
   successful `DELETE`'s 204 omits it", from four deletes that all happened to
   send no `Content-Type`. When a new 204 disagrees with a header rule, measure
@@ -1418,6 +1432,95 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   on every request - so that half **cannot be `Recorded`**, whatever else is
   true of it.
 
+- **Two Java collections on one body chain in opposite directions.** A
+  resource's `uris` is a `HashSet<String>` and its `attributes` a
+  `HashMap<String,List<String>>`, and when their keys share a bucket the uris
+  chain in **request** order and the attributes in **reverse** request order.
+  Measured with six keys that all hash to bucket 0 - a two-letter string of one
+  repeated character has a `hashCode` that is a multiple of 32 - so the bucket
+  order says nothing and the chain says everything, and the two fields sit one
+  key apart on the same request. `javamap.KeyOrder` sorts before bucketing and
+  is therefore exact on any collision-free key set and wrong on both chains;
+  both goldens and both package tests use collision-free sets, which is the
+  protocol mappers' sidestep applied twice. A resource's `scopes` is a third
+  set, keyed on the scope's **name**, and its colliding chain is reproducible
+  from nothing on the wire: `aa, bb, zz` came back unchanged and `zz, bb, aa`
+  came back `bb, aa, zz`, which is neither direction.
+- **One scope has five serialisations and the route decides.**
+  `{id, name, iconUri, displayName}` from the scope family's own reads;
+  `{id, name, iconUri}` inline in a resource; `{id, name}` from
+  `GET .../resource/{id}/scopes`; `{name}` inline in a resource in the settings
+  export; and `{name, iconUri, displayName}` from the export's own `scopes`
+  array. Measured on one scope carrying an iconUri and a displayName and
+  confirmed on a second carrying only a displayName, so the missing keys are
+  dropped rather than merely empty. A sixth body on the same surface,
+  `GET .../scope/{id}/resources`, serves `{"name":..., "_id":...}` - **the only
+  response in this API measured putting a name ahead of an id**.
+- **`_id` is the resource's wire name and `id` is refused.** Every other create
+  in this API takes `id`; this one answers `Unrecognized field "id"` for it, and
+  the same body spells the icon `icon_uri` where the scope family one path
+  segment away spells it `iconUri` - and where a resource's own inline copy of a
+  scope spells it `iconUri` too. Two spellings of one concept inside one
+  response.
+- **A resource `PUT` replaces everything except `attributes`.** A body naming
+  only the name cleared the type, the displayName, the icon_uri, the uris, the
+  scopes and `ownerManagedAccess`, and left the attributes untouched;
+  `{"attributes":{}}` cleared them, so the exception is about **absence** and not
+  about the field. That is the third variation of "`PUT` replaces / `PUT` merges
+  - except for one field", and the first pointing this way: the verb replaces
+  and one field merges. The other two are a role's `PUT`, which replaces
+  outright, and a client's, whose one exception is `authorizationServicesEnabled`.
+- **Two 404s on one resource, one path segment apart, and neither is the scope
+  family's.** `GET`, `PUT` and `DELETE .../resource/{unknown}` answer
+  `{"error":"HTTP 404 Not Found"}` with `application/json` and **no
+  `Cache-Control`**; `.../resource/{unknown}/attributes`, `/permissions` and
+  `/scopes` answer an **empty body with `Cache-Control: no-cache`**. The scope
+  family's single read answers its own missing scope the second way, so the two
+  families invert each other and the resource family inverts itself. The JSON one
+  is a **fifth producer** of the generic 404 body, after an unmatched path, a
+  wrong verb, a switched-off resource and an unparseable integer bound - and the
+  first that is an ordinary missing row.
+- **`POST` and `PUT` on one resource disagree about a body that is not there.**
+  An empty request body and a literal `null` are a **400 with an empty body** on
+  the create and a **500 `unknown_error`** on the update. The scope family
+  answers the create's bytes with the update's status, so three writes on one
+  resource server give two answers split along no line either family shares.
+- **A resource create is an upsert on `_id` and a scope create is an upsert on
+  the name.** Two resource creates naming one `_id` leave one row holding the
+  second body; two naming one **name** are a 409. On the scope family it is the
+  other way round. Reusing either family's upsert helper is wrong in both
+  directions at once.
+- **A `type` is what a policy and a permission need, and the accepted set is not
+  the provider catalogue.** `POST .../policy` and `POST .../permission` answer a
+  body with no `type` with `409 Duplicate resource error`, and accept
+  `regex role resource scope client time group aggregate uma` - nine. `uma` is
+  accepted and is **absent** from `GET .../policy/providers`; `user` and
+  `client-scope` are in that catalogue and answer a **500**. Validating against
+  the catalogue this repository already ships would refuse one working type and
+  admit two that fail.
+- **`GET .../authz/resource-server`'s three arrays really are always empty.** The
+  first cut measured it against a resource server holding four scopes; it was
+  re-measured against one holding seven resources and thirty-three policies and
+  still answered `"resources":[],"policies":[],"scopes":[]`, while the settings
+  export beside it populates all three. This is the one claim in the family that
+  a bigger sample **confirmed** rather than refuted, which is worth recording
+  because most single-measurement claims here have not survived one.
+- **A theme page names the realm three times and only one of them is the restart
+  URL.** The `<title>` is `Sign in to <displayName>` and the header brand is
+  `<displayNameHtml>`, and a realm created through `POST /admin/realms` has
+  neither - so Keycloak falls back to the realm **name** in both, and the
+  `<div class="kc-logo-text"><span>` wrapper that `displayNameHtml` carries
+  disappears with it rather than wrapping the name. Master's two values are
+  `Keycloak` and that wrapper, which is why serving them as constants looks
+  right: it is right on the one realm every conformance case used to address.
+- **A refresh token's introspection body enumerates a realm-wide set.** `aud` and
+  `resource_access` name every admin container the subject holds roles on, and
+  the bootstrapped administrator holds `create-realm`, so **every realm any
+  fixture creates adds a key**. `oidc/introspection/active-refresh-token` was
+  clean for a month only because every realm-creating fixture happened to live in
+  `adminCases` and run after it; ordering cannot carry that, and the case carries
+  `PristineRealm` now.
+
 ## Boundaries
 
 | Package | Owns | Must not |
@@ -1545,6 +1648,31 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
   them on one handler produced 22 failures, nine in the pollution pass itself,
   and none of them order-dependence. The flag stays a declaration and the sweep
   that checks it is a person reading the catalogue. See F53.
+- **The catalogue could not tell a realm-derived value from the literal
+  `master`, and the fix was cases rather than machinery.** Sixty goldens carry
+  the realm name of their request in the response and **fifty-eight address
+  master**, so a handler answering with the literal compared equal to one
+  deriving it. Found by a mutation that hard-coded `master` into the theme
+  page's restart URL and passed all 352 served cases. What F142 costed as
+  "a second realm in the harness" was **already built**: `realmFixture` has
+  created realms through `POST /admin/realms` since P4 and sixty-six cases
+  address one - the blind spot was that all sixty-six were on the Admin API, and
+  `internal/oidc`'s own tests build nothing but `bootstrap.EnsureMaster`.
+  `Case.SecondRealm` marks a case that re-measures a covered behaviour against
+  another realm and is kept **out of the parity denominator**, because a
+  protocol chapter counts cases and counting a re-measurement would report
+  diligence as coverage. It follows F53 rather than overturning it - it is a
+  declaration, not a derivation, since `oidc/discovery/unknown-realm` addresses
+  `nosuchrealm` and *is* a distinct behaviour that belongs in the denominator -
+  but unlike `PristineRealm` both halves are checked, so the declaration can
+  fail: the realm must be one the case's own fixture creates, and the golden's
+  response must carry that name and never `master`. A second-realm case whose
+  golden pins nothing realm-derived is the harness equivalent of a mask that
+  changes nothing. **Twenty derivation sites exist, eighteen were master-only,
+  four are pinned now, and three of the rest are measured survivors** -
+  `registrationURI`, the device grant's `verification_uri` and `/auth`'s
+  error-redirect `iss` each take a hard-coded `master` with the whole tree
+  green. See F142.
 - **`make record` leaves a `Pending` golden exactly as it found it.**
   `TestConformance` skips a Pending case whether or not a golden exists, so
   nothing compares one, and rewriting it can only add noise to the diff this
