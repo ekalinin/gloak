@@ -221,20 +221,39 @@ func TestPolicyCreateIsTheRequestEchoed(t *testing.T) {
 		t.Errorf("the create sent a Location: %q", loc)
 	}
 
-	// And the read serves neither owner nor resourceType, and the role-shaped
-	// half of the same claim: a `role` create with no config answers `{}` and
-	// its read answers `{"roles":"[]"}`.
+	// And the read serves neither owner nor resourceType.
 	read := strings.TrimSpace(get(t, h, base+"/search?name=e1", admin).Body.String())
 	if strings.Contains(read, "owner") || strings.Contains(read, "resourceType") {
 		t.Errorf("the read served owner or resourceType: %s", read)
 	}
-	created := send(t, h, http.MethodPost, base, admin, `{"name":"e2","type":"role"}`)
-	if !strings.Contains(created.Body.String(), `"config":{}`) {
+
+	// The role-shaped half of the same claim, and it needs a **role** create
+	// **carrying a config**. A body with no config echoes `{}` whichever
+	// source the echo reads, and a `uma` body's stored config equals its
+	// request's - so neither can tell the two sources apart. This one can: the
+	// request says two keys, the 201 says the same two, and the read says
+	// three, because the role provider's key is written after the response
+	// representation is built.
+	//
+	// `aa` and `bb` rather than a single `zz`, and that is the protocol
+	// mappers' sidestep: `{roles, zzz}` is a key set `javamap.SizedKeyOrder`
+	// places **wrongly** - the server answers `[roles, zzz]` from both request
+	// orders and the model answers the request's - so a test built on it would
+	// be asserting a known divergence. `{aa, bb, roles}` is measured and is
+	// placed exactly.
+	created := send(t, h, http.MethodPost, base, admin,
+		`{"name":"e2","type":"role","config":{"aa":"1","bb":"2"}}`)
+	if !strings.Contains(created.Body.String(), `"config":{"aa":"1","bb":"2"}}`) {
 		t.Errorf("a role create's own 201 already had the provider's key: %s", created.Body)
 	}
 	back := get(t, h, base+"/search?name=e2", admin).Body.String()
-	if !strings.Contains(back, `"config":{"roles":"[]"}`) {
+	if !strings.Contains(back, `"config":{"aa":"1","bb":"2","roles":"[]"}`) {
 		t.Errorf("the role provider's key was not added: %s", back)
+	}
+	// And the same with no config at all, which is where `{}` comes from.
+	created = send(t, h, http.MethodPost, base, admin, `{"name":"e3","type":"role"}`)
+	if !strings.Contains(created.Body.String(), `"config":{}`) {
+		t.Errorf("a bare role create's 201: %s", created.Body)
 	}
 }
 
@@ -385,17 +404,21 @@ func TestPolicyListingFiltersAndOrders(t *testing.T) {
 	admin := tokenFor(t, h, "admin", "admin")
 	uuid := createAuthzClient(t, h, admin, "gloak-t-pol-list")
 	base := authzPolicyPath(uuid)
-	scopeID := mkScope(t, h, admin, authzScopePath(uuid), `{"id":"lsc","name":"lsc"}`)
-	resID := mkResource(t, h, admin, authzResourcePath(uuid), `{"_id":"lres","name":"lres"}`)
+	// **The id and the name have to differ**, or `?resource=` and `?scope=`
+	// cannot tell a name match from an id match and a comparator that dropped
+	// half of each would pass. The third cut lost a mutation to exactly this
+	// shape on the resource listing's sort.
+	scopeID := mkScope(t, h, admin, authzScopePath(uuid), `{"id":"lsc-id","name":"lsc-name"}`)
+	resID := mkResource(t, h, admin, authzResourcePath(uuid), `{"_id":"lres-id","name":"lres-name"}`)
 
 	mkPolicy(t, h, admin, base, `{"id":"p1","name":"zulu","type":"role"}`)
 	mkPolicy(t, h, admin, base, `{"id":"p2","name":"yankee","type":"resource",`+
-		`"resources":["lres"],"config":{"defaultResourceType":"urn:tt"}}`)
+		`"resources":["lres-name"],"config":{"defaultResourceType":"urn:tt"}}`)
 	mkPolicy(t, h, admin, base, `{"id":"p3","name":"xray","type":"time"}`)
 	// **Zebra is what makes the sort an assertion**: it leads a byte-wise sort
 	// and comes third under a case-folded one. The third cut lost a mutation to
 	// a set that could not tell those apart.
-	mkPolicy(t, h, admin, base, `{"id":"p4","name":"Zebra","type":"uma","scopes":["lsc"]}`)
+	mkPolicy(t, h, admin, base, `{"id":"p4","name":"Zebra","type":"uma","scopes":["lsc-name"]}`)
 
 	names := func(query string) []string {
 		t.Helper()
@@ -430,9 +453,9 @@ func TestPolicyListingFiltersAndOrders(t *testing.T) {
 	eq("type=e spans the types holding an e", names("?type=e"),
 		[]string{"xray", "yankee", "zulu"})
 	eq("policyId is exact", names("?policyId=p3"), []string{"xray"})
-	eq("resource by name", names("?resource=lres"), []string{"yankee"})
+	eq("resource by name", names("?resource=lres-name"), []string{"yankee"})
 	eq("resource by id", names("?resource="+resID), []string{"yankee"})
-	eq("scope by name", names("?scope=lsc"), []string{"Zebra"})
+	eq("scope by name", names("?scope=lsc-name"), []string{"Zebra"})
 	eq("scope by id", names("?scope="+scopeID), []string{"Zebra"})
 	// **resourceType is the one filter that does not fold case.**
 	eq("resourceType exact", names("?resourceType=urn:tt"), []string{"yankee"})
@@ -462,6 +485,14 @@ func TestPolicyAndPermissionAreOneListingWithTwoViews(t *testing.T) {
 	mkPolicy(t, h, admin, base, `{"id":"v2","name":"bres","type":"resource",`+
 		`"config":{"defaultResourceType":"urn:v"}}`)
 
+	// **The bare listing returns both families**, which is the state a two-way
+	// predicate gets wrong and which every other assertion here is blind to:
+	// `?permission=true`, `?permission=false` and the `/permission` path all
+	// name a half, so only this request can see the whole.
+	both := strings.TrimSpace(get(t, h, base, admin).Body.String())
+	if !strings.Contains(both, "arole") || !strings.Contains(both, "bres") {
+		t.Errorf("the bare listing dropped a family: %s", both)
+	}
 	filtered := strings.TrimSpace(get(t, h, base+"?permission=true", admin).Body.String())
 	typed := strings.TrimSpace(get(t, h, perm, admin).Body.String())
 	if want := `[{"id":"v2","name":"bres","type":"resource","logic":"POSITIVE",` +
