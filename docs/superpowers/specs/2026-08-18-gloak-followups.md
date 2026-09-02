@@ -3824,9 +3824,19 @@ unknown value gets.
 ## F129: the other twenty-six authorization-services operations (partly closed)
 
 **Eight landed 2026-08-31** - the whole scope family. **Nine more landed
-2026-09-01** - the whole resource family. **Nine remain: policy 4, permission 4,
-import 1**, and §1.9 of `docs/superpowers/handover/p10-authz-resources.md`
-carries their measurements, so the fourth cut starts from those.
+2026-09-01** - the whole resource family. **Seven more landed 2026-09-02** -
+policy, permission and import, taking the chapter to **29 of 31**.
+
+**Two remain and they are F148**, not this entry: the two `evaluate` operations
+need an RPT, which lives in `internal/token`.
+
+§1.9 of `docs/superpowers/handover/p10-authz-resources.md` was the fourth cut's
+starting point and **two of its statements were wrong** - it recorded the policy
+listing's `type` filter as exact where it is a case-insensitive substring
+(`?type=gg` finds `aggregate`), and it recorded `type` as the create's only gate
+where a **name** is needed too. Both were caught by measuring rather than
+inheriting, which is the check the brief asked for and which paid twice on one
+document this project wrote itself.
 
 **Three of this entry's own statements were wrong, and the briefs written from it
 inherited them.** Corrected by measurement:
@@ -4027,12 +4037,17 @@ challenge, each by an `Implemented` second-realm case. The theme page is
 follow the realm, that case starts matching and `TestConformance` demands
 promotion. That is the alarm working.
 
-**Still open:** the seven admin `Location` sites, the `access` block, the device
-page's form action, and the three **measured survivors** - `registrationURI`,
-the device grant's `verification_uri` and `/auth`'s error-redirect `iss` all take
-a hard-coded `master` with `./internal/conformance ./internal/oidc
-./internal/httpx` green. §5.1 of that handover names the package tests, per
-package and per claim.
+**Closed 2026-09-02, the protocol half:** the theme chrome, the device
+verification page's form action, the device grant's `verification_uri`,
+`registrationURI` and `/auth`'s error-redirect `iss`. **No measured survivor
+remains.** The theme case was promoted from `Recorded` to `Implemented` when the
+divergence behind it was fixed, which is the alarm this entry describes working
+end to end.
+
+**Still open, and all of it is in `internal/admin`:** the seven create `Location`
+sites and the `access` block. §5.1 of
+`docs/superpowers/handover/harness-second-realm.md` describes them as **one
+table** in `crossrealm_test.go`, which already builds a second realm.
 
 The general form is right and stays: any value a handler derives from the realm
 name is unpinned unless a second-realm case or a package test says otherwise.
@@ -4107,32 +4122,105 @@ Whether it follows the realm's locale has never been asked.
 
 ## F147: the fifth security-header exception is a measured split nobody has explained
 
-AGENTS.md's header bullet has now been wrong **four times**, and twice it was
-refuted by the very golden it cited. The current text says so rather than
-offering a fifth explanation, and this entry is the probe that would end it.
+AGENTS.md's header bullet has now been wrong **five times**, twice refuted by the
+very golden it cited. The current text says so rather than offering a sixth
+explanation, and this entry records what has been ruled out so that nobody
+re-derives a refuted lead.
 
-What three committed goldens establish, without a container:
+**Fifteen committed goldens answer the byte-identical 67-byte
+`Duplicate resource error` body.** Counted from that list:
 
 ```
-scope-create-conflict     POST  application/json  409  67 bytes   five of five
-scope-put-conflict        PUT   application/json  409  67 bytes   none of five
-resource-create-conflict  POST  application/json  409  102 bytes  five of five
-resource-put-conflict     PUT   application/json  409  67 bytes   none of five
+POST  seven send none of the five, three send all five
+PUT   four send none, one sends all five
 ```
 
-Same request `Content-Type`, same status, same family, one path segment apart.
-So the variable is not the status, not the body, not the body's length and not
-the request's `Content-Type` - which is exception three and explains five of the
-six scope goldens on its own. Emptiness explains the empty answers (every 204
-that omits the headers, every empty 404, the resource search's empty 400) and
-cannot explain these, because none of them is empty.
+Ruled out, each by evidence already in this repository: the status, the body,
+the body's length, emptiness (none of the fifteen is empty), the request's
+`Content-Type` - varied over four spellings on one of them without moving it -
+and **the verb**, which was this entry's own lead when it was filed on
+2026-09-01. Two `PUT`s disagree: `default-default-client-scopes/{id}` sends five
+of five and `roles/{name}` sends none.
 
-Across two families a `POST`'s 409 keeps the five and a `PUT`'s drops them. That
-is **two families' worth of data points, not a rule**, and the obvious next step
-is the one nobody has taken: send the same duplicate-name conflict through a
-third family's `POST` and `PUT`, and send a `PUT` that answers 409 on a family
-whose `POST` also answers 409 for a *different* reason. If the verb is the
-variable, both hold; if the endpoint is, they come apart.
+**"The endpoint decides" does not survive either**, and this is the sharpest
+pair:
 
-Until somebody sends those, "not explained" is the honest entry, and it is
-cheaper than the fourth wrong explanation.
+```
+admin/protocol-mappers/add-models-duplicate-id-same-container    POST  five of five
+admin/protocol-mappers/add-models-duplicate-id-other-container   POST  none of five
+```
+
+Same route, same verb, same `Content-Type`, same 67 bytes. They differ only in
+which internal failure produced the 409 - a duplicate mapper id **inside one
+container** against **across two**.
+
+So the header set follows whatever produced the response, and **nothing about the
+request or the response distinguishes the two**. Reproducing it means matching
+Keycloak's exception path rather than any observable, which is why Gloak pins
+these per golden and states no rule.
+
+What would settle it is not another probe on the wire. It is reading which
+Keycloak exception each of the fifteen throws and which of them reaches the
+filter that adds the headers. Until somebody does that, **"not explained" is the
+entry**, and it is cheaper than the sixth wrong explanation.
+
+## F148: the two `evaluate` operations need an RPT, which lives in `internal/token`
+
+`POST .../policy/evaluate` and `POST .../permission/evaluate` are the last two
+of `admin/authz-resource-server`'s 31. Their 200 runs the authorization engine
+and mints an **RPT** - an access token's claim set - and `internal/token` owns
+that. Duplicating it inside `internal/admin` is the second truth the boundary
+table exists to prevent, so the cut that closes the chapter is the one that
+decides where the RPT is built.
+
+Both are in the catalogue as `Recorded` with a `Reason`, and §1.9 of
+`docs/superpowers/handover/p10-authz-policies.md` measures them in full.
+
+## F149: `requireJSONBody` accepts an absent `Content-Type` and Keycloak answers 415
+
+Measured on **nine endpoints across four chapters**. Gloak accepts a write whose
+request carries no `Content-Type`; Keycloak answers `415`.
+
+It is one line and its blast radius is the whole API, which is exactly why it is
+filed rather than fixed in a family cut: **no golden covers it**, so the change
+would be unmeasured everywhere it lands. It wants its own branch, a sweep that
+establishes which writes answer 415 and which do not, and goldens for the ones
+that move.
+
+## F150: `javamap.SizedKeyOrder` is wrong on one measured key set
+
+`{roles, zzz}` comes back `[roles, zzz]` from **both** request orders on the
+server, and the model answers whichever order it was handed - the two keys share
+a bucket at both table sizes, so the model preserves an insertion order the
+server does not.
+
+A vector rather than a contradiction of anything written down, and it is real:
+the package's own tests cannot see it because no existing vector collides that
+way. §1.11 of `docs/superpowers/handover/p10-authz-policies.md` has the bytes.
+
+## F151: a mask ratchet cost a case rather than saving one
+
+`oidc/device/second-realm-authorization-request` was written, fixtured, recorded
+and then **withdrawn**. Masking `verification_uri_complete` is the exact mask
+`prefixMasksLeftInPlace` already records as too wide on the master sibling, and
+that list lives in `catalog_test.go`, which the cut was not allowed to touch.
+
+This is the first time a mask ratchet has cost this project a case rather than
+saved it, and it is worth knowing before somebody loosens the ratchet in
+frustration: the ratchet was right, and the case is one body-side `VolatileTail`
+away. See F107.
+
+The site it would have covered - the device grant's `verification_uri` - is
+closed by a package test instead, so nothing is unpinned. What is lost is the
+golden.
+
+## F152: a second realm refuses master's own administrator at the registration endpoint
+
+Measured with a control on 2026-09-02: `POST /realms/{other}/clients-registrations/`
+`openid-connect` with master's bootstrapped administrator's token answers
+`401 Failed decode token` - the same answer a garbage bearer gets.
+
+Gloak has a branch that lets it through. Recorded as a divergence rather than
+changed, because the measurement was taken while closing F142 and a token-scope
+change is not a realm-values cut's to make. It is also why F142's site 17 is
+closed by a package test and carries no golden.

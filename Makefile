@@ -39,8 +39,14 @@ conformance:
 # record rewrites the expected values in internal/conformance/testdata/golden
 # from a live Keycloak 26.7.1. It needs Docker. Read the diff before committing:
 # an unreviewed re-record pins a regression as the new contract.
+# -timeout 40m, because recording is the one target that legitimately runs long:
+# it starts containers, waits for them and replays the whole catalogue against
+# them. Go's default is 10 minutes per package, and on 2026-09-02 a 510-second
+# run was killed at 600 with three containers still alive, leaving a stack trace
+# and no recording. A killed record is worse than a slow one - it leaves the
+# goldens half-written and the containers behind.
 record:
-	CGO_ENABLED=0 go test -tags docker ./internal/conformance/ -run TestRecordGoldens -v -count=1
+	CGO_ENABLED=0 go test -timeout 40m -tags docker ./internal/conformance/ -run TestRecordGoldens -v -count=1
 
 # oracle drives Gloak with kcadm.sh, the admin CLI that ships inside the
 # Keycloak image, so a real client exercises fields no golden covers. It needs

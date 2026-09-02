@@ -131,36 +131,41 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `WithKeycloakFallbacks`, so nothing was changed on the strength of it; the
   same sweep also found that **`/auth` is the only one of the four whose
   `OPTIONS` carries an `Allow` header**. See F31.
-  **The fifth is not explained, and saying so is the correction of 2026-09-01.**
-  Two committed goldens one path segment apart settle what it is *not*:
+  **The fifth is not explained, and every explanation offered so far has been
+  refuted by goldens already in this repository.** Fifteen committed goldens
+  answer the byte-identical 67-byte `Duplicate resource error` body. Counted from
+  that list:
 
   ```
-  scope-create-conflict   POST  Content-Type: application/json  409  67 bytes  five of five
-  scope-put-conflict      PUT   Content-Type: application/json  409  67 bytes  none of five
+  POST  seven send none of the five, three send all five
+  PUT   four send none, one sends all five
   ```
 
-  Same request `Content-Type`, same status, same body length, same family.
-  So the variable is not the status, not the body, and not the request's
-  `Content-Type` - which is exception three and covers five of the six scope
-  goldens on its own. `resource-put-conflict` and `resource-create-conflict`
-  reproduce the split on a second family, so three committed goldens now say it.
-  What **is** true, and is all that is: an empty body sends none of the five -
-  every 204 that omits them, every empty 404 and the resource search's empty 400
-  agree. The two 409s are 67 bytes each, so emptiness cannot be what separates
-  *them*. Across the two families a `POST`'s 409 keeps the five and a `PUT`'s
-  drops them; that is **two data points, not a rule**, and it is written here as
-  a lead rather than as an explanation.
+  So the status is out, the body is out, its length is out, emptiness is out
+  (none of the fifteen is empty), the request's `Content-Type` is out - varied
+  over four spellings on one of them without moving it - and **the verb is out**,
+  which was this bullet's last surviving lead.
+  "The endpoint decides" does not survive either. `admin/protocol-mappers/`
+  `add-models-duplicate-id-same-container` and `-other-container` are the **same
+  route, the same verb, the same `Content-Type` and the same 67 bytes**, and one
+  sends all five while the other sends none. They differ only in which internal
+  failure produced the 409 - a duplicate id inside one container against one
+  across two.
+  What is measured, and it is all that is measured: **the header set follows
+  whatever produced the response, and nothing about the request or the response
+  distinguishes the two.** An empty body does send none of the five - every 204
+  that omits them, every empty 404 and the resource search's empty 400 agree -
+  but emptiness explains only the empty answers and none of these fifteen.
   So four exceptions are decided by the path, the endpoint, the request's
-  `Content-Type` and the method; the fifth is a measured split nobody has
-  explained, and a sixth is likelier than a unifying one.
-  **This bullet has now been wrong four times, twice refuted by the very golden
-  it cited.** It said "a 409" for a day; then "an empty response body", folded in
-  from a cut that had measured one case and generalised it, while
-  `scope-put-conflict.http` - recorded by that same cut, in that same commit -
-  held the 67 bytes that refute it. Its own closing advice was written in the
-  commit that broke it. **Before writing a rule about headers, grep the goldens
-  for a case that would break it**, and prefer "not explained" to a fifth
-  explanation.
+  `Content-Type` and the method; the fifth is a split nobody has explained, and
+  a sixth is likelier than a unifying one. See F147.
+  **This bullet has now been wrong five times, twice refuted by the very golden
+  it cited.** "A 409"; then "an empty response body", folded in from a cut that
+  had measured one case, while the golden refuting it was committed in that same
+  cut; then "a `POST` keeps them and a `PUT` drops them", which fourteen further
+  goldens refute. Its own closing advice was written in the commit that broke it.
+  **Before writing a rule about headers, grep the goldens for a case that would
+  break it** - and prefer "not explained" to the next explanation.
 - **That rule was wrong once already.** P2's Task 11 recorded it as "a
   successful `DELETE`'s 204 omits it", from four deletes that all happened to
   send no `Content-Type`. When a new 204 disagrees with a header rule, measure
@@ -1490,7 +1495,11 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   second body; two naming one **name** are a 409. On the scope family it is the
   other way round. Reusing either family's upsert helper is wrong in both
   directions at once.
-- **A `type` is what a policy and a permission need, and the accepted set is not
+- **A policy needs a name *and* a type**, and missing either is
+  `409 Duplicate resource error`. This file and F129 both said `type` was the
+  gate, from a probe set that left the type out and never left the name out;
+  `{"type":"role"}` with no name is the same 409. The rest of the bullet below
+  was re-measured and holds. The accepted set is not
   the provider catalogue.** `POST .../policy` and `POST .../permission` answer a
   body with no `type` with `409 Duplicate resource error`, and accept
   `regex role resource scope client time group aggregate uma` - nine. `uma` is
@@ -1505,14 +1514,33 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   export beside it populates all three. This is the one claim in the family that
   a bigger sample **confirmed** rather than refuted, which is worth recording
   because most single-measurement claims here have not survived one.
-- **A theme page names the realm three times and only one of them is the restart
-  URL.** The `<title>` is `Sign in to <displayName>` and the header brand is
-  `<displayNameHtml>`, and a realm created through `POST /admin/realms` has
-  neither - so Keycloak falls back to the realm **name** in both, and the
-  `<div class="kc-logo-text"><span>` wrapper that `displayNameHtml` carries
-  disappears with it rather than wrapping the name. Master's two values are
-  `Keycloak` and that wrapper, which is why serving them as constants looks
-  right: it is right on the one realm every conformance case used to address.
+- **A theme page names the realm three times, and the two display fields fall
+  back through different chains.** Measured over twelve realms on 2026-09-02:
+
+  ```
+  title  =  displayName      or  realm name
+  brand  =  displayNameHtml  or  displayName  or  realm name
+  ```
+
+  **The brand's chain is one rung longer**, and the realm that separates the two
+  readings is one carrying a `displayName` and no `displayNameHtml` - its brand
+  names the display name, not the realm. This bullet said "falls back to the
+  realm **name** in both" until 2026-09-02, which is what a realm carrying
+  *neither* answers: the rule was written from the one realm that could not tell
+  the two chains apart. An empty string counts as absent and whitespace does not
+  (`""` gives the realm name, `"  "` gives two spaces).
+  The `<div class="kc-logo-text"><span>` wrapper is `displayNameHtml`'s **own
+  markup**, not the template's, so it disappears with the value rather than
+  wrapping whatever replaces it. Master's two values are `Keycloak` and that
+  wrapper, which is why serving them as constants looks right: it is right on the
+  one realm every conformance case used to address.
+  **One page spells a double quote two ways, eight lines apart.** The title is
+  Freemarker's escaping (`&quot;`) and the brand is a jsoup sanitiser's raw
+  output (`&#34;`), so `html.EscapeString` is correct for one and wrong for the
+  other. Keycloak **sanitises** the raw branch and Gloak does not - measured,
+  `<b onclick="x">Bold</b>` comes back `<b>Bold</b>` - which is a filed
+  divergence rather than a simplification: master's value passes through
+  unchanged and a created realm has none.
 - **A refresh token's introspection body enumerates a realm-wide set.** `aud` and
   `resource_access` name every admin container the subject holds roles on, and
   the bootstrapped administrator holds `create-realm`, so **every realm any
@@ -1520,6 +1548,73 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   clean for a month only because every realm-creating fixture happened to live in
   `adminCases` and run after it; ordering cannot carry that, and the case carries
   `PristineRealm` now.
+
+- **The nine policy types have eight representations and one storage.** One
+  config carrying every provider's keys at once was sent to all nine types: the
+  generic view came back **byte-identical on all nine** and the typed view
+  served exactly the keys the type owns - `resource` and `scope` sharing one
+  shape and the other seven each having their own. `resourceType` is not a
+  shared base field on the read: a `role` policy carrying `defaultResourceType`
+  serves it in the generic view and does not project it. So the provider model
+  this family needs is **a table over one stored map, not nine structures**, and
+  `uma`'s `scopes` is the one projected field that does not come from the config
+  - it is read from the association set, always present, and served **by name**
+  where the create that set it echoed the id.
+- **A policy create's 201 is the request echoed and its read is not**, which is
+  the opposite of the resource create two path segments away. The config comes
+  back exactly as sent, where the read has role names resolved to uuids and
+  `required` filled in; `owner` and `resourceType` are echoed and no read serves
+  either; and a `role` create with no config answers `config:{}` where its own
+  read answers `{"roles":"[]"}`, because the provider's key is written after the
+  response representation is built.
+- **Three providers resolve a reference and all three answer an unknown one
+  differently.** An unknown role in `config.roles` is silently dropped, an
+  unknown group path in `config.groups` is silently dropped, and an unknown
+  clientId in `config.clients` is a **500**. A shared resolver is wrong on one of
+  the three whichever answer it picks. Three keys inside `config` are also not
+  config at all: `applyPolicies`, `resources` and `scopes` are consumed into the
+  association sets and vanish from the stored config on every type, where an
+  unknown target is a 500 for all three - including `scopes`, which the body's
+  own top-level `scopes` array answers with a bare `400 {"error":"unknown_error"}`
+  carrying no description.
+- **`GET .../settings` and `GET .../permission` partition the same rows
+  differently.** The listing counts `resource`, `scope` and `uma` as permissions;
+  the export moves `resource` and `scope` to the end of its `policies` array and
+  leaves `uma` among the policies. A shared predicate is wrong on `uma` in one of
+  the two places - the fifth time this API has had a rule that is right on one
+  family and inverted on its neighbour. The export also **denormalises**: uuids
+  go back to names, clients to clientIds, groups to paths, and the three
+  association sets are synthesised back into `applyPolicies`, `resources` and
+  `scopes`, so a policy whose live read answers `config:{}` exports a config with
+  three keys in it.
+- **A null enum is a third state.** `{"logic":null}` is a 201 and the row reads
+  back with **no `logic` key at all** on the listing, the search and the typed
+  view alike, where an absent `logic` gets `POSITIVE`. A plain string field with
+  a default is right on one of the two and cannot express the other. And
+  `CONSENSUS` is a 201 on `POST .../policy` and a **500** on
+  `PUT .../authz/resource-server` - one enum value, two endpoints on one
+  resource server, so the two accepted lists are two lists.
+- **A policy's `config` is placed by `javamap.SizedKeyOrder` sized on what is
+  *stored*, and that is the opposite of the protocol mappers.** A six-key config
+  sent to a `role` policy - which adds `roles`, making seven - came back in the
+  seven-key order, byte for byte the same as a `uma` policy sent all seven
+  outright. The protocol-mapper bullet in this file says a config the create grew
+  "was built for the request's key count and serialised at a larger one"; that
+  remains true of protocol mappers and **does not generalise**. Two families, two
+  answers, and neither can be read off the other.
+- **Three families on one resource server, three upsert rules.** The scope create
+  upserts on the **name**, the resource create on the **`_id`**, and the policy
+  create on **neither** - a repeat of either is a 409. A policy id is global the
+  way a resource id is, and the losing create does the other resource server no
+  damage.
+- **`POST .../import` is strict where the two creates beside it are not.** The
+  same unknown field is `400 Invalid json representation for
+  ResourceServerRepresentation` there and a 500 `Cannot parse the JSON` on
+  `POST .../policy`, on one resource server. It **deletes nothing**, resets the
+  three settings to the representation's own initialisers and then overwrites
+  what the body names, and a name it already holds it **merges into** rather than
+  replaces - a `regex` body imported over a `role` policy left the type alone and
+  grew the config.
 
 ## Boundaries
 
