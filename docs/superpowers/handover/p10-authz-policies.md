@@ -432,6 +432,25 @@ unpinned. **That is the opposite of what AGENTS.md's protocol mapper bullet says
 about its own family** - "a config the create grew was built for the request's
 key count and serialised at a larger one". Two families, two answers; see §3.
 
+**And one measured key set `SizedKeyOrder` places wrongly**, which is a vector
+for `internal/javamap` and this branch did not add it there, because that
+package's tests are another stream's this round:
+
+```
+{roles, zzz}   sent to a uma policy as {"roles":"[]","zzz":"1"}   -> roles, zzz
+               sent to a uma policy as {"zzz":"1","roles":"[]"}   -> roles, zzz
+               SizedKeyOrder answers whichever order it was handed
+```
+
+The two keys collide in the model at both table sizes - `roles` and `zzz` share
+a bucket at capacity 2 and at capacity 4 - so the model preserves the insertion
+order, and the server does not. Every other measured set is placed exactly,
+including `{aa, bb, roles}`, `{pattern, roles}`, `{yyy, zzz, roles}`, the
+six-key, seven-key, nine-key and twelve-key sets and the two-key `{nbf, hour}`.
+Every key set the goldens use is one of those, which is the protocol mappers'
+sidestep applied a third time, and the package test that needed a colliding pair
+uses `{aa, bb, roles}` instead with a comment saying why.
+
 ### 1.12 F147's probe
 
 The brief asked for two probes and both were sent. **The result is a refutation
@@ -615,7 +634,7 @@ shape to look for, and it needs the server's source rather than another probe.
 
 ## 3. Lines in AGENTS.md and the observed document these measurements contradict
 
-Four, and one of them is this cut's own predecessor.
+Five, and one of them is this cut's own predecessor.
 
 1. **AGENTS.md, the authorization bullet: "A `type` is what a policy and a
    permission need".** It needs a name and a type. `{"type":"role"}` with no
@@ -643,6 +662,15 @@ Four, and one of them is this cut's own predecessor.
    substring, `?type=gg` finds `aggregate` - and it records `type` as the create's
    only gate. Both were fixed by measurement rather than inherited, which is the
    check the brief asked for and which paid twice.
+
+5. **`internal/javamap`'s `SizedKeyOrder` is wrong on one measured key set**, and
+   nothing in the package's own tests says so because the vector is new.
+   `{roles, zzz}` comes back `[roles, zzz]` from **both** request orders and the
+   model answers whichever order it was handed - the two keys share a bucket at
+   both table sizes, so the model preserves an insertion order the server does
+   not. It is a vector rather than a contradiction of anything written down, and
+   it is not fixed here because that package's tests belong to another stream
+   this round. §1.11 has it.
 
 Two things were **confirmed** against a bigger sample rather than refuted, and
 both were single-measurement claims: `authzIntBound`'s 404 for an unparseable
@@ -715,10 +743,82 @@ would be the second truth the boundary table exists to prevent. The next cut
 should either export a claims builder from `internal/token` or take those two
 operations together with a change there.
 
-## 5. The mutation pass
+## 5. The mutation pass, and the four survivors
 
-*(filled in below)*
+**Forty mutations**, one per claim, each naming the test it had to break and each
+reverted. Thirty-five were killed on the first pass. The five that survived are
+below; **four were holes in a test and one was a claim no test made at all**, so
+this pass found more than the previous cut's did.
+
+**Survivor 1 - a real hole. The create's echo was asserted only where the two
+sources agree.** Building `authzPolicyCreated.Config` from the **stored** config
+rather than the request's left `TestPolicyCreateIsTheRequestEchoed` green,
+because its create was a `uma` policy: uma adds no provider key and consumes no
+association key, so its stored config *is* its request's. A body with no config
+at all cannot see it either - both sources marshal to `{}`. The one body that
+separates them is a **role** create carrying a config, where the request says
+two keys and the read says three. The test uses one now and the mutation dies.
+
+**Survivor 2 - a real hole. Three states, and only two were ever asked for.**
+Replacing the `permission` partition's three-state check with a two-way one left
+`TestPolicyAndPermissionAreOneListingWithTwoViews` green, because every request
+in it named a half: `?permission=true`, `?permission=false` and the `/permission`
+path. The **bare** listing - the commonest request there is - was never sent, and
+it is the only one a two-way predicate gets wrong. It is sent now.
+
+**Survivor 3 - a real hole, and it is the third cut's `Zebra` again.** Deleting
+the name branch from `?resource=` and from `?scope=` left
+`TestPolicyListingFiltersAndOrders` green, because the fixture created its
+resource as `{"_id":"lres","name":"lres"}` and its scope as
+`{"id":"lsc","name":"lsc"}`. **A row whose id and name are the same string
+cannot tell a name match from an id match.** The ids and the names differ now,
+and a third mutation was added for the other direction - dropping the *id*
+branch - which the old fixture could not see either. All three die.
+
+**Survivor 4 - a claim with no test.** Disabling the block that consumes
+`applyPolicies`, `resources` and `scopes` out of the config changed no golden,
+because every fixture in the catalogue names its associations through the
+**body's** three arrays rather than through the config. The path was reachable
+and unasserted, which is worse than a hole in an assertion: nothing claimed to
+cover it. `TestConfigAssociationKeysAreConsumed` covers it now, on four types,
+in both directions, with the two different refusals an unknown target gets.
+
+One mutation was **badly written rather than informative** and is recorded so it
+is not read as a fifth survivor: replacing the settings export's `Policies` with
+an empty literal left an unused variable and broke the build. Rewritten as
+`exportedPolicies[:0]` it dies on the golden, which is what it should always
+have been.
+
+**A note on what the pass cannot reach.** Every case in this cut runs against
+`master`, and none of this family's responses derives from the realm name - no
+body carries it, the export does not, and the two ids in play are the client's
+and the policy's. So there is nothing here for `SecondRealm` to pin, and saying
+so is the answer to "what do your tests not cover" rather than an omission.
 
 ## 6. Parity, before and after
 
-*(filled in below)*
+```
+Parity: 361 -> 368 of 535 (+7)
+
+chapter                         before  after  delta
+admin/authz-resource-server         22     29     +7
+```
+
+The chapter's denominator is thirty-one. **Twenty-nine are served and two are
+not**: `POST .../policy/evaluate` and `POST .../permission/evaluate`, which are
+in the catalogue as `Recorded` with a `Reason` and are measured in full in §1.9.
+
+One of the twenty-nine moved without moving the total, and it is a fix rather
+than an addition: `GET .../settings` was already counted as served and was
+already wrong in a way no golden could see, because nothing could create a
+policy to put in it. It is the reason this cut's diff touches `authz.go`, and it
+is the second time that one struct has held an always-empty key for exactly that
+reason - `resources` was the first, one cut ago.
+
+Twenty-four goldens were recorded and **no existing golden moved**, on a clean
+checkout. The first recording pass failed two cases and the reason is worth
+keeping: **the two `evaluate` cases shared a fixture with two others**, and the
+recorder shares one container, so the second client create answered 409 with no
+`Location` and the capture came back empty. `userFixture`'s doc comment says so
+in as many words and the convention is one fixture per case; they have their own
+now.
