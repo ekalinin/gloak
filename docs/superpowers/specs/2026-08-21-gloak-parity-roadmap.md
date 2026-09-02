@@ -217,6 +217,7 @@ operations is allocated below; none is left unassigned.
 | P8 second cut | Required actions enforced at login, **done 2026-08-31** | P8 first cut, P13 | no operations. F104 closed, and it named the smaller half: `internal/oidc` read a user's `requiredActions` on **no** endpoint, so the password grant was handing out tokens too. A temporary password is now temporary | 0 ops |
 | P8 first cut | The SPI registry and required actions | P3 | `admin/authentication-management` 0->18 of 39. The other 21 - `flows`, `executions`, `config` - are **deliberately deferred**: Gloak walks a hard-coded flow, so they would edit a description nothing reads. Named individually in F103 | 18 ops |
 | **P9** | Federation and brokering, **first cut done 2026-09-01** | P4, P8 | Identity Providers 17, Component 6. The first cut built nine - the instances listing, create, read, update, delete, `export` and `reload-keys`, and the component listing and single read. The estimate held to the operation for the first time; what moved was the *content* of three of them. The twelve left need two things this cut did not build: a **per-provider property catalogue** (`providers/{provider_id}`, `mapper-types`, `sub-component-types`, `POST`/`PUT /components`, the five mapper operations) and an outbound HTTP fetch (`import-config`). `DELETE /components/{id}` is deliberately unbuilt - see F145 | 23 ops |
+| P9 second cut | The provider catalogue and the mapper family, **done 2026-09-02** | P9 first cut | `admin/identity-providers` 9->16. The catalogue is **three endpoints, three envelopes and one atom**, and it is also the filter `POST /components` applies to a submitted config. Only `import-config` is left in the chapter, and it makes a real outbound fetch. The component writes are unbuilt: one of them, a second `declarative-user-profile`, **breaks every login in the realm** | 7 ops |
 | **P10** | Authorization services (UMA 2.0), **first cut done 2026-08-31** | P5 | `authz/resource-server/*` 31, plus **twelve** `management/permissions` operations counted under five other tags - the brief said eight, which was right only for the three chapters that had no other unserved operations | 43 ops |
 | P10 second cut | The scope family, **done 2026-08-31** | P10 first cut | `admin/authz-resource-server` 5->13. Eighteen operations remain; the three permanently-`[]` listings were **deliberately excluded** as parity points indistinguishable from stubs | 8 ops |
 | P10 third cut | The resource family, **done 2026-09-01** | P10 second cut | `admin/authz-resource-server` 13->22 - the whole resource family, listing and search included. **The "permanently-`[]` listings" were not permanently `[]`**: they were empty because nothing had been created, and `GET /resource` is served by the real store here. Nine remain: policy 4, permission 4, import 1, and they need the **typed per-provider representation** that `GET .../permission` uses and `GET .../policy` does not - not the "provider model before `POST` means anything" F129 claimed, since a policy needs a `type` and nothing else | 9 ops |
@@ -226,6 +227,7 @@ operations is allocated below; none is left unassigned.
 | **P12** | Organizations and Workflows, **first cut done 2026-08-31** | P4 | Organizations 36, Workflows 9. **The row's 45 is 56**: eleven more operations live under `/organizations/{org-id}/groups/.../role-mappings` and are counted under `Role Mapper` and `Client Role Mappings`, so building this unlocks them. 47 operations live under `/organizations` in all | 56 ops |
 | P12 first cut | The organization as a resource | P4 | `admin/organizations` 0->6. `ORGANIZATION` is **not** a preview feature: what is off is the realm's `organizationsEnabled`, and the refusal sits **after** the caller's roles - the opposite of `client-types` | 6 ops |
 | **P13** | Themes, i18n, account console, admin console, **first cut done 2026-08-30, markup cut done 2026-09-01** | P5 | - . The markup cut served the login theme's error and info pages and took seven parked goldens to contracts (+7). Nine theme pages still serve the placeholder body (F146) and the login-actions family is F109 | not in OpenAPI |
+| P13 pages cut | The login-action page and the nine measured, **done 2026-09-02** | P13 markup cut | no operations of its own; `oidc/authorization` 18->23 and the denominator +5. **F109 closed**: twelve call sites answer three sentences and four are not that page. The nine remaining pages are measured and none is served - each carries a `tab_id` minted by its own request, so F146 is blocked on **F38, reopened** | 0 ops |
 | P3 third cut | The `authorization_code` grant, **done 2026-08-30** | P13 first cut | `oidc/token` 10->14 and its `recorded` column to **zero**. With P13's cut this is the first time Gloak can complete a browser OAuth flow. The measured contract said "Every rejection" over eight rows and there are twelve | 0 ops |
 | P13 second cut | SSO and the consent pages, **done 2026-08-30** | P13 first cut, P7 first cut | no operations: F65, F77 and F101 close, so a browser that has signed in once gets a code without a form and a user can finish a device login. `oidc/authorization` 12->14, `oidc/device` 11->13 | 0 ops |
 | P13 first cut | The browser login, end to end | P3, P5 | no operations, and the column that matters is `oidc/authorization`'s `recorded` going **4 -> 0**: the chapter no longer holds a case waiting on an endpoint nobody built. The flow is served - authentication session, login form, `/login-actions/authenticate`, authorization code - and the theme's markup is not | 0 ops |
@@ -233,8 +235,9 @@ operations is allocated below; none is left unassigned.
 
 Denominator today: **413 Admin API operations plus 122 protocol behaviours, 535
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **368** after
-P10's policy family, and **P2, P4 and P5 are complete** - as are the `Roles`,
+surface is not counted and which the report says so about. Served: **380 of 540**
+after the theme pages and P9's provider catalogue, and **P2, P4 and P5 are
+complete** - as are the `Roles`,
 `Roles (by ID)` and `Groups` chapters, which P10 closed by measuring what their
 last operations refuse - up from 8 before P1, 25 after it, 89 after the second cut's
 roles half, 100 after that cut was complete, 109 after the group tree and 113
@@ -261,7 +264,34 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-02 (eleventh fold).** `make conformance` reports **368 of
+**Updated 2026-09-02 (twelfth fold).** `make conformance` reports **380 of 540**.
+The denominator moved for the first time in a week: five `oidc/authorization`
+cases were added for behaviours nobody had catalogued, which is how a protocol
+chapter grows. F109 closed, `admin/identity-providers` reached 16 of 17.
+
+**The round's lesson is that a count in prose beside the list it counts will rot,
+and this project proved it on its own file.** AGENTS.md's header bullet said
+"fifteen committed goldens" while the tree held sixteen - and the sixteenth had
+arrived in the **same fold that wrote the sentence**. The conclusion survived and
+the evidence it cites did not.
+
+That count is now a test.
+`TestTheDuplicateResourceErrorSplitIsNotDecidedByTheVerb` walks the goldens,
+prints the split and asserts the **claim** rather than the number, so a cut that
+adds another such golden needs no documentation edit and a cut that makes one
+verb consistent breaks the build. It is the first time this project has answered
+a recurring documentation defect with code rather than with a more careful
+sentence.
+
+**Two follow-ups turned out to be about something other than what they said.**
+F109 asked for twelve unpinned judgements; the twelve call sites answer **three**
+sentences and four of them are not that page at all. F146 said the instruction
+and the chrome had to be measured; they were readable in an afternoon, and the
+real blocker is that **all nine pages carry a `tab_id` minted by their own
+request**, so none can carry a golden. F146 is now blocked on F38, which is
+**reopened**: the mechanism it declined for one case is wanted by eleven.
+
+**Earlier on 2026-09-02 (eleventh fold).** `make conformance` reports **368 of
 535**. P10's fourth cut took `admin/authz-resource-server` to **29 of 31** - the
 last two need an RPT and are F148 - and F142's protocol half closed the theme
 chrome and four other derivation sites, leaving **no measured survivor**.

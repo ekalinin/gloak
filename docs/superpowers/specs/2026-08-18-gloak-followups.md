@@ -2133,7 +2133,32 @@ the `available` filtering, `admin/users/list-without-view-users`, and F36's
 sweep over which roles open the user and credential routes are all currently
 unrecordable for the same reason.
 
-## F38: a golden cannot mask a per-request value inside an HTML body (closed, not built)
+## F38: a golden cannot mask a per-request value inside an HTML body (REOPENED 2026-09-02)
+
+**Reopened, and the condition this entry set for reopening is met several times
+over.** It said: "a second case that wants the same mechanism". There are
+**eleven**.
+
+`oidc/authorization/prompt-create` was the second. The other nine are F146's
+theme pages, measured 2026-09-02: every one carries a `tab_id` minted by its own
+request, six carry a `session_code`, five the `KC_AUTH_SESSION_HASH`, three a
+generated secret. `ReplaceCaptured` reaches only what a fixture step captured, so
+none of them can carry a golden without the mask this entry declined.
+
+**The four grounds it closed on are worth re-reading rather than dismissing**,
+because three of them still hold - the mechanism is still a mask per case and per
+position, it still has to survive `make record`, and it still risks asserting
+presence and nothing else. What has changed is the fourth: it is no longer
+machinery for one case.
+
+One measurement is worth having before anybody builds it. A mutation on
+2026-09-02 dropped `client_data` from the login-action chrome and was killed only
+by a test that branch wrote; the identical mutation would have **survived the
+whole previous tree**, because that value appears only inside a *parked* golden.
+**A measurement nobody compares pins nothing** - which is the argument for this
+mechanism and against treating a parked golden as coverage.
+
+
 
 **Closed 2026-08-29 as not worth building**, on four grounds, and it should not
 sit here as a standing to-do. The gap is real; the mechanism is not the answer.
@@ -3604,7 +3629,21 @@ list to work from, not a question to re-ask.
 Both fell out of the SSO work. Neither is on any tag's operation list, so they
 move no parity number, and both are reachable from a browser today.
 
-## F109: `prompt=login` serves the plain login page
+## F109: `prompt=login` serves the plain login page (closed 2026-09-02)
+
+**Closed, and it was smaller than this entry made it.** Twelve call sites answer
+**three** sentences, not twelve: `Invalid Request` for an unparseable
+`client_data`, `An error occurred, please login again through your application.`
+for all four ways a client can fail, and `Restart login cookie not found. …`
+when there is nothing to restart from. **Four of the twelve are not that page at
+all** - a body that will not form-decode is a 500 with `application/json`, and
+Gloak answered the 400 page on three of those four because the session and
+client checks ran first.
+
+The markup needed nothing new: the page this family serves and the one `GET
+/auth` serves are byte-identical apart from the instruction, so closing this was
+a change of call site. Five goldens compare it now, and it is **the one page in
+its family a golden can hold** - see F146 for why the other nine cannot.
 
 Keycloak serves a re-authentication page; Gloak serves the ordinary form. The
 envelope is right and the prose is not, which is F67's family.
@@ -4110,15 +4149,27 @@ backed by this table, so the delete would leave a realm in a state Keycloak
 cannot reach. That is the argument migration 0019 already makes for
 `authz_resource_server` having no `enabled` column.
 
-## F146: nine theme pages still serve the placeholder body
+## F146: nine theme pages still serve the placeholder body (measured; blocked on F38)
 
-Named in `themePageBody`'s doc comment: the logout confirmation, "You are logged
-out", "Page has expired", the consent page and the five required-action pages.
-Each is an hour with a container; the instruction and the chrome are what have to
-be measured. The login-actions family is separate and is F109.
+**All nine were measured on 2026-09-02 and none was served, and that is the
+finding rather than a shortfall.** This entry said "the instruction and the
+chrome are what have to be measured". All eighteen were readable in an afternoon
+and none of them was the blocker.
 
-Also unmeasured, and served as a constant: the `<html lang="en">` attribute.
-Whether it follows the realm's locale has never been asked.
+**Every one of the nine carries a `tab_id` minted by the request that renders
+it.** Six carry a `session_code`, five the `KC_AUTH_SESSION_HASH` inside
+`checkAuthSession(…)`, and three a generated secret on top - a TOTP secret, a
+WebAuthn challenge and twelve recovery codes. `ReplaceCaptured` reaches only what
+a fixture step captured, so **no golden in this harness can hold any of them**.
+
+What keeps them placeholders is state and a masking mechanism, not an unread
+instruction. Building them is possible - the measurements are in
+`docs/superpowers/handover/theme-remaining-pages.md`, and four of the nine are
+reachable today - but they would be served with no golden under them, which is
+the arrangement this project has twice found to pin nothing.
+
+So this entry is now **blocked on F38** rather than on measurement, and it is
+what reopens it: the mechanism F38 declined is wanted by **eleven** cases now.
 
 ## F147: the fifth security-header exception is a measured split nobody has explained
 
@@ -4130,10 +4181,15 @@ re-derives a refuted lead.
 **Fifteen committed goldens answer the byte-identical 67-byte
 `Duplicate resource error` body.** Counted from that list:
 
-```
-POST  seven send none of the five, three send all five
-PUT   four send none, one sends all five
-```
+**The tally is computed, not written down.**
+`TestTheDuplicateResourceErrorSplitIsNotDecidedByTheVerb` in
+`internal/conformance` walks the goldens, prints the split per verb and asserts
+the claim. It exists because the number in AGENTS.md drifted three times and the
+last drift happened **inside one commit** - the bullet said "fifteen" while the
+tree held sixteen, the sixteenth having arrived in the very fold that wrote the
+sentence. At the time of writing the test prints `POST 8 none / 4 all` and
+`PUT 4 none / 1 all`; if that has moved, the test is right and this paragraph is
+the stale one.
 
 Ruled out, each by evidence already in this repository: the status, the body,
 the body's length, emptiness (none of the fifteen is empty), the request's
