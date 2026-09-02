@@ -743,12 +743,16 @@ would be the second truth the boundary table exists to prevent. The next cut
 should either export a claims builder from `internal/token` or take those two
 operations together with a change there.
 
-## 5. The mutation pass, and the four survivors
+## 5. The mutation pass, and its five survivors
 
 **Forty mutations**, one per claim, each naming the test it had to break and each
-reverted. Thirty-five were killed on the first pass. The five that survived are
-below; **four were holes in a test and one was a claim no test made at all**, so
-this pass found more than the previous cut's did.
+reverted. Counted from the list rather than incremented: **thirty-four were
+killed on the first attempt, one was written badly enough to break the build and
+was rewritten, and five survived** - four causes between them, because two of
+the five are the same hole seen from two sides.
+
+Of the four causes, **three were holes in a test and one was a claim no test
+made at all**.
 
 **Survivor 1 - a real hole. The create's echo was asserted only where the two
 sources agree.** Building `authzPolicyCreated.Config` from the **stored** config
@@ -784,10 +788,11 @@ cover it. `TestConfigAssociationKeysAreConsumed` covers it now, on four types,
 in both directions, with the two different refusals an unknown target gets.
 
 One mutation was **badly written rather than informative** and is recorded so it
-is not read as a fifth survivor: replacing the settings export's `Policies` with
-an empty literal left an unused variable and broke the build. Rewritten as
+is not read as a survivor: replacing the settings export's `Policies` with an
+empty literal left an unused variable and broke the build. Rewritten as
 `exportedPolicies[:0]` it dies on the golden, which is what it should always
-have been.
+have been. A mutation that does not compile says nothing about the test, which
+is the same lesson from the other side as the third cut's first survivor.
 
 **A note on what the pass cannot reach.** Every case in this cut runs against
 `master`, and none of this family's responses derives from the realm name - no
