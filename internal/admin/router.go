@@ -130,13 +130,15 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /admin/realms/{realm}/organizations/{orgID}",
 		h.guardOrganization(organizationWriteRoles, h.deleteOrganization))
 
-	// Authorization services. Twenty-two operations of the description's
+	// Authorization services. Twenty-nine operations of the description's
 	// thirty-one untagged ones - the resource server as a resource, the two
-	// provider catalogues, the scope family and the resource family. The nine
-	// left are the policy and permission families' four each and `import`. See
-	// docs/superpowers/plans/2026-08-31-p10-authz-services.md,
-	// docs/superpowers/plans/2026-08-31-p10-authz-cut-b.md and
-	// docs/superpowers/plans/2026-09-01-p10-authz-resources.md.
+	// provider catalogues, the scope family, the resource family, the policy
+	// and permission families' three representations each and `import`. The two
+	// left are `POST .../policy/evaluate` and `POST .../permission/evaluate`.
+	// See docs/superpowers/plans/2026-08-31-p10-authz-services.md,
+	// docs/superpowers/plans/2026-08-31-p10-authz-cut-b.md,
+	// docs/superpowers/plans/2026-09-01-p10-authz-resources.md and
+	// docs/superpowers/plans/2026-09-02-p10-authz-policies.md.
 	//
 	// **Every one of them sits behind the client's own
 	// authorizationServicesEnabled**, and guardAuthz checks it *before* the
@@ -214,6 +216,42 @@ func (h *handler) register(mux *http.ServeMux) {
 		h.guardAuthz(authzReadRoles, h.listAuthzResourcePermissions))
 	mux.HandleFunc("GET "+authzPrefix+"/resource/{resourceID}/scopes",
 		h.guardAuthz(authzReadRoles, h.listAuthzResourceScopes))
+
+	// The policy and permission families, three operations each, and `import`.
+	// The role sets are the two above, swept on all nine of the family's
+	// remaining routes one single role at a time over seven callers - none, the
+	// two authorization roles, the three client roles and manage-realm. They
+	// came back identical to the scope and resource families': the four reads
+	// take authzReadRoles and the two creates and `import` take
+	// authzWriteRoles, with query-clients and manage-realm 403 on every one.
+	// **Both `evaluate`s take the read set**, which is the one cell of that
+	// sweep worth writing down, because a POST that runs the authorization
+	// engine reads as a write.
+	//
+	// **The six policy and permission routes are three handlers, not six.** The
+	// two listings, the two searches and the two creates were each measured
+	// serving the same rows, and only the path decides the view and the family
+	// filter - see authzTypedRoute. Registering six handlers would put one
+	// measurement in two places, which is how the scope family's two orders got
+	// written down twice and disagreed.
+	//
+	// `/policy/providers` and `/permission/providers` above are registered
+	// ahead of nothing here: neither `/policy` nor `/permission` takes a
+	// trailing segment in the description, so the literals cannot collide.
+	mux.HandleFunc("GET "+authzPrefix+"/policy",
+		h.guardAuthz(authzReadRoles, h.listAuthzPolicies))
+	mux.HandleFunc("POST "+authzPrefix+"/policy",
+		h.guardAuthz(authzWriteRoles, h.createAuthzPolicy))
+	mux.HandleFunc("GET "+authzPrefix+"/policy/search",
+		h.guardAuthz(authzReadRoles, h.searchAuthzPolicy))
+	mux.HandleFunc("GET "+authzPrefix+"/permission",
+		h.guardAuthz(authzReadRoles, h.listAuthzPolicies))
+	mux.HandleFunc("POST "+authzPrefix+"/permission",
+		h.guardAuthz(authzWriteRoles, h.createAuthzPolicy))
+	mux.HandleFunc("GET "+authzPrefix+"/permission/search",
+		h.guardAuthz(authzReadRoles, h.searchAuthzPolicy))
+	mux.HandleFunc("POST "+authzPrefix+"/import",
+		h.guardAuthz(authzWriteRoles, h.importAuthzSettings))
 
 	// The twelve `management/permissions` operations. All of them are the same
 	// 501, and they need **three** combinators because the refusal does not sit
