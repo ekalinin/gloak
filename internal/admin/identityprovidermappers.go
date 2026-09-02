@@ -320,10 +320,19 @@ func decodeIdentityProviderMapperBody(w http.ResponseWriter, r *http.Request) (*
 	if !requireJSONBody(w, r) {
 		return nil, false
 	}
-	raw, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeIdentityProviderConsultLog(w)
-		return nil, false
+	// r.Body is nil rather than http.NoBody on a request built by hand, which
+	// the conformance harness does. decodeStrict never met it because every
+	// other strict endpoint reaches io.ReadAll through a request the server
+	// built; this one is the first to read the body itself, and the golden of
+	// the empty-body 500 is what found it.
+	var raw []byte
+	if r.Body != nil {
+		var err error
+		raw, err = io.ReadAll(r.Body)
+		if err != nil {
+			writeIdentityProviderConsultLog(w)
+			return nil, false
+		}
 	}
 	// An empty body and the literal `null` are one case, and it is the 500.
 	if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || string(trimmed) == "null" {

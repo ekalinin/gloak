@@ -12216,12 +12216,18 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 	},
 	{
-		// **The listing's order is masked and the mask is not inert.** Five
-		// mappers created `zzz, mmm, aaa, qqq, bbb` came back `bbb, zzz, qqq,
-		// mmm, aaa`, twice on one container. It is a Java collection over the
-		// mapper id, and an id is a minted UUID on any run that does not name
-		// one - so there is no order to assert even though this fixture does
-		// name them.
+		// **The listing's order is masked, and this golden is exactly why the
+		// mask is not something to argue away.** Five mappers created
+		// `zzz, mmm, aaa, qqq, bbb` came back `bbb, zzz, qqq, mmm, aaa`, twice
+		// on one container: it is a Java collection over the **mapper id**, and
+		// an id is a minted UUID on any run that does not name one.
+		//
+		// The recorded body below happens to be in creation order, because this
+		// fixture names its ids and names them ascending. That coincidence is a
+		// fact about the ids chosen here and not about the endpoint, so the mask
+		// stays - taking it off would turn "these three ids sort this way" into
+		// a claim that Keycloak preserves creation order, which the five-mapper
+		// probe measures as false.
 		//
 		// It is also the only route of the five that reads the path's alias:
 		// the three that name a mapper id resolve it realm-wide.
@@ -12280,6 +12286,14 @@ var adminCases = []Case{
 		// the policy family's answer to the same omission and the third family
 		// in this API to give it. Nothing is duplicated - the broker holds no
 		// mappers at all.
+		//
+		// **It is a sixteenth golden for the security-header split**, and one of
+		// the sharper ones: it sends **none** of the five, while the duplicate
+		// 400 below and the empty-body 500 beside it - same route, same verb,
+		// same `Content-Type` - send all five. Three failures of one endpoint,
+		// two header sets, and nothing about the request or the response tells
+		// them apart. See F147, which says exactly that and is not being
+		// explained here either.
 		ID: "admin/identity-providers/mappers-create-no-name",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -12371,18 +12385,18 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "PUT /admin/realms/{realm}/identity-provider/instances/{alias}/mappers/{id}",
-		Fixture:   "idp-mapper-one",
+		Fixture:   "idp-mapper-update",
 		Request: Request{
 			Method: http.MethodPut,
 			Path: "/admin/realms/master/identity-provider/instances/" +
-				"gloak-probe-map-broker-one/mappers/1de07000-0000-4000-8000-000000000041",
+				"gloak-probe-map-broker-upd/mappers/1de07000-0000-4000-8000-000000000047",
 			Headers: map[string]string{
 				"Authorization": "Bearer {{access_token}}",
 				"Content-Type":  "application/json",
 			},
-			Body: []byte(`{"id":"1de07000-0000-4000-8000-000000000041",` +
-				`"name":"gloak-probe-mapper-solo",` +
-				`"identityProviderAlias":"gloak-probe-map-broker-one",` +
+			Body: []byte(`{"id":"1de07000-0000-4000-8000-000000000047",` +
+				`"name":"gloak-probe-mapper-target",` +
+				`"identityProviderAlias":"gloak-probe-map-broker-upd",` +
 				`"identityProviderMapper":"oidc-user-attribute-idp-mapper",` +
 				`"config":{"claim":"gloak-probe-replaced"}}`),
 		},
@@ -12401,11 +12415,11 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "DELETE /admin/realms/{realm}/identity-provider/instances/{alias}/mappers/{id}",
-		Fixture:   "idp-mapper-taken",
+		Fixture:   "idp-mapper-delete",
 		Request: Request{
 			Method: http.MethodDelete,
 			Path: "/admin/realms/master/identity-provider/instances/" +
-				"gloak-probe-map-broker-dup/mappers/1de07000-0000-4000-8000-000000000045",
+				"gloak-probe-map-broker-del/mappers/1de07000-0000-4000-8000-000000000048",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders:       []string{"Cache-Control"},

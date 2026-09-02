@@ -1149,16 +1149,22 @@ var Fixtures = map[string]Fixture{
 	"idp-mt-saml":     identityProviderFixture(`{"alias":"gloak-probe-mt-broker-saml","internalId":"1de07000-0000-4000-8000-000000000021","providerId":"saml"}`),
 	"idp-mt-linkedin": identityProviderFixture(`{"alias":"gloak-probe-mt-broker-li","internalId":"1de07000-0000-4000-8000-000000000022","providerId":"linkedin-openid-connect"}`),
 
-	// One broker holding one mapper, for the read, the update and the delete.
-	// Its config carries four keys whose order the SizedKeyOrder serialiser
-	// has to place, and one of them is undeclared - which is the measurement
-	// that separates this family from `POST /components`, where an undeclared
-	// key is dropped.
+	// One broker holding one mapper. Its config carries four keys whose order
+	// the SizedKeyOrder serialiser has to place, and one of them is undeclared
+	// - which is the measurement that separates this family from
+	// `POST /components`, where an undeclared key is dropped.
+	//
+	// **`idempotentCreate` cannot cover a repeated mapper create**, which is
+	// why the update gets a fixture of its own rather than sharing this one: a
+	// mapper name the alias already holds is a **400**, not the 409 the rest of
+	// this API answers, so a fixture named by two cases fails its second run on
+	// the recorder's shared container. That is not a hypothetical - it is what
+	// the first recording of these cases did, and it is the same trap the two
+	// `evaluate` fixtures above record from the other direction.
 	"idp-mapper-one": identityProviderMapperFixture("gloak-probe-map-broker-one", "30",
-		[]idpMapperSeed{{"41", "gloak-probe-mapper-solo",
-			`"identityProviderMapper":"oidc-user-attribute-idp-mapper",` +
-				`"config":{"claim":"gloak-probe-claim","user.attribute":"gloak-probe-attr",` +
-				`"syncMode":"INHERIT","gloak-probe-undeclared":"kept"}`}}),
+		[]idpMapperSeed{{"41", "gloak-probe-mapper-solo", idpMapperFullConfig}}),
+	"idp-mapper-update": identityProviderMapperFixture("gloak-probe-map-broker-upd", "36",
+		[]idpMapperSeed{{"47", "gloak-probe-mapper-target", idpMapperFullConfig}}),
 
 	// Three mappers under one broker. **The listing's order is masked**, and
 	// the mask is not inert: five mappers created `zzz, mmm, aaa, qqq, bbb` on
@@ -1173,9 +1179,12 @@ var Fixtures = map[string]Fixture{
 		}),
 
 	// A broker holding one mapper whose name the case's own create then
-	// repeats, which is the measured 400.
+	// repeats, which is the measured 400. The delete gets its own for the
+	// reason above.
 	"idp-mapper-taken": identityProviderMapperFixture("gloak-probe-map-broker-dup", "32",
 		[]idpMapperSeed{{"45", "gloak-probe-mapper-taken", `"identityProviderMapper":"oidc-username-idp-mapper"`}}),
+	"idp-mapper-delete": identityProviderMapperFixture("gloak-probe-map-broker-del", "37",
+		[]idpMapperSeed{{"48", "gloak-probe-mapper-doomed", `"identityProviderMapper":"oidc-username-idp-mapper"`}}),
 
 	// Brokers with no mappers, for the create, the empty listing and the two
 	// bodies that fail before anything is written. One each rather than one
@@ -5569,6 +5578,17 @@ func authzImportAppliedFixture(clientID, group string) Fixture {
 	})
 	return f
 }
+
+// idpMapperFullConfig is the body tail two fixtures share: a mapper whose
+// config carries four keys, one of which the mapper type does not declare.
+//
+// The undeclared key is the point of it. `POST /components` one chapter away
+// filters a submitted config down to the provider's declared properties and
+// this endpoint does not, so a golden holding `gloak-probe-undeclared` is the
+// assertion that the two families disagree.
+const idpMapperFullConfig = `"identityProviderMapper":"oidc-user-attribute-idp-mapper",` +
+	`"config":{"claim":"gloak-probe-claim","user.attribute":"gloak-probe-attr",` +
+	`"syncMode":"INHERIT","gloak-probe-undeclared":"kept"}`
 
 // idpMapperSeed is one mapper a fixture creates: the tail of its fixed id, its
 // name, and the rest of its body.

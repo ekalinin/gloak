@@ -1,0 +1,12 @@
+# GET /admin/realms/master/identity-provider/instances/gloak-probe-map-broker-one/mappers/1de07000-0000-4000-8000-000000000041
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"id":"1de07000-0000-4000-8000-000000000041","name":"gloak-probe-mapper-solo","identityProviderAlias":"gloak-probe-map-broker-one","identityProviderMapper":"oidc-user-attribute-idp-mapper","config":{"syncMode":"INHERIT","claim":"gloak-probe-claim","user.attribute":"gloak-probe-attr","gloak-probe-undeclared":"kept"}}
