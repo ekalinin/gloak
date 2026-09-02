@@ -1,0 +1,11 @@
+# GET /admin/realms/master/clients/{{client_uuid}}/authz/resource-server/settings
+HTTP/1.1 200 OK
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"allowRemoteResourceManagement":true,"policyEnforcementMode":"ENFORCING","resources":[{"name":"gloak-probe-presource","ownerManagedAccess":false,"attributes":{},"uris":[]}],"policies":[{"name":"gloak-probe-alpha","type":"role","logic":"POSITIVE","decisionStrategy":"UNANIMOUS","config":{"roles":"[]"}},{"name":"gloak-probe-charlie","type":"uma","logic":"POSITIVE","decisionStrategy":"UNANIMOUS","config":{"scopes":"[\"gloak-probe-pscope\"]"}},{"name":"gloak-probe-echo","type":"time","logic":"POSITIVE","decisionStrategy":"UNANIMOUS","config":{"hour":"3"}},{"name":"gloak-probe-mike","type":"aggregate","logic":"POSITIVE","decisionStrategy":"UNANIMOUS","config":{"applyPolicies":"[\"gloak-probe-alpha\"]"}},{"name":"gloak-probe-bravo","type":"resource","logic":"POSITIVE","decisionStrategy":"UNANIMOUS","config":{"resources":"[\"gloak-probe-presource\"]"}},{"name":"gloak-probe-delta","type":"scope","logic":"POSITIVE","decisionStrategy":"UNANIMOUS","config":{"scopes":"[\"gloak-probe-pscope\"]"}}],"scopes":[{"name":"gloak-probe-pscope"}],"decisionStrategy":"UNANIMOUS"}

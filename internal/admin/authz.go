@@ -56,15 +56,24 @@ type resourceServerRepresentation struct {
 // key ever took was the empty array. It carries the export view of every
 // resource - the representation minus `_id` and `owner`, with each inline scope
 // reduced to its name - in **creation order**, which is the same order the
-// scopes beside it come back in. `policies` is still `[]struct{}` for the
-// reason `resources` used to be, and that reason is now load-bearing rather
-// than accidental: this cut serves no route that creates a policy, so the
-// empty array is a fact about the store and not a placeholder.
+// scopes beside it come back in.
+//
+// **`policies` was `[]struct{}` until P10's fourth cut and that was wrong for
+// exactly the same reason, one cut later.** The comment here said the empty
+// array was "a fact about the store and not a placeholder", which was true
+// while nothing could create a policy and stopped being true the moment
+// `POST .../policy` landed. That is the second time this one struct has held a
+// key whose only measured value was `[]` because no fixture could fill it, and
+// the lesson is the third cut's rather than a new one: an always-empty
+// collection is a claim about the fixtures, not about the server.
+//
+// Its entry is **not** the generic representation. It drops the id and the
+// owner, and its config is denormalised - see authzExportedPolicies.
 type settingsRepresentation struct {
 	AllowRemoteResourceManagement bool                          `json:"allowRemoteResourceManagement"`
 	PolicyEnforcementMode         string                        `json:"policyEnforcementMode"`
 	Resources                     []authzResourceRepresentation `json:"resources"`
-	Policies                      []struct{}                    `json:"policies"`
+	Policies                      []authzPolicyExport           `json:"policies"`
 	Scopes                        []authzScopeRepresentation    `json:"scopes"`
 	DecisionStrategy              string                        `json:"decisionStrategy"`
 }
@@ -198,11 +207,25 @@ func (h *handler) readResourceServerSettings(w http.ResponseWriter, r *http.Requ
 		exportedResources = append(exportedResources, authzResourceRepresentationOf(
 			res, a.client.ID, a.client.ClientID, byID, authzResourceExported))
 	}
+	// The policies come back in creation order too, **with the `resource` and
+	// `scope` rows moved to the end** - which is not the partition
+	// `GET .../permission` makes, because `uma` stays among the policies here.
+	// See authzExportedPolicies.
+	policies, err := h.store.Authz().ListPolicies(r.Context(), a.client.ID)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	exportedPolicies, err := h.authzExportedPolicies(r, rc, a, policies)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
 	httpx.WriteJSONCharset(w, http.StatusOK, settingsRepresentation{
 		AllowRemoteResourceManagement: a.rs.AllowRemoteResourceManagement,
 		PolicyEnforcementMode:         a.rs.PolicyEnforcementMode,
 		Resources:                     exportedResources,
-		Policies:                      []struct{}{},
+		Policies:                      exportedPolicies,
 		Scopes:                        exported,
 		DecisionStrategy:              a.rs.DecisionStrategy,
 	})

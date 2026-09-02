@@ -1067,6 +1067,66 @@ var Fixtures = map[string]Fixture{
 	"idp-listing":  identityProviderListingFixture(),
 	"idp-taken":    identityProviderFixture(idpMinimalBody),
 	"idp-stranded": identityProviderStrandedFixture(),
+
+	// ---- P10 fourth cut: policy, permission and import -------------------
+	//
+	// Appended at the very end of the map, and the helpers after the last one.
+	//
+	// **Every policy carries a fixed `id` and no fixture shares one**, for the
+	// reason the scope and resource fixtures above give: a policy id is global
+	// rather than per resource server - a create naming one another resource
+	// server holds is a 409 - and the body's id wins, so a case can name a
+	// policy without capturing anything.
+	//
+	// Each fixture also builds its own scope and its own resource under the
+	// same group, because those two id spaces are global too. One client per
+	// case, again for clientFixtureBody's stated reason.
+	//
+	// **No fixture creates a `role`, `client` or `group` policy carrying a real
+	// reference**, and that is deliberate rather than an omission. Those three
+	// providers resolve a name to an id on the way in, and every id they could
+	// resolve to - a bootstrapped role's, a bootstrapped client's, a group's -
+	// is minted per container, so a golden holding one would have to mask the
+	// value and would then assert nothing about the resolution. The resolution,
+	// its three different answers to an unknown reference and the export's
+	// denormalisation back to names are pinned by internal/admin's own tests
+	// instead. What the goldens do hold is the **empty** case, `roles: "[]"`,
+	// which is the provider's own added key and is reproducible.
+	"authz-pol-list":          authzPolicyFixture("gloak-probe-authz-pol-list", "11", policySeedOutOfOrder),
+	"authz-pol-filter":        authzPolicyFixture("gloak-probe-authz-pol-filt", "12", policySeedOutOfOrder),
+	"authz-pol-permission":    authzPolicyFixture("gloak-probe-authz-pol-perm", "13", policySeedOutOfOrder),
+	"authz-pol-bound":         authzPolicyFixture("gloak-probe-authz-pol-bnd", "14", nil),
+	"authz-pol-create":        authzPolicyFixture("gloak-probe-authz-pol-crt", "15", nil),
+	"authz-pol-conflict":      authzPolicyFixture("gloak-probe-authz-pol-conf", "16", policySeedOne),
+	"authz-pol-noname":        authzPolicyFixture("gloak-probe-authz-pol-non", "17", nil),
+	"authz-pol-badtype":       authzPolicyFixture("gloak-probe-authz-pol-bty", "18", nil),
+	"authz-pol-badscope":      authzPolicyFixture("gloak-probe-authz-pol-bsc", "19", nil),
+	"authz-pol-search":        authzPolicyFixture("gloak-probe-authz-pol-srch", "1a", policySeedOne),
+	"authz-pol-search-miss":   authzPolicyFixture("gloak-probe-authz-pol-smis", "1b", policySeedOne),
+	"authz-pol-search-empty":  authzPolicyFixture("gloak-probe-authz-pol-semp", "1c", policySeedOne),
+	"authz-perm-list":         authzPolicyFixture("gloak-probe-authz-perm-lst", "1d", policySeedOutOfOrder),
+	"authz-perm-create":       authzPolicyFixture("gloak-probe-authz-perm-crt", "1e", policySeedOne),
+	"authz-perm-search-role":  authzPolicyFixture("gloak-probe-authz-perm-rol", "1f", policySeedRole),
+	"authz-perm-search-regex": authzPolicyFixture("gloak-probe-authz-perm-rgx", "21", policySeedRegex),
+	"authz-perm-search-time":  authzPolicyFixture("gloak-probe-authz-perm-tim", "22", policySeedTime),
+	"authz-perm-search-miss":  authzPolicyFixture("gloak-probe-authz-perm-mis", "23", policySeedOne),
+	"authz-import":            authzPolicyFixture("gloak-probe-authz-imp", "24", nil),
+	"authz-import-strict":     authzPolicyFixture("gloak-probe-authz-imp-str", "25", nil),
+	// The client an import has already run against, so the case can read what
+	// the 204 cannot show: the three settings reset then overwritten, the rows
+	// added and the pre-existing policy left alone.
+	"authz-import-applied": authzImportAppliedFixture("gloak-probe-authz-imp-app", "26"),
+	// The settings export now carries policies, which it did not before this
+	// cut because nothing could create one. The seeds interleave the two
+	// families so the export's partition is an assertion.
+	"authz-pol-settings": authzPolicyFixture("gloak-probe-authz-pol-set", "27", policySeedInterleaved),
+	// The two `evaluate` operations, which are Recorded rather than served.
+	// They get fixtures of their own rather than borrowing one: the recorder
+	// shares a container, so a fixture named by two cases runs twice and the
+	// second client create answers 409 with no Location - which is exactly what
+	// the first recording of these two hit.
+	"authz-pol-evaluate":  authzPolicyFixture("gloak-probe-authz-pol-ev", "28", nil),
+	"authz-perm-evaluate": authzPolicyFixture("gloak-probe-authz-perm-ev", "29", nil),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -5320,5 +5380,135 @@ func authzScopeResourcesFixture(clientID, group string) Fixture {
 			`{"_id":"`+authzResourceID(group, "0"+string(rune('1'+i)))+
 				`","name":"gloak-probe-`+seed.name+`","scopes":[{"id":"`+seed.scope+`"}]}`))
 	}
+	return f
+}
+
+// ---- P10 fourth cut: policy, permission and import -------------------------
+
+func authzPolicyID(group, suffix string) string {
+	return "9011ce00-0000-4000-8000-00000000" + group + suffix
+}
+
+// policySeed is one policy a fixture creates: the suffix of its fixed id, the
+// suffix of its name, and the rest of the create body.
+type policySeed struct{ idSuffix, name, extra string }
+
+// seedPolicyScope and seedPolicyResource stand for the fixture's own scope id
+// and resource id inside a seed, so a seed can name them without knowing the
+// group.
+const (
+	seedPolicyScope    = "{{seed_policy_scope}}"
+	seedPolicyResource = "{{seed_policy_resource}}"
+)
+
+// policySeedOutOfOrder is the listing's set: four policies created in the
+// reverse of name order, spanning **both** families and three of the eight
+// typed shapes.
+//
+// Three separate measurements ride on this one set:
+//
+//   - the byte-wise name sort, which `Zebra` is what makes an assertion - it
+//     leads a byte-wise sort and comes third under a case-folded one;
+//   - `?permission=true`, which keeps `yankee` and `Zebra` and drops the
+//     other two, so the partition is visible without a second fixture;
+//   - **`javamap.SizedKeyOrder` rather than `KeyOrder`**, carried by `xray`'s
+//     config: `{nbf, hour}` goes in and `{hour, nbf}` comes back, and KeyOrder
+//     returns the other order. It is the smallest key set that separates the
+//     two functions.
+var policySeedOutOfOrder = []policySeed{
+	{"01", "zulu", `,"type":"role"`},
+	{"02", "yankee", `,"type":"resource","config":{"defaultResourceType":"urn:gloak:TT"}`},
+	{"03", "xray", `,"type":"time","config":{"nbf":"2026-01-01 00:00:00","hour":"3"}`},
+	{"04", "Zebra", `,"type":"uma","scopes":["` + seedPolicyScope + `"]`},
+}
+
+// policySeedInterleaved is the export's set. The two families alternate on the
+// way in so the export's partition - the `resource` and `scope` rows moved to
+// the end, `uma` staying among the policies - cannot be mistaken for creation
+// order. `mike` also carries an association, so the export's synthesised
+// `applyPolicies` key is in the golden.
+var policySeedInterleaved = []policySeed{
+	{"01", "alpha", `,"type":"role"`},
+	{"02", "bravo", `,"type":"resource","resources":["` + seedPolicyResource + `"]`},
+	{"03", "charlie", `,"type":"uma","scopes":["` + seedPolicyScope + `"]`},
+	{"04", "delta", `,"type":"scope","scopes":["` + seedPolicyScope + `"]`},
+	{"05", "echo", `,"type":"time","config":{"hour":"3"}`},
+	{"06", "mike", `,"type":"aggregate","policies":["gloak-probe-alpha"]`},
+}
+
+var policySeedOne = []policySeed{{"01", "solo", `,"type":"role"`}}
+
+// policySeedRole, policySeedRegex and policySeedTime are the three types the
+// `/permission` listing hides, reachable only through `/permission/search` -
+// which is not filtered by family, and which is the only operation in the
+// description that shows their typed representation.
+var (
+	policySeedRole  = []policySeed{{"01", "roled", `,"type":"role"`}}
+	policySeedRegex = []policySeed{{"01", "regexed",
+		`,"type":"regex","config":{"targetClaim":"tc","pattern":"^gloak$"}`}}
+	// Every one of the twelve bounds, so the golden holds the whole table and
+	// its order rather than the two an obvious body would send.
+	policySeedTime = []policySeed{{"01", "timed", `,"type":"time","config":{` +
+		`"nbf":"2026-01-01 00:00:00","noa":"2027-01-01 00:00:00",` +
+		`"dayMonth":"1","dayMonthEnd":"2","month":"3","monthEnd":"4",` +
+		`"year":"2026","yearEnd":"2027","hour":"5","hourEnd":"6",` +
+		`"minute":"7","minuteEnd":"8"}`}}
+)
+
+// authzPolicyFixture creates one client with authorization services on, one
+// scope and one resource for the seeds to point at, and then the seeds.
+//
+// The scope and the resource are created whether a seed needs them or not, so
+// that a case sending its own create can name them - which is what the create
+// and the unknown-scope cases do.
+func authzPolicyFixture(clientID, group string, seeds []policySeed) Fixture {
+	f := authzClientFixture(clientID)
+	scopeID, resourceID := authzScopeID(group, "01"), authzResourceID(group, "01")
+	f.Steps = append(f.Steps,
+		authzScopeStep(scopeID, "gloak-probe-pscope", ``),
+		authzResourceStep(`{"_id":"`+resourceID+`","name":"gloak-probe-presource"}`))
+	for _, s := range seeds {
+		extra := strings.ReplaceAll(s.extra, seedPolicyScope, scopeID)
+		extra = strings.ReplaceAll(extra, seedPolicyResource, resourceID)
+		f.Steps = append(f.Steps, authzPolicyStep(
+			`{"id":"`+authzPolicyID(group, s.idSuffix)+`","name":"gloak-probe-`+s.name+`"`+extra+`}`))
+	}
+	return f
+}
+
+func authzPolicyStep(body string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/policy",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(body),
+		},
+	}
+}
+
+// authzImportAppliedFixture is the client an import has already run against.
+//
+// It seeds a policy the import does not mention and then imports a body that
+// names all three settings, a scope, a resource and two policies - so the
+// golden of the settings read afterwards holds the three measured behaviours at
+// once: the settings replaced, the rows added, and the seeded policy still
+// there because **import deletes nothing**.
+func authzImportAppliedFixture(clientID, group string) Fixture {
+	f := authzPolicyFixture(clientID, group, policySeedOne)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/import",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body: []byte(`{"allowRemoteResourceManagement":false,` +
+				`"policyEnforcementMode":"PERMISSIVE","decisionStrategy":"AFFIRMATIVE",` +
+				`"scopes":[{"name":"gloak-probe-imported-scope"}],` +
+				`"resources":[{"name":"gloak-probe-imported-resource","uris":["/imported"]}],` +
+				`"policies":[{"name":"gloak-probe-imported-policy","type":"time",` +
+				`"config":{"hour":"9"}},` +
+				`{"name":"gloak-probe-solo","type":"regex","config":{"pattern":"^merged$"}}]}`),
+		},
+	})
 	return f
 }
