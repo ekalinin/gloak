@@ -586,33 +586,22 @@ var oidcCore = []Case{
 		// beside it: they are two body templates sharing one head.
 		AssertHeaders: []string{"Content-Type", "Cache-Control", "Content-Language"},
 	},
-	{
-		ID: "oidc/device/second-realm-authorization-request",
-		Doc: Doc{
-			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
-			Section:   "Device authorization endpoint",
-			Retrieved: "2026-09-02",
-		},
-		Status:      Implemented,
-		SecondRealm: true,
-		Fixture:     "second-realm-device",
-		Request: Request{
-			Method: http.MethodPost,
-			Path:   "/realms/" + secondRealmName + "/protocol/openid-connect/auth/device",
-			Form: map[string]string{
-				"client_id": "gloak-probe-second-device",
-				"scope":     "openid",
-			},
-		},
-		AssertHeaders:       []string{"Content-Type", "Cache-Control"},
-		AssertAbsentHeaders: []string{"Pragma"},
-		// The master sibling's three masks, and verification_uri deliberately
-		// left out of them: it is the value this case exists for.
-		// verification_uri_complete is masked because it carries the user code,
-		// and the two URLs come from one expression, so the unmasked one is
-		// what asserts both.
-		Volatile: []string{"device_code", "user_code", "verification_uri_complete"},
-	},
+	// **oidc/device/second-realm-authorization-request is not here, and the
+	// reason is a mask rather than a measurement.** §5.2 of the handover names
+	// it and the fixture for it was written; the response was recorded and the
+	// realm is in it, on `verification_uri`. What stops it is
+	// `verification_uri_complete`, which is that URL plus `?user_code=` plus a
+	// code minted per request: masking it whole is the mask
+	// `prefixMasksLeftInPlace` already records as a finding on the master
+	// sibling - `{{issuer}}` and more, thrown away to hide eight characters -
+	// and a second instance of a known-too-wide mask is not worth a second
+	// entry in a list of findings. Case has no body-side equivalent of
+	// VolatileTailHeaders, which is F107's "a mechanism and not an edit".
+	//
+	// Site 15 is closed by internal/oidc's
+	// TestDeviceAuthorizationNamesTheRequestsRealm instead, which asserts both
+	// URLs whole and needs no mask at all. The case belongs here the day that
+	// mechanism exists.
 	{
 		ID: "oidc/authorization/second-realm-error-redirect",
 		Doc: Doc{

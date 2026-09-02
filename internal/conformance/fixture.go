@@ -578,19 +578,18 @@ var Fixtures = map[string]Fixture{
 	// one on the protocol side.
 	"second-realm": realmFixture(secondRealmName),
 
-	// The two second-realm cases that need a client **inside** that realm,
-	// which is what kept them out of the cut that built the flag. They create
-	// the same realm as the fixture above rather than one each: it is a
-	// read-only realm for all three, the create is idempotent, and one extra
-	// realm on the shared container is one extra admin container inside every
-	// realm-wide body master serves - which is exactly what moved
-	// oidc/introspection/active-refresh-token last time.
+	// The second-realm case that needs a client **inside** that realm, which is
+	// what kept it out of the cut that built the flag. It creates the same
+	// realm as the fixture above rather than one of its own: both only read it,
+	// the create is idempotent, and one extra realm on the shared container is
+	// one extra admin container inside every realm-wide body master serves -
+	// which is exactly what moved oidc/introspection/active-refresh-token last
+	// time.
 	//
-	// Each still creates the realm itself, because
+	// It still creates the realm itself, because
 	// TestSecondRealmCasesAddressARealmTheyCreate requires the case's **own**
 	// fixture to be the creator: the verifier runs that fixture and nothing
 	// else, so a realm another fixture made would not be there.
-	"second-realm-device":  secondRealmDeviceFixture(),
 	"second-realm-browser": secondRealmBrowserFixture(),
 
 	// P4's second cut. The default groups and the read by path live in a realm
@@ -5267,26 +5266,16 @@ func authzResourcePutFixture(clientID, group string) Fixture {
 // oidc/introspection/active-refresh-token when this family arrived.
 const secondRealmName = "gloak-probe-second"
 
-// secondRealmDeviceFixture is the second realm with a device-grant client in
-// it, for the device authorization request - site 15 of the derivation table,
-// and one of the three measured survivors.
-//
-// The client body is deviceClientFixture's, unchanged: what a second realm
-// changes is the path it is created at, not what a device client is.
-func secondRealmDeviceFixture() Fixture {
-	f := realmFixture(secondRealmName)
-	f.Steps = append(f.Steps, clientInRealmStep(secondRealmName,
-		deviceClientBody("gloak-probe-second-device", "")))
-	return f
-}
-
 // secondRealmBrowserFixture is the second realm with a browser client in it,
-// for /auth's error redirect - site 19, and the third survivor.
+// for /auth's error redirect - site 19 of the derivation table, and one of the
+// three measured survivors.
 //
-// It registers browserRedirectURI, exactly as the master browser fixtures do.
-// That constant's own doc comment says why a client has to be registered at all
-// rather than a bootstrapped one named: none of the six can serve these cases,
-// and in a created realm the six are the same six.
+// The client body is browserClientFixture's, unchanged: what a second realm
+// changes is the path the client is created at, not what a browser client is.
+// It registers browserRedirectURI exactly as the master browser fixtures do,
+// and that constant's own doc comment says why a client has to be registered at
+// all rather than a bootstrapped one named - none of the six can serve these
+// cases, and in a created realm the six are the same six.
 func secondRealmBrowserFixture() Fixture {
 	f := realmFixture(secondRealmName)
 	f.Steps = append(f.Steps, clientInRealmStep(secondRealmName,
