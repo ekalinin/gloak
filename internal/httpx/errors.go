@@ -451,24 +451,38 @@ func WriteThemeDeviceCodePage(w http.ResponseWriter, action string, c ThemeChrom
 }
 
 // themePageBody is Gloak's placeholder for a page the login theme renders and
-// this project has not measured.
+// this project cannot yet reproduce.
 //
-// Keycloak serves 3572 to 4692 bytes of keycloak.v2 Freemarker output here,
-// carrying a /resources/<version>/ cache-busting segment. Eight of those pages
-// are measured and are built in theme.go; the rest are still this. The list of
-// what is still a placeholder is short and worth naming, because each is a page
-// somebody could measure in an hour: the logout confirmation, "You are logged
-// out", "Page has expired", the consent page and the five required-action
-// pages.
+// Keycloak serves 3616 to 12443 bytes of keycloak.v2 Freemarker output here,
+// carrying a /resources/<version>/ cache-busting segment. Nine pages are still
+// this, and on 2026-09-02 every one of them was measured rather than left
+// unread. The reason each is still a placeholder is no longer "nobody has read
+// it off a server":
 //
-// Giving those the real chrome under an invented instruction would be writing
-// an observable value from memory, which is the one rule this project puts
-// above every other - so the placeholder stays until each is read off a server.
+//	page                  data-page-id                            what stops it
+//	logout confirmation   login-logout-confirm                    a tab_id and a session_code
+//	You are logged out    login-info                              a tab_id
+//	Page has expired      login-login-page-expired                a tab_id, the session hash
+//	consent               login-login-oauth-grant                 a tab_id, a session code
+//	UPDATE_PASSWORD       login-login-update-password             a tab_id, a session code
+//	UPDATE_PROFILE        login-login-update-profile              a tab_id, a session code
+//	CONFIGURE_TOTP        login-login-config-totp                 and a minted TOTP secret
+//	Passkey               login-webauthn-register                 and a WebAuthn challenge
+//	recovery codes        login-login-recovery-authn-code-config  and twelve generated codes
+//
+// **All nine carry a tab_id minted by the request that renders them**, and the
+// first two carry it on a path where Gloak has no authentication session to
+// take it from. So the placeholder is now waiting on state rather than on a
+// measurement, and none of the nine can carry a conformance golden whatever
+// else changes - see F146 and F38.
 //
 // The title is a parameter because the measured pages are not all the error
 // page: `/logout` serves "Logging out" and "You are logged out" with 200s
 // through the same envelope, and a 200 whose body says "We are sorry..." would
-// be a placeholder that misleads about which branch was taken.
+// be a placeholder that misleads about which branch was taken. The logout
+// confirmation's own <title> is measured to be "Logging out" rather than
+// "Sign in to <realm>", which is the one page in the family whose <title> is
+// not the head template's.
 func themePageBody(title string) string {
 	return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
 		`<title>` + title + `</title></head><body><h1 id="kc-page-title">` + title +

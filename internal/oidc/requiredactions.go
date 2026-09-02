@@ -235,10 +235,14 @@ func (h *handler) serveStep(w http.ResponseWriter, realm *model.Realm, sess *aut
 		// neither does Gloak, so this is the answer for every realm this project
 		// can serve - the same standing that CIBA's 503 has, and the same
 		// standing writeRegistrationPage's 400 has.
-		// The placeholder body, for writeLoginActionErrorPage's reason: the
-		// sentence is measured and the chrome is not.
-		httpx.WriteThemePage(w, http.StatusInternalServerError, loginActionCacheControl,
-			httpx.ThemeErrorTitle)
+		//
+		// Its chrome is writeRegistrationPage's rather than the 400 page's, and
+		// that was measured on 2026-09-02 rather than assumed: the restart URL
+		// carries client_id, tab_id and client_data, because this page too is
+		// rendered from inside the authentication flow. It is what stops this
+		// page being comparable in a golden and does not stop it being served.
+		httpx.WriteThemeErrorPage(w, http.StatusInternalServerError, loginActionCacheControl,
+			h.flowChrome(realm, client, tab), pageVerifyEmailFailed)
 		return
 	}
 	spec := requiredActionTable[step]
@@ -323,10 +327,6 @@ func (h *handler) runStep(w http.ResponseWriter, r *http.Request, realm *model.R
 // also a matching pair.
 func (h *handler) runUpdatePassword(w http.ResponseWriter, r *http.Request, realm *model.Realm,
 	client *model.Client, sess *authSession, tab *authTab, user *model.User) bool {
-	if err := r.ParseForm(); err != nil {
-		h.writeLoginActionErrorPage(w)
-		return false
-	}
 	password := r.PostForm.Get("password-new")
 	if password == "" {
 		h.serveStep(w, realm, sess, tab, client, user, updatePasswordAction, httpx.PasswordMissingMessage)
@@ -360,10 +360,6 @@ func (h *handler) runUpdatePassword(w http.ResponseWriter, r *http.Request, real
 // it.
 func (h *handler) runUpdateProfile(w http.ResponseWriter, r *http.Request, realm *model.Realm,
 	client *model.Client, sess *authSession, tab *authTab, user *model.User) bool {
-	if err := r.ParseForm(); err != nil {
-		h.writeLoginActionErrorPage(w)
-		return false
-	}
 	updated := *user
 	updated.Email = r.PostForm.Get("email")
 	updated.FirstName = r.PostForm.Get("firstName")

@@ -47,6 +47,31 @@ const (
 	pageMissingIDTokenHint     = "Missing parameters: id_token_hint"
 )
 
+// The three sentences the /login-actions family's 400 page carries, and the one
+// its VERIFY_EMAIL landing carries with a 500.
+//
+// Measured 2026-09-02, one branch at a time, across all twelve call sites that
+// reach this page - see §2 of
+// docs/superpowers/plans/2026-09-02-theme-remaining-pages.md. Twelve sites,
+// **three** sentences and one answer that is not this page at all.
+//
+// pageLoginActionError is the answer to every way the client can fail on these
+// three endpoints: unknown, absent, empty, and a **real client that is not the
+// tab's**. That last cell is the one worth knowing, because it is the only place
+// the page's own chrome and its instruction disagree - the sentence says the
+// client failed and the chrome names it. `/auth` splits the same four ways into
+// three different sentences; this family collapses all four into one.
+//
+// pageRestartCookieNotFound is the one long sentence in the family and its
+// wording is the contract, full stops and all.
+const (
+	pageLoginActionError      = "An error occurred, please login again through your application."
+	pageRestartCookieNotFound = "Restart login cookie not found. It may have expired; it may have " +
+		"been deleted or cookies are disabled in your browser. If cookies are disabled then enable " +
+		"them. Click Back to Application to login again."
+	pageVerifyEmailFailed = "Failed to send email, please try again later."
+)
+
 // The device status page's three bodies, under two headings. The heading is in
 // internal/httpx beside the other page titles; these are the sentences.
 //
@@ -126,6 +151,51 @@ func (h *handler) themeChromeFor(realm *model.Realm, client *model.Client, extra
 	c.RestartParams = httpx.ThemeRestartParams(params...)
 	c.BackToApplication = h.clientHomeURL(client)
 	return c
+}
+
+// loginActionChrome is the chrome every page the /login-actions family serves
+// carries, and it follows the request's own client_id rather than the tab's.
+//
+// Measured 2026-09-02 as a four-cell sweep on one container, on a tab belonging
+// to one client:
+//
+//	client_id resolves            restart?client_id=<it>&skip_logout=true, and its Back to Application link
+//	client_id is another real one restart?client_id=<that other one>, and **that** client's link
+//	client_id unknown or empty    restart?skip_logout=true, no link
+//	client_id absent              restart?skip_logout=true, no link
+//
+// The second cell is the finding. The page's instruction on that cell says the
+// client failed - it is not the tab's - and the chrome names it anyway, so the
+// two halves of one response describe two different judgements. Reading the
+// chrome off the tab is the obvious implementation and it is wrong there.
+//
+// It is also why this takes url.Values rather than a resolved client: three of
+// the four cells have no client to pass.
+func (h *handler) loginActionChrome(r *http.Request, realm *model.Realm, q url.Values) httpx.ThemeChrome {
+	if client, ok := h.authClient(r, realm, q.Get("client_id")); ok {
+		return h.themeChromeFor(realm, client)
+	}
+	return h.themeChrome(realm)
+}
+
+// flowChrome is the chrome of a page rendered from **inside** the
+// authentication flow, where a tab already exists.
+//
+// Measured on the two pages that are: prompt=create's 400 and VERIFY_EMAIL's
+// 500. Their restart URL carries three parameters where the rest of the family
+// carries one:
+//
+//	?client_id=<id>&tab_id=<11 chars>&client_data=<base64url>&skip_logout=true
+//
+// Those two extra values are also why neither page can carry a golden. A tab
+// whose client_data will not encode contributes nothing rather than an empty
+// parameter, because an empty client_data is not a shape any measurement shows.
+func (h *handler) flowChrome(realm *model.Realm, client *model.Client, tab *authTab) httpx.ThemeChrome {
+	extra := []string{"tab_id=" + url.QueryEscape(tab.TabID)}
+	if data, err := tab.clientData(); err == nil {
+		extra = append(extra, "client_data="+url.QueryEscape(data))
+	}
+	return h.themeChromeFor(realm, client, extra...)
 }
 
 // clientHomeURL is the href of the error page's "Back to Application" link,

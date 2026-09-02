@@ -578,6 +578,148 @@ var oidcPending = []Case{
 		AssertHeaders: []string{"Content-Type"},
 	},
 
+	// --- The /login-actions family's error page: F109's twelve call sites ---
+	//
+	// Twelve sites across three files reach one page, and until 2026-09-02 no
+	// golden compared any of them. What made these four possible is a
+	// measurement rather than a mechanism: **this page carries nothing
+	// per-request.** Its restart URL is `?client_id=<id>&skip_logout=true` and
+	// no more - no tab_id, no session_code, no checkAuthSession hash - where the
+	// nine theme pages still serving a placeholder body carry all three between
+	// them. So the same page that could not be pinned inside the flow is a
+	// contract outside it.
+	//
+	// All four send **no cookies**, which is what reaches three of the twelve
+	// branches from a fixture that only creates a client. The fourth, "a real
+	// client that is not the tab's", needs a live tab and is pinned by
+	// internal/oidc's TestLoginActionErrorPageNamesTheRequestsClient instead.
+	{
+		ID: "oidc/authorization/login-actions-invalid-client-data",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Login actions: client_data",
+			Retrieved: "2026-09-02",
+		},
+		Status: Implemented,
+		// Measured 2026-09-02: 400, the keycloak.v2 login-error page,
+		// "Invalid Request", and Cache-Control: no-store, must-revalidate,
+		// max-age=0 - the third of the three values this one page has across
+		// four endpoints. client_data is checked before the cookies, which is
+		// why a request carrying none still gets this sentence rather than the
+		// restart one.
+		Fixture: "browser-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/login-actions/authenticate",
+			Query: map[string]string{
+				"client_id":   "gloak-probe-browser",
+				"tab_id":      "zz",
+				"client_data": "!!!!",
+			},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "Content-Language"},
+	},
+	{
+		ID: "oidc/authorization/login-actions-restart-cookie-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Login actions: the restart cookie",
+			Retrieved: "2026-09-02",
+		},
+		Status: Implemented,
+		// The long sentence, and the chrome that names the request's client.
+		// Its pair is login-actions-unknown-client below: same sentence, same
+		// endpoint, and a chrome that names nothing - which is what says the
+		// chrome follows the client that resolved rather than the request that
+		// asked.
+		Fixture: "browser-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/login-actions/authenticate",
+			Query: map[string]string{
+				"client_id":   "gloak-probe-browser",
+				"tab_id":      "zz",
+				"client_data": "e30",
+			},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "Content-Language"},
+	},
+	{
+		ID: "oidc/authorization/login-actions-unknown-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Login actions: client validation",
+			Retrieved: "2026-09-02",
+		},
+		Status: Implemented,
+		// **An unknown client_id never reaches the client check here**: the
+		// authentication session is judged first, so the answer is about the
+		// cookie and the page names no client at all. Measured beside the case
+		// above, which differs only in the client_id being real. GET /auth
+		// splits the same four client failures into three sentences; this
+		// family reports none of them.
+		Fixture: "bootstrap",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/login-actions/authenticate",
+			Query: map[string]string{
+				"client_id":   "nosuchclient",
+				"tab_id":      "zz",
+				"client_data": "e30",
+			},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "Content-Language"},
+	},
+	{
+		ID: "oidc/authorization/login-actions-unparseable-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Login actions: request body",
+			Retrieved: "2026-09-02",
+		},
+		Status: Implemented,
+		// **Not the page family at all.** A body carrying a bad percent escape
+		// answers 500 with application/json and the identical 94 bytes POST
+		// /auth and POST /logout answer, and the decode runs ahead of every
+		// check the endpoint makes - bad client_data, absent cookies and an
+		// unknown client all lose to it, and only the realm beats it. Gloak
+		// answered the 400 page on three of those four rows until 2026-09-02,
+		// because its ParseForm sat four levels down.
+		Fixture: "bootstrap",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/realms/master/login-actions/authenticate",
+			Headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded"},
+			Body:    []byte("a=1&%zz=2"),
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "oidc/authorization/required-action-invalid-client-data",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Login actions: required action, client_data",
+			Retrieved: "2026-09-02",
+		},
+		Status: Implemented,
+		// The sibling endpoint answering the identical page, which is the claim
+		// F109's twelve sites rest on: three files, one writer, one answer. It
+		// is not a re-measurement of the case above - a different handler
+		// decides it, and the two were separately capable of disagreeing, the
+		// way /auth and /logout do about an empty client_id.
+		Fixture: "browser-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/login-actions/required-action",
+			Query: map[string]string{
+				"client_id":   "gloak-probe-browser",
+				"tab_id":      "zz",
+				"client_data": "!!!!",
+			},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "Content-Language"},
+	},
+
 	// --- Token endpoint ---
 	// expires_in and refresh_expires_in are not in these cases' Volatile
 	// lists. They are configured token lifespans (60 and 1800 for master;

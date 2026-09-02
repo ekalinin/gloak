@@ -39,16 +39,23 @@ func newBrowser(t *testing.T) *browser {
 // branch in writeUnusableSession reachable from a test at all.
 func (b *browser) do(method, target string, form url.Values) *httptest.ResponseRecorder {
 	b.t.Helper()
-	var body *strings.Reader
 	if form != nil {
-		body = strings.NewReader(form.Encode())
-	} else {
-		body = strings.NewReader("")
+		return b.doRaw(method, target, form.Encode())
 	}
-	req := httptest.NewRequest(method, target, body)
-	if form != nil {
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	}
+	return b.send(httptest.NewRequest(method, target, strings.NewReader("")))
+}
+
+// doRaw is do with the body written verbatim, which is the only way to send one
+// that will not form-decode. url.Values cannot express a bad percent escape.
+func (b *browser) doRaw(method, target, body string) *httptest.ResponseRecorder {
+	b.t.Helper()
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return b.send(req)
+}
+
+func (b *browser) send(req *http.Request) *httptest.ResponseRecorder {
+	b.t.Helper()
 	if len(b.jar) > 0 {
 		pairs := make([]string, 0, len(b.jar))
 		for name, value := range b.jar {
@@ -1027,5 +1034,259 @@ func TestExecutionIsStableAcrossLogins(t *testing.T) {
 	// A different realm - here, a different bootstrapped store - gets its own.
 	if alien.Get("execution") == first.Get("execution") {
 		t.Errorf("two realms share an execution id")
+	}
+}
+
+// The three instructions the /login-actions family's 400 page carries, measured
+// 2026-09-02 across all twelve call sites that reach it. They are spelled here
+// rather than imported so that a change to the constant fails a test that says
+// what the sentence is.
+const (
+	instrInvalidRequest = "Invalid Request"
+	instrClientFailed   = "An error occurred, please login again through your application."
+	instrNoRestart      = "Restart login cookie not found. It may have expired; it may have been " +
+		"deleted or cookies are disabled in your browser. If cookies are disabled then enable them. " +
+		"Click Back to Application to login again."
+)
+
+// TestLoginActionErrorPageInstructions is F109's twelve, one branch at a time.
+//
+// **Twelve call sites, three sentences.** The mapping is the whole of what F109
+// asked for and it is not the one a reader would guess: the four ways a client
+// can fail - unknown, absent, empty, and a real client that is not the tab's -
+// collapse into **one** sentence here, where GET /auth splits the same four into
+// three. Guessing would have produced three sentences on this endpoint too.
+func TestLoginActionErrorPageInstructions(t *testing.T) {
+	const la = "/realms/master/login-actions/authenticate"
+	const ra = "/realms/master/login-actions/required-action"
+	const co = "/realms/master/login-actions/consent"
+
+	tests := []struct {
+		name   string
+		method string
+		target string
+		want   string
+	}{
+		{"authenticate, unparseable client_data", http.MethodGet,
+			la + "?client_id=probe&tab_id=zz&client_data=%21%21%21%21", instrInvalidRequest},
+		{"required-action, unparseable client_data", http.MethodGet,
+			ra + "?client_id=probe&tab_id=zz&client_data=%21%21%21%21", instrInvalidRequest},
+		{"consent, unparseable client_data", http.MethodPost,
+			co + "?client_id=probe&tab_id=zz&client_data=%21%21%21%21", instrInvalidRequest},
+		{"authenticate, nothing to restart from", http.MethodGet,
+			la + "?client_id=probe&tab_id=zz&client_data=e30", instrNoRestart},
+		{"required-action, nothing to restart from", http.MethodGet,
+			ra + "?client_id=probe&tab_id=zz&client_data=e30", instrNoRestart},
+		// An unknown client_id does not reach the client check: the session is
+		// judged first and answers about the cookie. Measured on both.
+		{"authenticate, an unknown client is still the cookie", http.MethodGet,
+			la + "?client_id=nosuch&tab_id=zz&client_data=e30", instrNoRestart},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newBrowser(t)
+			w := b.do(tc.method, tc.target, nil)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("want 400, got %d\n%s", w.Code, w.Body)
+			}
+			assertInstruction(t, w.Body.String(), tc.want)
+		})
+	}
+
+	// The client branch needs a live tab, because the only way to reach it is to
+	// get past the session check with a client that is not this tab's.
+	t.Run("authenticate, a real client that is not the tab's", func(t *testing.T) {
+		b := newBrowser(t)
+		target, params := actionParams(t, b.login(nil))
+		w := b.do(http.MethodPost, replaceParam(target, params, "client_id", "probe-home"),
+			credentials("admin", "admin"))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("want 400, got %d\n%s", w.Code, w.Body)
+		}
+		assertInstruction(t, w.Body.String(), instrClientFailed)
+	})
+	t.Run("required-action, a real client that is not the tab's", func(t *testing.T) {
+		h, s := authServerAndStore(t)
+		b := &browser{h: h, t: t, jar: map[string]string{}}
+		setActions(t, s, "UPDATE_PASSWORD")
+		landing := b.browserAt(t, "")
+		u, err := url.Parse(landing)
+		if err != nil {
+			t.Fatalf("parse landing %q: %v", landing, err)
+		}
+		q := u.Query()
+		q.Set("client_id", "probe-home")
+		w := b.do(http.MethodGet, u.Path+"?"+q.Encode(), nil)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("want 400, got %d\n%s", w.Code, w.Body)
+		}
+		assertInstruction(t, w.Body.String(), instrClientFailed)
+	})
+}
+
+var instructionRe = regexp.MustCompile(`<p class="instruction">([^<]*)</p>`)
+
+// assertInstruction reads the login-error template's one instruction paragraph.
+func assertInstruction(t *testing.T, body, want string) {
+	t.Helper()
+	m := instructionRe.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("no <p class=\"instruction\"> in the page (%d bytes)", len(body))
+	}
+	if m[1] != want {
+		t.Errorf("instruction:\n got %q\nwant %q", m[1], want)
+	}
+}
+
+// TestLoginActionErrorPageNamesTheRequestsClient is the half of F109 nothing had
+// measured: which client the page's restart URL names.
+//
+// **It is the request's own client_id, not the tab's**, and the branch that
+// makes that visible is the one whose sentence says the client failed. A page
+// that read the chrome off the tab would name the right client on five of the
+// six cells and the wrong one on the sixth, which is the cell nobody would build
+// a fixture for.
+func TestLoginActionErrorPageNamesTheRequestsClient(t *testing.T) {
+	const la = "/realms/master/login-actions/authenticate"
+	tests := []struct {
+		name     string
+		clientID string
+		want     string // the restart URL's query, before skip_logout
+		link     string
+	}{
+		{"a client with a baseUrl", "probe-home", "client_id=probe-home&", "http://abs.example/home"},
+		{"a client without one", "probe", "client_id=probe&", ""},
+		{"a client carrying a rootUrl alone", "probe-rootonly", "client_id=probe-rootonly&", ""},
+		{"an unknown client", "nosuch", "", ""},
+		{"an empty client_id", "", "", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newBrowser(t)
+			w := b.do(http.MethodGet,
+				la+"?client_id="+url.QueryEscape(tc.clientID)+"&tab_id=zz&client_data=e30", nil)
+			assertChrome(t, w.Body.String(), tc.want, tc.link)
+		})
+	}
+	t.Run("an absent client_id", func(t *testing.T) {
+		b := newBrowser(t)
+		w := b.do(http.MethodGet, la+"?tab_id=zz&client_data=e30", nil)
+		assertChrome(t, w.Body.String(), "", "")
+	})
+	// The cell that separates "the request's client" from "the tab's client".
+	t.Run("a real client that is not the tab's", func(t *testing.T) {
+		b := newBrowser(t)
+		target, params := actionParams(t, b.login(nil))
+		w := b.do(http.MethodPost, replaceParam(target, params, "client_id", "probe-home"),
+			credentials("admin", "admin"))
+		assertChrome(t, w.Body.String(), "client_id=probe-home&", "http://abs.example/home")
+	})
+}
+
+// assertChrome checks the restart URL's parameters and the Back to Application
+// link, which are the two things the page's chrome is.
+func assertChrome(t *testing.T, body, wantParams, wantLink string) {
+	t.Helper()
+	want := `"/realms/master/login-actions/restart?` + wantParams + `skip_logout=true"`
+	if !strings.Contains(body, want) {
+		t.Errorf("restart URL: want the page to contain %s", want)
+	}
+	link := strings.Contains(body, `id="backToApplication" href="`+wantLink+`"`)
+	if wantLink == "" {
+		if strings.Contains(body, "backToApplication") {
+			t.Errorf("want no Back to Application link, got one")
+		}
+		return
+	}
+	if !link {
+		t.Errorf("Back to Application: want href %q", wantLink)
+	}
+}
+
+// TestUnparseableBodyIsA500OnTheLoginActionEndpoints is the four of F109's
+// twelve sites that are not this page at all, and the order that reaches them.
+//
+// Measured 2026-09-02: a body carrying a bad percent escape answers 500 with
+// application/json and the same 94 bytes POST /auth and POST /logout answer, on
+// all three /login-actions endpoints. That is five endpoints on one rule, and
+// the first time the rule was found by measuring a branch rather than by
+// probing an endpoint.
+//
+// **The order is the second half of the finding.** The decode beats bad
+// client_data, missing cookies and an unknown client, and loses only to the
+// realm - so it is not the endpoint's own judgement. Gloak called ParseForm
+// four levels down and answered the 400 page on three of those four rows.
+func TestUnparseableBodyIsA500OnTheLoginActionEndpoints(t *testing.T) {
+	const badBody = "a=1&%zz=2"
+	paths := map[string]string{
+		"authenticate":    "/realms/master/login-actions/authenticate",
+		"required-action": "/realms/master/login-actions/required-action",
+		"consent":         "/realms/master/login-actions/consent",
+	}
+	queries := map[string]string{
+		"plain":             "?client_id=probe&tab_id=zz&client_data=e30",
+		"bad client_data":   "?client_id=probe&tab_id=zz&client_data=%21%21%21%21",
+		"an unknown client": "?client_id=nosuch&tab_id=zz&client_data=e30",
+		"no parameters":     "",
+	}
+	for name, path := range paths {
+		for qname, query := range queries {
+			t.Run(name+", "+qname, func(t *testing.T) {
+				b := newBrowser(t)
+				w := b.doRaw(http.MethodPost, path+query, badBody)
+				assertUnparseableBody(t, w)
+			})
+		}
+	}
+
+	// **The 500 here is not byte-identical to POST /auth's**, and the byte is a
+	// Cache-Control. Measured side by side: /auth sends none and this sends the
+	// family's own value, on responses that agree on everything else.
+	t.Run("the Cache-Control is this endpoint's, not /auth's", func(t *testing.T) {
+		b := newBrowser(t)
+		here := b.doRaw(http.MethodPost, "/realms/master/login-actions/authenticate", badBody)
+		if got := here.Header().Get("Cache-Control"); got != "no-store, must-revalidate, max-age=0" {
+			t.Errorf("/login-actions 500 Cache-Control: got %q", got)
+		}
+		there := b.doRaw(http.MethodPost, "/realms/master/protocol/openid-connect/auth", badBody)
+		if there.Code != http.StatusInternalServerError {
+			t.Fatalf("control: want 500 from POST /auth, got %d", there.Code)
+		}
+		if got := there.Header().Get("Cache-Control"); got != "" {
+			t.Errorf("POST /auth's 500 sends Cache-Control %q, measured to send none", got)
+		}
+	})
+
+	// The realm is the one check that beats it: an unknown realm with the same
+	// body answers the protocol side's 404 rather than the 500.
+	t.Run("the realm wins", func(t *testing.T) {
+		b := newBrowser(t)
+		w := b.doRaw(http.MethodPost, "/realms/gloak-no-such-realm/login-actions/authenticate", badBody)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("an unknown realm with a bad body: want 404, got %d\n%s", w.Code, w.Body)
+		}
+	})
+
+	// And a live tab reaches the same answer, which is the cell the four call
+	// sites actually sat on.
+	t.Run("a live tab", func(t *testing.T) {
+		b := newBrowser(t)
+		target, _ := actionParams(t, b.login(nil))
+		assertUnparseableBody(t, b.doRaw(http.MethodPost, target, badBody))
+	})
+}
+
+func assertUnparseableBody(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500, got %d\n%s", w.Code, w.Body)
+	}
+	if got := w.Header().Get("Content-Type"); got != "application/json" {
+		t.Errorf("Content-Type: got %q, want application/json", got)
+	}
+	const want = `{"error":"unknown_error","error_description":` +
+		`"For more on this error consult the server log."}`
+	if got := strings.TrimSpace(w.Body.String()); got != want {
+		t.Errorf("body:\n got %s\nwant %s", got, want)
 	}
 }
