@@ -57,9 +57,15 @@ func (h *handler) requiredAction(w http.ResponseWriter, r *http.Request) {
 	if realm == nil {
 		return
 	}
+	// The body is decoded before anything this endpoint decides, so that a
+	// submission whose form will not parse answers the measured 500 rather than
+	// this endpoint's page. See decodeLoginActionBody.
+	if !decodeLoginActionBody(w, r) {
+		return
+	}
 	q := r.URL.Query()
 	if !validClientData(q.Get("client_data")) {
-		h.writeLoginActionErrorPage(w)
+		h.writeLoginActionErrorPage(w, h.loginActionChrome(r, realm, q), pageInvalidRequest)
 		return
 	}
 	// The tab is resolved by its id alone, never by the session code, because a
@@ -73,7 +79,7 @@ func (h *handler) requiredAction(w http.ResponseWriter, r *http.Request) {
 	}
 	client, ok := h.authClient(r, realm, q.Get("client_id"))
 	if !ok || client.ClientID != tab.ClientID {
-		h.writeLoginActionErrorPage(w)
+		h.writeLoginActionErrorPage(w, h.loginActionChrome(r, realm, q), pageLoginActionError)
 		return
 	}
 	user, err := h.store.Users().ByID(r.Context(), realm.ID, tab.UserID)
@@ -220,9 +226,12 @@ func (h *handler) consent(w http.ResponseWriter, r *http.Request) {
 	if realm == nil {
 		return
 	}
+	if !decodeLoginActionBody(w, r) {
+		return
+	}
 	q := r.URL.Query()
 	if !validClientData(q.Get("client_data")) {
-		h.writeLoginActionErrorPage(w)
+		h.writeLoginActionErrorPage(w, h.loginActionChrome(r, realm, q), pageInvalidRequest)
 		return
 	}
 	tab, sess, ok := h.resolveAuthTab(r, realm, q)
@@ -236,11 +245,7 @@ func (h *handler) consent(w http.ResponseWriter, r *http.Request) {
 	}
 	client, ok := h.authClient(r, realm, q.Get("client_id"))
 	if !ok || client.ClientID != tab.ClientID {
-		h.writeLoginActionErrorPage(w)
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		h.writeLoginActionErrorPage(w)
+		h.writeLoginActionErrorPage(w, h.loginActionChrome(r, realm, q), pageLoginActionError)
 		return
 	}
 	user, err := h.store.Users().ByID(r.Context(), realm.ID, tab.UserID)

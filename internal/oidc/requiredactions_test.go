@@ -584,6 +584,23 @@ func TestVerifyEmailIsTwoAnswers(t *testing.T) {
 		if got := storedActions(t, s); len(got) != 1 {
 			t.Errorf("an unreachable VERIFY_EMAIL clears nothing, got %v", got)
 		}
+		// **Its body is the theme's error page and its chrome is the one
+		// prompt=create carries**, measured 2026-09-02: the restart URL takes
+		// client_id, tab_id and client_data, because this page too is rendered
+		// from inside the authentication flow. It served the placeholder body
+		// until then, with a comment saying the sentence was measured and the
+		// chrome was not.
+		body := w.Body.String()
+		assertInstruction(t, body, "Failed to send email, please try again later.")
+		tabID, err := url.Parse(landing)
+		if err != nil {
+			t.Fatalf("parse landing: %v", err)
+		}
+		want := "/realms/master/login-actions/restart?client_id=probe&tab_id=" +
+			url.QueryEscape(tabID.Query().Get("tab_id")) + "&client_data="
+		if !strings.Contains(body, want) {
+			t.Errorf("restart URL: want the page to contain %q", want)
+		}
 	})
 }
 
