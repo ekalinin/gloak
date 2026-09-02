@@ -211,6 +211,47 @@ type AuthzRepo interface {
 	// and it is what lets one set of rows have three measured consumers without
 	// three queries.
 	ListResources(ctx context.Context, clientID string) ([]*model.AuthzResource, error)
+
+	// CreatePolicy inserts a policy - or a permission, which is the same row
+	// with one of three types - assigning it the next ordinal within its
+	// resource server.
+	//
+	// **Two constraints, two measured 409 bodies, and internal/admin has to
+	// tell them apart.** A name another policy of the same resource server
+	// holds is `Policy with name [x] already exists` / `Conflicting policy`; an
+	// id **any** resource server holds is `Duplicate resource error`. Both come
+	// back as ErrConflict, so the handler checks the name itself before calling
+	// this and treats what is left as the id collision - which is also the
+	// measured order, the name answering ahead of the id on a body wrong in
+	// both ways.
+	CreatePolicy(ctx context.Context, p *model.AuthzPolicy) error
+	// UpdatePolicy replaces every field and every child row. It does not move
+	// the ordinal, for the reason UpdateScope and UpdateResource do not.
+	//
+	// Its only caller is POST .../import, which was measured **merging** into a
+	// policy whose name it already holds rather than replacing it: importing a
+	// `regex` body over a `role` policy left the type `role` and merged the
+	// config. The merge is decided in internal/admin; this method always
+	// replaces what it is handed.
+	UpdatePolicy(ctx context.Context, p *model.AuthzPolicy) error
+	// PolicyByID and PolicyByName both take the client id, because a policy is
+	// addressed within its resource server: one server's policy id read through
+	// another is a 404. The id is global all the same - a create naming an id
+	// another server holds is a 409, and the **other** server is undamaged,
+	// which is the resource family's answer and not F131's.
+	PolicyByID(ctx context.Context, clientID, policyID string) (*model.AuthzPolicy, error)
+	PolicyByName(ctx context.Context, clientID, name string) (*model.AuthzPolicy, error)
+	// ListPolicies returns every policy of one resource server **in creation
+	// order**, which is the order GET .../settings serves after moving the
+	// `resource` and `scope` rows to the end. The two listings' byte-wise name
+	// sort, their ten filters and their two bounds all run in internal/admin
+	// over what this returns - ListScopes' and ListResources' precedent, and
+	// here it is what lets one set of rows serve two listings, two searches and
+	// an export whose orders and partitions all disagree.
+	//
+	// There is no DeletePolicy: no operation in the description removes one,
+	// and the resource server's cascade takes the rows with it.
+	ListPolicies(ctx context.Context, clientID string) ([]*model.AuthzPolicy, error)
 }
 
 // OrganizationRepo stores a realm's organizations.

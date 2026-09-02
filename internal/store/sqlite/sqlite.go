@@ -2480,6 +2480,200 @@ func scanAuthzResourceAttributes(rows *sql.Rows, byID map[string]*model.AuthzRes
 	return classify(rows.Err())
 }
 
+// authzPolicyColumns is the read order every policy query uses, matching
+// scanAuthzPolicy.
+const authzPolicyColumns = `id, resource_server_id, name, description, type,
+	logic, decision_strategy, owner, ordinal`
+
+// CreatePolicy assigns the ordinal from the resource server's own maximum, the
+// way CreateScope and CreateResource do, and writes the config and the three
+// association sets in the same transaction so a policy never exists
+// half-written.
+func (r *authzRepo) CreatePolicy(ctx context.Context, p *model.AuthzPolicy) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO authz_policy
+		   (id, resource_server_id, name, description, type, logic, decision_strategy, owner, ordinal)
+		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(MAX(ordinal), -1) + 1
+		 FROM authz_policy WHERE resource_server_id = ?`,
+		p.ID, p.ClientID, p.Name, p.Description, p.Type, p.Logic, p.DecisionStrategy,
+		p.Owner, p.ClientID); err != nil {
+		return classify(err)
+	}
+	if err := insertAuthzPolicyChildren(ctx, tx, p); err != nil {
+		return classify(err)
+	}
+	return tx.Commit()
+}
+
+// UpdatePolicy leaves the ordinal alone, so a row the import merges into keeps
+// the position its create gave it in GET .../settings.
+func (r *authzRepo) UpdatePolicy(ctx context.Context, p *model.AuthzPolicy) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx,
+		`UPDATE authz_policy
+		    SET name = ?, description = ?, type = ?, logic = ?, decision_strategy = ?, owner = ?
+		  WHERE id = ? AND resource_server_id = ?`,
+		p.Name, p.Description, p.Type, p.Logic, p.DecisionStrategy, p.Owner, p.ID, p.ClientID)
+	if err != nil {
+		return classify(err)
+	}
+	if n, err := result.RowsAffected(); err == nil && n == 0 {
+		return store.ErrNotFound
+	}
+	for _, table := range []string{"authz_policy_config", "authz_policy_association"} {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM `+table+` WHERE policy_id = ?`, p.ID); err != nil {
+			return classify(err)
+		}
+	}
+	if err := insertAuthzPolicyChildren(ctx, tx, p); err != nil {
+		return classify(err)
+	}
+	return tx.Commit()
+}
+
+func (r *authzRepo) PolicyByID(ctx context.Context, clientID, policyID string) (*model.AuthzPolicy, error) {
+	return r.oneAuthzPolicy(ctx, r.db.QueryRowContext(ctx,
+		`SELECT `+authzPolicyColumns+` FROM authz_policy
+		 WHERE id = ? AND resource_server_id = ?`, policyID, clientID))
+}
+
+func (r *authzRepo) PolicyByName(ctx context.Context, clientID, name string) (*model.AuthzPolicy, error) {
+	return r.oneAuthzPolicy(ctx, r.db.QueryRowContext(ctx,
+		`SELECT `+authzPolicyColumns+` FROM authz_policy
+		 WHERE resource_server_id = ? AND name = ?`, clientID, name))
+}
+
+// ListPolicies orders by ordinal, which is creation order. Both listings' name
+// sort and the export's partition are applied above this layer; see
+// store.AuthzRepo.
+func (r *authzRepo) ListPolicies(ctx context.Context, clientID string) ([]*model.AuthzPolicy, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+authzPolicyColumns+` FROM authz_policy
+		 WHERE resource_server_id = ? ORDER BY ordinal`, clientID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	out, err := collectAuthzPolicies(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadAuthzPolicyChildren(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *authzRepo) oneAuthzPolicy(ctx context.Context, row *sql.Row) (*model.AuthzPolicy, error) {
+	p := &model.AuthzPolicy{}
+	if err := row.Scan(&p.ID, &p.ClientID, &p.Name, &p.Description, &p.Type,
+		&p.Logic, &p.DecisionStrategy, &p.Owner, &p.Ordinal); err != nil {
+		return nil, classify(err)
+	}
+	if err := r.loadAuthzPolicyChildren(ctx, []*model.AuthzPolicy{p}); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+func collectAuthzPolicies(rows *sql.Rows) ([]*model.AuthzPolicy, error) {
+	defer func() { _ = rows.Close() }()
+	out := []*model.AuthzPolicy{}
+	for rows.Next() {
+		p := &model.AuthzPolicy{}
+		if err := rows.Scan(&p.ID, &p.ClientID, &p.Name, &p.Description, &p.Type,
+			&p.Logic, &p.DecisionStrategy, &p.Owner, &p.Ordinal); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func insertAuthzPolicyChildren(ctx context.Context, tx *sql.Tx, p *model.AuthzPolicy) error {
+	for i, c := range p.Config {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO authz_policy_config (policy_id, name, value, ordinal) VALUES (?, ?, ?, ?)`,
+			p.ID, c.Name, c.Value, i); err != nil {
+			return err
+		}
+	}
+	for _, kind := range model.AuthzPolicyAssociationKinds {
+		for i, target := range p.AssociationSet(kind) {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO authz_policy_association (policy_id, kind, target_id, ordinal)
+				 VALUES (?, ?, ?, ?)`, p.ID, kind, target, i); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// loadAuthzPolicyChildren fills Config and the three association sets on
+// policies already scanned, one query each for the whole set -
+// loadAuthzResourceChildren's shape.
+func (r *authzRepo) loadAuthzPolicyChildren(ctx context.Context, list []*model.AuthzPolicy) error {
+	if len(list) == 0 {
+		return nil
+	}
+	byID := make(map[string]*model.AuthzPolicy, len(list))
+	ids := make([]any, 0, len(list))
+	placeholders := make([]string, 0, len(list))
+	for _, p := range list {
+		byID[p.ID] = p
+		ids = append(ids, p.ID)
+		placeholders = append(placeholders, "?")
+	}
+	in := strings.Join(placeholders, ",")
+
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT policy_id, name, value FROM authz_policy_config
+		  WHERE policy_id IN (`+in+`) ORDER BY policy_id, ordinal`, ids...)
+	if err != nil {
+		return classify(err)
+	}
+	if err := func() error {
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var policyID, name, value string
+			if err := rows.Scan(&policyID, &name, &value); err != nil {
+				return err
+			}
+			p := byID[policyID]
+			p.Config = append(p.Config, model.AuthzPolicyConfig{Name: name, Value: value})
+		}
+		return classify(rows.Err())
+	}(); err != nil {
+		return err
+	}
+
+	rows, err = r.db.QueryContext(ctx,
+		`SELECT policy_id, kind, target_id FROM authz_policy_association
+		  WHERE policy_id IN (`+in+`) ORDER BY policy_id, kind, ordinal`, ids...)
+	if err != nil {
+		return classify(err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var policyID, kind, target string
+		if err := rows.Scan(&policyID, &kind, &target); err != nil {
+			return err
+		}
+		byID[policyID].AddAssociation(kind, target)
+	}
+	return classify(rows.Err())
+}
+
 type identityProviderRepo struct{ db *sql.DB }
 
 // identityProviderColumns is the SELECT list shared by ByAlias and List, so the

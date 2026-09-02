@@ -2642,6 +2642,195 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	// The policy half of AuthzRepo. Four things here are the assertions and the
+	// rest is round-tripping:
+	//
+	//   - **ListPolicies comes back in creation order**, for ListScopes' and
+	//     ListResources' reason on a third family: GET .../settings serves that
+	//     order - with the resource and scope rows moved to the end - and the
+	//     two listings sort by name above this layer.
+	//   - **Config keeps the order it was given.** It is a Java map whose wire
+	//     order internal/admin computes from the arrival order, so a driver
+	//     returning it in primary-key order would pass every test that writes
+	//     it alphabetically. `zz` is written first here for exactly that.
+	//   - **The three association sets stay apart and stay ordered.** They are
+	//     one table with a `kind` column, so a driver that dropped the column
+	//     from the read would merge all three into whichever slice it filled
+	//     first.
+	//   - **A policy id is global and a policy name is per resource server**,
+	//     which is what makes the cross-server lookup a not-found, the same
+	//     name in two servers a success, and the same id in two servers a
+	//     conflict.
+	t.Run("authorization policies keep creation order, config order and three association sets", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := newRealm(t, s)
+		mk := func(clientID string) *model.Client {
+			t.Helper()
+			c := &model.Client{ID: model.NewID(), RealmID: realm.ID, ClientID: clientID, Enabled: true}
+			if err := s.Clients().Create(ctx, c); err != nil {
+				t.Fatalf("Clients().Create %s: %v", clientID, err)
+			}
+			if err := s.Authz().Upsert(ctx, model.DefaultAuthzResourceServer(c.ID)); err != nil {
+				t.Fatalf("Upsert %s: %v", clientID, err)
+			}
+			return c
+		}
+		one, two := mk("authz-pol-one"), mk("authz-pol-two")
+
+		if got, err := s.Authz().ListPolicies(ctx, one.ID); err != nil || len(got) != 0 {
+			t.Fatalf("ListPolicies on an empty resource server: got %v, %v", got, err)
+		}
+
+		scope := &model.AuthzScope{ID: model.NewID(), ClientID: one.ID, Name: "psc"}
+		if err := s.Authz().CreateScope(ctx, scope); err != nil {
+			t.Fatalf("CreateScope: %v", err)
+		}
+		res := &model.AuthzResource{ID: model.NewID(), ClientID: one.ID, Name: "pres"}
+		if err := s.Authz().CreateResource(ctx, res); err != nil {
+			t.Fatalf("CreateResource: %v", err)
+		}
+
+		// Created in the reverse of name order, for the reason the two
+		// subtests above give.
+		names := []string{"zulu", "yankee", "xray"}
+		ids := map[string]string{}
+		for _, n := range names {
+			p := &model.AuthzPolicy{
+				ID: model.NewID(), ClientID: one.ID, Name: n, Type: "role",
+				Logic:            model.DefaultAuthzPolicyLogic,
+				DecisionStrategy: model.DefaultAuthzPolicyDecisionStrategy,
+			}
+			ids[n] = p.ID
+			if err := s.Authz().CreatePolicy(ctx, p); err != nil {
+				t.Fatalf("CreatePolicy %s: %v", n, err)
+			}
+		}
+		assertOrder := func(what string, want []string) {
+			t.Helper()
+			got, err := s.Authz().ListPolicies(ctx, one.ID)
+			if err != nil {
+				t.Fatalf("ListPolicies %s: %v", what, err)
+			}
+			have := make([]string, 0, len(got))
+			for _, p := range got {
+				have = append(have, p.Name)
+			}
+			if !slices.Equal(have, want) {
+				t.Errorf("ListPolicies %s: got %v, want %v", what, have, want)
+			}
+		}
+		assertOrder("after the creates", names)
+
+		// A policy carrying everything: a config written out of alphabetical
+		// order and all three association sets at once.
+		full := &model.AuthzPolicy{
+			ID: model.NewID(), ClientID: one.ID, Name: "full", Description: "D",
+			Type: "resource", Logic: "NEGATIVE", DecisionStrategy: "AFFIRMATIVE",
+			Owner: "someone",
+			Config: []model.AuthzPolicyConfig{
+				{Name: "zz", Value: "1"},
+				{Name: "aa", Value: "2"},
+				{Name: "roles", Value: `[{"id":"r","required":false}]`},
+			},
+			AssociatedPolicies: []string{ids["zulu"], ids["yankee"]},
+			Resources:          []string{res.ID},
+			Scopes:             []string{scope.ID},
+		}
+		if err := s.Authz().CreatePolicy(ctx, full); err != nil {
+			t.Fatalf("CreatePolicy full: %v", err)
+		}
+		got, err := s.Authz().PolicyByID(ctx, one.ID, full.ID)
+		if err != nil {
+			t.Fatalf("PolicyByID: %v", err)
+		}
+		if got.Description != "D" || got.Logic != "NEGATIVE" ||
+			got.DecisionStrategy != "AFFIRMATIVE" || got.Owner != "someone" {
+			t.Errorf("scalar round-trip: got %+v", got)
+		}
+		if len(got.Config) != 3 || got.Config[0].Name != "zz" ||
+			got.Config[1].Name != "aa" || got.Config[2].Name != "roles" {
+			t.Errorf("config order: got %v, want zz, aa, roles", got.Config)
+		}
+		if !slices.Equal(got.AssociatedPolicies, []string{ids["zulu"], ids["yankee"]}) {
+			t.Errorf("associated policies: got %v", got.AssociatedPolicies)
+		}
+		if !slices.Equal(got.Resources, []string{res.ID}) {
+			t.Errorf("associated resources: got %v", got.Resources)
+		}
+		if !slices.Equal(got.Scopes, []string{scope.ID}) {
+			t.Errorf("associated scopes: got %v", got.Scopes)
+		}
+
+		// A name is per resource server and an id is global.
+		shared := &model.AuthzPolicy{
+			ID: model.NewID(), ClientID: two.ID, Name: "zulu", Type: "role",
+			Logic: "POSITIVE", DecisionStrategy: "UNANIMOUS",
+		}
+		if err := s.Authz().CreatePolicy(ctx, shared); err != nil {
+			t.Fatalf("the same name in a second resource server: %v", err)
+		}
+		if _, err := s.Authz().PolicyByID(ctx, one.ID, shared.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("a policy id read through another resource server: want ErrNotFound, got %v", err)
+		}
+		if _, err := s.Authz().PolicyByName(ctx, one.ID, "nothing"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("PolicyByName on a name nobody holds: want ErrNotFound, got %v", err)
+		}
+		dupName := &model.AuthzPolicy{
+			ID: model.NewID(), ClientID: one.ID, Name: "zulu", Type: "role",
+			Logic: "POSITIVE", DecisionStrategy: "UNANIMOUS",
+		}
+		if err := s.Authz().CreatePolicy(ctx, dupName); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("a taken name in one resource server: want ErrConflict, got %v", err)
+		}
+		dupID := &model.AuthzPolicy{
+			ID: ids["zulu"], ClientID: two.ID, Name: "elsewhere", Type: "role",
+			Logic: "POSITIVE", DecisionStrategy: "UNANIMOUS",
+		}
+		if err := s.Authz().CreatePolicy(ctx, dupID); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("an id another resource server holds: want ErrConflict, got %v", err)
+		}
+
+		// The update replaces every field and every child row, and leaves the
+		// ordinal where it was - which is what the import's merge needs.
+		got.Name = "full-renamed"
+		got.Config = []model.AuthzPolicyConfig{{Name: "only", Value: "x"}}
+		got.AssociatedPolicies = nil
+		got.Scopes = nil
+		if err := s.Authz().UpdatePolicy(ctx, got); err != nil {
+			t.Fatalf("UpdatePolicy: %v", err)
+		}
+		back, err := s.Authz().PolicyByName(ctx, one.ID, "full-renamed")
+		if err != nil {
+			t.Fatalf("PolicyByName after the update: %v", err)
+		}
+		if len(back.Config) != 1 || back.Config[0].Name != "only" {
+			t.Errorf("config after the update: got %v", back.Config)
+		}
+		if len(back.AssociatedPolicies) != 0 || len(back.Scopes) != 0 || len(back.Resources) != 1 {
+			t.Errorf("associations after the update: %v %v %v",
+				back.AssociatedPolicies, back.Resources, back.Scopes)
+		}
+		assertOrder("after the update", append(slices.Clone(names), "full-renamed"))
+
+		if err := s.Authz().UpdatePolicy(ctx,
+			&model.AuthzPolicy{ID: "nobody", ClientID: one.ID, Name: "x"}); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("UpdatePolicy on an id nobody holds: want ErrNotFound, got %v", err)
+		}
+
+		// The policies cascade with the resource server, which cascades with
+		// the client - authz_scope's argument two tables along.
+		if err := s.Authz().DeleteByClientID(ctx, one.ID); err != nil {
+			t.Fatalf("DeleteByClientID: %v", err)
+		}
+		if got, err := s.Authz().ListPolicies(ctx, one.ID); err != nil || len(got) != 0 {
+			t.Errorf("after the flag goes off: got %v, %v", got, err)
+		}
+		if got, err := s.Authz().ListPolicies(ctx, two.ID); err != nil || len(got) != 1 {
+			t.Errorf("the neighbouring resource server: got %v, %v", got, err)
+		}
+	})
+
 	t.Run("an identity provider round-trips, alias and all", func(t *testing.T) {
 		ctx := context.Background()
 		s := newStore(t)

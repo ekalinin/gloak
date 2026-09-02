@@ -618,6 +618,143 @@ func (r *AuthzResource) AddAttribute(name, value string) {
 	r.Attributes = append(r.Attributes, AuthzResourceAttribute{Name: name, Values: []string{value}})
 }
 
+// AuthzPolicy is one policy of a resource server, and a permission is one of
+// these too.
+//
+// **There is no separate permission type**, because there is no separate row.
+// `GET .../policy?permission=true` and `GET .../permission` returned the same
+// rows one key apart on 26.7.1, measured 2026-09-02, and the family a row
+// belongs to is decided by its Type alone.
+//
+// ID is a free string rather than a UUID, the way AuthzScope.ID and
+// AuthzResource.ID are: `POST .../policy` with `{"id":"echo1",...}` answered
+// 201 and created a policy with exactly that id. **Unlike a resource it does
+// not upsert** - a repeat of an id this resource server already holds is a 409
+// `Duplicate resource error` - so the create's id is a wish that the primary
+// key either grants or refuses.
+//
+// Config is a Java map whose serialised key order is part of the contract, and
+// it is a slice for AuthzResource.Attributes' reason: the wire order is
+// computed from the order the entries arrived in and a Go map would sort it.
+// `javamap.SizedKeyOrder(len(config), keys)` places every measured key set and
+// `javamap.KeyOrder` gets two of eight wrong.
+//
+// **Config is what the typed view is a projection of.** One config carrying
+// every provider's keys at once was sent to all nine types and the generic view
+// came back byte-identical on all nine, while the typed view served exactly the
+// keys the type owns - eight distinct field sets over the nine types, with
+// `resource` and `scope` sharing one. So there are not nine representations to
+// store, there is one map and a projection table; see internal/admin.
+//
+// AssociatedPolicies, Resources and Scopes are the three association sets, and
+// they are not symmetrical on the wire: the create echoes the first two and no
+// read serves them, while Scopes is served by exactly one type's typed view -
+// `uma`'s, always, and by name rather than by id. All three are kept because
+// the two listings filter on two of them and because `GET .../settings`
+// synthesises an aggregate policy's `config.applyPolicies` back out of the
+// first.
+//
+// Ordinal is creation order. `GET .../policy` sorts by name byte-wise and
+// `GET .../settings` serves creation order with the `resource` and `scope` rows
+// moved to the end, so neither read can be derived from the other's order.
+type AuthzPolicy struct {
+	ID       string
+	ClientID string
+	Name     string
+	// Description is omitted from every representation when empty and Owner is
+	// served by none of them - it is echoed by the create and dropped by every
+	// read - so absent and empty are one state for both.
+	Description string
+	Type        string
+	// Logic and DecisionStrategy default to POSITIVE and UNANIMOUS. Both are
+	// case-sensitive on the way in and a bad value is a 500 `Cannot parse the
+	// JSON` rather than a validation error, because Jackson refuses the token
+	// while binding the enum. **CONSENSUS is accepted here** and is a 500 on
+	// `PUT .../authz/resource-server`, one path segment away.
+	Logic              string
+	DecisionStrategy   string
+	Owner              string
+	Config             []AuthzPolicyConfig
+	AssociatedPolicies []string
+	Resources          []string
+	Scopes             []string
+	Ordinal            int
+}
+
+// AuthzPolicyConfig is one config key and its value.
+//
+// The value is a string even when it carries a collection: `config.roles` is
+// served as the **string** `"[{\"id\":\"...\",\"required\":false}]"` and not as
+// a nested array, on every one of the four keys that hold one.
+type AuthzPolicyConfig struct {
+	Name  string
+	Value string
+}
+
+// DefaultAuthzPolicyLogic and DefaultAuthzPolicyDecisionStrategy are what a
+// policy created without them carries, measured on all nine types.
+const (
+	DefaultAuthzPolicyLogic            = "POSITIVE"
+	DefaultAuthzPolicyDecisionStrategy = "UNANIMOUS"
+)
+
+// AuthzPolicyAssociationKinds is the `kind` column's domain, in the order both
+// drivers write the rows.
+var AuthzPolicyAssociationKinds = []string{"policy", "resource", "scope"}
+
+// AssociationSet returns the ids stored under one association kind.
+//
+// It is on the model rather than in a driver for AddAttribute's reason: both
+// drivers write the same three sets into the same table from the same slices,
+// and a copy in each is a copy that can diverge.
+func (p *AuthzPolicy) AssociationSet(kind string) []string {
+	switch kind {
+	case "policy":
+		return p.AssociatedPolicies
+	case "resource":
+		return p.Resources
+	case "scope":
+		return p.Scopes
+	}
+	return nil
+}
+
+// AddAssociation appends one id under kind, which is what both drivers do while
+// scanning the association rows back.
+func (p *AuthzPolicy) AddAssociation(kind, id string) {
+	switch kind {
+	case "policy":
+		p.AssociatedPolicies = append(p.AssociatedPolicies, id)
+	case "resource":
+		p.Resources = append(p.Resources, id)
+	case "scope":
+		p.Scopes = append(p.Scopes, id)
+	}
+}
+
+// ConfigValue returns the value stored under name.
+func (p *AuthzPolicy) ConfigValue(name string) (string, bool) {
+	for _, c := range p.Config {
+		if c.Name == name {
+			return c.Value, true
+		}
+	}
+	return "", false
+}
+
+// SetConfig writes name, replacing an existing entry in place so the order the
+// entries arrived in survives an overwrite - which is what the import's merge
+// needs, since it writes over a config that is already there.
+func (p *AuthzPolicy) SetConfig(name, value string) {
+	for i := range p.Config {
+		if p.Config[i].Name == name {
+			p.Config[i].Value = value
+			return
+		}
+	}
+	p.Config = append(p.Config, AuthzPolicyConfig{Name: name, Value: value})
+}
+
 // Organization is a realm's organization: a name, an immutable alias, a set of
 // e-mail domains and a multivalued attribute map.
 //
