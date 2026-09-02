@@ -80,18 +80,32 @@ type identityProviderInfo struct {
 // So this route and the instance routes one path segment apart answer an
 // unknown name with two different statuses.
 func (h *handler) readIdentityProviderInfo(w http.ResponseWriter, r *http.Request, rc *reqContext) {
-	id := r.PathValue("providerID")
-	entry, ok := model.IdentityProviderCatalogue(id)
+	body, ok := identityProviderInfoOf(r.PathValue("providerID"))
 	if !ok {
 		httpx.WriteMessageError(w, http.StatusBadRequest, "HTTP 400 Bad Request")
 		return
 	}
-	writeAdminJSON(w, identityProviderInfo{
+	writeAdminJSON(w, body)
+}
+
+// identityProviderInfoOf builds the body for one provider id.
+//
+// It is a function rather than four lines inside the handler **because of a
+// surviving mutation**. The byte-for-byte test against the thirty-two measured
+// bodies used to assemble the body itself, so a mutation of the assembly inside
+// the handler changed the served bytes and the test could not see it. A claim
+// has to live where the code is; this is the seam that puts it there.
+func identityProviderInfoOf(providerID string) (identityProviderInfo, bool) {
+	entry, ok := model.IdentityProviderCatalogue(providerID)
+	if !ok {
+		return identityProviderInfo{}, false
+	}
+	return identityProviderInfo{
 		Name:             entry.Name,
-		ID:               id,
+		ID:               providerID,
 		ConfigProperties: providerPropertiesOf(entry.Properties),
 		ConfigMetadata:   []struct{}{},
-	})
+	}, true
 }
 
 // identityProviderMapperType is one entry of the mapper-types map. It repeats
@@ -159,7 +173,7 @@ func (h *handler) listIdentityProviderMapperTypes(w http.ResponseWriter, r *http
 		writeIdentityProviderConsultLog(w)
 		return
 	}
-	ids, ok := model.IdentityProviderMapperTypes(p.ProviderID)
+	out, ok := identityProviderMapperTypesOf(p.ProviderID)
 	if !ok {
 		// Unreachable through the router: a stored provider's id was checked
 		// against the same registry on the way in. Kept so that a provider id
@@ -167,6 +181,21 @@ func (h *handler) listIdentityProviderMapperTypes(w http.ResponseWriter, r *http
 		// than serving an empty map that looks measured.
 		writeIdentityProviderConsultLog(w)
 		return
+	}
+	writeAdminJSON(w, out)
+}
+
+// identityProviderMapperTypesOf builds the map one provider serves, in the
+// catalogue's stored order.
+//
+// A function for the reason identityProviderInfoOf is: a mutation that reversed
+// this loop **survived** the byte-for-byte test against the measured bodies,
+// because that test assembled the body itself instead of asking for it. The
+// seam is what makes the order a claim the test can fail on.
+func identityProviderMapperTypesOf(providerID string) (identityProviderMapperTypes, bool) {
+	ids, ok := model.IdentityProviderMapperTypes(providerID)
+	if !ok {
+		return nil, false
 	}
 	out := make(identityProviderMapperTypes, 0, len(ids))
 	for _, id := range ids {
@@ -182,7 +211,7 @@ func (h *handler) listIdentityProviderMapperTypes(w http.ResponseWriter, r *http
 			Properties: providerPropertiesOf(t.Properties),
 		})
 	}
-	writeAdminJSON(w, out)
+	return out, true
 }
 
 // writeIdentityProviderConsultLog is Keycloak's 500 for a fault it declines to

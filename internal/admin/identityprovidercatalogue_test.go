@@ -40,39 +40,33 @@ var identityProviderRegistryForTest = []string{
 // case and a case costs a fixture. This covers the other twenty-eight, and it is
 // the only thing in the tree that would notice a mistyped helpText in
 // `microsoft`.
+//
+// **It goes through the two functions the handlers call, and that is not
+// incidental.** An earlier version assembled the bodies itself, and a mutation
+// that reversed the mapper-types loop inside the handler survived it: the test
+// compared its own assembly with the measurement while the served bytes moved.
+// A test that rebuilds what it is checking is checking the rebuild.
 func TestProviderCatalogueReproducesEveryMeasuredBody(t *testing.T) {
 	for _, id := range identityProviderRegistryForTest {
-		entry, ok := model.IdentityProviderCatalogue(id)
+		body, ok := identityProviderInfoOf(id)
 		if !ok {
 			t.Errorf("%s: absent from the catalogue", id)
 			continue
 		}
-		got := marshalForTest(t, identityProviderInfo{
-			Name:             entry.Name,
-			ID:               id,
-			ConfigProperties: providerPropertiesOf(entry.Properties),
-			ConfigMetadata:   []struct{}{},
-		})
-		compareWithMeasured(t, "prov-"+id+".json", got)
+		compareWithMeasured(t, "prov-"+id+".json", marshalForTest(t, body))
 	}
 
 	served := 0
 	for _, id := range identityProviderRegistryForTest {
-		ids, ok := model.IdentityProviderMapperTypes(id)
+		out, ok := identityProviderMapperTypesOf(id)
 		if !ok {
 			continue
 		}
 		served++
-		out := make(identityProviderMapperTypes, 0, len(ids))
-		for _, mid := range ids {
-			m, found := model.IdentityProviderMapperTypeByID(mid)
-			if !found {
-				t.Fatalf("%s offers mapper type %q and the catalogue has no such entry", id, mid)
+		for _, e := range out {
+			if _, found := model.IdentityProviderMapperTypeByID(e.ID); !found {
+				t.Fatalf("%s offers mapper type %q and the catalogue has no such entry", id, e.ID)
 			}
-			out = append(out, identityProviderMapperType{
-				ID: mid, Name: m.Name, Category: m.Category, HelpText: m.HelpText,
-				Properties: providerPropertiesOf(m.Properties),
-			})
 		}
 		compareWithMeasured(t, "mt-"+id+".json", marshalForTest(t, out))
 	}
@@ -110,17 +104,9 @@ func TestTwoProvidersHaveNoMapperTypes(t *testing.T) {
 // comparison above would catch it too; this names the reason so that a failure
 // says what broke rather than printing ten kilobytes.
 func TestCatalogueValuesAreNotHTMLEscaped(t *testing.T) {
-	ids, ok := model.IdentityProviderMapperTypes("saml")
+	out, ok := identityProviderMapperTypesOf("saml")
 	if !ok {
 		t.Fatal("saml has no mapper types")
-	}
-	out := make(identityProviderMapperTypes, 0, len(ids))
-	for _, mid := range ids {
-		m, _ := model.IdentityProviderMapperTypeByID(mid)
-		out = append(out, identityProviderMapperType{
-			ID: mid, Name: m.Name, Category: m.Category, HelpText: m.HelpText,
-			Properties: providerPropertiesOf(m.Properties),
-		})
 	}
 	body := string(marshalForTest(t, out))
 	if !strings.Contains(body, "ATTRIBUTE.<NAME>") {
