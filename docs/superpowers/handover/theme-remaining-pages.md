@@ -42,8 +42,13 @@ There are eleven now: these nine, `prompt-create` and `response-mode-form-post`.
 ### 1.2 The logout confirmation page names a client the request never mentioned
 
 Its restart URL and its confirm form's action both carry `client_id=account`.
-Measured on two sessions made by two different clients - `gloak-probe-page` and
-`gloak-probe-consent` - and it is `account` both times.
+Three browsers, and all three:
+
+```
+a completed gloak-probe-page login          client_id=account
+a browser mid-flow at gloak-probe-consent   client_id=account
+no cookies at all                           client_id=account
+```
 
 That breaks the rule the previous cut wrote down. "The theme page's chrome shows
 how far the request got, not what it asked for" is true of `/auth`'s family and
@@ -53,8 +58,8 @@ has and no request in this flow names.
 ### 1.3 One page's `<title>` is not the head template's
 
 ```
-logout confirmation   <title>Logging out</title>
-every other page      <title>Sign in to Keycloak</title>
+logout confirmation           <title>Logging out</title>
+the other eight of the nine   <title>Sign in to Keycloak</title>
 ```
 
 `themeHead` builds `Sign in to <displayName or realm name>` unconditionally, and
@@ -216,6 +221,53 @@ placeholder body under a comment saying the sentence was measured and the chrome
 was not; the chrome is measured now and the page is served. It cannot carry a
 golden, for the nine pages' reason, and `TestVerifyEmailIsTwoAnswers` pins it.
 
+### 1.13 The 500 is not byte-identical after all, and the byte is a Cache-Control
+
+```
+POST /auth                        500  no Cache-Control at all
+POST /login-actions/authenticate  500  no-store, must-revalidate, max-age=0
+```
+
+Same status, same 94 bytes, same `application/json`, same five security headers,
+and neither sends `Content-Language` or `Content-Security-Policy`. Found by
+reading a recorded golden rather than by a probe, which is the second time this
+project has learnt something from the recorder that a hand probe had walked past.
+
+### 1.14 Lines this cut contradicts
+
+**AGENTS.md**, "Things that look like bugs and are not":
+
+- **"An undecodable request body is a 500 with a JSON body on both browser
+  endpoints … and none of `Content-Language`, `Content-Security-Policy` or
+  `Cache-Control`."** True of the two endpoints it names and false of the three
+  `/login-actions` ones, which send `no-store, must-revalidate, max-age=0`. It is
+  also no longer "both browser endpoints": there are five.
+- **The `Cache-Control` table under "`state=` is echoed at `/auth` and dropped at
+  `/logout`"** reads "three values across four rows". It is still three values,
+  and there is a fifth row now - the `/login-actions` 500 - which is the first
+  row in that table that is not a theme page at all.
+- **"The theme page's chrome shows how far the request got, not what it asked
+  for."** It holds on the two endpoint families it was drawn from and does not
+  generalise: the `/login-actions` page names the client the request **asked**
+  for even when the rejection is that the client is wrong, and the logout
+  confirmation page names `account`, which no request in that flow asks for. That
+  bullet has now been drawn from the endpoints that happened to be measured
+  twice.
+
+**The observed document**, "An undecodable body": nothing in it is falsified, and
+that is because of one word. It says `POST /auth` and `POST /logout` are
+"byte-identical **on both**" and lists "no Cache-Control" - a claim about those
+two, correctly scoped, and true. What it is now is incomplete: three more
+endpoints answer the same 94 bytes and **do** send a Cache-Control, so a reader
+who took that block as the rule for the family would get all three wrong. The
+section wants a line naming the three and the header, which is the difference
+between a claim that survives a wider measurement and one that was only ever
+about its sample.
+
+Its `/login-actions` chapter records the branch each request takes and no page
+body, so the three instructions and the chrome are additions to it rather than
+corrections.
+
 ## 2. Entries for AGENTS.md
 
 Written in that file's voice, for whoever folds this in.
@@ -242,17 +294,24 @@ Written in that file's voice, for whoever folds this in.
 >   `checkAuthSession` block - which is what makes it the only one of them a
 >   golden can hold.
 >
-> - **A body that will not form-decode is a 500 on five endpoints now, and it is
->   judged after the realm and before everything else.** `POST /auth`, `POST
->   /logout` and all three `/login-actions` endpoints answer
+> - **A body that will not form-decode is a 500 on five endpoints now, it is
+>   judged after the realm and before everything else, and the five are not
+>   byte-identical.** `POST /auth`, `POST /logout` and all three
+>   `/login-actions` endpoints answer
 >   `500 {"error":"unknown_error","error_description":"For more on this error
->   consult the server log."}` with `application/json`. Measured against every
->   later check on 2026-09-02: bad `client_data`, absent cookies and an unknown
->   client all lose to it and only an unknown realm beats it, which answers
+>   consult the server log."}` with `application/json`, the five security
+>   headers, and no `Content-Language` or `Content-Security-Policy` - **and the
+>   three `/login-actions` ones send `Cache-Control: no-store,
+>   must-revalidate, max-age=0` where the two browser endpoints send none.**
+>   Same status, same 94 bytes, same everything else. This bullet said "on both
+>   browser endpoints" and "no Cache-Control" until 2026-09-02, which was a
+>   correct statement about the two endpoints it had, and it is the `Cache-Control`
+>   table's fifth row - the first in it that is not a theme page. Measured
+>   against every later check: bad `client_data`, absent cookies and an unknown
+>   client all lose to the decode, and only an unknown realm beats it, answering
 >   `404 {"error":"Realm does not exist"}`. So the decode is the container's
 >   judgement rather than the endpoint's. Gloak called `ParseForm` four levels
->   down and answered the **400 page** on three of those four rows until
->   2026-09-02.
+>   down and answered the **400 page** on three of those four rows.
 >
 > - **All nine theme pages that still serve a placeholder body carry a `tab_id`
 >   minted by the request that renders them**, measured 2026-09-02 - the logout
@@ -426,6 +485,46 @@ Five cases added, all `Implemented`, all in `oidc/authorization`:
 
 ## 5. Mutations
 
+Twelve, one per claim, each applied on its own, each confirmed against the named
+test, each reverted with `git checkout -- <one file>` off a committed tree.
+
+```
+ 1  client_data answers the client sentence      TestLoginActionErrorPageInstructions
+                                                  /authenticate, unparseable client_data
+                                                 TestConformance/oidc/authorization/login-actions-invalid-client-data
+ 2  the client branch answers Invalid Request    TestLoginActionErrorPageInstructions
+                                                  /authenticate, a real client that is not the tab's
+ 3  the restart sentence loses a full stop       TestLoginActionErrorPageInstructions (3 subtests)
+                                                 TestConformance/.../login-actions-restart-cookie-missing
+ 4  the chrome never names a client              TestLoginActionErrorPageNamesTheRequestsClient (4 subtests)
+                                                 TestConformance/.../login-actions-invalid-client-data
+                                                 TestConformance/.../login-actions-restart-cookie-missing
+ 5  the decode moves behind the endpoint's       TestUnparseableBodyIsA500OnTheLoginActionEndpoints (4 subtests)
+    own checks                                   TestConformance/.../login-actions-unparseable-body
+ 6  the 500 loses its Cache-Control              TestUnparseableBodyIsA500OnTheLoginActionEndpoints
+                                                  /the Cache-Control is this endpoint's, not /auth's
+                                                 TestConformance/.../login-actions-unparseable-body
+ 7  /required-action stops decoding first        TestUnparseableBodyIsA500OnTheLoginActionEndpoints (4 subtests)
+ 8  /consent stops decoding first                TestUnparseableBodyIsA500OnTheLoginActionEndpoints (4 subtests)
+ 9  VERIFY_EMAIL's chrome drops the tab          TestVerifyEmailIsTwoAnswers/unverified
+10  VERIFY_EMAIL loses a full stop               TestVerifyEmailIsTwoAnswers/unverified
+11  a new golden's /resources/ count is wrong    TestThemeResourceAppearsOnlyInTheThemePages
+12  flowChrome drops the client_data             TestVerifyEmailIsTwoAnswers/unverified
+```
+
+**No survivors, and number 12 is the one worth reading.** It is killed by a
+single subtest and by nothing else - and that subtest is one this cut wrote. The
+same mutation applied to the *previous* tree would have survived the whole of it:
+`flowChrome`'s two arguments lived inline in `writeRegistrationPage`, whose only
+case is `oidc/authorization/prompt-create`, which is `Pending` with a parked
+golden, so nothing compared them. Dropping `client_data` from the registration
+page's restart URL was invisible until today, and it is visible now only as a
+side effect of VERIFY_EMAIL borrowing the same helper.
+
+That is the general shape P13's mutation 18 already found once: **a value only a
+parked golden would show is a value nothing guards.** The parked golden is a
+measurement, and a measurement nobody compares pins nothing.
+
 ## 6. What is left undone
 
 - **The nine pages of §1.1.** §3's F146 note splits them into the two that need
@@ -437,3 +536,30 @@ Five cases added, all `Implemented`, all in `oidc/authorization`:
   whole-body pass, not the per-position masker the entry describes.
 - **The `<html lang="en">` attribute** is still served as a constant. Whether it
   follows the realm's locale was not measured here either.
+- **`prompt=create`'s `client_data`** is still unguarded by anything but the
+  helper it now shares with VERIFY_EMAIL. §5's mutation 12 is the evidence; the
+  fix is a package test naming that page, not a golden, because its golden is
+  parked.
+
+## 7. What surprised me
+
+**That the blocker was never the thing F146 said it was.** The entry reads "the
+instruction and the chrome are what have to be measured", and every instruction
+and every chrome on all nine pages was readable in an afternoon. What none of
+them buys is a comparable response, because all nine pages carry a `tab_id`. The
+cut spent its measurement budget establishing that a page count was the wrong
+unit - which is exactly what the brief warned about, arriving from the other
+direction: not "the estimate was too small" but "the estimate was of the wrong
+thing".
+
+**That F109's page turned out to be the one page in its own family that a golden
+can hold.** Twelve call sites that nothing compared, on an endpoint whose every
+other response carries a `tab_id`, a `session_code` and a session hash - and the
+error page carries none of the three, because it is the only page in the family
+rendered from outside the authentication flow. The follow-up that looked
+hardest was the one that was already a contract waiting to be recorded.
+
+**That the golden found the Cache-Control and the probes did not.** Five
+endpoints answering the same 94 bytes, and the one difference between them
+surfaced while reading a recorded file, not while running any of the forty
+`curl`s that produced the measurements above.
