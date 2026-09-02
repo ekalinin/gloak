@@ -2645,6 +2645,24 @@ and its optional sibling now carry the flag.
 The sweep was complete and a one-off sweep cannot hold. Every cut that adds a
 fixture writing to a realm-wide set can add another, and one did immediately.
 
+**A fourth arrived 2026-09-01, and it is the first on the protocol side.**
+`oidc/introspection/active-refresh-token`'s `aud` and `resource_access`
+enumerate every admin container the subject holds roles on, and the bootstrapped
+administrator holds `create-realm` - so **every realm any fixture creates adds a
+key**. It had been clean for a month only because every realm-creating fixture
+happened to live in `adminCases` and therefore ran after it in catalogue order.
+It carries `PristineRealm` now, and re-recording with the flag reproduced the
+committed bytes byte for byte.
+
+**It is also the first the ratchet could not see.** The realm reaches that body
+as the derived client name `<realm>-realm` - a key of `resource_access` and an
+element of `aud` - where `TestNoGoldenHoldsAnObjectItDidNotCreate` looks for
+`"realm":"<name>"`. `TestConformance` caught it one step later, which is the
+step the ratchet exists to precede. Widening the guard to match `<realm>-realm`
+was considered and **deliberately not done** in the cut that found it: it
+changes a guard every golden in the repository passes, and it belongs in a cut
+that can afford to read whatever it turns up.
+
 **The derived check was tried and declined on two measurements**, not on taste.
 Request shape cannot decide it: `GET /admin/realms/master/clients` with no query
 is realm-wide for an administrator, and measured `[]` both before *and* after
@@ -3381,10 +3399,11 @@ no bucket collision in any of them.
 **2026-09-01: the pattern this entry asks for is now the majority and the client
 is the holdout.** P9 added two more families that serialise a Java map from an
 ordered slice with a marshaller of their own - `identityProviderConfig` and
-`componentConfig` - which makes four counting an organization's attributes and a
-protocol mapper's config. Not closed here because it lives in `clients.go` and
-moving it re-records five goldens in another chapter, which is a change that
-should arrive on its own branch.
+`componentConfig` - and P10's third cut added a fifth, `authzResourceAttributes`,
+which makes five counting an organization's attributes and a protocol mapper's
+config. Not closed here because it lives in `clients.go` and moving it re-records
+five goldens in another chapter, which is a change that should arrive on its own
+branch.
 
 The fix is the move `model.StringMap` already makes for a client scope's
 `attributes` and a protocol mapper's `config`. When it lands, `UnorderedKeys`
@@ -3804,8 +3823,33 @@ unknown value gets.
 
 ## F129: the other twenty-six authorization-services operations (partly closed)
 
-**Eight of the twenty-six landed 2026-08-31** - the whole scope family.
-Eighteen remain: resource 9, policy 4, permission 4, import 1.
+**Eight landed 2026-08-31** - the whole scope family. **Nine more landed
+2026-09-01** - the whole resource family. **Nine remain: policy 4, permission 4,
+import 1**, and §1.9 of `docs/superpowers/handover/p10-authz-resources.md`
+carries their measurements, so the fourth cut starts from those.
+
+**Three of this entry's own statements were wrong, and the briefs written from it
+inherited them.** Corrected by measurement:
+
+- *"the resource family takes eight query parameters"* - **the description
+  declares eleven and the server reads all eleven**, with `exactName` and
+  `matchingUri` as modifiers. `fields` is not on this operation at all; it is on
+  `GET .../policy`, where it is declared and ignored.
+- *"policy and permission need a provider model before `POST` means anything"* -
+  **they need a `type` and nothing else.** A body without one is
+  `409 Duplicate resource error`; `{"name":"p","type":"role"}` is a 201. The
+  provider model is needed one layer out, for the typed serialisation the
+  `/permission` reads use, which this entry does not mention and which is what
+  actually sized the third cut.
+- *"the three permanently-`[]` listings (`GET /resource`, `/policy`,
+  `/permission`)"* - **none of the three is permanently `[]`.** They are ordinary
+  listings, empty on a fresh resource server only because nothing had been
+  created. `GET /resource` is built now, served by the real store.
+
+The premise that survived is the fourth: `import` genuinely does need the other
+families first.
+
+What the finding said, kept for the record:
 
 The cut deliberately did **not** take the three permanently-`[]` listings
 (`GET /resource`, `/policy`, `/permission`), which would have been three cheap
@@ -3837,6 +3881,15 @@ third should add them rather than route again.
 Measured on 26.7.1 and reproduced on a fresh pair: reusing a scope id across two
 resource servers leaves the **other** one broken - its listing answers 400 and
 its settings 500.
+
+**2026-09-01: it does not extend to the resource family, measured rather than
+assumed.** A resource carries the same global-`_id` constraint, and after a
+colliding create the other resource server's listing, per-id read and settings
+export all answered 200. So the third cut neither reproduces the damage nor
+diverges from anything, and this entry stays a statement about the **scope**
+family alone. One qualification is worth keeping: the scope-side reproduction
+broke on the eighth of sixteen rows and the resource-side control had seven, so
+"does not corrupt" is measured at that size and not at every size.
 
 **Gloak deliberately does not reproduce it.** That makes it the first measured
 behaviour this project has declined to copy, which is a decision worth having on
@@ -3871,6 +3924,10 @@ bound.
 
 Whether Keycloak agrees on those four is unmeasured - the finding is that Gloak
 is inconsistent with itself, which is knowable without a container.
+
+**2026-09-01, second note: the resource listing is a sixth measured answering
+the 404**, and it uses `authzIntBound`, so the four listings this entry names are
+unmoved and the count of listings that agree with each other has grown.
 
 **2026-09-01: measured on two more families, and they disagree with each
 other.** The identity provider listing answers `?first=abc` with the 404; on
@@ -3934,7 +3991,54 @@ gap is not a defect - the other four either pin their tail through the body's
 `id` or are not served - but the arithmetic is worth having written down, since
 F46's mechanism exists precisely to keep those tails asserted.
 
-## F142: every conformance case runs against `master`, so realm-derived values are invisible
+## F142: realm-derived values are unpinned (partly closed; the premise below was wrong)
+
+**Corrected 2026-09-01, before anything else in this entry is read.** The
+sentence "every case in `internal/conformance` is recorded and replayed against
+`master`" **has been false since P4**, and it is the reason this entry costed
+neither of the two routes it named. Counted from the catalogue:
+
+```
+cases in the catalogue                                     592
+cases whose path names a realm that is not master           66
+distinct non-master realm segments                          34
+goldens whose response carries the realm name it addressed  60
+  of those, addressed at master                             58
+```
+
+`realmFixture(name)` has created realms through `POST /admin/realms` since P4,
+five fixtures call it, and `createdKeys` in the pollution guard already carries
+`"realm"`. **Nothing had to be built for a case to run against a second realm.**
+The blind spot was that all sixty-six such cases were on the Admin API, and
+`internal/oidc`'s tests build nothing but `bootstrap.EnsureMaster`.
+
+So the route this entry priced as expensive machinery was already in
+`fixture.go`, and what was missing was **cases** - plus one declaration,
+`Case.SecondRealm`, which keeps a re-measurement out of the parity denominator.
+
+**Twenty derivation sites**, counted from the list in
+`docs/superpowers/handover/harness-second-realm.md` §1.2. Eighteen were
+master-only and exactly one of the eighteen was pinned by a package test.
+
+**Closed here:** the discovery document, the realm info body and the bearer
+challenge, each by an `Implemented` second-realm case. The theme page is
+`Recorded` rather than `Implemented`, because Gloak serves master's
+`displayName` and `displayNameHtml` as constants; when somebody makes the theme
+follow the realm, that case starts matching and `TestConformance` demands
+promotion. That is the alarm working.
+
+**Still open:** the seven admin `Location` sites, the `access` block, the device
+page's form action, and the three **measured survivors** - `registrationURI`,
+the device grant's `verification_uri` and `/auth`'s error-redirect `iss` all take
+a hard-coded `master` with `./internal/conformance ./internal/oidc
+./internal/httpx` green. §5.1 of that handover names the package tests, per
+package and per claim.
+
+The general form is right and stays: any value a handler derives from the realm
+name is unpinned unless a second-realm case or a package test says otherwise.
+What this entry should no longer say is that the harness cannot express one.
+
+What the finding said, kept for the record:
 
 Found by a mutation on 2026-09-01: hard-coding `master` into the theme page's
 restart URL, instead of using the realm the page was built for, **passed the
@@ -4000,3 +4104,35 @@ be measured. The login-actions family is separate and is F109.
 
 Also unmeasured, and served as a constant: the `<html lang="en">` attribute.
 Whether it follows the realm's locale has never been asked.
+
+## F147: the fifth security-header exception is a measured split nobody has explained
+
+AGENTS.md's header bullet has now been wrong **four times**, and twice it was
+refuted by the very golden it cited. The current text says so rather than
+offering a fifth explanation, and this entry is the probe that would end it.
+
+What three committed goldens establish, without a container:
+
+```
+scope-create-conflict     POST  application/json  409  67 bytes   five of five
+scope-put-conflict        PUT   application/json  409  67 bytes   none of five
+resource-create-conflict  POST  application/json  409  102 bytes  five of five
+resource-put-conflict     PUT   application/json  409  67 bytes   none of five
+```
+
+Same request `Content-Type`, same status, same family, one path segment apart.
+So the variable is not the status, not the body, not the body's length and not
+the request's `Content-Type` - which is exception three and explains five of the
+six scope goldens on its own. Emptiness explains the empty answers (every 204
+that omits the headers, every empty 404, the resource search's empty 400) and
+cannot explain these, because none of them is empty.
+
+Across two families a `POST`'s 409 keeps the five and a `PUT`'s drops them. That
+is **two families' worth of data points, not a rule**, and the obvious next step
+is the one nobody has taken: send the same duplicate-name conflict through a
+third family's `POST` and `PUT`, and send a `PUT` that answers 409 on a family
+whose `POST` also answers 409 for a *different* reason. If the verb is the
+variable, both hold; if the endpoint is, they come apart.
+
+Until somebody sends those, "not explained" is the honest entry, and it is
+cheaper than the fourth wrong explanation.
