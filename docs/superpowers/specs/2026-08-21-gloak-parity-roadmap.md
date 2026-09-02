@@ -220,6 +220,7 @@ operations is allocated below; none is left unassigned.
 | **P10** | Authorization services (UMA 2.0), **first cut done 2026-08-31** | P5 | `authz/resource-server/*` 31, plus **twelve** `management/permissions` operations counted under five other tags - the brief said eight, which was right only for the three chapters that had no other unserved operations | 43 ops |
 | P10 second cut | The scope family, **done 2026-08-31** | P10 first cut | `admin/authz-resource-server` 5->13. Eighteen operations remain; the three permanently-`[]` listings were **deliberately excluded** as parity points indistinguishable from stubs | 8 ops |
 | P10 third cut | The resource family, **done 2026-09-01** | P10 second cut | `admin/authz-resource-server` 13->22 - the whole resource family, listing and search included. **The "permanently-`[]` listings" were not permanently `[]`**: they were empty because nothing had been created, and `GET /resource` is served by the real store here. Nine remain: policy 4, permission 4, import 1, and they need the **typed per-provider representation** that `GET .../permission` uses and `GET .../policy` does not - not the "provider model before `POST` means anything" F129 claimed, since a policy needs a `type` and nothing else | 9 ops |
+| P10 fourth cut | Policy, permission and import, **done 2026-09-02** | P10 third cut | `admin/authz-resource-server` 22->29. **The nine policy types have eight representations over one stored map** - a projection table, not nine structures - which is what F129 meant by "a provider model" and did not say. Two operations remain, the `evaluate` pair, and they need an RPT from `internal/token`: F148 | 7 ops |
 | P10 first cut | The resource server and the twelve refusals | P5 | `admin/authz-resource-server` 0->5, and **three chapters closed outright**: `admin/roles` 28/28, `admin/roles-by-id` 10/10, `admin/groups` 11/11. The gate is the **client's** `authorizationServicesEnabled` and it runs **before** authorization - a fourth gate shape in four families | 17 ops |
 | **P11** | SAML 2.0 | P4 | descriptors, SSO and SLO bindings | not in OpenAPI |
 | **P12** | Organizations and Workflows, **first cut done 2026-08-31** | P4 | Organizations 36, Workflows 9. **The row's 45 is 56**: eleven more operations live under `/organizations/{org-id}/groups/.../role-mappings` and are counted under `Role Mapper` and `Client Role Mappings`, so building this unlocks them. 47 operations live under `/organizations` in all | 56 ops |
@@ -232,8 +233,8 @@ operations is allocated below; none is left unassigned.
 
 Denominator today: **413 Admin API operations plus 122 protocol behaviours, 535
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **361** after
-P10's resource family, and **P2, P4 and P5 are complete** - as are the `Roles`,
+surface is not counted and which the report says so about. Served: **368** after
+P10's policy family, and **P2, P4 and P5 are complete** - as are the `Roles`,
 `Roles (by ID)` and `Groups` chapters, which P10 closed by measuring what their
 last operations refuse - up from 8 before P1, 25 after it, 89 after the second cut's
 roles half, 100 after that cut was complete, 109 after the group tree and 113
@@ -260,7 +261,33 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-01 (tenth fold).** `make conformance` reports **361 of 535**.
+**Updated 2026-09-02 (eleventh fold).** `make conformance` reports **368 of
+535**. P10's fourth cut took `admin/authz-resource-server` to **29 of 31** - the
+last two need an RPT and are F148 - and F142's protocol half closed the theme
+chrome and four other derivation sites, leaving **no measured survivor**.
+
+**The round's lesson is that a rule with one data point behind it should be
+written as one data point.** Two of this project's own rules were generalised
+from a single example and both were refuted within a day.
+
+I wrote that a created realm "falls back to the realm **name** in both" the
+title and the brand. That is what a realm carrying **neither** display field
+answers, and it was the only realm measured. Twelve realms say the brand's chain
+is one rung longer - `displayNameHtml`, then `displayName`, then the name - and
+the realm that separates the two readings is one carrying a `displayName` and no
+`displayNameHtml`.
+
+And the security-header bullet, wrong for a **fifth** time. Its lead was "a
+`POST`'s 409 keeps the five and a `PUT`'s drops them", written from two data
+points and labelled as two data points, which did not save it: fifteen committed
+goldens split on both verbs. "The endpoint decides" does not survive either -
+`add-models-duplicate-id-same-container` and `-other-container` are the same
+route, the same verb and the same 67 bytes, and disagree. The header set follows
+whatever produced the response and nothing observable distinguishes them. The
+bullet now removes a claim without adding one, which is the first correction in
+that sequence to do so.
+
+**Earlier on 2026-09-01 (tenth fold).** `make conformance` reports **361 of 535**.
 P10's third cut built the whole resource family (+9, `admin/authz-resource-server`
 13->22) and the harness cut closed part of F142 without moving the meter, which
 is what a harness cut should do.
