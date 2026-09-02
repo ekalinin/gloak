@@ -501,27 +501,29 @@ var oidcCore = []Case{
 			Section:   "Authorization endpoint: client validation",
 			Retrieved: "2026-08-20",
 		},
-		Status: Recorded,
+		Status: Implemented,
 		// The page carries **three** realm-derived values, not the one F142
 		// went looking for. The restart URL's path is the third; the first two
-		// are the <title> and the header brand, and Gloak serves both as
-		// master's constants:
+		// are the <title> and the header brand:
 		//
-		//	<title>Sign in to gloak-probe-second</title>       Gloak: Sign in to Keycloak
-		//	class="pf-v5-c-brand">gloak-probe-second</div>     Gloak: <div class="kc-logo-text"><span>Keycloak</span></div>
+		//	<title>Sign in to gloak-probe-second</title>
+		//	class="pf-v5-c-brand">gloak-probe-second</div>
 		//
-		// Measured 2026-09-01. They are the realm's displayName and
-		// displayNameHtml; a realm created through POST /admin/realms carries
-		// neither, so Keycloak falls back to the realm name in both places and
-		// the kc-logo-text wrapper - which is displayNameHtml's - disappears
-		// with it. internal/httpx/theme.go hard-codes master's.
+		// They are the realm's displayName and displayNameHtml, and a realm
+		// created through POST /admin/realms carries neither. The
+		// kc-logo-text wrapper master's brand has is displayNameHtml's own
+		// markup, so it disappears with the value rather than wrapping the
+		// name.
 		//
-		// It is Recorded rather than Pending because the bytes are measured and
-		// the endpoint is served: only these two values are wrong. Nothing in
-		// the page is per-request - the /resources/<version>/ segment is minted
-		// with the database and ReplaceThemeResource handles it - so the rule
-		// that such a page cannot be Recorded does not bite.
-		Reason:      "the theme page's title and header brand are served as master's displayName and displayNameHtml rather than following the realm",
+		// **This case was Recorded until 2026-09-02 and its promotion is the
+		// alarm working.** internal/httpx served master's two values as
+		// constants, which is right on the one realm every conformance case
+		// used to address; when the theme was made to follow the realm this
+		// case started matching its golden and TestConformance said so. The
+		// fallback the constants hid is one `if` deeper than it looks - the
+		// brand falls back to displayName and only then to the realm name -
+		// and that `if` is measured in internal/httpx's own tests, because a
+		// realm carrying neither value cannot show it.
 		SecondRealm: true,
 		Fixture:     "second-realm",
 		Request: Request{
@@ -536,5 +538,95 @@ var oidcCore = []Case{
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
+	},
+
+	// --- The three sites the cut before this one measured and left open ---
+	//
+	// Sites 14, 15 and 19 of the derivation table in
+	// docs/superpowers/handover/harness-second-realm.md §1.2. Three of them
+	// were **measured survivors**: hard-coding master into registrationURI,
+	// into the device grant's verification_uri and into /auth's error-redirect
+	// iss left `go test ./internal/conformance ./internal/oidc
+	// ./internal/httpx` green, all three at once, on 2026-09-01.
+	//
+	// Two of the three are closed here **and** in internal/oidc's
+	// crossrealm_test.go, per site. The third, registrationURI, has no case:
+	// measured 2026-09-02 with a control, a second realm's registration
+	// endpoint refuses master's own administrator with the same
+	// `401 invalid_token / Failed decode token` a garbage bearer gets, and the
+	// two credentials that do open it are an initial access token - an Admin
+	// API route Gloak does not serve - and a registration access token, which
+	// needs a client that is already registered. That site is a package test
+	// and its comment says so.
+	//
+	// oidc/certs/second-realm is deliberately **not** here. Every value in that
+	// response is masked, so it would pin nothing realm-derived and would be
+	// the harness equivalent of a mask that changes nothing.
+	{
+		ID: "oidc/device/second-realm-verification-page",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Device authorization grant: the verification page",
+			Retrieved: "2026-09-02",
+		},
+		Status:      Implemented,
+		SecondRealm: true,
+		Fixture:     "second-realm",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/" + secondRealmName + "/device",
+		},
+		// The form's action is `/realms/<realm>/device`, relative and not the
+		// path the request arrived on - and on master those are three spellings
+		// of one string, which is why the sentence above serveDeviceCodePage
+		// claimed the opposite for a month without any test disagreeing.
+		//
+		// The page carries the chrome too, so this golden pins the title and
+		// the brand a second time. That is not redundant with the error page
+		// beside it: they are two body templates sharing one head.
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "Content-Language"},
+	},
+	// **oidc/device/second-realm-authorization-request is not here, and the
+	// reason is a mask rather than a measurement.** §5.2 of the handover names
+	// it and the fixture for it was written; the response was recorded and the
+	// realm is in it, on `verification_uri`. What stops it is
+	// `verification_uri_complete`, which is that URL plus `?user_code=` plus a
+	// code minted per request: masking it whole is the mask
+	// `prefixMasksLeftInPlace` already records as a finding on the master
+	// sibling - `{{issuer}}` and more, thrown away to hide eight characters -
+	// and a second instance of a known-too-wide mask is not worth a second
+	// entry in a list of findings. Case has no body-side equivalent of
+	// VolatileTailHeaders, which is F107's "a mechanism and not an edit".
+	//
+	// Site 15 is closed by internal/oidc's
+	// TestDeviceAuthorizationNamesTheRequestsRealm instead, which asserts both
+	// URLs whole and needs no mask at all. The case belongs here the day that
+	// mechanism exists.
+	{
+		ID: "oidc/authorization/second-realm-error-redirect",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authorization endpoint: request validation",
+			Retrieved: "2026-09-02",
+		},
+		Status:      Implemented,
+		SecondRealm: true,
+		Fixture:     "second-realm-browser",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/" + secondRealmName + "/protocol/openid-connect/auth",
+			Query: map[string]string{
+				"client_id":    "gloak-probe-second-browser",
+				"redirect_uri": browserRedirectURI,
+				"scope":        "openid",
+				"state":        "xyz123",
+			},
+		},
+		// The iss is the only one of the four query keys a second realm can
+		// tell apart - error, error_description and state are the same bytes
+		// whatever realm asked - and ReplaceIssuer rewrites the base URL and
+		// not the realm segment, so it stays asserted whole.
+		AssertHeaders:       []string{"Location", "Cache-Control"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
 	},
 }

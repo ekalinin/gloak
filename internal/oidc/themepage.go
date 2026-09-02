@@ -1,10 +1,12 @@
 package oidc
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
 
+	"github.com/ekalinin/gloak/internal/bootstrap"
 	"github.com/ekalinin/gloak/internal/httpx"
 	"github.com/ekalinin/gloak/internal/model"
 )
@@ -57,9 +59,59 @@ const (
 	pageDeviceFailed   = "You may close this browser window and go back to your device and try connecting again."
 )
 
+// masterDisplayName and masterDisplayNameHTML are master's two display fields.
+//
+// They live in code rather than in the realm row because internal/bootstrap
+// writes no settings blob at all, so master's realm has none to read - which is
+// how internal/admin's defaultRealmRepresentation carries the same two literals
+// for the same reason. Two copies of one measurement, on opposite sides of the
+// boundary internal/oidc is not allowed to cross.
+const (
+	masterDisplayName     = "Keycloak"
+	masterDisplayNameHTML = `<div class="kc-logo-text"><span>Keycloak</span></div>`
+)
+
+// realmDisplay reads the two values the theme's chrome names the realm with.
+//
+// The shape is decodeRealmSettings' - defaults first, the stored blob over the
+// top - because that is what makes a PUT that sets or clears either of them
+// visible here. The fields are pointers so a stored `""` overrides master's
+// default rather than reading as absent: an empty string and an absent key are
+// two different stored states, even though the page renders them the same way.
+//
+// A blob that will not decode is served as the defaults rather than propagated.
+// This is a page's chrome; there is no answer to give a person instead.
+func realmDisplay(realm *model.Realm) (displayName, displayNameHTML string) {
+	if realm.Name == bootstrap.MasterRealmName {
+		displayName, displayNameHTML = masterDisplayName, masterDisplayNameHTML
+	}
+	if len(realm.Settings) == 0 {
+		return displayName, displayNameHTML
+	}
+	var stored struct {
+		DisplayName     *string `json:"displayName"`
+		DisplayNameHTML *string `json:"displayNameHtml"`
+	}
+	if err := json.Unmarshal(realm.Settings, &stored); err != nil {
+		return displayName, displayNameHTML
+	}
+	if stored.DisplayName != nil {
+		displayName = *stored.DisplayName
+	}
+	if stored.DisplayNameHTML != nil {
+		displayNameHTML = *stored.DisplayNameHTML
+	}
+	return displayName, displayNameHTML
+}
+
 // themeChrome is the chrome of a page whose rejection resolved no client.
 func (h *handler) themeChrome(realm *model.Realm) httpx.ThemeChrome {
-	return httpx.ThemeChrome{Realm: realm.Name}
+	displayName, displayNameHTML := realmDisplay(realm)
+	return httpx.ThemeChrome{
+		Realm:           realm.Name,
+		DisplayName:     displayName,
+		DisplayNameHTML: displayNameHTML,
+	}
 }
 
 // themeChromeFor is the chrome of a page that did resolve one, with any extra
@@ -70,11 +122,10 @@ func (h *handler) themeChrome(realm *model.Realm) httpx.ThemeChrome {
 // client_data as well.
 func (h *handler) themeChromeFor(realm *model.Realm, client *model.Client, extra ...string) httpx.ThemeChrome {
 	params := append([]string{"client_id=" + url.QueryEscape(client.ClientID)}, extra...)
-	return httpx.ThemeChrome{
-		Realm:             realm.Name,
-		RestartParams:     httpx.ThemeRestartParams(params...),
-		BackToApplication: h.clientHomeURL(client),
-	}
+	c := h.themeChrome(realm)
+	c.RestartParams = httpx.ThemeRestartParams(params...)
+	c.BackToApplication = h.clientHomeURL(client)
+	return c
 }
 
 // clientHomeURL is the href of the error page's "Back to Application" link,

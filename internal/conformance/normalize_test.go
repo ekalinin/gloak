@@ -572,6 +572,10 @@ func TestThemeResourceAppearsOnlyInTheThemePages(t *testing.T) {
 		"oidc/logout/invalid-id-token-hint":            7,
 		"oidc/device/verification-page":                7,
 		"oidc/device/status-page":                      7,
+		// The tenth, and the device verification page served for a realm that
+		// is not master. Seven again, for the ninth's reason: the count is a
+		// property of the head, which every one of these pages shares.
+		"oidc/device/second-realm-verification-page": 7,
 	}
 	seen := map[string]bool{}
 	for _, c := range Catalog {
