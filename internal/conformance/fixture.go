@@ -1127,6 +1127,63 @@ var Fixtures = map[string]Fixture{
 	// the first recording of these two hit.
 	"authz-pol-evaluate":  authzPolicyFixture("gloak-probe-authz-pol-ev", "28", nil),
 	"authz-perm-evaluate": authzPolicyFixture("gloak-probe-authz-perm-ev", "29", nil),
+
+	// ---- P9 second cut: the property catalogue and the mapper family -----
+	//
+	// Appended at the very end of the map, and the helpers after the last one.
+	//
+	// **Every fixture names its own broker and its own mapper ids**, because the
+	// body's `id` wins on both creates - the provider's `internalId` and the
+	// mapper's `id` alike - so a case can assert a whole body and a whole
+	// `Location` without masking anything.
+	//
+	// **No two of them share an alias**, and the broker alias, the mapper name
+	// and the mapper id are three different strings on every one. A fixture that
+	// used one string for two of the three would pass a handler that looked one
+	// up by the other, which is the hole four of the last two cuts' five
+	// surviving mutations went through.
+	//
+	// The three mapper-types fixtures create brokers of three different
+	// `providerId`s, because that is the only input that route has.
+	"idp-mt-oidc":     identityProviderFixture(`{"alias":"gloak-probe-mt-broker-oidc","internalId":"1de07000-0000-4000-8000-000000000020","providerId":"oidc"}`),
+	"idp-mt-saml":     identityProviderFixture(`{"alias":"gloak-probe-mt-broker-saml","internalId":"1de07000-0000-4000-8000-000000000021","providerId":"saml"}`),
+	"idp-mt-linkedin": identityProviderFixture(`{"alias":"gloak-probe-mt-broker-li","internalId":"1de07000-0000-4000-8000-000000000022","providerId":"linkedin-openid-connect"}`),
+
+	// One broker holding one mapper, for the read, the update and the delete.
+	// Its config carries four keys whose order the SizedKeyOrder serialiser
+	// has to place, and one of them is undeclared - which is the measurement
+	// that separates this family from `POST /components`, where an undeclared
+	// key is dropped.
+	"idp-mapper-one": identityProviderMapperFixture("gloak-probe-map-broker-one", "30",
+		[]idpMapperSeed{{"41", "gloak-probe-mapper-solo",
+			`"identityProviderMapper":"oidc-user-attribute-idp-mapper",` +
+				`"config":{"claim":"gloak-probe-claim","user.attribute":"gloak-probe-attr",` +
+				`"syncMode":"INHERIT","gloak-probe-undeclared":"kept"}`}}),
+
+	// Three mappers under one broker. **The listing's order is masked**, and
+	// the mask is not inert: five mappers created `zzz, mmm, aaa, qqq, bbb` on
+	// the server came back `bbb, zzz, qqq, mmm, aaa`, twice on one container and
+	// reproducible nowhere else, since the ids that decide it are minted UUIDs
+	// on any run this fixture does not name them for.
+	"idp-mapper-listing": identityProviderMapperFixture("gloak-probe-map-broker-list", "31",
+		[]idpMapperSeed{
+			{"42", "gloak-probe-mapper-zulu", `"identityProviderMapper":"oidc-username-idp-mapper"`},
+			{"43", "gloak-probe-mapper-mike", `"identityProviderMapper":"oidc-hardcoded-role-idp-mapper","config":{"role":"offline_access"}`},
+			{"44", "gloak-probe-mapper-alfa", `"identityProviderMapper":"oidc-username-idp-mapper"`},
+		}),
+
+	// A broker holding one mapper whose name the case's own create then
+	// repeats, which is the measured 400.
+	"idp-mapper-taken": identityProviderMapperFixture("gloak-probe-map-broker-dup", "32",
+		[]idpMapperSeed{{"45", "gloak-probe-mapper-taken", `"identityProviderMapper":"oidc-username-idp-mapper"`}}),
+
+	// Brokers with no mappers, for the create, the empty listing and the two
+	// bodies that fail before anything is written. One each rather than one
+	// shared, for the reason the two `evaluate` fixtures give: the recorder
+	// shares a container and a fixture named by two cases runs twice.
+	"idp-mapper-create": identityProviderMapperFixture("gloak-probe-map-broker-new", "33", nil),
+	"idp-mapper-noname": identityProviderMapperFixture("gloak-probe-map-broker-non", "34", nil),
+	"idp-mapper-empty":  identityProviderMapperFixture("gloak-probe-map-broker-emp", "35", nil),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -5511,4 +5568,51 @@ func authzImportAppliedFixture(clientID, group string) Fixture {
 		},
 	})
 	return f
+}
+
+// idpMapperSeed is one mapper a fixture creates: the tail of its fixed id, its
+// name, and the rest of its body.
+//
+// The id tail and the name are separate fields rather than one derived from the
+// other **on purpose**. A fixture that built the id out of the name would let a
+// handler that resolved a mapper by the wrong one of the two pass, and that is
+// the shape of hole that swallowed four of the last two cuts' five surviving
+// mutations.
+type idpMapperSeed struct {
+	idSuffix string
+	name     string
+	rest     string
+}
+
+// identityProviderMapperFixture creates one broker of provider id `oidc` and
+// then the seeds under it.
+//
+// **Both ids are named rather than captured**, because the body's id wins on
+// both creates - the provider's `internalId` and the mapper's `id` - so a case
+// can assert a whole body and a whole `Location` with nothing masked. group is
+// the byte that keeps two fixtures' ids apart; nothing derives it, and two
+// fixtures sharing one would collide on a shared container.
+func identityProviderMapperFixture(alias, group string, seeds []idpMapperSeed) Fixture {
+	f := identityProviderFixture(`{"alias":"` + alias +
+		`","internalId":"1de07000-0000-4000-8000-0000000000` + group + `","providerId":"oidc"}`)
+	for _, s := range seeds {
+		f.Steps = append(f.Steps, Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/identity-provider/instances/" + alias + "/mappers",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"id":"` + idpMapperID(s.idSuffix) + `","name":"` + s.name +
+					`","identityProviderAlias":"` + alias + `",` + s.rest + `}`),
+			},
+			ExpectStatus: idempotentCreate,
+		})
+	}
+	return f
+}
+
+// idpMapperID is the fixed id one seed's mapper gets. Spelled through a helper
+// so a case can name the same value its fixture used without repeating the
+// prefix, and so that two seeds cannot silently pick one id.
+func idpMapperID(suffix string) string {
+	return "1de07000-0000-4000-8000-0000000000" + suffix
 }
