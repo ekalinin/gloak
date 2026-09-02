@@ -279,11 +279,13 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /admin/realms/{realm}/groups/{groupID}/management/permissions",
 		h.guardGroupResolving(h.managementPermissionsAfterGroup))
 
-	// Identity Providers, seven of the seventeen. The two
-	// `management/permissions` operations above are two more; the eight left
-	// are `import-config`, the provider and mapper-type catalogues and the five
-	// mapper operations. See
-	// docs/superpowers/plans/2026-09-01-p9-identity-providers.md.
+	// Identity Providers. Counting the two `management/permissions` operations
+	// registered above, this tag is now **every operation the description lists
+	// except `import-config`**, which is unbuilt because it makes an outbound
+	// HTTP fetch from this package - a boundary decision rather than a detail.
+	// See docs/superpowers/plans/2026-09-01-p9-identity-providers.md for the
+	// routes below and 2026-09-02-p9-provider-catalogue.md for the block after
+	// them.
 	//
 	// **The gate is a fifth shape and it is the simplest of the five**: a plain
 	// two-role check with no feature flag, no realm flag and no resource
@@ -321,6 +323,33 @@ func (h *handler) register(mux *http.ServeMux) {
 	// rather than shared for the reason that one's is.
 	mux.HandleFunc("GET "+idpPrefix+"/{alias}/reload-keys",
 		h.guardIdentityProvider(identityProviderWriteRoles, h.reloadIdentityProviderKeys))
+
+	// P9's second cut: the property catalogue and the five mapper operations.
+	// See docs/superpowers/plans/2026-09-02-p9-provider-catalogue.md.
+	//
+	// **The guards are the first cut's two, re-measured on all seven rather
+	// than inherited.** One role at a time over six callers: the four reads
+	// take `view-identity-providers` or `manage-identity-providers` and the
+	// three writes take `manage-identity-providers` alone. `view-realm` and
+	// `manage-realm` are 403 on every one of them, and `view-clients` is the
+	// control.
+	//
+	// `providers/{provider_id}` is the one route of the seven with no instance
+	// in its path, so it takes the plain role guard.
+	mux.HandleFunc("GET /admin/realms/{realm}/identity-provider/providers/{providerID}",
+		h.guardAny(identityProviderReadRoles, h.readIdentityProviderInfo))
+	mux.HandleFunc("GET "+idpPrefix+"/{alias}/mapper-types",
+		h.guardIdentityProvider(identityProviderReadRoles, h.listIdentityProviderMapperTypes))
+	mux.HandleFunc("GET "+idpPrefix+"/{alias}/mappers",
+		h.guardIdentityProvider(identityProviderReadRoles, h.listIdentityProviderMappers))
+	mux.HandleFunc("POST "+idpPrefix+"/{alias}/mappers",
+		h.guardIdentityProvider(identityProviderWriteRoles, h.createIdentityProviderMapper))
+	mux.HandleFunc("GET "+idpPrefix+"/{alias}/mappers/{mapperID}",
+		h.guardIdentityProvider(identityProviderReadRoles, h.readIdentityProviderMapper))
+	mux.HandleFunc("PUT "+idpPrefix+"/{alias}/mappers/{mapperID}",
+		h.guardIdentityProvider(identityProviderWriteRoles, h.updateIdentityProviderMapper))
+	mux.HandleFunc("DELETE "+idpPrefix+"/{alias}/mappers/{mapperID}",
+		h.guardIdentityProvider(identityProviderWriteRoles, h.deleteIdentityProviderMapper))
 
 	// Component, two of the six. The four left - the two writes,
 	// `sub-component-types` and the delete - each need the per-provider

@@ -59,6 +59,18 @@ func decodeStrict(w http.ResponseWriter, r *http.Request, class string, out any)
 		writeCannotParseJSON(w, body)
 		return false
 	}
+	return decodeStrictBytes(w, body, class, out)
+}
+
+// decodeStrictBytes is decodeStrict over a body somebody else has already read.
+//
+// It exists because one endpoint has to look at the bytes before the decode:
+// `POST .../identity-provider/instances/{alias}/mappers` answers an **empty**
+// body with a 500 and a merely malformed one with a 400, so the emptiness test
+// runs first and the reader cannot be inside this function. Splitting it is
+// what keeps that endpoint on the same strict decoder as the other nine rather
+// than growing a second one.
+func decodeStrictBytes(w http.ResponseWriter, body []byte, class string, out any) bool {
 	if err := json.Unmarshal(body, out); err != nil {
 		writeCannotParseJSON(w, body)
 		return false
