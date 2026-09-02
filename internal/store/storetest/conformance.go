@@ -3014,6 +3014,118 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 			t.Errorf("the listing is not in creation order")
 		}
 	})
+
+	t.Run("an identity provider mapper is listed by alias and found without one", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		realm := newRealm(t, s)
+
+		// The names and the ids differ from each other on purpose: a repo that
+		// looked one up by the other would pass a fixture that used one string
+		// for both, and this project has lost four mutations to exactly that.
+		under := &model.IdentityProviderMapper{
+			ID: "11111111-1111-1111-1111-111111111111", RealmID: realm.ID,
+			Alias: "gloak-probe-broker-one", Name: "gloak-probe-mapper-alpha",
+			Mapper: "oidc-hardcoded-role-idp-mapper",
+			Config: []model.IdentityProviderMapperConfigEntry{
+				{Name: "zz", Value: "1"},
+				{Name: "aa", Value: "2"},
+				{Name: "mm", Value: "3"},
+			},
+		}
+		second := &model.IdentityProviderMapper{
+			ID: "22222222-2222-2222-2222-222222222222", RealmID: realm.ID,
+			Alias: "gloak-probe-broker-one", Name: "gloak-probe-mapper-beta",
+			Mapper: "oidc-username-idp-mapper",
+		}
+		elsewhere := &model.IdentityProviderMapper{
+			ID: "33333333-3333-3333-3333-333333333333", RealmID: realm.ID,
+			Alias: "gloak-probe-broker-two", Name: "gloak-probe-mapper-gamma",
+			Mapper: "oidc-username-idp-mapper",
+		}
+		for _, m := range []*model.IdentityProviderMapper{under, second, elsewhere} {
+			if err := s.IdentityProviderMappers().Create(ctx, m); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+		}
+
+		// The same name under a second alias is fine; the same name under the
+		// same alias is the measured conflict.
+		clash := &model.IdentityProviderMapper{
+			ID: model.NewID(), RealmID: realm.ID,
+			Alias: "gloak-probe-broker-one", Name: "gloak-probe-mapper-alpha",
+			Mapper: "oidc-username-idp-mapper",
+		}
+		if err := s.IdentityProviderMappers().Create(ctx, clash); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("a repeated name under one alias: want ErrConflict, got %v", err)
+		}
+
+		// The config keeps the order it was handed, which is what
+		// javamap.SizedKeyOrder needs: those three keys share a bucket and the
+		// insertion order is the only thing that decides them.
+		got, err := s.IdentityProviderMappers().ByID(ctx, realm.ID, under.ID)
+		if err != nil {
+			t.Fatalf("ByID: %v", err)
+		}
+		if len(got.Config) != 3 || got.Config[0].Name != "zz" ||
+			got.Config[1].Name != "aa" || got.Config[2].Name != "mm" {
+			t.Errorf("config order: got %v", got.Config)
+		}
+		if got.Name != "gloak-probe-mapper-alpha" || got.Alias != "gloak-probe-broker-one" ||
+			got.Mapper != "oidc-hardcoded-role-idp-mapper" {
+			t.Errorf("round trip: got %+v", got)
+		}
+
+		// **ByID takes no alias**, and this is the assertion that says so: the
+		// mapper of one broker is found while its own listing has one row.
+		if _, err := s.IdentityProviderMappers().ByID(ctx, realm.ID, elsewhere.ID); err != nil {
+			t.Errorf("a mapper of another alias: want it found, got %v", err)
+		}
+		list, err := s.IdentityProviderMappers().List(ctx, realm.ID, "gloak-probe-broker-one")
+		if err != nil || len(list) != 2 {
+			t.Fatalf("List: %v, %v", list, err)
+		}
+		if list[0].ID != under.ID || list[1].ID != second.ID {
+			t.Errorf("the listing is not in creation order: got %v, %v", list[0].ID, list[1].ID)
+		}
+		if list, err := s.IdentityProviderMappers().List(ctx, realm.ID, "gloak-probe-broker-nosuch"); err != nil || len(list) != 0 {
+			t.Errorf("an alias with no mappers: want an empty list, got %v, %v", list, err)
+		}
+
+		// Update replaces, config included, and it can set an alias no
+		// provider has - both measured on the server.
+		under.Alias = "gloak-probe-broker-stranded"
+		under.Name = "gloak-probe-mapper-alpha-renamed"
+		under.Config = []model.IdentityProviderMapperConfigEntry{{Name: "only", Value: "9"}}
+		if err := s.IdentityProviderMappers().Update(ctx, under); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		got, err = s.IdentityProviderMappers().ByID(ctx, realm.ID, under.ID)
+		if err != nil || len(got.Config) != 1 || got.Config[0].Name != "only" ||
+			got.Alias != "gloak-probe-broker-stranded" {
+			t.Errorf("after Update: got %+v, %v", got, err)
+		}
+		if list, err := s.IdentityProviderMappers().List(ctx, realm.ID, "gloak-probe-broker-one"); err != nil || len(list) != 1 {
+			t.Errorf("the old alias should have lost a row: got %v, %v", list, err)
+		}
+
+		missing := &model.IdentityProviderMapper{
+			ID: "44444444-4444-4444-4444-444444444444", RealmID: realm.ID,
+			Alias: "gloak-probe-broker-one", Name: "gloak-probe-mapper-delta",
+		}
+		if err := s.IdentityProviderMappers().Update(ctx, missing); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("Update of a mapper that does not exist: want ErrNotFound, got %v", err)
+		}
+		if _, err := s.IdentityProviderMappers().ByID(ctx, realm.ID, missing.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("ByID of a mapper that does not exist: want ErrNotFound, got %v", err)
+		}
+		if err := s.IdentityProviderMappers().Delete(ctx, realm.ID, second.ID); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		if err := s.IdentityProviderMappers().Delete(ctx, realm.ID, second.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("the second Delete: want ErrNotFound, got %v", err)
+		}
+	})
 }
 
 // strPtr is the "absent is not empty" helper the organization cases need, and

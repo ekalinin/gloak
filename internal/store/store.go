@@ -58,6 +58,7 @@ type Store interface {
 	Organizations() OrganizationRepo
 	Authz() AuthzRepo
 	IdentityProviders() IdentityProviderRepo
+	IdentityProviderMappers() IdentityProviderMapperRepo
 	Components() ComponentRepo
 	Close() error
 }
@@ -91,6 +92,47 @@ type IdentityProviderRepo interface {
 	// the measured serving order: three created `zzz, mmm, aaa` came back
 	// `aaa, mmm, zzz`. A provider whose alias was cleared sorts first.
 	List(ctx context.Context, realmID string) ([]*model.IdentityProvider, error)
+}
+
+// IdentityProviderMapperRepo stores a realm's identity provider mappers.
+//
+// **Its two lookups are scoped differently and that is measured, not an
+// oversight.** List takes the alias in the path and filters by it; ByID does
+// not take one at all, because the three single-mapper routes ignore the path's
+// alias entirely - a mapper created under one provider was read through a
+// second provider's path with a 200 and then deleted through it with a 204,
+// while that second provider's own listing stayed empty. Giving ByID an alias
+// argument "for symmetry" is the tidy-up that turns two measured 2xx into 404s.
+type IdentityProviderMapperRepo interface {
+	// Create inserts a mapper and its config. A name the same alias already
+	// holds is ErrConflict, which internal/admin turns into the measured
+	// `400 {"errorMessage":"Failed to add mapper 'x' to identity provider
+	// [oidc]."}` - a 400 rather than the 409 most of this API answers, and a
+	// sentence naming the **providerId** where the route carries the alias.
+	Create(ctx context.Context, m *model.IdentityProviderMapper) error
+	// Update **replaces**, config included: a PUT naming one config key on a
+	// mapper holding four left it holding one. That is the opposite of
+	// `PUT /components/{id}`, which merges, one chapter away.
+	Update(ctx context.Context, m *model.IdentityProviderMapper) error
+	// ByID resolves a mapper realm-wide. ErrNotFound becomes
+	// `404 {"error":"Model not found"}`, which is a spelling of not-found this
+	// API did not previously have.
+	ByID(ctx context.Context, realmID, id string) (*model.IdentityProviderMapper, error)
+	// Delete removes one by id, realm-wide for the reason ByID is.
+	Delete(ctx context.Context, realmID, id string) error
+	// List returns one provider's mappers **in the order they were created**,
+	// which is not the server's order. Keycloak's listing was measured having
+	// none that is reproducible: five mappers created `zzz, mmm, aaa, qqq, bbb`
+	// came back `bbb, zzz, qqq, mmm, aaa`, twice in a row on one container and
+	// matching neither insertion, name nor anything else on the wire - the ids
+	// are minted UUIDs, so nothing about a later run can repeat it. The
+	// conformance case masks the array; this order exists so a driver is
+	// deterministic where the server is not.
+	//
+	// It takes no bounds because the listing has none: `first`, `max`, `search`
+	// and `briefRepresentation` were each measured returning the whole set, and
+	// so was `first=abc`.
+	List(ctx context.Context, realmID, alias string) ([]*model.IdentityProviderMapper, error)
 }
 
 // ComponentRepo stores a realm's SPI components.

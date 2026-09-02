@@ -2,7 +2,6 @@ package admin
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -89,13 +88,13 @@ func (c identityProviderConfig) MarshalJSON() ([]byte, error) {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		key, err := json.Marshal(entry.Name)
+		key, err := marshalOrderedValue(entry.Name)
 		if err != nil {
 			return nil, err
 		}
 		b.Write(key)
 		b.WriteByte(':')
-		value, err := json.Marshal(entry.Value)
+		value, err := marshalOrderedValue(entry.Value)
 		if err != nil {
 			return nil, err
 		}

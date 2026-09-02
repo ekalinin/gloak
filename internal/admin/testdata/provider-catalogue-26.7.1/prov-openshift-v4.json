@@ -1,0 +1,1 @@
+{"name":"Openshift v4","id":"openshift-v4","configProperties":[{"name":"baseUrl","label":"Base URL","helpText":"Override the default Base URL for this identity provider.","type":"String","secret":false,"required":false,"readOnly":false}],"helpText":"","configMetadata":[]}

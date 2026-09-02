@@ -1,0 +1,12 @@
+# GET /admin/realms/master/identity-provider/instances/gloak-probe-map-broker-list/mappers
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"id":"1de07000-0000-4000-8000-000000000042","name":"gloak-probe-mapper-zulu","identityProviderAlias":"gloak-probe-map-broker-list","identityProviderMapper":"oidc-username-idp-mapper","config":{}},{"id":"1de07000-0000-4000-8000-000000000043","name":"gloak-probe-mapper-mike","identityProviderAlias":"gloak-probe-map-broker-list","identityProviderMapper":"oidc-hardcoded-role-idp-mapper","config":{"role":"offline_access"}},{"id":"1de07000-0000-4000-8000-000000000044","name":"gloak-probe-mapper-alfa","identityProviderAlias":"gloak-probe-map-broker-list","identityProviderMapper":"oidc-username-idp-mapper","config":{}}]

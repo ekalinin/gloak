@@ -1,0 +1,1 @@
+{"name":"PayPal","id":"paypal","configProperties":[{"name":"sandbox","label":"Target Sandbox","helpText":"Target PayPal's sandbox environment","type":"boolean","secret":false,"required":false,"readOnly":false}],"helpText":"","configMetadata":[]}

@@ -12043,4 +12043,407 @@ var adminCases = []Case{
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},
+
+	// P9's second cut: the per-provider property catalogue and the mapper
+	// family. See docs/superpowers/plans/2026-09-02-p9-provider-catalogue.md.
+	{
+		// **The catalogue's small end.** Eleven of the seventeen registered
+		// providers declare no properties at all and `oidc` is one of them, so
+		// this endpoint serves a provider's *extra* configuration rather than
+		// its whole surface - which is worth a golden precisely because the
+		// name says otherwise and an `oidc` broker plainly has a `clientId`.
+		//
+		// `helpText` is `""` and `configMetadata` is `[]` on all seventeen.
+		ID: "admin/identity-providers/provider-info",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: get one provider's configuration properties",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/identity-provider/providers/{provider_id}",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/identity-provider/providers/oidc",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The catalogue's big end, and the one entry where **one field carries
+		// two JSON types**: `githubJsonFormat`'s default is the literal `false`
+		// and `jwtAuthorizationGrantMaxAllowedAssertionExpiration`'s is the
+		// string `"3600"`, both on providers this endpoint serves. A `string`
+		// field loses the first and a `bool` loses the second, which is why the
+		// catalogue holds an `any` and why this golden is worth its case.
+		//
+		// `google` is the biggest of the seventeen at 2386 bytes and six
+		// properties.
+		ID: "admin/identity-providers/provider-info-properties",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: a provider that declares properties",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/identity-provider/providers/google",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **An unregistered provider id is a 400 here and a 404 one path
+		// segment away.** The instance routes answer an alias that does not
+		// exist with the generic `HTTP 404 Not Found`; this route answers the
+		// generic **400**. Two neighbouring families, one unknown name, two
+		// statuses.
+		ID: "admin/identity-providers/provider-info-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: an unregistered provider id",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/identity-provider/providers/gloak-probe-nosuch",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **A Java map keyed on the mapper id, and its order is stored rather
+		// than computed.** All thirteen measured key sets are bucket-monotone
+		// at capacity 16; javamap.KeyOrder places eight of them and the five it
+		// misses hold six colliding pairs, which is that package's documented
+		// tie-break gap. Nothing is masked here - the order was byte-identical
+		// across two container starts, so it is a constant of the version.
+		//
+		// The set is per provider and this is the ten an `oidc` broker offers.
+		ID: "admin/identity-providers/mapper-types",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: the mapper types one instance offers",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/identity-provider/instances/{alias}/mapper-types",
+		Fixture:   "idp-mt-oidc",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/identity-provider/instances/gloak-probe-mt-broker-oidc/mapper-types",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The biggest body in this half of the catalogue, 10212 bytes, and the
+		// one that carries the two things the serialiser could get wrong and
+		// nothing else would notice: an `options` array, and a helpText holding
+		// `ATTRIBUTE.<NAME>`. Keycloak escapes none of `<`, `>` and `&`, and a
+		// custom MarshalJSON cannot inherit the encoder's SetEscapeHTML(false),
+		// so this golden is what pins marshalOrderedValue.
+		//
+		// A `saml` broker swaps six of the ten for SAML spellings, which is
+		// also what says the set follows the provider rather than the route.
+		ID: "admin/identity-providers/mapper-types-saml",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: a SAML instance's mapper types",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "idp-mt-saml",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/identity-provider/instances/gloak-probe-mt-broker-saml/mapper-types",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **Two of the seventeen answer this route with a 500**, on an instance
+		// that was created without complaint and reads back normally through
+		// every other route in the family - `linkedin-openid-connect` and
+		// `openshift-v4`. Reproduced rather than smoothed into an empty map,
+		// because what a caller gets is the 500.
+		ID: "admin/identity-providers/mapper-types-unsupported",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: an instance whose mapper types cannot be listed",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "idp-mt-linkedin",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/identity-provider/instances/gloak-probe-mt-broker-li/mapper-types",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **The config is not filtered and the mapper type is not validated.**
+		// `gloak-probe-undeclared` is not a property of
+		// `oidc-user-attribute-idp-mapper` and it comes back; a create naming a
+		// mapper type that does not exist is a 201. `POST /components` one
+		// chapter away does the opposite on both counts, which is what makes
+		// this golden the pair to `admin/component/list`.
+		//
+		// The four config keys are placed by javamap.SizedKeyOrder - the same
+		// constructor the parent provider's config uses and the other one from
+		// a component's. Nothing masks the order.
+		ID: "admin/identity-providers/mappers-read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: get one mapper",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/identity-provider/instances/{alias}/mappers/{id}",
+		Fixture:   "idp-mapper-one",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/identity-provider/instances/" +
+				"gloak-probe-map-broker-one/mappers/1de07000-0000-4000-8000-000000000041",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **The listing's order is masked, and this golden is exactly why the
+		// mask is not something to argue away.** Five mappers created
+		// `zzz, mmm, aaa, qqq, bbb` came back `bbb, zzz, qqq, mmm, aaa`, twice
+		// on one container: it is a Java collection over the **mapper id**, and
+		// an id is a minted UUID on any run that does not name one.
+		//
+		// The recorded body below happens to be in creation order, because this
+		// fixture names its ids and names them ascending. That coincidence is a
+		// fact about the ids chosen here and not about the endpoint, so the mask
+		// stays - taking it off would turn "these three ids sort this way" into
+		// a claim that Keycloak preserves creation order, which the five-mapper
+		// probe measures as false.
+		//
+		// It is also the only route of the five that reads the path's alias:
+		// the three that name a mapper id resolve it realm-wide.
+		ID: "admin/identity-providers/mappers-list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: list one instance's mappers",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/identity-provider/instances/{alias}/mappers",
+		Fixture:   "idp-mapper-listing",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/identity-provider/instances/" +
+				"gloak-probe-map-broker-list/mappers",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		Unordered:     []string{"."},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **A 201 with a Location and no Content-Type at all**, content-length
+		// zero. The tail is the mapper's id, and the fixture names it, so
+		// nothing here is masked - the body's `id` winning on this create is
+		// the fifth endpoint in this API with that rule and this header is
+		// where it is asserted.
+		ID: "admin/identity-providers/mappers-create",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: add a mapper to an instance",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/identity-provider/instances/{alias}/mappers",
+		Fixture:   "idp-mapper-create",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/identity-provider/instances/" +
+				"gloak-probe-map-broker-new/mappers",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"1de07000-0000-4000-8000-000000000046",` +
+				`"name":"gloak-probe-mapper-fresh",` +
+				`"identityProviderAlias":"gloak-probe-map-broker-new",` +
+				`"identityProviderMapper":"oidc-hardcoded-role-idp-mapper",` +
+				`"config":{"role":"offline_access","syncMode":"INHERIT"}}`),
+		},
+		AssertHeaders:       []string{"Location"},
+		AssertAbsentHeaders: []string{"Content-Type"},
+	},
+	{
+		// **A body with no name answers the duplicate-resource 409**, which is
+		// the policy family's answer to the same omission and the third family
+		// in this API to give it. Nothing is duplicated - the broker holds no
+		// mappers at all.
+		//
+		// **It is a sixteenth golden for the security-header split**, and one of
+		// the sharper ones: it sends **none** of the five, while the duplicate
+		// 400 below and the empty-body 500 beside it - same route, same verb,
+		// same `Content-Type` - send all five. Three failures of one endpoint,
+		// two header sets, and nothing about the request or the response tells
+		// them apart. See F147, which says exactly that and is not being
+		// explained here either.
+		ID: "admin/identity-providers/mappers-create-no-name",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: adding a mapper with no name",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "idp-mapper-noname",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/identity-provider/instances/" +
+				"gloak-probe-map-broker-non/mappers",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"identityProviderAlias":"gloak-probe-map-broker-non",` +
+				`"identityProviderMapper":"oidc-username-idp-mapper"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **A name the alias already holds is a 400, not a 409**, and the
+		// sentence names the provider's `providerId` where the route carries
+		// its alias. So the two ways a name can fail on this endpoint are two
+		// different statuses and neither is the one the rest of the API uses
+		// for a duplicate.
+		ID: "admin/identity-providers/mappers-create-duplicate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: adding a mapper whose name is taken",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "idp-mapper-taken",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/identity-provider/instances/" +
+				"gloak-probe-map-broker-dup/mappers",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-mapper-taken",` +
+				`"identityProviderAlias":"gloak-probe-map-broker-dup",` +
+				`"identityProviderMapper":"oidc-username-idp-mapper"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **An empty body is a 500** where a merely malformed one is a 400 -
+		// the same defect `POST /users` has, on a different endpoint, and
+		// reproduced for the same reason.
+		ID: "admin/identity-providers/mappers-create-empty-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: adding a mapper with no body",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "idp-mapper-empty",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/identity-provider/instances/" +
+				"gloak-probe-map-broker-emp/mappers",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(``),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// A 204 with `Cache-Control: no-cache`, and the update **replaces**:
+		// this body names one config key on a mapper holding four, and the read
+		// afterwards is one key. `PUT /components/{id}` one chapter away merges
+		// and cannot clear a config at all, so the two neighbouring updates are
+		// opposite on the same verb.
+		//
+		// The request declares JSON, so the 204 carries `X-Frame-Options` -
+		// which is the rule AGENTS.md records about the request's Content-Type
+		// rather than about the method.
+		ID: "admin/identity-providers/mappers-update",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: update one mapper",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/identity-provider/instances/{alias}/mappers/{id}",
+		Fixture:   "idp-mapper-update",
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/master/identity-provider/instances/" +
+				"gloak-probe-map-broker-upd/mappers/1de07000-0000-4000-8000-000000000047",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"1de07000-0000-4000-8000-000000000047",` +
+				`"name":"gloak-probe-mapper-target",` +
+				`"identityProviderAlias":"gloak-probe-map-broker-upd",` +
+				`"identityProviderMapper":"oidc-user-attribute-idp-mapper",` +
+				`"config":{"claim":"gloak-probe-replaced"}}`),
+		},
+		AssertHeaders: []string{"Cache-Control", "X-Frame-Options"},
+	},
+	{
+		// The delete's 204 carries `Cache-Control: no-cache` and **no**
+		// `X-Frame-Options`, because the request declares no Content-Type -
+		// which is what decides that header on a 204, per AGENTS.md, and which
+		// this case and the update above assert as a pair.
+		ID: "admin/identity-providers/mappers-delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: delete one mapper",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/identity-provider/instances/{alias}/mappers/{id}",
+		Fixture:   "idp-mapper-delete",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path: "/admin/realms/master/identity-provider/instances/" +
+				"gloak-probe-map-broker-del/mappers/1de07000-0000-4000-8000-000000000048",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// **`Model not found` is a new spelling of not-found**, and it is in the
+		// bare-`error` family. The provider family around it answers an unknown
+		// alias with the generic `HTTP 404 Not Found`, so one chapter now has
+		// both - and the Component chapter beside it has two more of its own.
+		ID: "admin/identity-providers/mappers-read-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: a mapper id that resolves to nothing",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "idp-mapper-create",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/identity-provider/instances/" +
+				"gloak-probe-map-broker-new/mappers/1de07000-0000-4000-8000-0000000000ff",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
 }

@@ -1,0 +1,6 @@
+# POST /admin/realms/master/identity-provider/instances/gloak-probe-map-broker-non/mappers
+HTTP/1.1 409 Conflict
+Content-Length: {{volatile}}
+Content-Type: application/json
+
+{"error":"conflict","error_description":"Duplicate resource error"}

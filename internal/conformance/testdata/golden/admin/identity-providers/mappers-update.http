@@ -1,0 +1,9 @@
+# PUT /admin/realms/master/identity-provider/instances/gloak-probe-map-broker-upd/mappers/1de07000-0000-4000-8000-000000000047
+HTTP/1.1 204 No Content
+Cache-Control: no-cache
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
