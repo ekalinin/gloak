@@ -142,9 +142,9 @@ func (h *handler) themeChrome(realm *model.Realm) httpx.ThemeChrome {
 // themeChromeFor is the chrome of a page that did resolve one, with any extra
 // restart parameters the page carries in front of skip_logout.
 //
-// extra exists for prompt=create alone, whose page is rendered from inside the
-// authentication flow and whose restart URL therefore carries a tab_id and a
-// client_data as well.
+// extra exists for the pages rendered from inside the authentication flow,
+// whose restart URL carries a tab_id and a client_data as well - prompt=create's
+// 400 and VERIFY_EMAIL's 500. flowChrome builds those two arguments.
 func (h *handler) themeChromeFor(realm *model.Realm, client *model.Client, extra ...string) httpx.ThemeChrome {
 	params := append([]string{"client_id=" + url.QueryEscape(client.ClientID)}, extra...)
 	c := h.themeChrome(realm)
