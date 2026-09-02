@@ -344,6 +344,13 @@ still does both. That is exactly why the drift matters - the paragraph's
 conclusion survived while its arithmetic did not, and the arithmetic is what the
 bullet offers as evidence.
 
+Confirmed in review against `main`: the sixteenth golden and the bullet's
+"fifteen" were written in **the same fold**, so the number was stale before it
+was committed. It is being replaced with a test that computes it, which is the
+only thing that stops the next cut inheriting it - a count in prose beside the
+list it counts is the failure mode AGENTS.md already names twice and this is its
+third instance.
+
 ## 2. Entries for AGENTS.md's "Things that look like bugs and are not"
 
 - **The per-provider property catalogue is three endpoints, three envelopes and
@@ -671,6 +678,15 @@ Not built, each with a stated reason in §5: `import-config`, `POST /components`
   body before the decode - an empty body is a 500 there and a malformed one a
   400 - and splitting the function is what kept that endpoint on the same strict
   decoder as the other nine rather than growing a second one.
+- **`IdentityProviderMapperTypesFail` and the branch that consulted it are
+  gone.** Review found the branch survived deletion; the check that explains it
+  is one request, and it is in §6. The two provider ids the predicate named are
+  exactly the two the catalogue has no mapper set for, so the fallback below it
+  wrote the identical body and the branch could not change an answer. The
+  condition is asserted now -
+  `TestTheProvidersWithNoMapperTypesAreTheTwoMeasured500s` compares the whole
+  absent list, so each of the two fails it on its own - and the one branch that
+  is left is mutation-killed.
 - **Not built, and each reason is a measurement rather than a budget:**
   - `POST .../identity-provider/import-config` - §1.10. An outbound HTTP fetch
     made from `internal/admin`, which the boundary table gives no client and no
@@ -691,8 +707,8 @@ Not built, each with a stated reason in §5: `import-config`, `POST /components`
 
 ## 6. The mutation pass
 
-Thirty-one mutations that applied, a different one per claim, each confirming the
-**named** test fails and then reverted. Counted from the runs rather than
+Thirty-seven mutations that applied, a different one per claim, each confirming
+the **named** test fails and then reverted. Counted from the runs rather than
 incremented:
 
 ```
@@ -704,9 +720,14 @@ the nil-body guard   23                              1 SURVIVOR (not discriminat
                      23a, 23b                        2 killed
 javamap              the two table sizes             2 killed
                      the three vectors               3 killed
+in review            the mapper-types 500 branch     1 SURVIVOR (dead code)
+                     the branch that replaced it     1 killed
+                     the absent set, four ways       4 killed
 ```
 
-Twenty-nine killed, two survivors, and neither of them was a mutation problem.
+Thirty-four killed, three survivors, and none of the three was a mutation
+problem: one was a hole in a test, one was a blunt mutation of a live block, and
+one was dead code.
 
 **The one real survivor was a hole in a test, and the rule caught it.**
 Reversing the `mapper-types` loop inside the handler passed
@@ -723,6 +744,55 @@ dead. AGENTS.md's rule - if every mutation of a block preserves behaviour, the
 block preserves behaviour - was applied rather than assumed: both real mutations
 of that block, removing the guard outright and never reading the body, are
 killed, one by the conformance golden and one by the create's own test.
+
+**The third survivor came from review, and it was dead code.** Deleting the four
+lines that asked `model.IdentityProviderMapperTypesFail` whether this provider
+was one of the two that answer a 500 left `./internal/admin/` and
+`./internal/conformance/` both `ok`.
+
+The reason is not that the behaviour was untested. **It is that the deletion
+cannot change an answer**, and the check that says so is one request, not an
+argument: with the branch removed, `linkedin-openid-connect` answers 500,
+`openshift-v4` answers 500 and `oidc` answers its map - byte for byte what they
+answered before. The two ids the predicate named are exactly the two the
+catalogue has no mapper set for, so the `!ok` fallback two lines below wrote the
+identical body. Two spellings of one condition, one of them unreachable, and the
+first reading of the survivor - that the two providers would start serving a map
+- is refuted by the map not existing.
+
+So this is the nil-body block's class and not a new one, with one difference that
+matters: **that block was live and only the mutation was blunt, this block was
+dead.** AGENTS.md's rule is what separates them, and it is the whole of the
+method here - a survivor is a finding, and the finding is about the code exactly
+when every mutation of the block preserves behaviour.
+
+The branch and the predicate are gone. What is left is the one `!ok` branch,
+which is live - deleting it serves `{}` with a 200 and fails
+`TestMapperTypesFollowTheProvider` - and
+`TestTheProvidersWithNoMapperTypesAreTheTwoMeasured500s`, which compares the
+**whole** absent list rather than asking about each id. Five mutations confirm
+it, each failing the named test:
+
+```
+the 500 branch deleted outright                TestMapperTypesFollowTheProvider
+openshift-v4 gains a mapper set                TestTheProvidersWithNoMapperTypes...
+linkedin-openid-connect gains a mapper set     TestTheProvidersWithNoMapperTypes...
+github loses its mapper set                    TestTheProvidersWithNoMapperTypes...
+the consult-log sentence                       TestMapperTypesFollowTheProvider
+```
+
+The middle two are the point of comparing the list rather than the members: **two
+ids behind one claim is the shape where a test pins one and lets the other rot**,
+and each of them fails on its own.
+
+**A golden would not be stronger here, and that is a judgement worth stating.**
+`admin/identity-providers/mapper-types-unsupported` already holds
+`linkedin-openid-connect`'s 500 as recorded bytes, headers included. A second
+golden for `openshift-v4` would assert byte-identical content through the same
+writer - a duplicate measurement - and, more to the point, **no golden can pin a
+set**: it says "this provider answers this" and cannot say "and these are the
+only two", which is the half that rots. The package test carries the set and both
+ids, the golden carries the bytes, and neither replaces the other.
 
 **A counted claim was wrong on its first writing and the test refused it.**
 `KeyOrder` is wrong on **seven** of the ten mapper config vectors, not six. That
