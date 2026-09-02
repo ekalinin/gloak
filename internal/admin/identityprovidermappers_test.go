@@ -340,6 +340,69 @@ func TestProviderInfoRefusesAnUnknownIDWithA400(t *testing.T) {
 	}
 }
 
+// TestMapperFamilyGuard pins the two role sets across all seven routes this cut
+// adds, measured one role at a time over six callers on 2026-09-02.
+//
+// The four reads take either identity-provider role and the three writes take
+// `manage-identity-providers` alone. `view-realm` and `manage-realm` - the pair
+// that opens the Component chapter one path segment away - are 403 on every one
+// of them, which is the disjointness the first cut measured and this one
+// re-measured rather than inherited.
+func TestMapperFamilyGuard(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	createIDP(t, h, admin, `{"alias":"gloak-probe-guard-broker","providerId":"oidc"}`)
+	const base = "/admin/realms/master/identity-provider"
+	const mappers = base + "/instances/gloak-probe-guard-broker/mappers"
+	w := send(t, h, http.MethodPost, mappers, admin,
+		`{"id":"cccccccc-0000-0000-0000-000000000001","name":"gloak-probe-guard-mapper",`+
+			`"identityProviderAlias":"gloak-probe-guard-broker",`+
+			`"identityProviderMapper":"oidc-username-idp-mapper"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("seeding: %d %s", w.Code, w.Body)
+	}
+
+	view := tokenForRoles(t, h, s, realm, "view-identity-providers")
+	manage := tokenForRoles(t, h, s, realm, "manage-identity-providers")
+	realmManager := tokenForRoles(t, h, s, realm, "manage-realm")
+	none := tokenForRoles(t, h, s, realm)
+	const mapper = mappers + "/cccccccc-0000-0000-0000-000000000001"
+
+	for _, tc := range []struct {
+		method, path, body  string
+		wantView, wantWrite int
+	}{
+		{http.MethodGet, base + "/providers/oidc", "", 200, 200},
+		{http.MethodGet, base + "/instances/gloak-probe-guard-broker/mapper-types", "", 200, 200},
+		{http.MethodGet, mappers, "", 200, 200},
+		{http.MethodGet, mapper, "", 200, 200},
+		{http.MethodPost, mappers,
+			`{"name":"gloak-probe-guard-added","identityProviderAlias":"gloak-probe-guard-broker",` +
+				`"identityProviderMapper":"oidc-username-idp-mapper"}`, 403, 201},
+		{http.MethodPut, mapper,
+			`{"id":"cccccccc-0000-0000-0000-000000000001","name":"gloak-probe-guard-mapper",` +
+				`"identityProviderAlias":"gloak-probe-guard-broker",` +
+				`"identityProviderMapper":"oidc-username-idp-mapper"}`, 403, 204},
+		{http.MethodDelete, mapper, "", 403, 204},
+	} {
+		if w := send(t, h, tc.method, tc.path, view, tc.body); w.Code != tc.wantView {
+			t.Errorf("%s %s as view-identity-providers: got %d, want %d",
+				tc.method, tc.path, w.Code, tc.wantView)
+		}
+		if w := send(t, h, tc.method, tc.path, realmManager, tc.body); w.Code != http.StatusForbidden {
+			t.Errorf("%s %s as manage-realm: got %d, want 403", tc.method, tc.path, w.Code)
+		}
+		if w := send(t, h, tc.method, tc.path, none, tc.body); w.Code != http.StatusForbidden {
+			t.Errorf("%s %s as a caller holding nothing: got %d, want 403", tc.method, tc.path, w.Code)
+		}
+		// The write set last, because three of these rows change the mapper.
+		if w := send(t, h, tc.method, tc.path, manage, tc.body); w.Code != tc.wantWrite {
+			t.Errorf("%s %s as manage-identity-providers: got %d, want %d",
+				tc.method, tc.path, w.Code, tc.wantWrite)
+		}
+	}
+}
+
 // firstMapperID pulls the first `"id":"..."` out of a listing body.
 func firstMapperID(t *testing.T, body string) string {
 	t.Helper()
