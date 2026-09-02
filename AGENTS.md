@@ -132,19 +132,21 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   same sweep also found that **`/auth` is the only one of the four whose
   `OPTIONS` carries an `Allow` header**. See F31.
   **The fifth is not explained, and every explanation offered so far has been
-  refuted by goldens already in this repository.** Fifteen committed goldens
-  answer the byte-identical 67-byte `Duplicate resource error` body. Counted from
-  that list:
-
-  ```
-  POST  seven send none of the five, three send all five
-  PUT   four send none, one sends all five
-  ```
-
+  refuted by goldens already in this repository.** A dozen and a half committed
+  goldens answer the byte-identical 67-byte `Duplicate resource error` body, and
+  **this bullet no longer carries the tally** -
+  `TestTheDuplicateResourceErrorSplitIsNotDecidedByTheVerb` computes it and
+  prints it, and asserts the claim rather than the count.
+  That test exists because the number written here drifted three times, and the
+  last time it drifted **inside one commit**: the bullet said "fifteen" while the
+  tree held sixteen, because the sixteenth arrived in the very fold that wrote
+  the sentence. The conclusion survived and the arithmetic did not, and the
+  arithmetic is what the paragraph offers as evidence. This file's own advice
+  about counts in prose applies to this file.
   So the status is out, the body is out, its length is out, emptiness is out
-  (none of the fifteen is empty), the request's `Content-Type` is out - varied
-  over four spellings on one of them without moving it - and **the verb is out**,
-  which was this bullet's last surviving lead.
+  (none of them is empty), the request's `Content-Type` is out - varied over four
+  spellings on one of them without moving it - and **the verb is out**, which was
+  this bullet's last surviving lead: both verbs answer this one body both ways.
   "The endpoint decides" does not survive either. `admin/protocol-mappers/`
   `add-models-duplicate-id-same-container` and `-other-container` are the **same
   route, the same verb, the same `Content-Type` and the same 67 bytes**, and one
@@ -492,7 +494,7 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **Role listings have no stable order across container starts.** Every one of
   them is a bare array at the root of the body, which is why `Case.Unordered`
   learned the root path spelling `"."`.
-- **Twenty-three spellings of not-found in the admin API now**, including four for
+- **Twenty-four spellings of not-found in the admin API now**, including four for
   one resource, **four** for a missing group, and three *pairs* that differ only
   in a full stop. Counted from the list, not incremented: (1) `Could not find client`, (2) `Client not found`,
   (3) `User not found`, (4) `Realm not found.` with its full stop,
@@ -512,7 +514,8 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   (21) `Organization not found.`, (22) `Could not find component` from
   `/components/{id}` - which the **realm's own id** answers too, because
   components are parented on the realm and the realm is not one - and
-  (23) `Could not find parent component` from `/components/{id}/sub-component-types`.
+  (23) `Could not find parent component` from `/components/{id}/sub-component-types`,
+  and (24) `Model not found` from the identity provider mapper read and delete.
   An unknown identity provider alias adds nothing here: the read, the update and
   the delete all answer the generic `HTTP 404 Not Found`, so two neighbouring
   chapters measured in one cut contributed two spellings and none.
@@ -578,13 +581,16 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   one family and inverted on its neighbour, and the second time the description's
   tag turned out to be the thing that predicts it.
 
-- **A create's `Location` ends in a server-minted UUID on ten routes out of
-  fourteen; the other four end in a name the caller chose.** Counted from the
+- **A create's `Location` ends in a server-minted UUID on eleven routes out of
+  fifteen; the other four end in a name the caller chose.** Counted from the
   list below rather than incremented, which is the only way this number has ever
   been right. The uuid tails are `POST /clients`, `/users`, `/groups`,
   `/groups/{id}/children`, `/client-scopes`, `/client-templates`,
-  `/clients-initial-access`, `/components`, `/authentication/flows` and
-  `/realms/{r}/clients-registrations/openid-connect`; the name tails are
+  `/clients-initial-access`, `/components`, `/authentication/flows`,
+  `/realms/{r}/clients-registrations/openid-connect` and
+  `POST .../identity-provider/instances/{alias}/mappers` - whose tail is
+  server-minted when the body names no id and the **body's own** when it does,
+  which is `POST /clients`' rule rather than a new one; the name tails are
   `POST /roles`, `POST /clients/{uuid}/roles`, `POST /admin/realms` and
   `POST .../identity-provider/instances`, which ends in the **alias**. One more
   could not be reached on a default container and is not counted.
@@ -1118,10 +1124,14 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   the two gates could not share an implementation.
 - **`POST /organizations` reads the body's `id` and discards it**, inverting the
   rule the client and client-scope creates follow.
-- **Eight strict JSON decoders, and three families disagree about when the decode
+- **Ten strict JSON decoders, and three families disagree about when the decode
   runs.** Counted from the list: `POST`/`PUT /organizations`, two of the
   required-action writes, client registration,
-  `POST`/`PUT .../identity-provider/instances` and `POST /components`. On the
+  `POST`/`PUT .../identity-provider/instances`, `POST /components`,
+  `POST .../instances/{alias}/mappers` and `PUT /components/{id}`. The last two
+  decode **before** the path's resource is resolved - a `PUT` to a component id
+  that does not exist carrying an unknown field answers the 400, not the 404 -
+  so the split below gains two members on one side and none on the other. On the
   required-action `PUT` the decode runs **before** the path's alias is resolved,
   and the identity provider `PUT` joins it there; on the organization `PUT` an
   unknown id answers `Organization not found.` for an unknown field and for
@@ -1405,8 +1415,11 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `DELETE` of an alias that does not exist is 403 to a viewer and 404 to a
   manager.
 - **A created realm has fourteen components and master has fifteen.** The
-  fifteenth is `declarative-user-profile`, and it is also the **only component
-  with no `name` key at all** - so "the nameless component" and "the component a
+  fifteenth is `declarative-user-profile`, and it is the only component with no
+  `name` key **on a default install** - the qualifier matters, because
+  `POST /components` with no `name` is a 201 and the row reads back with no
+  `name` key either, so the state is reachable and a `name` column that cannot
+  be null is wrong twice over - so "the nameless component" and "the component a
   created realm does not get" are one row. One bootstrap list for every realm is
   wrong on master, and a `name` column that cannot be null is wrong on that row.
   Neither the listing's row order nor the `allowed-protocol-mapper-types` array
@@ -1615,6 +1628,88 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   what the body names, and a name it already holds it **merges into** rather than
   replaces - a `regex` body imported over a `role` policy left the type alone and
   grew the config.
+
+- **Twelve call sites on one page answer three sentences, and the four ways a
+  client can fail are one of them.** `/login-actions/authenticate`,
+  `/required-action` and `/consent` share a 400 page whose instruction is
+  `Invalid Request` for an unparseable `client_data`, `Restart login cookie not
+  found. …` when there is nothing to restart from, and `An error occurred,
+  please login again through your application.` for a client that is unknown,
+  absent, empty **or real and not the tab's**. `GET /auth` splits that same
+  fourth group into three sentences, so a reader who generalised from it would
+  have written three here.
+- **That page's chrome names the client the request sent, not the client the tab
+  belongs to.** A request naming a real client that is not the tab's answers the
+  client-failure sentence over a restart URL carrying `client_id=<that other
+  client>` and a Back to Application link to **its** `baseUrl` - two halves of
+  one response describing two different judgements. An unknown, empty or absent
+  `client_id` names none and offers no link. Unlike every other page in this
+  family it carries **nothing per request**, which is what makes it the only one
+  a golden can hold.
+- **A body that will not form-decode is a 500 on five endpoints, judged after the
+  realm and before everything else, and the five are not byte-identical.**
+  `POST /auth`, `POST /logout` and all three `/login-actions` endpoints answer
+  the same 94-byte `unknown_error` with `application/json` and the five security
+  headers - **and the three `/login-actions` ones send `Cache-Control: no-store,
+  must-revalidate, max-age=0` where the two browser endpoints send none.** Bad
+  `client_data`, absent cookies and an unknown client all lose to the decode;
+  only an unknown realm beats it, answering `Realm does not exist`. So the decode
+  is the container's judgement rather than the endpoint's.
+- **All nine theme pages that still serve a placeholder body carry a `tab_id`
+  minted by the request that renders them** - the logout confirmation, "You are
+  logged out", "Page has expired", the consent page and the five required-action
+  pages. Six carry a `session_code`, five the `KC_AUTH_SESSION_HASH`, and three a
+  generated secret (a TOTP secret, a WebAuthn challenge, twelve recovery codes).
+  **None of the nine can carry a conformance golden**, because `ReplaceCaptured`
+  reaches only what a fixture step captured and every one of these values is
+  minted by the case's own request. What keeps them placeholders is state and a
+  masking mechanism, **not an unread instruction** - which is the opposite of
+  what the follow-up assumed for a fortnight.
+- **The logout confirmation page names the `account` client, and no request in
+  that flow mentions it.** Measured on two sessions made by two different
+  clients: its restart URL and its confirm form's action both carry
+  `client_id=account`. Its `<title>` is `Logging out`, where every other page in
+  the theme answers `Sign in to <displayName or realm name>`.
+- **The `login-info` template's Back to Application link is not the
+  `login-error` template's.** `<p><a href="…">« Back to Application</a></p>` at
+  sixteen spaces against `<p><a id="backToApplication" href="…">…` at twenty. One
+  link, two templates, two spellings, and the rest of `kc-info-message` is
+  byte-identical between them - exactly the shape that invites a shared helper
+  and gets one of the two wrong.
+- **"Page has expired" is served for a session code that is merely wrong.**
+  A valid code with a bad `execution`, an absent code and a **bogus** code all
+  answer the page; only a browser whose authentication session cannot be resolved
+  restarts. So the page is about the code and the restart is about the session.
+
+- **The per-provider property catalogue is three endpoints, three envelopes and
+  one atom.** `providers/{provider_id}` serves a provider's **extra**
+  configuration rather than its whole one, and one field in it carries two JSON
+  types - `github`'s `githubJsonFormat`. **Two of the seventeen providers answer
+  `mapper-types` with a 500**, and they are exactly the two the catalogue has no
+  mapper set for, so a predicate naming them is a second spelling of a condition
+  the serving path already has: that set belongs in a test, because a golden says
+  "this provider answers this" and never "and these are the only two".
+- **`sub-component-types` reads its parent component only to decide whether to
+  404**, and `POST /components` filters a submitted config to the provider's
+  declared properties - the catalogue is the filter. Its `required` flag is **not**
+  the validator: a create missing a required property is a 201.
+- **An identity provider mapper's config is not filtered and its mapper type is
+  not checked**, and `PUT .../instances/{alias}/mappers/{id}` writes the mapper
+  the **body's** `id` names rather than the path's. A mapper create with no name
+  is a 409 and one with a taken name is a 400 - the two refusals a caller would
+  expect to be the same shape, inverted.
+- **A custom `MarshalJSON` cannot inherit the encoder's `SetEscapeHTML(false)`.**
+  Every ordered-object marshaller in `internal/admin` escaped `<`, `>` and `&`
+  where Keycloak escapes none of them, shipped, and reachable through any
+  identity provider config value a caller writes. The fix is one shared helper;
+  the bug is that a per-type `MarshalJSON` silently opts out of the encoder's
+  settings, so a family that hand-rolls one gets HTML escaping back without
+  asking.
+- **`POST /components` accepts a second `declarative-user-profile` and it breaks
+  every login in the realm.** After a sweep created one on `master`, the
+  bootstrap administrator's password grant answered
+  `{"error":"invalid_grant","error_description":"Account is not fully set up"}`
+  and the container had to be replaced. Measure this one in a created realm.
 
 ## Boundaries
 
