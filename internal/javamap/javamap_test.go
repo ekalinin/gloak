@@ -978,3 +978,104 @@ func TestKeyOrderIsWrongOnFourIdentityProviderConfigs(t *testing.T) {
 			len(identityProviderConfigVectors), len(wrong), wrong)
 	}
 }
+
+// identityProviderMapperConfigVectors are ten key sets measured on
+// `POST /admin/realms/{realm}/identity-provider/instances/{alias}/mappers`
+// against a live 26.7.1 on 2026-09-02, request order to served order.
+//
+// The family sits one path segment inside the identity providers and one
+// chapter from the components, and it uses the **identity provider's**
+// constructor.
+var identityProviderMapperConfigVectors = []struct {
+	name string
+	in   []string
+	want []string
+}{
+	// The set that settles the two constructors with no inference at all. It
+	// was sent to a mapper and to a component on one container and came back
+	// two ways: `active priority enabled` there, this here. Every other claim
+	// about the two constructors in this repository compares different key sets
+	// measured on different families; this is one key set and two answers.
+	{"priority enabled active - the component's own key set",
+		[]string{"priority", "enabled", "active"},
+		[]string{"priority", "active", "enabled"}},
+	{"role and syncMode",
+		[]string{"role", "syncMode"}, []string{"syncMode", "role"}},
+	{"a declared key and an undeclared one",
+		[]string{"role", "undeclared"}, []string{"undeclared", "role"}},
+	{"one key", []string{"a"}, []string{"a"}},
+	{"zz aa mm", []string{"zz", "aa", "mm"}, []string{"zz", "aa", "mm"}},
+	{"aa mm zz", []string{"aa", "mm", "zz"}, []string{"aa", "mm", "zz"}},
+	{"ten k-keys",
+		[]string{"k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9", "k10"},
+		[]string{"k1", "k2", "k3", "k4", "k5", "k6", "k10", "k7", "k8", "k9"}},
+	{"clientId and clientSecret",
+		[]string{"clientId", "clientSecret"}, []string{"clientSecret", "clientId"}},
+	{"a four-key attribute mapper",
+		[]string{"claim", "user.attribute", "syncMode", "extra"},
+		[]string{"syncMode", "claim", "user.attribute", "extra"}},
+	{"five keys a real mapper takes",
+		[]string{"claim", "claim.value", "user.attribute", "syncMode", "are.claim.values.regex"},
+		[]string{"syncMode", "claim", "user.attribute", "are.claim.values.regex", "claim.value"}},
+}
+
+func TestSizedKeyOrderReproducesAnIdentityProviderMappersConfig(t *testing.T) {
+	for _, c := range identityProviderMapperConfigVectors {
+		t.Run(c.name, func(t *testing.T) {
+			if got := javamap.SizedKeyOrder(len(c.in), slices.Clone(c.in)); !slices.Equal(got, c.want) {
+				t.Fatalf("want %v, got %v", c.want, got)
+			}
+		})
+	}
+}
+
+// TestKeyOrderIsWrongOnSevenIdentityProviderMapperConfigs is the discriminating
+// half, and the count is pinned for the reason the two beside it are.
+//
+// **Three of the ten do not discriminate.** A cut that measured only those
+// three would have had no evidence either way, which is what happened to the
+// component side of this question in P9's first cut: every config a default
+// install has holds nought, one or two keys, both functions agree on all of
+// them, and the constructor swap survived a whole test file.
+//
+// The number was written down as six first and this test refused it. That is
+// the third counted claim in this package to be wrong on its first writing and
+// corrected by the thing it counts, after "wrong on all of them" for the
+// identity providers and "six" for the protocol mapper configs.
+func TestKeyOrderIsWrongOnSevenIdentityProviderMapperConfigs(t *testing.T) {
+	var wrong []string
+	for _, c := range identityProviderMapperConfigVectors {
+		if !slices.Equal(javamap.KeyOrder(slices.Clone(c.in)), c.want) {
+			wrong = append(wrong, c.name)
+		}
+	}
+	if len(wrong) != 7 {
+		t.Fatalf("want KeyOrder wrong on 7 of the %d mapper configs, got %d: %v",
+			len(identityProviderMapperConfigVectors), len(wrong), wrong)
+	}
+}
+
+// TestTheTwoConstructorsDisagreeOnOneKeySet is the whole two-constructor claim
+// in one assertion, and it needs no second key set to compare against.
+//
+// `{priority, enabled, active}` was sent to a component and to an identity
+// provider mapper on one container. The component answered
+// `active priority enabled` and the mapper answered `priority active enabled`.
+// One key set, two families, two orders - so the two functions are not two
+// spellings of one rule, and a shared serialiser cannot be right on both
+// however it is written.
+func TestTheTwoConstructorsDisagreeOnOneKeySet(t *testing.T) {
+	keys := []string{"priority", "enabled", "active"}
+	componentOrder := []string{"active", "priority", "enabled"}
+	mapperOrder := []string{"priority", "active", "enabled"}
+
+	if got := javamap.KeyOrder(slices.Clone(keys)); !slices.Equal(got, componentOrder) {
+		t.Errorf("KeyOrder: want the component's %v, got %v", componentOrder, got)
+	}
+	if got := javamap.SizedKeyOrder(len(keys), slices.Clone(keys)); !slices.Equal(got, mapperOrder) {
+		t.Errorf("SizedKeyOrder: want the mapper's %v, got %v", mapperOrder, got)
+	}
+	if slices.Equal(componentOrder, mapperOrder) {
+		t.Fatal("the vector no longer discriminates, which makes this test decoration")
+	}
+}
