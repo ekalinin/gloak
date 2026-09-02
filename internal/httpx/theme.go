@@ -68,12 +68,42 @@ func mintThemeResourceVersion() string {
 // ThemeChrome is what the shared head and footer of a theme page vary in.
 //
 // Realm and RestartParams build the URL the page's session poller calls;
-// BackToApplication is the error page's one optional element. All three are
+// BackToApplication is the error page's one optional element. All of them are
 // strings the caller has already resolved, because internal/httpx owns
 // formatting and knows nothing domain-specific.
+//
+// **A page names the realm three times and only one of them is that URL.** The
+// other two are the <title> and the header brand, and they are the realm's
+// displayName and displayNameHtml - see DisplayName below. Measured 2026-09-02
+// by diffing the whole 400 page between two realms: three lines, and no more.
 type ThemeChrome struct {
 	// Realm names the realm in the restart URL's path.
 	Realm string
+	// DisplayName and DisplayNameHTML are the realm's two display fields **as
+	// stored**, empty when the realm has neither - which is what a realm
+	// created through POST /admin/realms has.
+	//
+	// The fallback between them lives here rather than in the caller because
+	// it is the login template's rule rather than a domain one, and because
+	// the zero value then renders what a created realm measurably gets.
+	// Measured 2026-09-02 across a realm with both, one, the other, neither,
+	// two empty strings and two whitespace strings:
+	//
+	//	title  =  displayName      or  realm name
+	//	brand  =  displayNameHtml  or  displayName  or  realm name
+	//
+	// **The brand falls back to displayName and not to the realm name**, which
+	// is one `if` more than the handover that found this recorded, and the one
+	// a realm carrying neither cannot show. An empty string counts as absent
+	// and a whitespace string does not: `""` renders the realm name and `"  "`
+	// renders two spaces.
+	//
+	// The <div class="kc-logo-text"><span> wrapper master's brand carries is
+	// displayNameHtml's own markup and not the template's: a realm whose
+	// displayNameHtml is `plain no markup` renders exactly that, and every
+	// realm reaching the brand through a fallback gets no wrapper at all.
+	DisplayName     string
+	DisplayNameHTML string
 	// RestartParams are the parameters in front of skip_logout=true in that
 	// URL, already escaped and joined with "&", with a trailing "&". It is
 	// empty when the page's own rejection happened before a client was
@@ -87,12 +117,73 @@ type ThemeChrome struct {
 	BackToApplication string
 }
 
+// title is what the page's <title> names the realm, before escaping.
+func (c ThemeChrome) title() string {
+	if c.DisplayName != "" {
+		return c.DisplayName
+	}
+	return c.Realm
+}
+
+// brand is the header's markup, ready to write.
+//
+// The two branches escape differently and that is measured rather than an
+// oversight. displayNameHtml is emitted raw - it is markup, and it is what
+// carries master's kc-logo-text wrapper. The fallback is a plain string and is
+// escaped.
+//
+// **Keycloak sanitises the raw branch and Gloak does not**, which is a
+// divergence rather than a simplification and is filed as one. Measured
+// 2026-09-02: `<b onclick="x">Bold</b>` comes back `<b>Bold</b>`, a <script>
+// element goes with its content, and a `javascript:` anchor is unwrapped to its
+// text. Copying that means an HTML parser with a safelist; nothing this project
+// serves needs one, because master's value passes through it unchanged and a
+// created realm has none.
+//
+// html.EscapeString is byte-exact against that sanitiser on the fallback branch
+// for any value carrying no markup and no backtick - measured, the sanitiser
+// spells `&` `&amp;`, `"` `&#34;` and `'` `&#39;`, which is what Go spells them
+// - so the fallback diverges only on a realm name or a displayName that carries
+// markup.
+func (c ThemeChrome) brand() string {
+	if c.DisplayNameHTML != "" {
+		return c.DisplayNameHTML
+	}
+	return html.EscapeString(c.title())
+}
+
+// escapeThemeTitle is Freemarker's HTML escaping, which the login templates
+// apply to every value they interpolate outside the brand.
+//
+// Measured 2026-09-02 on one realm's displayName rendered into the <title>:
+//
+//	a&b<c>d"e'f`g/h  ->  a&amp;b&lt;c&gt;d&quot;e&#39;f`g/h
+//
+// It is html.EscapeString with one difference, and the difference is the whole
+// reason this function exists: Go spells a double quote `&#34;` and Freemarker
+// spells it `&quot;`. Backtick and slash are untouched by both.
+//
+// The rest of this file keeps html.EscapeString on purpose. Nothing else
+// reaching it can carry a double quote - every instruction, page title and form
+// action is a measured constant, and Keycloak refuses to store a client baseUrl
+// containing one, answering `Base URL is not a valid URL`. A realm's
+// displayName is the one value here an administrator sets to anything.
+func escapeThemeTitle(s string) string { return themeTitleEscaper.Replace(s) }
+
+var themeTitleEscaper = strings.NewReplacer(
+	"&", "&amp;",
+	"<", "&lt;",
+	">", "&gt;",
+	`"`, "&quot;",
+	"'", "&#39;",
+)
+
 // themeHead is the <head> every measured page shares, plus the opening two
 // lines. It ends with the blank line after </head>.
 //
-// The three substitutions are the resource version (seven times here, and an
-// eighth inside the page body when a page has an authentication session) and
-// the restart URL's realm and parameters.
+// The four substitutions are the resource version (seven times here, and an
+// eighth inside the page body when a page has an authentication session), the
+// <title>'s display name, and the restart URL's realm and parameters.
 func themeHead(c ThemeChrome) string {
 	v := themeResourceVersion
 	return `<!DOCTYPE html>
@@ -104,7 +195,7 @@ func themeHead(c ThemeChrome) string {
     <meta name="color-scheme" content="light dark">
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <title>Sign in to Keycloak</title>
+    <title>Sign in to ` + escapeThemeTitle(c.title()) + `</title>
         <link rel="icon" href="/resources/` + v + `/login/keycloak.v2/img/favicon.ico" />
         <link href="/resources/` + v + `/common/keycloak/vendor/patternfly-v5/patternfly.min.css" rel="stylesheet" />
         <link href="/resources/` + v + `/common/keycloak/vendor/patternfly-v5/patternfly-addons.css" rel="stylesheet" />
@@ -210,7 +301,7 @@ func themeShell(c ThemeChrome, pageID, heading, feedback, main, footer string) s
   <div class="pf-v5-c-login__container">
     <header id="kc-header" class="pf-v5-c-login__header">
       <div id="kc-header-wrapper"
-              class="pf-v5-c-brand"><div class="kc-logo-text"><span>Keycloak</span></div></div>
+              class="pf-v5-c-brand">` + c.brand() + `</div>
     </header>
     <main class="pf-v5-c-login__main">
       <div class="pf-v5-c-login__main-header">

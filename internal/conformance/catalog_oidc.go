@@ -501,27 +501,29 @@ var oidcCore = []Case{
 			Section:   "Authorization endpoint: client validation",
 			Retrieved: "2026-08-20",
 		},
-		Status: Recorded,
+		Status: Implemented,
 		// The page carries **three** realm-derived values, not the one F142
 		// went looking for. The restart URL's path is the third; the first two
-		// are the <title> and the header brand, and Gloak serves both as
-		// master's constants:
+		// are the <title> and the header brand:
 		//
-		//	<title>Sign in to gloak-probe-second</title>       Gloak: Sign in to Keycloak
-		//	class="pf-v5-c-brand">gloak-probe-second</div>     Gloak: <div class="kc-logo-text"><span>Keycloak</span></div>
+		//	<title>Sign in to gloak-probe-second</title>
+		//	class="pf-v5-c-brand">gloak-probe-second</div>
 		//
-		// Measured 2026-09-01. They are the realm's displayName and
-		// displayNameHtml; a realm created through POST /admin/realms carries
-		// neither, so Keycloak falls back to the realm name in both places and
-		// the kc-logo-text wrapper - which is displayNameHtml's - disappears
-		// with it. internal/httpx/theme.go hard-codes master's.
+		// They are the realm's displayName and displayNameHtml, and a realm
+		// created through POST /admin/realms carries neither. The
+		// kc-logo-text wrapper master's brand has is displayNameHtml's own
+		// markup, so it disappears with the value rather than wrapping the
+		// name.
 		//
-		// It is Recorded rather than Pending because the bytes are measured and
-		// the endpoint is served: only these two values are wrong. Nothing in
-		// the page is per-request - the /resources/<version>/ segment is minted
-		// with the database and ReplaceThemeResource handles it - so the rule
-		// that such a page cannot be Recorded does not bite.
-		Reason:      "the theme page's title and header brand are served as master's displayName and displayNameHtml rather than following the realm",
+		// **This case was Recorded until 2026-09-02 and its promotion is the
+		// alarm working.** internal/httpx served master's two values as
+		// constants, which is right on the one realm every conformance case
+		// used to address; when the theme was made to follow the realm this
+		// case started matching its golden and TestConformance said so. The
+		// fallback the constants hid is one `if` deeper than it looks - the
+		// brand falls back to displayName and only then to the realm name -
+		// and that `if` is measured in internal/httpx's own tests, because a
+		// realm carrying neither value cannot show it.
 		SecondRealm: true,
 		Fixture:     "second-realm",
 		Request: Request{
