@@ -11406,4 +11406,641 @@ var adminCases = []Case{
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 	},
+
+	// ---- P10 fourth cut: policy, permission and import ---------------------
+	//
+	// Appended at the very end of adminCases.
+	{
+		// **Sorted by name, byte-wise**, and the fixture creates them zulu,
+		// yankee, xray, Zebra so this golden holding Zebra first is the
+		// assertion - a case-folded sort would put it third.
+		//
+		// Two more measurements ride on the same body. `zulu` is a `role`
+		// policy created with no config and answers `config:{"roles":"[]"}`,
+		// which is the provider's own key added on the way in - its own 201
+		// said `{}`. And `xray`'s config went in `{nbf, hour}` and comes back
+		// **`{hour, nbf}`**, which is `javamap.SizedKeyOrder`; `javamap.KeyOrder`
+		// returns the other order and is what this golden refuses.
+		ID: "admin/authz-resource-server/policy-list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: the policy listing",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/policy",
+		Fixture:   "authz-pol-list",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/policy",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// Three filters in one request, which is how the golden says they are
+		// **ANDed** rather than that each works alone.
+		//
+		// **`?type=` is a case-insensitive substring**, which `ti` is what
+		// says: it finds `time` and nothing else. §1.9 of the third cut's
+		// handover records this filter as exact and is wrong. `?name=` folds
+		// case too, where the sort beside it does not.
+		ID: "admin/authz-resource-server/policy-list-filtered",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: the policy listing's filters",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "authz-pol-filter",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/policy",
+			Query:  map[string]string{"type": "TI", "name": "XRA", "max": "5"},
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+			},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **`?permission=true` keeps three of the nine types** - `resource`,
+		// `scope` and `uma` - and this golden holds `yankee` and `Zebra` out of
+		// the fixture's four. The `permission-list` case below asks the
+		// `/permission` path for the same two rows and gets them in the typed
+		// shape, and the pair is what separates the filter from the
+		// serialisation.
+		ID: "admin/authz-resource-server/policy-list-permission-true",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: the policy listing filtered to permissions",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "authz-pol-permission",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/policy",
+			Query:   map[string]string{"permission": "true"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **A bound that does not parse is a 404**, and this is the seventh
+		// listing measured answering it. See the scope family's case of the
+		// same name for the producers of that body.
+		ID: "admin/authz-resource-server/policy-list-bad-bound",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: a policy listing bound that does not parse",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "authz-pol-bound",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/policy",
+			Query:   map[string]string{"first": "abc"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **The create's 201 is the request echoed**, which is the opposite of
+		// the resource create two path segments away. Three halves of this
+		// golden say so: the `config` comes back exactly as it was sent where
+		// the listing's version of the same row has the provider's `roles` key
+		// added; `owner` and `resourceType` are echoed and no read serves
+		// either; and the three association arrays are echoed as **resolved
+		// ids** where the request named the scope and the resource by name.
+		//
+		// **No Location**, which is what AssertAbsentHeaders pins, and
+		// `Cache-Control: no-cache`.
+		ID: "admin/authz-resource-server/policy-create",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: creating a policy",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/policy",
+		Fixture:   "authz-pol-create",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/policy",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"9011ce00-0000-4000-8000-000000001599",` +
+				`"name":"gloak-probe-created","description":"D","type":"uma",` +
+				`"logic":"NEGATIVE","decisionStrategy":"AFFIRMATIVE","owner":"echoed",` +
+				`"resourceType":"urn:gloak:echoed",` +
+				`"scopes":["gloak-probe-pscope"],"policies":[],` +
+				`"config":{"zzz":"1"}}`),
+		},
+		AssertHeaders:       []string{"Content-Type", "Cache-Control"},
+		AssertAbsentHeaders: []string{"Location"},
+	},
+	{
+		// **A duplicate name is the only 409 in this API that puts prose in
+		// `error` and a category in `error_description`** - every other shape
+		// on this surface is the other way round. It is also the second refusal
+		// in the family that names what it refused, after the resource create's.
+		//
+		// **It carries all five security headers**, which AssertHeaders pins,
+		// where the `PUT` onto the same taken name carries none. That pair is
+		// F147's probe on a third family and it is recorded in the handover;
+		// nothing here writes a rule about it.
+		ID: "admin/authz-resource-server/policy-create-conflict",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: creating a policy with a taken name",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "authz-pol-conflict",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/policy",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-solo","type":"role"}`),
+		},
+		AssertHeaders: []string{
+			"Content-Type", "Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
+		},
+	},
+	{
+		// **A policy needs a name and a type, and missing either is this 409.**
+		// This body carries a type and no name, which is the half §1.9 of the
+		// third cut's handover and AGENTS.md both miss - they say `type` is the
+		// gate, from a probe that only ever left the type out.
+		ID: "admin/authz-resource-server/policy-create-no-name",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: creating a policy with no name",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "authz-pol-noname",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/policy",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"type":"role"}`),
+		},
+		AssertHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// **The accepted type set is not `GET .../policy/providers`' catalogue.**
+		// `user` is in that catalogue, is offered to every caller who reads it,
+		// and answers this 500 - so a validator built from the constant this
+		// repository already ships would admit it and then fail.
+		ID: "admin/authz-resource-server/policy-create-unknown-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: creating a policy of a type the server refuses",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "authz-pol-badtype",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/policy",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-usertype","type":"user"}`),
+		},
+		AssertHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// **`{"error":"unknown_error"}` with no `error_description` at all** -
+		// an error shape this API has not been measured producing anywhere
+		// else, and it belongs to the body's own `scopes` array alone. The same
+		// unknown name inside `config.scopes` answers the ordinary consult-log
+		// 500 instead, which is why the two do not share a resolver.
+		//
+		// It also pins the order: this body carries no `type` either, and the
+		// scope resolution answers ahead of the presence check.
+		ID: "admin/authz-resource-server/policy-create-unknown-scope",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: creating a policy naming a scope that does not exist",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "authz-pol-badscope",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/policy",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-badscope","scopes":["gloak-probe-nothing"]}`),
+		},
+		AssertHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// The scope and resource searches' shape on a third family: an exact,
+		// case-sensitive name and a **bare object** rather than an array.
+		ID: "admin/authz-resource-server/policy-search",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: searching for a policy by name",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/policy/search",
+		Fixture:   "authz-pol-search",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/policy/search",
+			Query:   map[string]string{"name": "gloak-probe-solo"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **The match is case-sensitive and exact**, which this uppercase
+		// request is what says: the fixture holds `gloak-probe-solo` and this
+		// asks for it in capitals and gets the 204.
+		ID: "admin/authz-resource-server/policy-search-miss",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: a policy search that matches nothing",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "authz-pol-search-miss",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/policy/search",
+			Query:   map[string]string{"name": "GLOAK-PROBE-SOLO"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// An absent `name` is a **400 with an empty body**, and it carries the
+		// `Cache-Control` the 200 does. The empty body is why X-Frame-Options
+		// is absent - AGENTS.md's third security-header exception.
+		ID: "admin/authz-resource-server/policy-search-no-name",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: a policy search with no name",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "authz-pol-search-empty",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/policy/search",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// **The same two rows as `policy-list-permission-true`, one key apart.**
+		// That pair is the probe that separates the filter from the
+		// serialisation, and it is why both cases exist rather than one.
+		//
+		// Two of the eight typed shapes are in this body: `yankee` carries
+		// `resourceType`, projected from `config.defaultResourceType` and
+		// placed **after** `decisionStrategy`; `Zebra` carries `scopes`, placed
+		// **between `type` and `logic`** because it is a base-class field where
+		// the rest are the subclass's. Neither row carries a `config` key at
+		// all.
+		ID: "admin/authz-resource-server/permission-list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: the permission listing",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/permission",
+		Fixture:   "authz-perm-list",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/permission",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **`POST .../permission` does not restrict the type.** This body says
+		// `role`, which the listing beside it hides, and the answer is a 201 -
+		// so the two creates really are one handler and only the reads split.
+		// The row it makes is on `GET .../policy` and not on
+		// `GET .../permission`.
+		ID: "admin/authz-resource-server/permission-create",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: creating a permission",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/permission",
+		Fixture:   "authz-perm-create",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/permission",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"9011ce00-0000-4000-8000-000000001e99",` +
+				`"name":"gloak-probe-permcreated","type":"role",` +
+				`"resources":["gloak-probe-presource"],"policies":["gloak-probe-solo"]}`),
+		},
+		AssertHeaders:       []string{"Content-Type", "Cache-Control"},
+		AssertAbsentHeaders: []string{"Location"},
+	},
+	{
+		// **The search is not filtered by family.** This asks the
+		// `/permission` spelling for a `role` policy and gets it, in the typed
+		// shape - which makes this operation the only one in the description
+		// that shows the typed representation of the six types
+		// `GET .../permission` hides.
+		//
+		// The `roles: []` in it is the projection of the provider's own added
+		// config key, and it is the empty case on purpose: a populated one
+		// would hold a bootstrap-minted role id and would have to be masked.
+		ID: "admin/authz-resource-server/permission-search-role",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: a role policy through the permission search",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/permission/search",
+		Fixture:   "authz-perm-search-role",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/permission/search",
+			Query:   map[string]string{"name": "gloak-probe-roled"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **`targetContextAttributes` is emitted whether the config carries it
+		// or not**, defaulting to false, where `roles` is emitted only because
+		// the role provider writes the key. Two types, two reasons a field is
+		// always there, and this fixture's config names neither.
+		ID: "admin/authz-resource-server/permission-search-regex",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: a regex policy's typed representation",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "authz-perm-search-regex",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/permission/search",
+			Query:   map[string]string{"name": "gloak-probe-regexed"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The whole twelve-field time table, in the order it was measured
+		// coming back - and **two of the twelve are renamed on the way out**:
+		// `config.nbf` is `notBefore` and `config.noa` is `notOnOrAfter`. The
+		// generic view of the same row, which the listing case holds, serves
+		// the config's own spellings.
+		ID: "admin/authz-resource-server/permission-search-time",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: a time policy's typed representation",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "authz-perm-search-time",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/permission/search",
+			Query:   map[string]string{"name": "gloak-probe-timed"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The permission search's miss, which is the policy search's: 204, an
+		// empty body and the `Cache-Control` the 200 sends.
+		ID: "admin/authz-resource-server/permission-search-miss",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: a permission search that matches nothing",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "authz-perm-search-miss",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/permission/search",
+			Query:   map[string]string{"name": "gloak-probe-nothing"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// **204 with no `Cache-Control`**, and it carries `X-Frame-Options`
+		// because the request declared an `application/*` Content-Type -
+		// AGENTS.md's third security-header exception, on a route that had not
+		// been measured for it.
+		ID: "admin/authz-resource-server/import",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: importing a resource server's settings",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/import",
+		Fixture:   "authz-import",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/import",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{}`),
+		},
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **`import` is strict where `POST .../policy` beside it is not.** The
+		// same unknown field is this 400 here and a 500 there, on one resource
+		// server - which makes this the ninth strict endpoint and the first
+		// whose immediate neighbour disagrees with it.
+		ID: "admin/authz-resource-server/import-unknown-field",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: importing a body carrying an unknown field",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "authz-import-strict",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/import",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"zzz":1}`),
+		},
+		AssertHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// What the import's 204 cannot show, read afterwards. Three measured
+		// behaviours in one body:
+		//
+		//   - the three settings are **reset to the representation's own
+		//     initialisers and then overwritten** by what the body named, which
+		//     is `PUT .../authz/resource-server`'s rule;
+		//   - **nothing is deleted** - `gloak-probe-pscope`,
+		//     `gloak-probe-presource` and `gloak-probe-solo` are all still
+		//     there and none was mentioned;
+		//   - **a name the import already holds is merged into rather than
+		//     replaced** - `gloak-probe-solo` arrived as a `regex` body and is
+		//     still a `role` policy, with the imported `pattern` beside the
+		//     `roles` its own provider wrote.
+		ID: "admin/authz-resource-server/import-applied",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: the settings after an import",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "authz-import-applied",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/settings",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The settings export carries policies**, which it did not before this
+		// cut - not because Keycloak changed but because no fixture had a policy
+		// to put in it, so the only value the key had ever taken was `[]`. That
+		// is the second time this one struct has held such a key, one cut after
+		// `resources`.
+		//
+		// **Its partition is not `GET .../permission`'s.** The fixture
+		// interleaves the two families and this golden holds the `resource` and
+		// `scope` rows last with `uma` among the policies, where the listing
+		// counts `uma` as a permission. Two notions of "permission" one path
+		// segment apart.
+		//
+		// **And its config is the live config denormalised.** `mike` reads back
+		// `config:{}` from the listing and exports
+		// `{"applyPolicies":["gloak-probe-alpha"]}`, synthesised from the
+		// association by name; `bravo` and `delta` do the same for `resources`
+		// and `scopes`. The id and the owner are dropped from every entry.
+		ID: "admin/authz-resource-server/settings-with-policies",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: the settings export with policies in it",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "authz-pol-settings",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/settings",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **Measured and not served**, which is what `Recorded` is for.
+		//
+		// `userId` is this endpoint's gate: a body without one is this
+		// consult-log 500, and a body with one runs the whole authorization
+		// engine and answers 200 with a **full RPT** inside it - an access
+		// token carrying `exp`, `iat`, `jti` and `sid`, a `realm_access`, a
+		// `resource_access` and an `authorization.permissions` claim, beside a
+		// `results` array holding every resource, its scopes, each permission
+		// that applies, each of that permission's associated policies and their
+		// individual PERMIT/DENY, and the allowed and denied scope sets.
+		//
+		// Two things put that outside this branch. The engine is nine policy
+		// evaluators, decision-strategy aggregation and logic inversion, none
+		// of which any other route on this surface needs. And the RPT is an
+		// access token's claim set, which lives in `internal/token` - a package
+		// this branch may not modify, and reproducing its claim set in
+		// `internal/admin` would be the second-truth the boundary table exists
+		// to prevent. See the handover.
+		ID: "admin/authz-resource-server/policy-evaluate-no-user",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: evaluating with no subject",
+			Retrieved: "2026-09-02",
+		},
+		Status: Recorded,
+		Reason: "The 200 beside this 500 runs the authorization engine and mints an RPT, " +
+			"which needs internal/token. Measured in full in " +
+			"docs/superpowers/handover/p10-authz-policies.md.",
+		Operation: "POST /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/policy/evaluate",
+		Fixture:   "authz-pol-evaluate",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/" +
+				"policy/evaluate",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The permission spelling of the same operation, and it answers
+		// identically - measured side by side, on the gate and on the 200
+		// alike. See the case above for why neither is served.
+		ID: "admin/authz-resource-server/permission-evaluate-no-user",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: evaluating a permission with no subject",
+			Retrieved: "2026-09-02",
+		},
+		Status: Recorded,
+		Reason: "The 200 beside this 500 runs the authorization engine and mints an RPT, " +
+			"which needs internal/token. Measured in full in " +
+			"docs/superpowers/handover/p10-authz-policies.md.",
+		Operation: "POST /admin/realms/{realm}/clients/{client-uuid}/authz/resource-server/permission/evaluate",
+		Fixture:   "authz-perm-evaluate",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/" +
+				"permission/evaluate",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
 }

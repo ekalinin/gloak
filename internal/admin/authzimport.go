@@ -41,6 +41,17 @@ var authzConfigAssociationKeys = map[string]string{
 	"scopes":        "scope",
 }
 
+// authzAssociationConfigKey is that map read the other way, which the export
+// needs.
+func authzAssociationConfigKey(kind string) string {
+	for key, k := range authzConfigAssociationKeys {
+		if k == kind {
+			return key
+		}
+	}
+	return ""
+}
+
 // authzProviderDefaultKey is the key each provider writes into a config that
 // does not carry it, measured on a create with `config:{}` for every type.
 //
@@ -53,6 +64,31 @@ var authzProviderDefaultKey = map[string]string{
 	"role":   "roles",
 	"client": "clients",
 	"group":  "groups",
+}
+
+// authzExportKeeps says which config keys the settings export keeps, for the
+// three types that do not keep all of them.
+//
+// **The export rewrites a role, client or group policy's config to the
+// provider's own keys and throws the rest away**, and the other six types pass
+// the whole config through unchanged. Measured by storing one fourteen-key
+// config on all nine types: the live read served all fourteen on all nine, and
+// the export served fourteen on six of them and two, one and two on these
+// three.
+//
+// **It is the same three types three times over** - the three that resolve a
+// reference on the way in, the three that write a default key, and the three
+// that filter here - which is what makes one map of three entries the honest
+// shape rather than a coincidence worth three lists. Nothing measured separates
+// them, and a fourth type joining any one of the three would be the probe that
+// does.
+//
+// The synthesised association keys are added **after** this filter: a role
+// policy holding an associated policy exports `{applyPolicies, roles}`.
+var authzExportKeeps = map[string][]string{
+	"role":   {"roles", "fetchRoles"},
+	"client": {"clients"},
+	"group":  {"groups", "groupsClaim"},
 }
 
 // normaliseAuthzPolicyConfig turns the request's config into the stored one.
@@ -369,8 +405,12 @@ func (h *handler) authzExportedPolicies(r *http.Request, rc *reqContext, a *auth
 // exportedAuthzConfig denormalises one policy's config for the export.
 func (h *handler) exportedAuthzConfig(r *http.Request, rc *reqContext, a *authzContext,
 	p *model.AuthzPolicy) ([]model.AuthzPolicyConfig, error) {
+	keep, filtered := authzExportKeeps[p.Type]
 	out := make([]model.AuthzPolicyConfig, 0, len(p.Config)+3)
 	for _, entry := range p.Config {
+		if filtered && !containsString(keep, entry.Name) {
+			continue
+		}
 		value := entry.Value
 		var err error
 		switch {
@@ -386,7 +426,12 @@ func (h *handler) exportedAuthzConfig(r *http.Request, rc *reqContext, a *authzC
 		}
 		out = append(out, model.AuthzPolicyConfig{Name: entry.Name, Value: value})
 	}
-	for key, kind := range authzConfigAssociationKeys {
+	// Iterated over the ordered kinds rather than over the map, so two runs of
+	// one build produce one order. The wire order is javamap's and does not
+	// depend on this, but a Go map's iteration order would leak into the store
+	// order and from there into any key set javamap cannot place.
+	for _, kind := range model.AuthzPolicyAssociationKinds {
+		key := authzAssociationConfigKey(kind)
 		ids := p.AssociationSet(kind)
 		if len(ids) == 0 {
 			continue
@@ -540,8 +585,8 @@ type authzImportPolicy struct {
 	Name             string                `json:"name"`
 	Description      string                `json:"description"`
 	Type             string                `json:"type"`
-	Logic            *string               `json:"logic"`
-	DecisionStrategy *string               `json:"decisionStrategy"`
+	Logic            json.RawMessage       `json:"logic"`
+	DecisionStrategy json.RawMessage       `json:"decisionStrategy"`
 	Owner            string                `json:"owner"`
 	Config           *authzPolicyConfigMap `json:"config"`
 }
@@ -734,11 +779,11 @@ func (h *handler) importAuthzPolicy(w http.ResponseWriter, r *http.Request, rc *
 		Logic:            model.DefaultAuthzPolicyLogic,
 		DecisionStrategy: model.DefaultAuthzPolicyDecisionStrategy,
 	}
-	if entry.Logic != nil {
-		stored.Logic = *entry.Logic
+	if v, present, _ := authzEnumValue(entry.Logic); present {
+		stored.Logic = v
 	}
-	if entry.DecisionStrategy != nil {
-		stored.DecisionStrategy = *entry.DecisionStrategy
+	if v, present, _ := authzEnumValue(entry.DecisionStrategy); present {
+		stored.DecisionStrategy = v
 	}
 	if merging {
 		stored.ID = existing.ID

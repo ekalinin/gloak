@@ -72,7 +72,7 @@ var authzPermissionTypes = []string{"resource", "scope", "uma"}
 // that parses, because Jackson refuses the token while binding the enum - and
 // the comparison is case-sensitive: `"positive"` is that 500.
 var (
-	authzPolicyLogics            = []string{"POSITIVE", "NEGATIVE"}
+	authzPolicyLogics             = []string{"POSITIVE", "NEGATIVE"}
 	authzPolicyDecisionStrategies = []string{"AFFIRMATIVE", "UNANIMOUS", "CONSENSUS"}
 )
 
@@ -161,11 +161,15 @@ func (c *authzPolicyConfigMap) UnmarshalJSON(data []byte) error {
 // and KeyOrder is wrong on both. So this family takes the protocol mappers' and
 // identity providers' constructor and not the components'.
 //
-// **Whether the size argument is the stored count or the request's is not
-// pinned.** A role, client or group policy gains a key on the way in, so the
-// two counts differ by one on every such row; a search over every key set of
-// the shape `{roles, z1..zn}` for n up to 13 found none where the two sizes
-// disagree, so no probe separates them and this uses the stored count.
+// **The size argument is the count of what is stored, not of what the request
+// sent**, and that is measured rather than assumed. A six-key config sent to a
+// `role` policy - which adds `roles`, making seven - came back in the
+// **seven**-key order, byte for byte the same as a `uma` policy sent all seven
+// outright; the six-key order is different, with `pattern` and `targetClaim`
+// on the other side of `nbf` and `hour`. That is the opposite of what
+// AGENTS.md's protocol mapper bullet says about its own family, where a config
+// the create grew "was built for the request's key count" - so the two families
+// disagree and neither can be read off the other.
 func authzOrderedConfig(in []model.AuthzPolicyConfig) authzPolicyConfigMap {
 	byName := make(map[string]string, len(in))
 	names := make([]string, 0, len(in))
@@ -499,12 +503,20 @@ func (h *handler) listAuthzPolicies(w http.ResponseWriter, r *http.Request, rc *
 		return
 	}
 
+	// **The partition has three states and only two of them filter.** An
+	// absent `permission` returns both families - 41 rows where `true` returned
+	// 17 and `false` returned 24 - so a two-way predicate is wrong on the
+	// commonest request of all. On the `/permission` path the route pins it
+	// true, and `?permission=false` there is ignored.
 	typed := authzTypedRoute(r)
-	wantPermission := typed || q.Get("permission") == "true"
+	partition := q["permission"]
 	kept := []*model.AuthzPolicy{}
 	for _, p := range policies {
-		if containsString(authzPermissionTypes, p.Type) != wantPermission {
-			continue
+		if typed || len(partition) > 0 {
+			want := typed || partition[0] == "true"
+			if containsString(authzPermissionTypes, p.Type) != want {
+				continue
+			}
 		}
 		if authzPolicyMatches(p, q, scopes, resources) {
 			kept = append(kept, p)
@@ -688,7 +700,11 @@ func (h *handler) searchAuthzPolicy(w http.ResponseWriter, r *http.Request, rc *
 //   - `name` and `type`: absent and `null` are the 409 and `{"name":""}` is a
 //     201, so empty is a value;
 //   - `logic` and `decisionStrategy`: absent gets the default and an explicit
-//     `null` stores nothing, and the row then reads back with the key missing.
+//     `null` **stores nothing**, and the row then reads back with the key
+//     missing - on the listing, the search and the typed view alike. That is
+//     three states for one field, so the two are json.RawMessage rather than
+//     *string: a *string cannot tell an absent key from a null one, and a
+//     default applied to both is right on one of the two.
 type authzPolicyBody struct {
 	ID               *string               `json:"id"`
 	Name             *string               `json:"name"`
@@ -697,11 +713,31 @@ type authzPolicyBody struct {
 	Policies         *[]string             `json:"policies"`
 	Resources        *[]string             `json:"resources"`
 	Scopes           *[]string             `json:"scopes"`
-	Logic            *string               `json:"logic"`
-	DecisionStrategy *string               `json:"decisionStrategy"`
+	Logic            json.RawMessage       `json:"logic"`
+	DecisionStrategy json.RawMessage       `json:"decisionStrategy"`
 	Owner            string                `json:"owner"`
 	ResourceType     string                `json:"resourceType"`
 	Config           *authzPolicyConfigMap `json:"config"`
+}
+
+// authzEnumValue reads one of the two enum fields, reporting the value it
+// carries and whether the key was present at all.
+//
+// An explicit `null` is present-with-no-value, which is the state that stores
+// nothing; anything else is decoded as a string, and a value outside the
+// enum's list is the create's first refusal.
+func authzEnumValue(raw json.RawMessage) (value string, present, null bool) {
+	if len(raw) == 0 {
+		return "", false, false
+	}
+	if string(bytes.TrimSpace(raw)) == "null" {
+		return "", true, true
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", true, false
+	}
+	return s, true, false
 }
 
 // createAuthzPolicy serves `POST .../policy` and `POST .../permission`, which
@@ -803,13 +839,15 @@ func (h *handler) createAuthzPolicy(w http.ResponseWriter, r *http.Request, rc *
 	stored.Description = body.Description
 	stored.Type = *body.Type
 	stored.Owner = body.Owner
+	// Absent takes the default and an explicit `null` stores nothing, which is
+	// what makes a row read back with no `logic` key at all.
 	stored.Logic = model.DefaultAuthzPolicyLogic
-	if body.Logic != nil {
-		stored.Logic = *body.Logic
+	if v, present, _ := authzEnumValue(body.Logic); present {
+		stored.Logic = v
 	}
 	stored.DecisionStrategy = model.DefaultAuthzPolicyDecisionStrategy
-	if body.DecisionStrategy != nil {
-		stored.DecisionStrategy = *body.DecisionStrategy
+	if v, present, _ := authzEnumValue(body.DecisionStrategy); present {
+		stored.DecisionStrategy = v
 	}
 	if body.Config != nil {
 		stored.Config = *body.Config
@@ -907,12 +945,13 @@ func (h *handler) decodeAuthzPolicyBody(w http.ResponseWriter, r *http.Request) 
 		writeAuthzPolicyParseError(w, "unknown_error")
 		return body, false
 	}
-	if body.Logic != nil && !containsString(authzPolicyLogics, *body.Logic) {
+	if v, present, null := authzEnumValue(body.Logic); present && !null &&
+		!containsString(authzPolicyLogics, v) {
 		writeAuthzPolicyParseError(w, "unknown_error")
 		return body, false
 	}
-	if body.DecisionStrategy != nil &&
-		!containsString(authzPolicyDecisionStrategies, *body.DecisionStrategy) {
+	if v, present, null := authzEnumValue(body.DecisionStrategy); present && !null &&
+		!containsString(authzPolicyDecisionStrategies, v) {
 		writeAuthzPolicyParseError(w, "unknown_error")
 		return body, false
 	}
