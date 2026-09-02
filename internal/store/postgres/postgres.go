@@ -152,6 +152,10 @@ func (s *Store) IdentityProviders() store.IdentityProviderRepo {
 	return &identityProviderRepo{s.pool}
 }
 
+func (s *Store) IdentityProviderMappers() store.IdentityProviderMapperRepo {
+	return &identityProviderMapperRepo{s.pool}
+}
+
 func (s *Store) Components() store.ComponentRepo {
 	return &componentRepo{s.pool}
 }
@@ -2966,5 +2970,170 @@ func scanComponent(row scanner) (*model.Component, error) {
 		return nil, classify(err)
 	}
 	m.Name = name
+	return m, nil
+}
+
+type identityProviderMapperRepo struct{ pool *pgxpool.Pool }
+
+// identityProviderMapperColumns is the SELECT list shared by ByID and List, so
+// the two cannot come to scan different columns into one scanner.
+const identityProviderMapperColumns = `id, realm_id, alias, name, mapper`
+
+func (r *identityProviderMapperRepo) Create(ctx context.Context, m *model.IdentityProviderMapper) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var ordinal int
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(MAX(ordinal), -1) + 1 FROM identity_provider_mapper
+		  WHERE realm_id = $1 AND alias = $2`, m.RealmID, m.Alias).Scan(&ordinal); err != nil {
+		return classify(err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO identity_provider_mapper (id, realm_id, alias, name, mapper, ordinal)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		m.ID, m.RealmID, m.Alias, m.Name, m.Mapper, ordinal); err != nil {
+		return classify(err)
+	}
+	for i, e := range m.Config {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO identity_provider_mapper_config (mapper_id, name, value, ordinal)
+			 VALUES ($1, $2, $3, $4)`, m.ID, e.Name, e.Value, i); err != nil {
+			return classify(err)
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// Update replaces every column and the whole config - see
+// store.IdentityProviderMapperRepo, and note that this is the opposite of what
+// PUT /components/{id} does one chapter away.
+//
+// It is keyed on the id alone, because the mapper the route writes is the one
+// the **body's** id names and the path's alias is not consulted.
+func (r *identityProviderMapperRepo) Update(ctx context.Context, m *model.IdentityProviderMapper) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx,
+		`UPDATE identity_provider_mapper SET alias = $1, name = $2, mapper = $3
+		  WHERE realm_id = $4 AND id = $5`,
+		m.Alias, m.Name, m.Mapper, m.RealmID, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM identity_provider_mapper_config WHERE mapper_id = $1`, m.ID); err != nil {
+		return classify(err)
+	}
+	for i, e := range m.Config {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO identity_provider_mapper_config (mapper_id, name, value, ordinal)
+			 VALUES ($1, $2, $3, $4)`, m.ID, e.Name, e.Value, i); err != nil {
+			return classify(err)
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *identityProviderMapperRepo) ByID(ctx context.Context, realmID, id string) (*model.IdentityProviderMapper, error) {
+	row := r.pool.QueryRow(ctx,
+		`SELECT `+identityProviderMapperColumns+` FROM identity_provider_mapper
+		  WHERE realm_id = $1 AND id = $2`, realmID, id)
+	m, err := scanIdentityProviderMapper(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadIdentityProviderMapperConfig(ctx, []*model.IdentityProviderMapper{m}); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (r *identityProviderMapperRepo) Delete(ctx context.Context, realmID, id string) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM identity_provider_mapper WHERE realm_id = $1 AND id = $2`, realmID, id)
+	if err != nil {
+		return classify(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (r *identityProviderMapperRepo) List(ctx context.Context, realmID, alias string) ([]*model.IdentityProviderMapper, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+identityProviderMapperColumns+` FROM identity_provider_mapper
+		  WHERE realm_id = $1 AND alias = $2 ORDER BY ordinal`, realmID, alias)
+	if err != nil {
+		return nil, classify(err)
+	}
+	out, err := collectIdentityProviderMappers(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadIdentityProviderMapperConfig(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *identityProviderMapperRepo) loadIdentityProviderMapperConfig(ctx context.Context, ms []*model.IdentityProviderMapper) error {
+	if len(ms) == 0 {
+		return nil
+	}
+	byID := make(map[string]*model.IdentityProviderMapper, len(ms))
+	ids := make([]any, 0, len(ms))
+	placeholders := make([]string, 0, len(ms))
+	for i, m := range ms {
+		byID[m.ID] = m
+		ids = append(ids, m.ID)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", i+1))
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT mapper_id, name, value FROM identity_provider_mapper_config
+		  WHERE mapper_id IN (`+strings.Join(placeholders, ",")+`)
+		  ORDER BY mapper_id, ordinal`, ids...)
+	if err != nil {
+		return classify(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name, value string
+		if err := rows.Scan(&id, &name, &value); err != nil {
+			return err
+		}
+		m := byID[id]
+		m.Config = append(m.Config, model.IdentityProviderMapperConfigEntry{Name: name, Value: value})
+	}
+	return classify(rows.Err())
+}
+
+func collectIdentityProviderMappers(rows pgx.Rows) ([]*model.IdentityProviderMapper, error) {
+	defer rows.Close()
+	out := []*model.IdentityProviderMapper{}
+	for rows.Next() {
+		m, err := scanIdentityProviderMapper(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+func scanIdentityProviderMapper(row scanner) (*model.IdentityProviderMapper, error) {
+	m := &model.IdentityProviderMapper{}
+	if err := row.Scan(&m.ID, &m.RealmID, &m.Alias, &m.Name, &m.Mapper); err != nil {
+		return nil, classify(err)
+	}
 	return m, nil
 }

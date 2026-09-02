@@ -988,3 +988,42 @@ func (c *Component) AddConfig(name, value string) {
 	}
 	c.Config = append(c.Config, ComponentConfigEntry{Name: name, Values: []string{value}})
 }
+
+// IdentityProviderMapper is one entry of
+// `/admin/realms/{realm}/identity-provider/instances/{alias}/mappers`.
+//
+// **Alias is a plain string on the row and it is the body's, not the path's.**
+// Measured 2026-09-02: a create sends `identityProviderAlias` and it is stored
+// and echoed raw, a `PUT` can change it to a value no provider has, and the
+// three single-mapper routes resolve the id **without looking at the alias in
+// the path at all** - a mapper of one provider was read and then deleted
+// through another provider's path. Only the listing is filtered by alias. So
+// this is a stored field rather than a foreign key onto IdentityProvider, and
+// making it one would refuse a state the server reaches.
+//
+// Config is single-valued, where a Component's is a list: an identity provider
+// mapper's config is `{"role":"offline_access"}` on the wire and a component's
+// is `{"priority":["100"]}`.
+type IdentityProviderMapper struct {
+	ID      string
+	RealmID string
+	Alias   string
+	Name    string
+	// Mapper is the wire's `identityProviderMapper`. **It is not validated**:
+	// a create naming a mapper type that does not exist answered 201, so this
+	// holds whatever the caller sent.
+	Mapper string
+	Config []IdentityProviderMapperConfigEntry
+}
+
+// IdentityProviderMapperConfigEntry is one `config` key and its value.
+//
+// It is its own type rather than a reuse of IdentityProviderConfigEntry, which
+// has the identical shape, because the two are only measured to agree today:
+// the parent provider's config masks a `clientSecret` on the way out and this
+// one masks nothing, so a field added to either for its own reason would arrive
+// in the other by accident.
+type IdentityProviderMapperConfigEntry struct {
+	Name  string
+	Value string
+}
