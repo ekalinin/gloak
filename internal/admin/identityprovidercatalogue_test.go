@@ -77,22 +77,39 @@ func TestProviderCatalogueReproducesEveryMeasuredBody(t *testing.T) {
 	}
 }
 
-// TestTwoProvidersHaveNoMapperTypes pins the pair that answers the 500, because
-// the test above can only see that they are absent and absent is also what a
-// deleted entry looks like.
-func TestTwoProvidersHaveNoMapperTypes(t *testing.T) {
-	var failing []string
+// TestTheProvidersWithNoMapperTypesAreTheTwoMeasured500s pins the set, and the
+// set is the whole claim.
+//
+// **This replaces a predicate and a branch that a mutation proved dead.**
+// `model.IdentityProviderMapperTypesFail` named two provider ids and the serving
+// path asked it before falling through to the catalogue; deleting all four lines
+// changed no byte of any response, because the two ids it named are exactly the
+// two the catalogue has no mapper set for. Two spellings of one condition, one
+// of them unreachable. The condition is asserted here instead.
+//
+// It fails in **both** directions, which is what a set-valued claim needs and
+// what a per-id assertion would not give: an id going missing from the catalogue
+// grows this set, and an entry arriving for either of these two shrinks it. Two
+// ids behind one claim is exactly the shape where a test pins one and lets the
+// other rot, so the comparison is over the whole list rather than a membership
+// check per id.
+//
+// The served half - that both really answer the consult-log 500 over HTTP, and
+// that a provider beside them answers its map - is
+// TestMapperTypesFollowTheProvider, which sends all five requests.
+func TestTheProvidersWithNoMapperTypesAreTheTwoMeasured500s(t *testing.T) {
+	var absent []string
 	for _, id := range identityProviderRegistryForTest {
-		if model.IdentityProviderMapperTypesFail(id) {
-			failing = append(failing, id)
-		}
-		if _, ok := model.IdentityProviderMapperTypes(id); !ok && !model.IdentityProviderMapperTypesFail(id) {
-			t.Errorf("%s has neither a mapper set nor a measured 500", id)
+		if _, ok := model.IdentityProviderMapperTypes(id); !ok {
+			absent = append(absent, id)
 		}
 	}
 	want := []string{"linkedin-openid-connect", "openshift-v4"}
-	if strings.Join(failing, ",") != strings.Join(want, ",") {
-		t.Errorf("providers answering mapper-types with a 500: got %v, want %v", failing, want)
+	if strings.Join(absent, ",") != strings.Join(want, ",") {
+		t.Errorf("providers with no mapper set: got %v, want %v - and every one of "+
+			"them is a measured 500 rather than a gap, so this list moving means "+
+			"either the catalogue lost an entry or one of the two started answering",
+			absent, want)
 	}
 }
 

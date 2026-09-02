@@ -91,10 +91,22 @@ func IdentityProviderCatalogue(providerID string) (IdentityProviderCatalogueEntr
 // IdentityProviderMapperTypes returns the mapper types a provider offers, in
 // the measured server order, and the definition of each.
 //
-// The second return is false for the two providers whose `mapper-types` is a
-// **500** - see [IdentityProviderMapperTypesFail] - and for an id that is not
-// registered at all. The caller tells the two apart with
-// [IsIdentityProvider], because they answer differently.
+// **The second return is false for exactly two registered providers, and both
+// of them are a measured 500** rather than a gap in the catalogue:
+// `linkedin-openid-connect` and `openshift-v4` answer `mapper-types` with
+// Keycloak's consult-the-log `unknown_error` on an instance that was created
+// without complaint and reads back normally through every other route in the
+// family. So "this provider has no mapper set" and "this provider answers a
+// 500" are one condition, and a caller needs one branch rather than two.
+//
+// That is asserted rather than implemented. There used to be an
+// IdentityProviderMapperTypesFail predicate and a branch in the serving path
+// that consulted it, and **deleting all four of those lines changed no byte of
+// any response** - the two providers it named are the two this map has no entry
+// for, so the fallback answered them identically. It is gone, and
+// TestTheProvidersWithNoMapperTypesAreTheTwoMeasured500s pins the set in both
+// directions instead: an id going missing from the map fails it, and an entry
+// arriving for either of these two fails it.
 func IdentityProviderMapperTypes(providerID string) ([]string, bool) {
 	ids, ok := identityProviderMapperIDs[providerID]
 	return ids, ok
@@ -104,16 +116,4 @@ func IdentityProviderMapperTypes(providerID string) ([]string, bool) {
 func IdentityProviderMapperTypeByID(id string) (IdentityProviderMapperType, bool) {
 	m, ok := identityProviderMapperCatalogue[id]
 	return m, ok
-}
-
-// IdentityProviderMapperTypesFail reports whether `mapper-types` on a provider
-// of this id is Keycloak's consult-the-log 500.
-//
-// **Two of the seventeen are**, `linkedin-openid-connect` and `openshift-v4`,
-// measured on providers that were created without complaint and read back
-// normally through every other route in the family. It is a defect of those two
-// providers' mapper lookup and it is reproduced, because a caller that asks
-// gets a 500 and a handler answering 200 with an empty map would not be a copy.
-func IdentityProviderMapperTypesFail(providerID string) bool {
-	return providerID == "linkedin-openid-connect" || providerID == "openshift-v4"
 }

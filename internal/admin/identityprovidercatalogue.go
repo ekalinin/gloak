@@ -169,16 +169,17 @@ func (m identityProviderMapperTypes) MarshalJSON() ([]byte, error) {
 // base set every provider has; `saml` swaps six of its ten for SAML spellings
 // and `keycloak-oidc` is `oidc`'s ten plus one.
 func (h *handler) listIdentityProviderMapperTypes(w http.ResponseWriter, r *http.Request, rc *reqContext, p *model.IdentityProvider) {
-	if model.IdentityProviderMapperTypesFail(p.ProviderID) {
-		writeIdentityProviderConsultLog(w)
-		return
-	}
 	out, ok := identityProviderMapperTypesOf(p.ProviderID)
 	if !ok {
-		// Unreachable through the router: a stored provider's id was checked
-		// against the same registry on the way in. Kept so that a provider id
-		// added to the registry without a mapper set fails loudly here rather
-		// than serving an empty map that looks measured.
+		// **This branch is the 500, and it is one branch rather than two.**
+		// An earlier version asked a separate predicate whether this provider
+		// was one of the two that answer a 500 and wrote the same body from
+		// there; deleting those four lines changed no byte of any response,
+		// because the providers the predicate named are exactly the providers
+		// the catalogue has no mapper set for. Two conditions, one set, and the
+		// set is asserted in
+		// TestTheProvidersWithNoMapperTypesAreTheTwoMeasured500s rather than
+		// spelled twice in code that cannot disagree with itself.
 		writeIdentityProviderConsultLog(w)
 		return
 	}

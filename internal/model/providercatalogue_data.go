@@ -717,10 +717,13 @@ var identityProviderMapperCatalogue = map[string]IdentityProviderMapperType{
 // the Keycloak version; computing it would mean guessing at six chains for no
 // gain.
 //
-// **Two providers are absent on purpose.** `linkedin-openid-connect` and
-// `openshift-v4` answer `mapper-types` with the consult-the-log 500 on a
-// provider that was created without complaint - see
-// IdentityProviderMapperTypesFail.
+// **Two providers are absent on purpose, and their absence is the 500.**
+// `linkedin-openid-connect` and `openshift-v4` answer `mapper-types` with the
+// consult-the-log `unknown_error` on an instance that was created without
+// complaint and reads back normally through every other route in the family. So
+// an entry arriving here for either of them would turn a measured 500 into a
+// served map, which is why the absent set is asserted rather than assumed - see
+// TestTheProvidersWithNoMapperTypesAreTheTwoMeasured500s.
 var identityProviderMapperIDs = map[string][]string{
 	"kubernetes": {
 		"hardcoded-user-session-attribute-idp-mapper",
