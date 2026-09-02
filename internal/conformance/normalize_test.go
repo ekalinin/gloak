@@ -576,6 +576,15 @@ func TestThemeResourceAppearsOnlyInTheThemePages(t *testing.T) {
 		// is not master. Seven again, for the ninth's reason: the count is a
 		// property of the head, which every one of these pages shares.
 		"oidc/device/second-realm-verification-page": 7,
+		// The /login-actions family's error page, four times. Seven again, and
+		// the reason is worth keeping beside the number: this page is the head
+		// and nothing more, which is exactly why it is the one page in that
+		// family that can carry a golden at all. prompt-create's eighth comes
+		// from a checkAuthSession block these do not have.
+		"oidc/authorization/login-actions-invalid-client-data":    7,
+		"oidc/authorization/login-actions-restart-cookie-missing": 7,
+		"oidc/authorization/login-actions-unknown-client":         7,
+		"oidc/authorization/required-action-invalid-client-data":  7,
 	}
 	seen := map[string]bool{}
 	for _, c := range Catalog {

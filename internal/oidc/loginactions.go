@@ -67,13 +67,18 @@ func (h *handler) loginActions(w http.ResponseWriter, r *http.Request) {
 	if realm == nil {
 		return
 	}
+	if !decodeLoginActionBody(w, r) {
+		return
+	}
 	q := r.URL.Query()
 
-	// Step 1. client_data is parsed before anything else, including before the
-	// cookies and before the client. Measured: "no client_id + bad client_data"
-	// and "bad client_data + no cookies" both answer about client_data.
+	// Step 1. client_data is parsed before anything else the endpoint decides,
+	// including before the cookies and before the client. Measured: "no
+	// client_id + bad client_data" and "bad client_data + no cookies" both
+	// answer about client_data. The body decode above is ahead of it and is not
+	// this endpoint's decision; see decodeLoginActionBody.
 	if !validClientData(q.Get("client_data")) {
-		h.writeLoginActionErrorPage(w)
+		h.writeLoginActionErrorPage(w, h.loginActionChrome(r, realm, q), pageInvalidRequest)
 		return
 	}
 
@@ -87,10 +92,12 @@ func (h *handler) loginActions(w http.ResponseWriter, r *http.Request) {
 
 	// Step 3. The client has to resolve **and be the tab's own**. Measured: a
 	// request naming a different real client answers the same 400 page an
-	// unknown one does, so this is not only a lookup.
+	// unknown one does, so this is not only a lookup. The **chrome** does tell
+	// the two apart - it names the other client and links to it - which is why
+	// loginActionChrome is asked rather than this branch's own `client`.
 	client, ok := h.authClient(r, realm, q.Get("client_id"))
 	if !ok || client.ClientID != tab.ClientID {
-		h.writeLoginActionErrorPage(w)
+		h.writeLoginActionErrorPage(w, h.loginActionChrome(r, realm, q), pageLoginActionError)
 		return
 	}
 
@@ -170,8 +177,11 @@ func (h *handler) writeUnusableSession(w http.ResponseWriter, r *http.Request, r
 		}
 	}
 	// Nothing to restart from and nobody to tell. Measured: 400, the theme error
-	// page, "Restart login cookie not found. It may have expired; ...".
-	h.writeLoginActionErrorPage(w)
+	// page, "Restart login cookie not found. It may have expired; ...". Its
+	// chrome still names the request's client when one resolved, so this page
+	// offers a Back to Application link on the very branch that tells the reader
+	// to click it.
+	h.writeLoginActionErrorPage(w, h.loginActionChrome(r, realm, q), pageRestartCookieNotFound)
 }
 
 // restartRecord reads KC_RESTART and resolves what it points at.
@@ -198,7 +208,7 @@ func (h *handler) restartRecord(r *http.Request, realm *model.Realm) (*restartRe
 func (h *handler) writeRestartRedirect(w http.ResponseWriter, r *http.Request, realm *model.Realm, rec *restartRecord, q url.Values) {
 	client, ok := h.authClient(r, realm, q.Get("client_id"))
 	if !ok {
-		h.writeLoginActionErrorPage(w)
+		h.writeLoginActionErrorPage(w, h.themeChrome(realm), pageLoginActionError)
 		return
 	}
 	tab := &authTab{
@@ -290,10 +300,6 @@ func clientDataTarget(raw string, client *model.Client) (redirectURI, state stri
 // attemptLogin is the credential check and everything a success sets in motion.
 func (h *handler) attemptLogin(w http.ResponseWriter, r *http.Request, realm *model.Realm,
 	client *model.Client, sess *authSession, tab *authTab) {
-	if err := r.ParseForm(); err != nil {
-		h.writeLoginActionErrorPage(w)
-		return
-	}
 	// PostForm, not Form: a GET's parameters must not become its credentials,
 	// and a POST's query must not either.
 	username := r.PostForm.Get("username")
@@ -539,25 +545,70 @@ func (h *handler) loginActionURL(realm *model.Realm, tab *authTab, sessionCode s
 	}, "&"), nil
 }
 
-// writeLoginActionErrorPage is this endpoint's 400.
+// writeLoginActionErrorPage is this family's 400, and it is the theme's
+// login-error page with a measured instruction under a measured chrome.
 //
-// All three of its measured spellings share one envelope and differ only in
-// prose Gloak does not serve yet: "Invalid Request" for an unparseable
-// client_data, "An error occurred, please login again through your
-// application." for a client that does not resolve, and "Restart login cookie
-// not found. It may have expired; it may have been deleted or cookies are
-// disabled in your browser. If cookies are disabled then enable them. Click
-// Back to Application to login again." when there is nothing to restart from.
+// **It served the placeholder body until 2026-09-02, and F109 is why.** Twelve
+// call sites across three files reach this family; the entry said mapping each
+// to a sentence would be twelve unpinned judgements, and that measuring the
+// twelve was what would close it. They are measured now, one branch at a time,
+// and they answer **three** sentences and one thing that is not this page:
 //
-// **This page is still the placeholder body**, deliberately, where /auth's and
-// /logout's are the theme's real markup as of 2026-09-01. Twelve call sites
-// across three files reach this writer and no golden compares any of them, so
-// mapping each to one of the three sentences would be twelve unpinned
-// judgements. The chrome would be unpinned too: nothing has measured which
-// client this page's restart URL names. It is F109's family and it closes when
-// somebody measures the twelve, not when somebody guesses them.
-func (h *handler) writeLoginActionErrorPage(w http.ResponseWriter) {
-	httpx.WriteThemePage(w, http.StatusBadRequest, loginActionCacheControl, httpx.ThemeErrorTitle)
+//	unparseable client_data            400  Invalid Request
+//	the client fails, four ways        400  An error occurred, …
+//	nothing to restart from            400  Restart login cookie not found. …
+//	a body that will not form-decode   500  application/json, and no page at all
+//
+// The markup itself needed nothing new. The page this family serves and the one
+// GET /auth serves are **byte-identical apart from the instruction** - measured
+// by diffing a whole 3713-byte page against a whole 3729-byte one, which is one
+// changed line - so themeErrorPageBody already produced it and closing F109 was
+// a change of call site.
+//
+// The chrome is loginActionChrome's, which is the half of F109 nothing had
+// measured: it names the request's own client_id rather than the tab's.
+func (h *handler) writeLoginActionErrorPage(w http.ResponseWriter, c httpx.ThemeChrome, instruction string) {
+	httpx.WriteThemeErrorPage(w, http.StatusBadRequest, loginActionCacheControl, c, instruction)
+}
+
+// decodeLoginActionBody form-decodes the request, and it runs **first** on all
+// three /login-actions endpoints - which is measured rather than tidy.
+//
+// A body carrying a bad percent escape answers
+// `500 {"error":"unknown_error",…}` with application/json, the identical 94
+// bytes POST /auth and POST /logout answer. Measured 2026-09-02 against every
+// later check on the endpoint:
+//
+//	an unknown realm  + a bad body   404 {"error":"Realm does not exist"}
+//	bad client_data   + a bad body   500
+//	no cookies at all + a bad body   500
+//	an unknown client + a bad body   500
+//
+// So the realm wins and nothing else does: the decode is not the endpoint's own
+// judgement but the container's, ahead of everything the handler decides. Gloak
+// called ParseForm four levels down - inside attemptLogin, consent,
+// runUpdatePassword and runUpdateProfile - and answered the **400 page** on
+// three of those four rows, because the session and client checks ran first.
+// Those four call sites are F109's, and this is the half of them that is not a
+// page at all.
+//
+// **It is not byte-identical to POST /auth's 500 after all**, and the byte is a
+// Cache-Control. Measured side by side on one container:
+//
+//	POST /auth                        500  no Cache-Control at all
+//	POST /login-actions/authenticate  500  no-store, must-revalidate, max-age=0
+//
+// Same status, same 94 bytes, same Content-Type, same five security headers,
+// and neither sends Content-Language or Content-Security-Policy. So the header
+// is per endpoint here exactly as it is on the theme page, which is the fourth
+// time that has been the only rule to survive on this value.
+func decodeLoginActionBody(w http.ResponseWriter, r *http.Request) bool {
+	if err := r.ParseForm(); err != nil {
+		w.Header().Set("Cache-Control", loginActionCacheControl)
+		writeUnparseableBody(w)
+		return false
+	}
+	return true
 }
 
 // startSessionWithID is startSession with the session id supplied rather than

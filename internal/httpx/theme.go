@@ -13,12 +13,12 @@ import (
 // templates indent their output unevenly and the three page headings do not
 // agree on how far. See docs/superpowers/plans/2026-09-01-p13-theme-markup.md.
 //
-// One head and three body templates cover the eight pages this project has
-// measured. The pages it has **not** measured - the logout confirmation, "You
-// are logged out", "Page has expired", the consent page and the five
-// required-action pages - keep the placeholder body in errors.go, because
-// giving them this chrome would mean writing an instruction nobody has read off
-// a server.
+// One head and three body templates cover the pages this project serves. The
+// nine that keep the placeholder body in errors.go are measured now - the
+// logout confirmation, "You are logged out", "Page has expired", the consent
+// page and the five required-action pages - and what keeps them placeholders is
+// a per-request value each of them carries rather than an unread instruction.
+// themePageBody's doc comment has the table.
 
 // themeResourceAlphabet is the character set every measured resource version is
 // drawn from: lowercase letters and digits, no upper case.

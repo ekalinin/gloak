@@ -494,10 +494,6 @@ func (h *handler) attachClientSessionTo(ctx context.Context, session *model.User
 // mechanism, which is still declined.
 func (h *handler) writeRegistrationPage(w http.ResponseWriter, realm *model.Realm,
 	client *model.Client, tab *authTab) {
-	extra := []string{"tab_id=" + url.QueryEscape(tab.TabID)}
-	if data, err := tab.clientData(); err == nil {
-		extra = append(extra, "client_data="+url.QueryEscape(data))
-	}
 	httpx.WriteThemeErrorPage(w, http.StatusBadRequest, loginActionCacheControl,
-		h.themeChromeFor(realm, client, extra...), pageRegistrationNotAllowed)
+		h.flowChrome(realm, client, tab), pageRegistrationNotAllowed)
 }
