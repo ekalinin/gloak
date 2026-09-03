@@ -9,4 +9,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-{"realmMappings":[{"id":"{{realm_role}}","name":"gloak-probe-og-role","description":"the realm role a group holds","composite":false,"clientRole":false,"containerId":"{{string}}"}],"clientMappings":{"gloak-probe-og-client":{"id":"{{client_uuid}}","client":"gloak-probe-og-client","mappings":[{"id":"{{client_role}}","name":"gloak-probe-og-crole","description":"the client role a group holds","composite":false,"clientRole":true,"containerId":"{{client_uuid}}"}]}}}
+{"realmMappings":[{"id":"{{realm_role_a}}","name":"gloak-probe-og-arole","description":"the realm role that sorts first","composite":false,"clientRole":false,"containerId":"{{string}}"},{"id":"{{realm_role}}","name":"gloak-probe-og-role","description":"the realm role a group holds","composite":false,"clientRole":false,"containerId":"{{string}}"}],"clientMappings":{"gloak-probe-og-client":{"id":"{{client_uuid}}","client":"gloak-probe-og-client","mappings":[{"id":"{{client_role}}","name":"gloak-probe-og-crole","description":"the client role a group holds","composite":false,"clientRole":true,"containerId":"{{client_uuid}}"}]}}}

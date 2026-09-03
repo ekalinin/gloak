@@ -9,4 +9,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-[{"id":"{{realm_role}}","name":"gloak-probe-og-role","description":"the realm role a group holds","composite":false,"clientRole":false,"containerId":"{{string}}"}]
+[{"id":"{{realm_role_a}}","name":"gloak-probe-og-arole","description":"the realm role that sorts first","composite":false,"clientRole":false,"containerId":"{{string}}"},{"id":"{{realm_role}}","name":"gloak-probe-og-role","description":"the realm role a group holds","composite":false,"clientRole":false,"containerId":"{{string}}"}]
