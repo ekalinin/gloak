@@ -1279,12 +1279,18 @@ var Fixtures = map[string]Fixture{
 	"org-group-create": organizationGroupFixture("gloak-probe-og-new", false),
 	"org-group-child":  organizationGroupFixture("gloak-probe-og-kid", false),
 	"org-group-update": organizationGroupFixture("gloak-probe-og-upd", false),
-	// The case that reads what the update's 204 hid does the update **in its
-	// own fixture** rather than depending on the update case having run: a
-	// golden that holds only while the catalogue's order holds is worse than no
-	// golden, and two cases sharing one realm across a mutation is exactly that
-	// shape.
-	"org-group-updated": organizationGroupRenamedFixture("gloak-probe-og-upn"),
+	// The two cases that read what the update's 204 hid do the update **in
+	// their own fixture** rather than depending on the update case having run:
+	// a golden that holds only while the catalogue's order holds is worse than
+	// no golden.
+	//
+	// **They get one realm each**, and that is the whole of why this fixture is
+	// declared twice: its rename cannot be idempotent, so a fixture two cases
+	// named would run twice and collide with itself. See
+	// organizationGroupRenameFixture, which records the two cheaper fixes that
+	// were tried and refuted.
+	"org-group-updated": organizationGroupRenameFixture("gloak-probe-og-upn"),
+	"org-group-attrs":   organizationGroupRenameFixture("gloak-probe-og-upa"),
 	"org-group-delete":  organizationGroupFixture("gloak-probe-og-del", false),
 	"org-group-move":    organizationGroupFixture("gloak-probe-og-mov", false),
 	"org-group-join":    organizationGroupFixture("gloak-probe-og-joi", false),
@@ -6103,47 +6109,75 @@ func organizationGroupFixture(realm string, mapped bool) Fixture {
 	return f
 }
 
-// organizationGroupRenamedFixture is organizationGroupFixture with the update
-// already applied, so the case reading its effect asserts a state its own
-// fixture produced rather than one another case left behind.
+// organizationGroupRenameFixture builds the smallest realm the two update cases
+// need: one organization, one group, one child of it, and the rename whose
+// effect the cases then read.
 //
-// The PUT is idempotent - a rename to the name the group already has is another
-// 204 - so the recorder running the fixture twice needs no second status.
-func organizationGroupRenamedFixture(realm string) Fixture {
-	f := organizationGroupFixture(realm, false)
-	f.Steps = append(f.Steps, Step{
-		Request: Request{
-			Method: http.MethodPut,
-			Path: "/admin/realms/" + realm +
-				"/organizations/{{org_id}}/groups/{{group_2}}",
-			Headers: map[string]string{
-				"Authorization": "Bearer {{access_token}}",
-				"Content-Type":  "application/json",
+// **The rename step cannot be idempotent, so the fixture is instantiated once
+// per case instead.** Measured 2026-09-03: the rename frees
+// `gloak-probe-og-aaa`, so a fixture two cases name runs twice, run two's create
+// takes the freed name and makes a *new* group, and run two's rename collides
+// with run one's -
+// `409 {"error":"conflict","error_description":"Duplicate resource error"}`,
+// which is a different error family from the create's
+// `{"errorMessage":"Group with the given name already exists."}`.
+//
+// Two cheaper fixes were tried and the repository refuted both:
+//
+//   - **Tolerating the 409 with ExpectStatus** leaves the case reading run
+//     two's group, which carries no attributes at all. That is F34's failure -
+//     a green recording over an empty body.
+//   - **Dropping the rename** and sending the group's own name makes the step
+//     idempotent and destroys a measured claim: `groups-update-effect` asserts
+//     that a child's `path` follows its parent's rename, and its golden moved
+//     from `/gloak-probe-og-renamed/…` to `/gloak-probe-og-aaa/…` the moment
+//     the rename went. A golden one directory away refuted "the rename adds
+//     nothing".
+//
+// So the pre-state is made deterministic by giving each case a realm rather
+// than by making the step tolerant. It does **not** reuse
+// organizationGroupFixture, whose twenty-eight steps build a second
+// organization, three groups, two users, a client and two roles that neither of
+// these cases reads: two of these are nine steps each and cost less than the one
+// they replace.
+func organizationGroupRenameFixture(realm string) Fixture {
+	f := organizationRealmFixture(realm)
+	base := "/organizations/{{org_id}}/groups"
+	f.Steps = append(f.Steps,
+		orgFixtureCreate(realm, "/organizations",
+			`{"name":"gloak-probe-og-one","alias":"gloak-probe-og-one-alias"}`),
+		orgFixtureCapture(realm, "/organizations", map[string]string{
+			"search": "gloak-probe-og-one", "exact": "true",
+		}, "org_id"),
+		orgFixtureCreate(realm, base, `{"name":"gloak-probe-og-aaa"}`),
+		orgFixtureCapture(realm, base, map[string]string{
+			"search": "gloak-probe-og-aaa", "exact": "true",
+		}, "group_id"),
+		// The child is created **before** the rename, so its own `path` was
+		// minted under the old name. That is what makes the cascade a claim
+		// rather than a coincidence: a handler storing `path` at create time
+		// serves `/gloak-probe-og-aaa/gloak-probe-og-kid` here.
+		orgFixtureCreate(realm, base+"/{{group_id}}/children", `{"name":"gloak-probe-og-kid"}`),
+		orgFixtureCapture(realm, base, map[string]string{
+			"search": "gloak-probe-og-kid", "exact": "true",
+		}, "child_id"),
+		Step{
+			Request: Request{
+				Method: http.MethodPut,
+				Path: "/admin/realms/" + realm +
+					"/organizations/{{org_id}}/groups/{{group_id}}",
+				Headers: map[string]string{
+					"Authorization": "Bearer {{access_token}}",
+					"Content-Type":  "application/json",
+				},
+				// The two attribute keys are chosen so javamap.KeyOrder moves
+				// them: `gloak-probe-z` comes back before `gloak-probe-k`,
+				// where a Go map would sort them the other way.
+				Body: []byte(`{"name":"gloak-probe-og-renamed","attributes":` +
+					`{"gloak-probe-k":["v1","v2"],"gloak-probe-z":["w"]}}`),
 			},
-			// **This step is not idempotent and two cases name this fixture,
-			// so the recorder runs it twice and the second run is a 409.**
-			// Measured 2026-09-03: the rename frees gloak-probe-og-aaa, run
-			// two's create takes the freed name and makes a *new* group, and
-			// its rename collides with run one's -
-			// `409 {"error":"conflict","error_description":"Duplicate resource
-			// error"}`, which is a different error family from the create's
-			// `{"errorMessage":"Group with the given name already exists."}`.
-			//
-			// Two fixes were tried and both are wrong. Tolerating the 409 with
-			// ExpectStatus leaves the case reading run two's group, which
-			// carries no attributes - F34's failure exactly. Dropping the
-			// rename and sending the group's own name makes the step
-			// idempotent and **destroys a measured claim**:
-			// groups-update-effect asserts that a child's `path` follows its
-			// parent's rename, and its golden moved from
-			// `/gloak-probe-og-renamed/...` to `/gloak-probe-og-aaa/...`.
-			//
-			// So the fixture needs a deterministic pre-state rather than a
-			// tolerant step, and that is unbuilt. See the handover.
-			Body: []byte(`{"name":"gloak-probe-og-renamed","attributes":` +
-				`{"gloak-probe-k":["v1","v2"],"gloak-probe-z":["w"]}}`),
 		},
-	})
+	)
 	return f
 }
 

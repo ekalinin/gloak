@@ -13946,7 +13946,7 @@ var adminCases = []Case{
 		Request: Request{
 			Method: http.MethodGet,
 			Path: "/admin/realms/gloak-probe-og-upn/organizations/{{org_id}}" +
-				"/groups/{{group_2}}/children",
+				"/groups/{{group_id}}/children",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
@@ -13962,11 +13962,11 @@ var adminCases = []Case{
 			Retrieved: "2026-09-03",
 		},
 		Status:  Implemented,
-		Fixture: "org-group-updated",
+		Fixture: "org-group-attrs",
 		Request: Request{
 			Method: http.MethodGet,
-			Path: "/admin/realms/gloak-probe-og-upn/organizations/{{org_id}}" +
-				"/groups/{{group_2}}",
+			Path: "/admin/realms/gloak-probe-og-upa/organizations/{{org_id}}" +
+				"/groups/{{group_id}}",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
