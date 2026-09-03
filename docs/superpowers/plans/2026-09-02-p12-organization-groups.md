@@ -19,9 +19,14 @@ library that adds a header.
 
 ## 1. Which of the eleven behave like the realm group family's, and which do not
 
-This is the question the cut turns on, and the answer is **two of the eleven**.
-The rest differ, and they differ in both directions - one is narrower than its
-realm sibling, five are shaped differently, and three invert a rule outright.
+This is the question the cut turns on, and the table below is the answer: read
+the count off it rather than from this sentence. Most of the eleven differ, and
+they differ in both directions - some are shaped differently and some invert a
+rule outright.
+
+(This paragraph said "two of the eleven" while the table beside it said three.
+A count in prose beside the list it counts is a count that will drift, and this
+one drifted before the code was written.)
 
 The realm family's bodies, re-measured on the same container beside the
 organization's rather than read out of AGENTS.md:
