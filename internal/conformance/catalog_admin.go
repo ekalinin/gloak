@@ -14138,6 +14138,7 @@ var adminCases = []Case{
 				"/groups/{{group_1}}/role-mappings",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
+		Volatile:      []string{"realmMappings/*/containerId"},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 	},
 	{
@@ -14175,6 +14176,7 @@ var adminCases = []Case{
 				"/groups/{{group_1}}/role-mappings/realm",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
+		Volatile:      []string{"*/containerId"},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 	},
 	{
@@ -14197,6 +14199,7 @@ var adminCases = []Case{
 				"/groups/{{group_1}}/role-mappings/realm/available",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
+		Volatile:      []string{"*/id", "*/containerId"},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 		Unordered:     []string{"."},
 	},
@@ -14217,8 +14220,8 @@ var adminCases = []Case{
 				"/groups/{{group_1}}/role-mappings/realm/composite",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
+		Volatile:      []string{"*/containerId"},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 	},
 	{
 		// The write: 204, all five security headers, no Cache-Control.
@@ -14329,7 +14332,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 	},
 	{
 		ID: "admin/organizations/groups-role-mappings-client-composite",
@@ -14350,7 +14352,6 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Unordered:     []string{"."},
 	},
 	{
 		ID: "admin/organizations/groups-role-mappings-client-add",
