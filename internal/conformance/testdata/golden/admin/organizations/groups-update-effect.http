@@ -1,4 +1,4 @@
-# GET /admin/realms/gloak-probe-og-upn/organizations/{{org_id}}/groups/{{group_2}}/children
+# GET /admin/realms/gloak-probe-og-upn/organizations/{{org_id}}/groups/{{group_id}}/children
 HTTP/1.1 200 OK
 Cache-Control: no-cache
 Content-Length: {{volatile}}
@@ -9,4 +9,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-[{"id":"{{child_id}}","name":"gloak-probe-og-kid","path":"/gloak-probe-og-renamed/gloak-probe-og-kid","parentId":"{{group_2}}","subGroups":[]}]
+[{"id":"{{child_id}}","name":"gloak-probe-og-kid","path":"/gloak-probe-og-renamed/gloak-probe-og-kid","parentId":"{{group_id}}","subGroups":[]}]

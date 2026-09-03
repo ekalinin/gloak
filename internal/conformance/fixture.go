@@ -6153,6 +6153,19 @@ func organizationGroupRenameFixture(realm string) Fixture {
 		orgFixtureCapture(realm, base, map[string]string{
 			"search": "gloak-probe-og-aaa", "exact": "true",
 		}, "group_id"),
+		// The hidden root, off the group's own `parentId` - the only place it
+		// is on the wire, because nothing lists it. Without this capture the
+		// single read's golden holds the recording container's root uuid and
+		// no replay can reproduce it.
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/" + realm + base,
+				Query:   map[string]string{"search": "gloak-probe-og-aaa", "exact": "true"},
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"root_id": "0/parentId"},
+		},
 		// The child is created **before** the rename, so its own `path` was
 		// minted under the old name. That is what makes the cascade a claim
 		// rather than a coincidence: a handler storing `path` at create time
