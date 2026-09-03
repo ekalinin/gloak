@@ -420,6 +420,30 @@ because Gloak has no user profile endpoint. **Not fixed** - it is the users
 chapter's, no golden can reach the second row, and the member family reuses
 `userRepresentationOf` unchanged for exactly that reason.
 
+### 1.14 The mutation that survived
+
+Seventeen mutations, one each, every one confirming the **named** test fails.
+Sixteen were killed. The survivor:
+
+```
+sqlite Members()  ORDER BY u.username  ->  ORDER BY u.email
+```
+
+`TestConformance/organization_members_are_users,_ordered_by_username,_and_cascade_both_ways`
+passed with it. The subtest created three users named `gloak-probe-zzz`,
+`gloak-probe-aaa`, `gloak-probe-mmm` and gave each the e-mail
+`name + "@members.example.com"` - so the two orders were the same string doing
+two jobs, and no order was asserted at all. That is exactly the hole AGENTS.md
+records swallowing four survivors in three cuts.
+
+**Fixed on this branch.** The e-mails now sort the other way round
+(`zzz -> aaa@`, `aaa -> zzz@`), the subtest asserts the first row's e-mail as
+well as its username, and the mutation is killed on both drivers. The
+conformance golden `admin/organizations/members-list` had the separation from the
+start - `gloak-probe-zebra` carries `aaa@…` and `gloak-probe-aardvark` carries
+`zzz@…` - so the behaviour was pinned; what was missing was the store's own
+guard, which is the half a driver can get wrong on its own.
+
 ---
 
 ## 2. Entries for AGENTS.md's "Things that look like bugs and are not"

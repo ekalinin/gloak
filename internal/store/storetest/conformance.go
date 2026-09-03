@@ -3152,12 +3152,24 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 
 		// Created zzz, aaa, mmm so that insertion order and username order
-		// disagree, which is the only way the ORDER BY is asserted at all.
+		// disagree - and given e-mail addresses that sort the **other** way, so
+		// that a driver ordering by e-mail is caught too.
+		//
+		// The second half is not decoration. This subtest carried
+		// `name + "@members.example.com"` until a mutation swapping the ORDER BY
+		// to `u.email` survived it: one string was doing the work of two, which
+		// is the shape of hole AGENTS.md records swallowing four survivors in
+		// three cuts.
+		emails := map[string]string{
+			"gloak-probe-zzz": "aaa@members.example.com",
+			"gloak-probe-aaa": "zzz@members.example.com",
+			"gloak-probe-mmm": "mmm@members.example.com",
+		}
 		users := map[string]*model.User{}
 		for _, name := range []string{"gloak-probe-zzz", "gloak-probe-aaa", "gloak-probe-mmm"} {
 			u := &model.User{
 				ID: model.NewID(), RealmID: realm.ID, Username: name,
-				Email: name + "@members.example.com", Enabled: true,
+				Email: emails[name], Enabled: true,
 			}
 			if err := s.Users().Create(ctx, u); err != nil {
 				t.Fatalf("Users().Create %s: %v", name, err)
@@ -3182,7 +3194,9 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 		// The rows are whole users, not ids: the member representation is a
 		// user representation and a driver returning bare ids would compile.
-		if members[0].Email != "gloak-probe-aaa@members.example.com" {
+		// The e-mail asserted here is the one that sorts **last**, which is the
+		// other half of the ORDER BY assertion.
+		if members[0].Email != "zzz@members.example.com" {
 			t.Errorf("Members should carry the whole user: got %+v", members[0])
 		}
 
