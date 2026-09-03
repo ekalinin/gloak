@@ -1398,7 +1398,7 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   never set and `false` when sent `false`; `displayName` on the same body is
   stored and served as `""`. A plain `bool` collapses two states the wire
   distinguishes, six times over, and `omitempty` on the seventh loses a value
-  the server keeps. `organizationId` is a 400 for **any** value including `""`.
+  the server keeps. `organizationId` is a 400 for any value **on a realm that has no organizations**, which is where it was measured, and `master` is such a realm. On a realm that has one, a real organization id is a **201** and the broker is associated with it; `""` and an unknown id stay 400. The sentence was a claim about the API and the measurement was a claim about master.
 - **A `PUT` whose body carries no `alias` answers 204 and strands the row.** The
   alias is cleared, the listing serves the row with no `alias` key, it sorts
   first, and nothing can address it again. The rename guard is
@@ -1655,8 +1655,15 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `client_data`, absent cookies and an unknown client all lose to the decode;
   only an unknown realm beats it, answering `Realm does not exist`. So the decode
   is the container's judgement rather than the endpoint's.
-- **All nine theme pages that still serve a placeholder body carry a `tab_id`
-  minted by the request that renders them** - the logout confirmation, "You are
+- **Eight of the nine remaining theme pages carry a `tab_id` their own fixture
+  minted, and exactly one carries a value only the case's own request mints.**
+  This bullet said all nine were beyond a golden's reach until 2026-09-02, and
+  that confused **where a value comes from** with **what a fixture can hold**:
+  `ReplaceCaptured` reaches whatever a fixture step captured, and on eight of the
+  nine the tab is minted by the fixture's own `GET /auth`. What is genuinely out
+  of reach is a value minted by the **case's** request, and the
+  `KC_AUTH_SESSION_HASH`, which travels only inside a `Set-Cookie` whose whole
+  header line is what `CaptureHeader` yields. The pages carry a `tab_id` - the logout confirmation, "You are
   logged out", "Page has expired", the consent page and the five required-action
   pages. Six carry a `session_code`, five the `KC_AUTH_SESSION_HASH`, and three a
   generated secret (a TOTP secret, a WebAuthn challenge, twelve recovery codes).
@@ -1710,6 +1717,61 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   bootstrap administrator's password grant answered
   `{"error":"invalid_grant","error_description":"Account is not fully set up"}`
   and the container had to be replaced. Measure this one in a created realm.
+
+- **A member is a user, and `POST .../members` takes its id as raw bytes.** No
+  membership id exists anywhere on the wire. The body is not JSON: trim
+  whitespace, then strip at most **one** `"` from each end. Pinned over twelve
+  bodies, on which `json.Unmarshal` is right on one and wrong on four. So the
+  member family is one table of pairs rather than two.
+- **The member listing is the only listing in this API that pages when asked for
+  nothing** - twelve rows answer ten, and `max=100` answers twelve, so `max`
+  defaults to **10** where every other listing defaults to everything.
+- **`search` has a third rule and the member listing is where it is.**
+  `search=lm-03` matches on the member listing and answers `[]` on `/users` -
+  same realm, same needle, infix against prefix - and the invitation listing
+  inverts the user listing the other way. Three rules over five listings now,
+  and the family decides which.
+- **Nineteen routes need a role from each of two families, and no single role
+  opens any of them** - five different conjunctions. Four invitation routes take
+  `manage-organizations` alone, which adds two more reads to this API's very
+  short list of reads that refuse the view role.
+- **An organization's identity providers are a column on the provider**, not a
+  join table: associating one changes what the **realm's** own identity provider
+  read answers in another chapter. A cut that treats the association as private
+  to organizations will serve a stale broker.
+- **A group under an organization is invisible to the group family, and its
+  parent is the organization's id.** `GET /organizations/{org}/groups/{parentId}`
+  reads the hidden root group: its `name` and its `path` are the **organization's
+  own id**. `GET /groups` and `GET /groups/count` do not see it or its children,
+  and `GET /groups/{parentId}` answers `Cannot manage organization related group
+  via non Organization API.`
+- **An absent `Content-Type` is accepted on this API's JSON writes, and a probe
+  that says otherwise is measuring itself.** Python's `urllib` adds
+  `application/x-www-form-urlencoded` to any POST carrying data that does not
+  already name one, so a "no Content-Type" probe written with it measures the 415
+  of a header **it set**. At socket level, `POST .../members`,
+  `POST .../identity-providers`, `POST /organizations` and
+  `PUT /organizations/{id}` all accept an absent one, answer 415 to `text/plain`,
+  `application/x-www-form-urlencoded` and `application/xml`, and answer
+  `500 unknown_error` to a **present but empty** one - three answers where a
+  reader would expect two. Before writing down an absence, dump the bytes that
+  actually left.
+
+- **A page rendered from inside the authentication flow carries a
+  `checkAuthSession` block and one rendered from outside does not**, measured on
+  thirteen responses, and its argument is the `KC_AUTH_SESSION_HASH` cookie byte
+  for byte. The block also moves the `/resources/` count: eight occurrences with
+  it, seven without.
+- **A mask over an HTML body is a mask over the value and never over its frame.**
+  `VolatileHTMLQuery` covers a query parameter's value wherever a URL carrying it
+  appears in a page and leaves the path, the other parameters, their values and
+  their order compared; `VolatileHTMLCall` covers a JS call's one quoted argument
+  and leaves the import above it, the indentation, the parentheses and the
+  semicolon compared. Masking the whole call argument instead of the value inside
+  it would be the whole-`Location` retreat this file already records.
+  `TestNoHTMLMaskVariesNothing` serves each case twice and **refuses a mask whose
+  covered bytes do not move**, which is what stops the declaration becoming a
+  place to hide a diff.
 
 ## Boundaries
 
