@@ -259,3 +259,41 @@ func TestThemePagesCarryTheResourceVersionSevenTimes(t *testing.T) {
 		}
 	}
 }
+
+// TestTheAuthCheckBlockIsTheEighthResourceSegment is the other half of the count
+// above, and it is one test rather than two because the two numbers are one
+// measurement: **every page measured with a checkAuthSession block carries eight
+// /resources/ segments and every page without one carries seven**, on thirteen
+// responses taken on one container on 2026-09-03.
+//
+// The block's bytes are pinned whole rather than by a substring, because what a
+// golden compares is the indentation and the blank line as much as the call. It
+// is served at eight spaces where the two <script>s around it are at four.
+func TestTheAuthCheckBlockIsTheEighthResourceSegment(t *testing.T) {
+	const hash = "doFZB1zRPGOwAFS6vATrE1oVD2qWWY6KFelQy8dCVcCt8s6bcYz+IRa0N1Yd/L8w"
+	segment := "/resources/" + httpx.ThemeResourceVersion() + "/"
+
+	without := recordThemeError(httpx.ThemeChrome{Realm: "master"}, "Client not found.")
+	if strings.Contains(without, "checkAuthSession") {
+		t.Error("a page with no authentication session carries the block")
+	}
+
+	with := recordThemeError(httpx.ThemeChrome{Realm: "master", AuthSessionHash: hash},
+		"Client not found.")
+	if got := strings.Count(with, segment); got != 8 {
+		t.Errorf("a page with the block carries the resource version %d times, want 8", got)
+	}
+	want := `    </script>
+        <script type="module">
+            import { checkAuthSession } from "` + segment + `login/keycloak.v2/js/authChecker.js";
+
+            checkAuthSession(
+                "` + hash + `"
+            );
+        </script>
+    <script>
+`
+	if !strings.Contains(with, want) {
+		t.Errorf("the block is not the measured bytes.\nwant to find:\n%s\ngot:\n%s", want, with)
+	}
+}

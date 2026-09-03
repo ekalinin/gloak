@@ -24,6 +24,15 @@ package conformance
 // substitutions together and ahead of every Case-declared mask, which is the
 // property that does matter.
 //
+// ReplaceHTMLValues is the first Case-declared mask and runs immediately after
+// the two unconditional passes, which keeps the property above: everything
+// unconditional first, then everything the catalogue declares. It has to run
+// **before** ReplaceCaptured could be undone by anything and after it rather
+// than before, because a value a fixture already captured comes out
+// `{{captured}}` and an HTML mask sitting on one is then visibly covering a
+// value that does not move - which is what TestNoHTMLMaskVariesNothing reports.
+// Running it before ReplaceCaptured would hide exactly that.
+//
 // It lives in its own file, called from both record_test.go and
 // conformance_test.go, because a pass added to one side and not the other is
 // a divergence no test can see: both sides would simply agree on the wrong
@@ -32,7 +41,11 @@ func normalisePasses(body []byte, base string, c Case, vars map[string]string) (
 	body = ReplaceCaptured(body, vars)
 	body = ReplaceIssuer(body, base)
 	body = ReplaceThemeResource(body)
-	body, err := Normalize(body, c.Volatile)
+	body, err := ReplaceHTMLValues(body, c)
+	if err != nil {
+		return nil, err
+	}
+	body, err = Normalize(body, c.Volatile)
 	if err != nil {
 		return nil, err
 	}

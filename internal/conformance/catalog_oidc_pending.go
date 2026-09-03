@@ -314,11 +314,15 @@ var oidcPending = []Case{
 
 	// --- The login theme's pages ---
 	//
-	// Three of these four are compared contracts as of 2026-09-01: Gloak serves
-	// the keycloak.v2 markup and ReplaceThemeResource makes the one
-	// installation-wide value in it - the /resources/<version>/ segment -
-	// comparable on both sides. prompt-create is the exception and its Reason
-	// says why. What each of them pins is in its own comment.
+	// **All four are compared contracts as of 2026-09-03**, and it took two
+	// mechanisms rather than one. ReplaceThemeResource made three of them
+	// comparable in 2026-09-01 by rewriting the one installation-wide value the
+	// markup carries, the /resources/<version>/ segment. prompt-create needed
+	// the other one: it is rendered from inside the authentication flow, so it
+	// carries a tab_id and an authentication session hash that its **own**
+	// request mints, and Case.VolatileHTMLQuery and Case.VolatileHTMLCall are
+	// what mask those two without giving up the markup around them. What each
+	// case pins is in its own comment.
 	//
 	// That segment is **minted with the database**, not per container start,
 	// which is what every comment in this file said until it was restarted six
@@ -366,14 +370,7 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: prompt=create on a realm with registration off",
 			Retrieved: "2026-08-30",
 		},
-		Status: Pending,
-		Reason: "the keycloak.v2 error page, and the one of the eight that stays parked. " +
-			"Its markup is served now; what is not comparable is two values **inside the body** - the tab_id in " +
-			"the restart URL and the authentication session's hash inside checkAuthSession(...) - both minted by " +
-			"this request. Measured 2026-09-01 by issuing all eight requests twice against one container: the " +
-			"other seven are byte-identical on two requests and this one is not, and client_data is not one of " +
-			"the movers. Masking a value at a named position inside HTML is F38's mechanism, declined on four " +
-			"written grounds; this is the second case that wants it and one more than F38 closed on",
+		Status:  Implemented,
 		Fixture: "browser-client",
 		Request: Request{
 			Method: http.MethodGet,
@@ -391,7 +388,85 @@ var oidcPending = []Case{
 		// which is the pair that refutes AGENTS.md's "GET /auth's page family
 		// sends none at all". The two are recorded side by side so that the
 		// difference is a diff away rather than a memory.
-		AssertHeaders: []string{"Content-Type", "Cache-Control", "Content-Language"},
+		//
+		// **Set-Cookie is asserted and masked**, which the other three pages in
+		// this block need neither of: this is the one that opens an
+		// authentication session, so it sets AUTH_SESSION_ID and
+		// KC_AUTH_SESSION_HASH where max-age-invalid beside it sets none at all
+		// and says so with AssertAbsentHeaders. Both values are minted per
+		// request, so the golden churned on every re-record until this was
+		// declared - the disease F23 and F69 are about, arriving on this case
+		// the moment it stopped being parked and started being re-recorded.
+		AssertHeaders:   []string{"Content-Type", "Cache-Control", "Content-Language", "Set-Cookie"},
+		VolatileHeaders: []string{"Set-Cookie"},
+		// The two values this page mints for itself, and the reason it was
+		// parked from 2026-08-30 until 2026-09-03. Measured by issuing the
+		// request twice against one container: these two move and nothing else
+		// does - client_data is a base64 of the request's own parameters and
+		// came back identical both times.
+		//
+		// Masking them is not the same as giving up the page. The tab_id goes
+		// out of one query and the restart URL's realm, path, client_id,
+		// client_data, skip_logout and their order all stay compared; the
+		// checkAuthSession argument goes and its import, its indentation, its
+		// parentheses and the block's place between the two <script>s beside it
+		// all stay compared. That is 5389 bytes of markup asserted to hide 75.
+		VolatileHTMLQuery: []string{"tab_id"},
+		VolatileHTMLCall:  []string{"checkAuthSession"},
+	},
+	{
+		// The first of F146's nine placeholder pages to become a contract, and
+		// the second consumer of F38's mechanism.
+		//
+		// **Its tab_id is not masked and that is the finding**, not an
+		// oversight. F146 recorded that all nine pages carry a tab_id minted by
+		// the request that renders them and concluded that no golden could hold
+		// any of them. The tab here is minted by the fixture's own GET /auth, so
+		// the fixture captures it and ReplaceCaptured has always reached it -
+		// the golden asserts *which tab* rather than giving the value up. What
+		// genuinely could not be masked is the KC_AUTH_SESSION_HASH, which
+		// arrives only inside a Set-Cookie and which nothing here can capture
+		// out of one.
+		//
+		// What this case pins beyond the mask: **three URLs to two endpoints
+		// that agree on nothing**. The head's restart URL ends
+		// skip_logout=true, the body's loginRestartLink is the same path ending
+		// skip_logout=false, and its loginContinueLink is absolute and puts
+		// execution first. And the <SCRIPT> history.replaceState block, which
+		// is emitted exactly when the request's session code was still
+		// spendable and whose URL is rebuilt rather than echoed - this request
+		// sends execution=gloak-probe-not-an-execution and the page answers
+		// with the realm's real one.
+		ID: "oidc/authorization/session-code-wrong-execution",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authentication: a valid session code with a wrong execution",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "browser-page-expired",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/login-actions/authenticate",
+			Query: map[string]string{
+				"session_code": "{{session_code}}",
+				"execution":    "gloak-probe-not-an-execution",
+				"client_id":    "gloak-probe-browser",
+				"tab_id":       "{{tab_id}}",
+				"client_data":  browserClientData,
+			},
+		},
+		// A **200**, which is the thing about this branch most likely to be
+		// implemented as a 400: the request named an execution that does not
+		// exist and the answer is a page, not a rejection. It sets no cookies,
+		// where the login page beside it sets three.
+		AssertHeaders: []string{
+			"Content-Type", "Cache-Control", "Content-Language",
+			"Content-Security-Policy", "Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
+		},
+		AssertAbsentHeaders: []string{"Set-Cookie"},
+		VolatileHTMLCall:    []string{"checkAuthSession"},
 	},
 	{
 		ID: "oidc/authorization/max-age-invalid",
@@ -495,7 +570,13 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-20",
 		},
 		Status: Pending,
-		Reason: "the harness cannot mask a per-request value inside an HTML body",
+		Reason: "Gloak answers this request the 400 page: form_post is in responseModes and not in " +
+			"servableResponseModes, so the transport does not exist. That is F51. The harness's own " +
+			"blocker is gone - this Reason said 'the harness cannot mask a per-request value inside an " +
+			"HTML body' until 2026-09-03, and the tab_id in the history.replaceState URL is exactly " +
+			"Case.VolatileHTMLQuery's shape now. What is still missing on the mask side is an INPUT " +
+			"VALUE frame for the form's own code and session_state, which no case in the catalogue " +
+			"consumes yet",
 		// Measured 2026-08-29 and recorded in the observed spec: form_post
 		// answers **200** with an auto-submitting form, not a redirect, and
 		// its Content-Type is text/html with no charset where the login page's

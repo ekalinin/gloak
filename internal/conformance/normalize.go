@@ -120,6 +120,205 @@ func ReplaceThemeResource(raw []byte) []byte {
 		[]byte("/resources/"+themeResourcePlaceholder+"/"))
 }
 
+// The HTML body masks, and why they are not any of the four passes above.
+//
+// `Case.Volatile` and its three siblings address a **JSON document**: Normalize
+// hands the body to editPaths, which builds a json.NewDecoder over it. A theme
+// page is not JSON, so with any path declared editPaths returns a decode error
+// rather than a mask; there is no path to write, not merely an awkward one.
+// ReplaceIssuer and ReplaceThemeResource are unconditional and have to stay so -
+// the value each of them rewrites is a property of whichever server answered
+// rather than of the case that asked, which ReplaceThemeResource's doc comment
+// states as the reason it has no catalogue surface. A tab_id is the opposite: it
+// is a property of the request, and an unconditional pass would rewrite it in
+// bodies where it is the contract.
+//
+// And ReplaceCaptured reaches exactly what a **fixture step** captured. That
+// boundary is narrower than "minted by the case's own request", and the two come
+// apart: on a page reached by walking the flow the tab_id in the markup is the
+// tab the fixture's own GET /auth minted, so CaptureForm's `action` already
+// holds it. What no capture reaches is a value the case's **own** request mints
+// (prompt-create is that request), a session_code a page rotates while rendering
+// itself, and the KC_AUTH_SESSION_HASH, which arrives only inside a Set-Cookie
+// whose whole header line is what CaptureHeader yields.
+//
+// So the mask is per case, per named value, and it covers the **value** and
+// never its frame. Masking startSessionPolling's whole argument instead of the
+// tab_id inside it would be F46's retreat one level down: it would give up the
+// realm, the endpoint, client_id, client_data and skip_logout to hide eleven
+// characters. See Case.VolatileHTMLQuery and Case.VolatileHTMLCall.
+
+// htmlValueTerminators are the bytes a query parameter's value can end at inside
+// a body. `&` covers both the raw separator and the first byte of `&amp;`, which
+// is how the same URL is spelled inside an href where it is spelled raw inside a
+// JavaScript string - both spellings appear on one measured page.
+const htmlValueTerminators = "&\"'<> \t\r\n"
+
+// htmlMatch is the byte range one HTML mask covers.
+type htmlMatch struct{ start, end int }
+
+// htmlQueryMatches is every place a URL in raw carries `name=<value>`.
+//
+// The occurrence has to be a whole parameter rather than the tail of a longer
+// one, so the byte in front of it is required to be `?`, `&`, or the `;` closing
+// an `&amp;`. Without that, masking `tab_id` would also fire on a parameter
+// named `client_tab_id`, and a mask that reaches further than it says is the
+// failure this file's other doc comments keep naming.
+func htmlQueryMatches(raw []byte, name string) []htmlMatch {
+	needle := []byte(name + "=")
+	var out []htmlMatch
+	for i := 0; ; {
+		j := bytes.Index(raw[i:], needle)
+		if j < 0 {
+			return out
+		}
+		at := i + j
+		i = at + len(needle)
+		if !openedAsQueryKey(raw, at) {
+			continue
+		}
+		end := i + bytes.IndexAny(raw[i:], htmlValueTerminators)
+		if end < i {
+			end = len(raw)
+		}
+		out = append(out, htmlMatch{start: i, end: end})
+	}
+}
+
+// openedAsQueryKey reports whether the parameter starting at i is a whole query
+// key rather than the suffix of a longer one.
+func openedAsQueryKey(raw []byte, i int) bool {
+	if i == 0 {
+		return false
+	}
+	if raw[i-1] == '?' || raw[i-1] == '&' {
+		return true
+	}
+	return raw[i-1] == ';' && i >= len("&amp;") && string(raw[i-len("&amp;"):i]) == "&amp;"
+}
+
+// htmlCallMatches is every place raw calls `name(` with one quoted argument, and
+// it is where the KC_AUTH_SESSION_HASH inside checkAuthSession(...) is reached.
+//
+// It refuses rather than masking when the first thing after the parenthesis is
+// not a quoted string, for MaskURLTail's reason: a mask that quietly covers
+// something of another shape is a measurement thrown away while looking like one
+// that was checked.
+func htmlCallMatches(raw []byte, name string) ([]htmlMatch, error) {
+	needle := []byte(name + "(")
+	var out []htmlMatch
+	for i := 0; ; {
+		j := bytes.Index(raw[i:], needle)
+		if j < 0 {
+			return out, nil
+		}
+		at := i + j
+		i = at + len(needle)
+		// A call whose name merely ends in this one is a different call.
+		if at > 0 && isIdentifierByte(raw[at-1]) {
+			continue
+		}
+		rest := raw[i:]
+		open := bytes.IndexFunc(rest, func(r rune) bool {
+			return r != ' ' && r != '\t' && r != '\r' && r != '\n'
+		})
+		if open < 0 || rest[open] != '"' {
+			return nil, fmt.Errorf("%s(...) is not called with a quoted string", name)
+		}
+		start := i + open + 1
+		shut := bytes.IndexByte(raw[start:], '"')
+		if shut < 0 {
+			return nil, fmt.Errorf("%s(...)'s argument is not terminated", name)
+		}
+		out = append(out, htmlMatch{start: start, end: start + shut})
+		i = start + shut
+	}
+}
+
+func isIdentifierByte(b byte) bool {
+	return b == '_' || b == '$' ||
+		(b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
+}
+
+// HTMLMaskedValues returns the raw bytes every HTML mask on c covers, keyed by
+// the name that declared it.
+//
+// It exists so a guard can ask what a mask actually covers, and it is the same
+// two finders the masker splices with rather than a second pair written in a
+// test - MaskedValues' doc comment has the argument, and it is the same one: two
+// resolvers drift, and the one that drifts is the one nobody runs against a real
+// body.
+//
+// An empty slice for a name is a fact about the mask: it addressed nothing.
+func HTMLMaskedValues(raw []byte, c Case) (map[string][][]byte, error) {
+	out := map[string][][]byte{}
+	collect := func(name string, ms []htmlMatch) {
+		values := make([][]byte, 0, len(ms))
+		for _, m := range ms {
+			values = append(values, raw[m.start:m.end])
+		}
+		out[name] = values
+	}
+	for _, name := range c.VolatileHTMLQuery {
+		collect(name, htmlQueryMatches(raw, name))
+	}
+	for _, name := range c.VolatileHTMLCall {
+		ms, err := htmlCallMatches(raw, name)
+		if err != nil {
+			return nil, fmt.Errorf("conformance: html call mask %q: %w", name, err)
+		}
+		collect(name, ms)
+	}
+	return out, nil
+}
+
+// ReplaceHTMLValues masks every value c's HTML masks name, writing `{{name}}`
+// where the value was and leaving every other byte of the page alone.
+//
+// **A declared name that the body does not carry is an error**, on both sides,
+// the way SortUnordered errors on a path that is not an array. A mask that masks
+// nothing while claiming to have checked is worse than a loud failure, and here
+// it is worse still: the golden would hold the placeholder, the served body
+// would hold the raw value, and the diff would blame the page rather than the
+// declaration. So would an **empty** value, which is why one is refused too.
+//
+// It is called from normalisePasses and from nowhere else, which is what makes
+// it survive `make record`: a pass on the replay side alone lets the two sides
+// agree on the wrong bytes, and passes.go's doc comment is where that is written
+// down.
+func ReplaceHTMLValues(raw []byte, c Case) ([]byte, error) {
+	var edits []edit
+	add := func(name string, ms []htmlMatch) error {
+		if len(ms) == 0 {
+			return fmt.Errorf("conformance: html mask %q covers nothing in this body - "+
+				"drop the mask, or name the value the page actually carries", name)
+		}
+		for _, m := range ms {
+			if m.end <= m.start {
+				return fmt.Errorf("conformance: html mask %q covers an empty value - "+
+					"a mask over no bytes asserts nothing and hides that it does", name)
+			}
+			edits = append(edits, edit{start: m.start, end: m.end, repl: []byte("{{" + name + "}}")})
+		}
+		return nil
+	}
+	for _, name := range c.VolatileHTMLQuery {
+		if err := add(name, htmlQueryMatches(raw, name)); err != nil {
+			return nil, err
+		}
+	}
+	for _, name := range c.VolatileHTMLCall {
+		ms, err := htmlCallMatches(raw, name)
+		if err != nil {
+			return nil, fmt.Errorf("conformance: html call mask %q: %w", name, err)
+		}
+		if err := add(name, ms); err != nil {
+			return nil, err
+		}
+	}
+	return applyEdits(raw, edits), nil
+}
+
 // Normalize replaces the values at the given paths with placeholders that
 // carry the original JSON type, so a string turning into a number is still
 // caught.

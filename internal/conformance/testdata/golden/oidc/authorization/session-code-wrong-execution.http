@@ -1,13 +1,11 @@
-# GET /realms/master/protocol/openid-connect/auth
-HTTP/1.1 400 Bad Request
+# GET /realms/master/login-actions/authenticate
+HTTP/1.1 200 OK
 Cache-Control: no-store, must-revalidate, max-age=0
 Content-Language: en
 Content-Length: {{volatile}}
 Content-Security-Policy: frame-src 'self'; frame-ancestors 'self'; object-src 'none';
 Content-Type: text/html;charset=utf-8
 Referrer-Policy: no-referrer
-Set-Cookie: {{volatile}}
-Set-Cookie: {{volatile}}
 Strict-Transport-Security: max-age=31536000; includeSubDomains
 X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
@@ -93,9 +91,9 @@ X-Robots-Tag: none
       // Workaround for https://bugzilla.mozilla.org/show_bug.cgi?id=1404468
       const isFirefox = true;
     </script>
-</head>
+<SCRIPT> if (typeof history.replaceState === 'function') {  history.replaceState({}, "some title", "{{issuer}}/realms/master/login-actions/authenticate?execution={{execution}}&client_id=gloak-probe-browser&tab_id={{tab_id}}&client_data=eyJydSI6Imh0dHA6Ly9sb2NhbGhvc3Q6OTk5OS9jYWxsYmFjayIsInJ0IjoiY29kZSIsInN0IjoieHl6MTIzIn0"); }</SCRIPT></head>
 
-<body id="keycloak-bg" class="" data-page-id="login-error">
+<body id="keycloak-bg" class="" data-page-id="login-login-page-expired">
 <div class="pf-v5-c-login">
   <div class="pf-v5-c-login__container">
     <header id="kc-header" class="pf-v5-c-login__header">
@@ -104,15 +102,16 @@ X-Robots-Tag: none
     </header>
     <main class="pf-v5-c-login__main">
       <div class="pf-v5-c-login__main-header">
-        <h1 class="pf-v5-c-title pf-m-3xl" id="kc-page-title">        We are sorry...
+        <h1 class="pf-v5-c-title pf-m-3xl" id="kc-page-title">        Page has expired
 </h1>
       </div>
       <div class="pf-v5-c-login__main-body">
 
 
-        <div id="kc-error-message">
-            <p class="instruction">Registration not allowed</p>
-        </div>
+        <p id="instruction1" class="instruction">
+            To restart the login process <a id="loginRestartLink" href="/realms/master/login-actions/restart?client_id=gloak-probe-browser&amp;tab_id={{tab_id}}&amp;client_data=eyJydSI6Imh0dHA6Ly9sb2NhbGhvc3Q6OTk5OS9jYWxsYmFjayIsInJ0IjoiY29kZSIsInN0IjoieHl6MTIzIn0&amp;skip_logout=false">Click here</a> .<br/>
+            To continue the login process <a id="loginContinueLink" href="{{issuer}}/realms/master/login-actions/authenticate?execution={{execution}}&amp;client_id=gloak-probe-browser&amp;tab_id={{tab_id}}&amp;client_data=eyJydSI6Imh0dHA6Ly9sb2NhbGhvc3Q6OTk5OS9jYWxsYmFjayIsInJ0IjoiY29kZSIsInN0IjoieHl6MTIzIn0">Click here</a> .
+        </p>
 
 
 

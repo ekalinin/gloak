@@ -97,8 +97,27 @@ func TestCatalogIsWellFormed(t *testing.T) {
 					c.ID, name)
 			}
 		}
+
+		// An HTML mask's name becomes the placeholder `{{name}}` in the golden,
+		// so it has to be something a reader can tell from markup. The alphabet
+		// is wider than capturedValue's `[a-z_0-9]` on purpose: a query key is
+		// snake_case and a JavaScript function is camelCase, and the name has to
+		// be the one the page actually spells.
+		//
+		// A name a fixture also captures is deliberately **not** refused here.
+		// ReplaceCaptured runs first, so the mask would then be covering
+		// `{{captured}}` - identical on two servings - which is exactly what
+		// TestNoHTMLMaskVariesNothing reports, with the better diagnosis.
+		for _, name := range slices.Concat(c.VolatileHTMLQuery, c.VolatileHTMLCall) {
+			if !htmlMaskName.MatchString(name) {
+				t.Errorf("%q: HTML mask %q is not a placeholder-safe name", c.ID, name)
+			}
+		}
 	}
 }
+
+// htmlMaskName is what may go inside an HTML mask's {{...}}.
+var htmlMaskName = regexp.MustCompile(`^[A-Za-z_0-9]+$`)
 
 // TestRecordedCaseRules pins the two rules that make Recorded different from
 // Pending: the golden is mandatory, and the case must say why it is not
@@ -1455,11 +1474,19 @@ func TestInertMaskGuardSeesEveryKind(t *testing.T) {
 	// caught the fifth field. It did not. A count catches somebody deleting an
 	// entry from bodyMasks, which the four branches above already catch, so it
 	// was the wrong assertion for the thing it was written for.
+	//
+	// An entry here says "not one of *these* four", which is not the same as
+	// "not a mask". The two HTML fields are body masks and are watched by
+	// TestNoHTMLMaskVariesNothing instead, because inertMasks reads a value
+	// through MaskedValues and MaskedValues walks a JSON document.
 	notABodyMask := map[string]string{
 		"AssertHeaders":       "asserts headers, and masks nothing",
 		"AssertAbsentHeaders": "asserts headers are absent, and masks nothing",
 		"VolatileHeaders":     "a header mask: the golden holds {{volatile}} and nothing can be asked of it",
 		"VolatileTailHeaders": "a header mask, and MaskURLTail already refuses a tail it cannot mask",
+		"VolatileHTMLQuery": "an HTML body mask, watched by TestNoHTMLMaskVariesNothing: " +
+			"it addresses no JSON path, so MaskedValues cannot read what it covers",
+		"VolatileHTMLCall": "the same, one frame along",
 	}
 	watched := map[string]bool{}
 	for _, m := range bodyMasks {
@@ -1481,5 +1508,163 @@ func TestInertMaskGuardSeesEveryKind(t *testing.T) {
 		if _, ok := caseType.FieldByName(name); !ok {
 			t.Errorf("notABodyMask excuses Case.%s, which no longer exists", name)
 		}
+	}
+}
+
+// htmlMaskedOnce serves c and returns the bytes each of its HTML masks covers,
+// read **before** the mask runs.
+//
+// The two passes applied first are normalisePasses' unconditional ones, in its
+// order, and stopping there is the whole point: ReplaceCaptured is what turns a
+// value a fixture already holds into `{{captured}}`, so a mask sitting on one
+// comes back identical on two servings and is reported. Applying the HTML mask
+// first would be reading the mask's own output.
+func htmlMaskedOnce(t *testing.T, c Case) (map[string][][]byte, error) {
+	t.Helper()
+	got, vars, err := serve(t, c)
+	if err != nil {
+		return nil, fmt.Errorf("serve: %w", err)
+	}
+	body := ReplaceIssuer(ReplaceCaptured(got.Body.Bytes(), vars), testIssuer)
+	return HTMLMaskedValues(body, c)
+}
+
+// htmlMasksThatDidNotMove is every HTML mask whose values are byte-identical
+// across two servings of one case.
+//
+// **This is the check TestNoMaskIsInertOnItsGolden says it cannot make**, and
+// the reason it can be made here is that this asks the *served* body rather than
+// the committed golden: the golden holds `{{tab_id}}` and can no longer say what
+// was there, and a second serving can.
+//
+// It is not AGENTS.md's forbidden inference. That rule reads "no mask in this
+// repository may be removed on the strength of two agreeing recordings", and it
+// is about Keycloak's answer being stable across **container starts** - two
+// recordings of `defaultClientScopes` agreeing said nothing, because the list
+// that moves moves between clients created minutes apart. This is one process
+// answering **the same request twice**, and a Case mask is by this project's own
+// rule for a value that is per *request*: ReplaceThemeResource's doc comment is
+// where the split is written down, and a value that belongs to the installation
+// rather than to the request gets an unconditional pass instead. So a mask whose
+// value does not move between two of one handler's answers is either covering
+// something that is not per-request, or is sitting on a value a fixture already
+// captured - and the failure message names both.
+func htmlMasksThatDidNotMove(first, second map[string][][]byte) []maskFinding {
+	names := make([]string, 0, len(first))
+	for name := range first {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var out []maskFinding
+	for _, name := range names {
+		a, b := first[name], second[name]
+		if len(a) == 0 || len(a) != len(b) {
+			continue // absence is ReplaceHTMLValues' own loud failure
+		}
+		moved := false
+		for i := range a {
+			if !bytes.Equal(a[i], b[i]) {
+				moved = true
+				break
+			}
+		}
+		if !moved {
+			out = append(out, maskFinding{"VolatileHTML", name, fmt.Sprintf(
+				"covers %d value(s) and two servings of this case produced the identical bytes (%q)",
+				len(a), a[0])})
+		}
+	}
+	return out
+}
+
+// htmlMasksLeftInPlace is every finding of the guard below that is still in the
+// catalogue, keyed "<case ID> VolatileHTML <name>", with the reason.
+//
+// It is empty, and that is a statement rather than an oversight: no HTML mask in
+// this repository covers a value that does not move. It exists because the other
+// three ratchets have one and because the day a legitimate exception appears -
+// a value Gloak pins per process and Keycloak does not - the way to say so is a
+// comment in the case and an entry here, not a loosened guard.
+var htmlMasksLeftInPlace = map[string]string{}
+
+// TestNoHTMLMaskVariesNothing is F38's answer to the ground it closed on: **a
+// mask per case and per position is a per-case declaration, and this project has
+// a ratchet against masks that change nothing.**
+//
+// There are two ways an HTML mask can change nothing and they are caught in two
+// places. A mask naming something the body does not carry is refused by
+// ReplaceHTMLValues itself, loudly, on both sides. A mask naming something the
+// body *does* carry and that never varies is this test: it serves the case
+// twice and requires the covered bytes to differ.
+//
+// The headline mutation for this cut is written against it - point a mask at
+// something that never varies, `client_id` on a theme page, and this is what
+// refuses it.
+func TestNoHTMLMaskVariesNothing(t *testing.T) {
+	matched := map[string]bool{}
+	visited := map[string]bool{}
+	declared := 0
+	for _, c := range Catalog {
+		if c.Status != Implemented || len(c.VolatileHTMLQuery)+len(c.VolatileHTMLCall) == 0 {
+			continue
+		}
+		declared++
+		t.Run(c.ID, func(t *testing.T) {
+			visited[c.ID] = true
+			first, err := htmlMaskedOnce(t, c)
+			if err != nil {
+				t.Fatalf("%v", err)
+			}
+			second, err := htmlMaskedOnce(t, c)
+			if err != nil {
+				t.Fatalf("%v", err)
+			}
+			for _, m := range htmlMasksThatDidNotMove(first, second) {
+				if _, listed := htmlMasksLeftInPlace[m.key(c.ID)]; listed {
+					matched[m.key(c.ID)] = true
+					continue
+				}
+				t.Errorf("%s - drop the mask and let the golden assert the value, or, "+
+					"if it belongs to the installation rather than to the request, "+
+					"give it an unconditional pass beside ReplaceThemeResource", m)
+			}
+		})
+	}
+	// A ratchet over a catalogue holding nothing to ratchet reads as though
+	// something is still being checked, which is the argument
+	// TestNoPendingGoldenIsCompared's own guard makes and the reason this one
+	// has the same shape. The day the last HTML mask goes, this test goes with
+	// it rather than being left green and empty.
+	if declared == 0 {
+		t.Fatal("no Implemented case declares an HTML mask, so this test has stopped checking " +
+			"anything; F38's mechanism has no consumer and both it and this guard should go")
+	}
+	reportStale(t, "htmlMasksLeftInPlace", "moves between two servings now",
+		htmlMasksLeftInPlace, matched, visited)
+}
+
+// TestHTMLMaskVariesGuardCanFail proves the guard above can fail, which matters
+// more here than for the three older ratchets: those are green with findings
+// they excuse, and this one is green with nothing excused at all - the same
+// colour a guard watching nothing comes in.
+func TestHTMLMaskVariesGuardCanFail(t *testing.T) {
+	stable := map[string][][]byte{"client_id": {[]byte("gloak-probe-browser")}}
+	if got := htmlMasksThatDidNotMove(stable, stable); len(got) != 1 {
+		t.Errorf("a mask over a value that never moves went unreported: %v", got)
+	}
+
+	moved := map[string][][]byte{"tab_id": {[]byte("oNX0Amj1DZE")}}
+	again := map[string][][]byte{"tab_id": {[]byte("8HmA_o2hC5Y")}}
+	if got := htmlMasksThatDidNotMove(moved, again); len(got) != 0 {
+		t.Errorf("a mask over a value that moves was reported anyway: %v", got)
+	}
+
+	// One moving occurrence earns the mask for all of them, which is the rule
+	// inertMasks already follows for a wildcard over fifteen client scopes.
+	part := map[string][][]byte{"tab_id": {[]byte("A"), []byte("oNX0Amj1DZE")}}
+	partAgain := map[string][][]byte{"tab_id": {[]byte("A"), []byte("8HmA_o2hC5Y")}}
+	if got := htmlMasksThatDidNotMove(part, partAgain); len(got) != 0 {
+		t.Errorf("a mask with one moving occurrence was reported: %v", got)
 	}
 }
