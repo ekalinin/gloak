@@ -2135,9 +2135,30 @@ unrecordable for the same reason.
 
 ## F38: a golden cannot mask a per-request value inside an HTML body (REOPENED 2026-09-02)
 
-**Reopened, and the condition this entry set for reopening is met several times
-over.** It said: "a second case that wants the same mechanism". There are
-**eleven**.
+**Reopened 2026-09-02, built 2026-09-02, and the count that reopened it was
+wrong.** It said: "a second case that wants the same mechanism". The reopening
+claimed eleven. **There are two**, and the mechanism was built and its two
+consumers promoted, which is what keeps this from being machinery for one case -
+but only just, and the entry should say so.
+
+The eleven came from F146's claim that all nine remaining theme pages carry a
+`tab_id` beyond a golden's reach. That confused **where a value comes from** with
+**what a fixture can hold**: `ReplaceCaptured` reaches whatever a fixture step
+captured, and on eight of the nine the tab is minted by the fixture's own
+`GET /auth`. Only a value minted by the **case's own** request, and the
+`KC_AUTH_SESSION_HASH` inside a `Set-Cookie`, are actually out of reach.
+
+Built: `Case.VolatileHTMLQuery` and `Case.VolatileHTMLCall`, both run from
+`normalisePasses` so the recorder and the verifier share one pass. Promoted:
+`oidc/authorization/prompt-create` and a new
+`oidc/authorization/session-code-wrong-execution`. **`parkedGoldens` is empty**,
+so `TestNoPendingGoldenIsCompared` was deleted rather than loosened, as its own
+comment and F72 required.
+
+The three grounds that still held are each answered where the answer can fail:
+an inert mask is refused by `TestNoHTMLMaskVariesNothing`, the pass has one call
+site so it cannot exist on one side only, and the unit is the value rather than
+its frame.
 
 `oidc/authorization/prompt-create` was the second. The other nine are F146's
 theme pages, measured 2026-09-02: every one carries a `tab_id` minted by its own
@@ -3784,7 +3805,22 @@ The end state is identical; the redirect chain is shorter. Measured, and left as
 measured rather than padded to match, because inventing a redirect to make a
 count agree is the shape of divergence this project exists to avoid.
 
-## F120: the organization group family is blocked on a hidden root group
+## F120: the organization group family is blocked on a hidden root group (unblocked 2026-09-02)
+
+**The hidden root group is readable and this entry's blocker is gone.**
+`GET /organizations/{org}/groups/{parentId}` reads it: its `name` and its `path`
+are the **organization's own id**. `GET /groups` and `GET /groups/count` do not
+see it or its children, and `GET /groups/{parentId}` answers
+`400 {"errorMessage":"Cannot manage organization related group via non
+Organization API."}` - a new refusal, and the reason the realm group family
+cannot be reused for these rows.
+
+The eleven group operations and the eleven role-mapping operations that go with
+them are still unbuilt; what has changed is that they are now ordinary work
+rather than blocked work.
+
+What the finding said, kept for the record:
+
 
 A created organization's group carries a `parentId` naming an id the
 representation never shows. Eleven operations under
@@ -4232,16 +4268,41 @@ decides where the RPT is built.
 Both are in the catalogue as `Recorded` with a `Reason`, and §1.9 of
 `docs/superpowers/handover/p10-authz-policies.md` measures them in full.
 
-## F149: `requireJSONBody` accepts an absent `Content-Type` and Keycloak answers 415
+## F149: the 415 claim was the probe measuring itself (closed 2026-09-02, false)
 
-Measured on **nine endpoints across four chapters**. Gloak accepts a write whose
-request carries no `Content-Type`; Keycloak answers `415`.
+**This entry was wrong, and the way it was wrong is worth more than the entry.**
 
-It is one line and its blast radius is the whole API, which is exactly why it is
-filed rather than fixed in a family cut: **no golden covers it**, so the change
-would be unmeasured everywhere it lands. It wants its own branch, a sweep that
-establishes which writes answer 415 and which do not, and goldens for the ones
-that move.
+It said Gloak accepts a write whose request carries no `Content-Type` where
+Keycloak answers 415, measured on nine endpoints across four chapters. Measured
+again at socket level on 2026-09-02:
+
+```
+POST .../members, POST .../identity-providers,
+POST /organizations, PUT /organizations/{id}    an absent Content-Type is ACCEPTED
+                                                415 for text/plain, x-www-form-urlencoded, application/xml
+                                                a present but EMPTY one is a third answer: 500 unknown_error
+```
+
+**The original probe was written with Python's `urllib`, which adds
+`application/x-www-form-urlencoded` to any POST carrying data that does not
+already name one.** So the "no Content-Type" probe measured the 415 of a header
+it had set itself. The tool answered a question about the tool.
+
+Two things follow, and the second is the reusable one.
+
+The wrong rule reached a handler and a test before it was caught, and **what
+caught it was `make record`** - the recorder builds its requests by hand, so the
+golden disagreed with the code. That is the third time recording has refuted a
+hand probe, after the `KC_RESTART` cookie and `briefRepresentation`.
+
+**A probe that a library builds is a probe whose headers you have not read.**
+Before writing down an absence - a missing header, an omitted parameter, an empty
+body - dump the bytes that actually left. `curl -v`, a socket, or the recorder.
+An absence is the one thing a convenience layer will quietly fill in for you.
+
+The two invite endpoints cannot answer 415 at all: without the form
+`Content-Type` the body is not read, and they answer about the field they are
+then missing.
 
 ## F150: `javamap.SizedKeyOrder` is wrong on one measured key set
 
@@ -4280,3 +4341,36 @@ Gloak has a branch that lets it through. Recorded as a divergence rather than
 changed, because the measurement was taken while closing F142 and a token-scope
 change is not a realm-values cut's to make. It is also why F142's site 17 is
 closed by a package test and carries no golden.
+
+## F153: two organization member routes overlap on one path and `ServeMux` panics
+
+`GET /organizations/members/{member-id}/organizations` and
+`GET /organizations/{orgID}/members/{memberID}` overlap on exactly one path, and
+Go's `ServeMux` panics at registration. Registering the overlap as a third
+pattern does not help - **checked against Go 1.26.6 rather than inferred from the
+documentation**.
+
+It is the nineteenth operation of the tag and the only one unbuilt. Both escape
+routes cost more than the route: a wildcard dispatcher would swallow F120's group
+paths and get the unmatched-path 404's header set wrong.
+
+Keycloak's answer to the overlap, the route's guard and its handler body are all
+recorded beside where it would be registered, so whoever takes it starts from
+measurements.
+
+## F154: `briefRepresentation` on the user listing drops `attributes` too, and which ones depends on the realm
+
+Measured while building the organization member listing, which shares the
+representation. `briefRepresentation=true` on `GET /users` drops `attributes` as
+well as the fields this project already records - and **which** attributes are
+present in the full form depends on the realm's **user profile**, so the shape is
+not a constant of the endpoint.
+
+No golden can reach it: the user profile would have to be edited first, and that
+is a chapter this project does not serve. Filed rather than measured further,
+because a claim about a shape that a realm configuration decides needs the
+configuration in the fixture before it means anything.
+
+This is the second `briefRepresentation` finding after the identity provider
+listing's six-key shape, and both say the same thing: **it is a different
+representation, not the full one minus a field.**

@@ -225,6 +225,7 @@ operations is allocated below; none is left unassigned.
 | P10 first cut | The resource server and the twelve refusals | P5 | `admin/authz-resource-server` 0->5, and **three chapters closed outright**: `admin/roles` 28/28, `admin/roles-by-id` 10/10, `admin/groups` 11/11. The gate is the **client's** `authorizationServicesEnabled` and it runs **before** authorization - a fourth gate shape in four families | 17 ops |
 | **P11** | SAML 2.0 | P4 | descriptors, SSO and SLO bindings | not in OpenAPI |
 | **P12** | Organizations and Workflows, **first cut done 2026-08-31** | P4 | Organizations 36, Workflows 9. **The row's 45 is 56**: eleven more operations live under `/organizations/{org-id}/groups/.../role-mappings` and are counted under `Role Mapper` and `Client Role Mappings`, so building this unlocks them. 47 operations live under `/organizations` in all | 56 ops |
+| P12 second cut | Members, invitations and linked brokers, **done 2026-09-02** | P12 first cut | `admin/organizations` 6->24. A member **is a user**, addressed by the user id, and `POST .../members` takes it as **raw bytes rather than JSON**. Nineteen routes, five different role conjunctions, and no single role opens any of them. **F120 is unblocked** - the hidden root group's name and path are the organization's own id - leaving the eleven group operations as ordinary work. One operation is left, F153: it overlaps a sibling on one path and `ServeMux` panics | 18 ops |
 | P12 first cut | The organization as a resource | P4 | `admin/organizations` 0->6. `ORGANIZATION` is **not** a preview feature: what is off is the realm's `organizationsEnabled`, and the refusal sits **after** the caller's roles - the opposite of `client-types` | 6 ops |
 | **P13** | Themes, i18n, account console, admin console, **first cut done 2026-08-30, markup cut done 2026-09-01** | P5 | - . The markup cut served the login theme's error and info pages and took seven parked goldens to contracts (+7). Nine theme pages still serve the placeholder body (F146) and the login-actions family is F109 | not in OpenAPI |
 | P13 pages cut | The login-action page and the nine measured, **done 2026-09-02** | P13 markup cut | no operations of its own; `oidc/authorization` 18->23 and the denominator +5. **F109 closed**: twelve call sites answer three sentences and four are not that page. The nine remaining pages are measured and none is served - each carries a `tab_id` minted by its own request, so F146 is blocked on **F38, reopened** | 0 ops |
@@ -235,9 +236,9 @@ operations is allocated below; none is left unassigned.
 
 Denominator today: **413 Admin API operations plus 122 protocol behaviours, 535
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **380 of 540**
-after the theme pages and P9's provider catalogue, and **P2, P4 and P5 are
-complete** - as are the `Roles`,
+surface is not counted and which the report says so about. Served: **400 of 541**
+after the organization member family, and **P2, P4 and P5 are complete** - as are
+the `Roles`,
 `Roles (by ID)` and `Groups` chapters, which P10 closed by measuring what their
 last operations refuse - up from 8 before P1, 25 after it, 89 after the second cut's
 roles half, 100 after that cut was complete, 109 after the group tree and 113
@@ -264,7 +265,32 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-02 (twelfth fold).** `make conformance` reports **380 of 540**.
+**Updated 2026-09-02 (thirteenth fold).** `make conformance` reports **400 of
+541**. `admin/organizations` went 6 of 36 to 24 of 36 in one cut, the largest
+single move since P2, and F38 was built after being closed for four days.
+
+**The round's lesson is that a probe built by a convenience library is a probe
+whose headers nobody has read.** F149 said this API answers 415 to a write
+carrying no `Content-Type`, measured across four chapters. It is false: Python's
+`urllib` adds `application/x-www-form-urlencoded` to any POST carrying data, so
+the probe measured the 415 of a header **it set itself**. The wrong rule reached
+a handler and a test before anything caught it, and what caught it was
+`make record` - the recorder builds its requests by hand, so the golden disagreed
+with the code. Third time recording has refuted a hand probe.
+
+The rule that follows is narrow and cheap: **before writing down an absence - a
+missing header, an omitted parameter, an empty body - dump the bytes that
+actually left.** An absence is the one thing a convenience layer fills in for
+you.
+
+**Two counts this project wrote were wrong in opposite directions.** F38 was
+reopened on the strength of eleven cases wanting its mechanism; there are two,
+because F146 confused where a value comes from with what a fixture can hold. And
+the organization member family was briefed at eight operations where the
+description enumerates ten. The first inflated a justification, the second
+undersized a cut, and neither number came from counting the list it named.
+
+**Earlier on 2026-09-02 (twelfth fold).** `make conformance` reports **380 of 540**.
 The denominator moved for the first time in a week: five `oidc/authorization`
 cases were added for behaviours nobody had catalogued, which is how a protocol
 chapter grows. F109 closed, `admin/identity-providers` reached 16 of 17.
