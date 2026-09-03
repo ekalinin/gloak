@@ -388,7 +388,17 @@ var oidcPending = []Case{
 		// which is the pair that refutes AGENTS.md's "GET /auth's page family
 		// sends none at all". The two are recorded side by side so that the
 		// difference is a diff away rather than a memory.
-		AssertHeaders: []string{"Content-Type", "Cache-Control", "Content-Language"},
+		//
+		// **Set-Cookie is asserted and masked**, which the other three pages in
+		// this block need neither of: this is the one that opens an
+		// authentication session, so it sets AUTH_SESSION_ID and
+		// KC_AUTH_SESSION_HASH where max-age-invalid beside it sets none at all
+		// and says so with AssertAbsentHeaders. Both values are minted per
+		// request, so the golden churned on every re-record until this was
+		// declared - the disease F23 and F69 are about, arriving on this case
+		// the moment it stopped being parked and started being re-recorded.
+		AssertHeaders:   []string{"Content-Type", "Cache-Control", "Content-Language", "Set-Cookie"},
+		VolatileHeaders: []string{"Set-Cookie"},
 		// The two values this page mints for itself, and the reason it was
 		// parked from 2026-08-30 until 2026-09-03. Measured by issuing the
 		// request twice against one container: these two move and nothing else

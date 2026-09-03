@@ -6,8 +6,8 @@ Content-Length: {{volatile}}
 Content-Security-Policy: frame-src 'self'; frame-ancestors 'self'; object-src 'none';
 Content-Type: text/html;charset=utf-8
 Referrer-Policy: no-referrer
-Set-Cookie: AUTH_SESSION_ID=Ri0yakpFZTN5MmNkVk5aYXRfMENjMFktLl91UU1xeHVJVVNzLVIwX1phVS1DUXBzMTNTTkxmc3RHNlN2OXZlSXgtcHBfc0ZXaUxBczdUazhkbTVlbUZJVmppZFo1R2t1XzljZjdzZ2pxTzhfZGl3;Version=1;Path=/realms/master/;Secure;HttpOnly;SameSite=None
-Set-Cookie: KC_AUTH_SESSION_HASH="S+0Ts8H5xE3Q4N8Jr+HC1DMMKipQuBfeUMtOunL1f6U/UBhyj3/KtgsZRQmrvoMQ";Version=1;Path=/realms/master/;Max-Age=60;Secure;SameSite=None
+Set-Cookie: {{volatile}}
+Set-Cookie: {{volatile}}
 Strict-Transport-Security: max-age=31536000; includeSubDomains
 X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
