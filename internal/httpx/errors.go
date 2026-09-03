@@ -454,27 +454,32 @@ func WriteThemeDeviceCodePage(w http.ResponseWriter, action string, c ThemeChrom
 // this project cannot yet reproduce.
 //
 // Keycloak serves 3616 to 12443 bytes of keycloak.v2 Freemarker output here,
-// carrying a /resources/<version>/ cache-busting segment. Nine pages are still
-// this, and on 2026-09-02 every one of them was measured rather than left
-// unread. The reason each is still a placeholder is no longer "nobody has read
-// it off a server":
+// carrying a /resources/<version>/ cache-busting segment. Nine pages were still
+// this on 2026-09-02, when every one of them was measured rather than left
+// unread, and **eight are** - "Page has expired" is served now. The reason each
+// of the rest is still a placeholder is no longer "nobody has read it off a
+// server":
 //
 //	page                  data-page-id                            what stops it
-//	logout confirmation   login-logout-confirm                    a tab_id and a session_code
-//	You are logged out    login-info                              a tab_id
-//	Page has expired      login-login-page-expired                a tab_id, the session hash
-//	consent               login-login-oauth-grant                 a tab_id, a session code
-//	UPDATE_PASSWORD       login-login-update-password             a tab_id, a session code
-//	UPDATE_PROFILE        login-login-update-profile              a tab_id, a session code
+//	logout confirmation   login-logout-confirm                    no authentication session at /logout
+//	You are logged out    login-info                              the same
+//	consent               login-login-oauth-grant                 5486 bytes of unwritten markup
+//	UPDATE_PASSWORD       login-login-update-password             10887 bytes of it
+//	UPDATE_PROFILE        login-login-update-profile              7301 bytes of it
 //	CONFIGURE_TOTP        login-login-config-totp                 and a minted TOTP secret
 //	Passkey               login-webauthn-register                 and a WebAuthn challenge
 //	recovery codes        login-login-recovery-authn-code-config  and twelve generated codes
 //
-// **All nine carry a tab_id minted by the request that renders them**, and the
-// first two carry it on a path where Gloak has no authentication session to
-// take it from. So the placeholder is now waiting on state rather than on a
-// measurement, and none of the nine can carry a conformance golden whatever
-// else changes - see F146 and F38.
+// **What stopped them is not what F146 said stopped them.** That entry read
+// "every one carries a tab_id minted by the request that renders it, so no
+// golden can hold any of them". The first half is true of where the value comes
+// from and the second does not follow: on every page reached by walking the flow
+// the tab_id is the tab the *fixture's* own GET /auth minted, so ReplaceCaptured
+// has always reached it. What genuinely could not be masked was the
+// KC_AUTH_SESSION_HASH - it arrives inside a Set-Cookie, and nothing here can
+// capture a cookie's value - and that is F38, built on 2026-09-03. So the five
+// pages above with markup in the "what stops it" column are stopped by the
+// markup and by nothing else.
 //
 // The title is a parameter because the measured pages are not all the error
 // page: `/logout` serves "Logging out" and "You are logged out" with 200s
@@ -545,6 +550,21 @@ func WriteThemeErrorPage(w http.ResponseWriter, status int, cacheControl string,
 func WriteThemeInfoPage(w http.ResponseWriter, status int, cacheControl string,
 	c ThemeChrome, title, instruction string) {
 	writeThemeHTML(w, status, cacheControl, themeInfoPageBody(c, title, instruction))
+}
+
+// WriteThemeExpiredPage writes the login-login-page-expired template, the fourth
+// real body this package serves and the first of F146's nine pages to stop being
+// a placeholder.
+//
+// The two URLs are the page's own two links and neither is the head's restart
+// URL, which the chrome already carries: they disagree on skip_logout, on the
+// base and on the parameter order, so the caller resolves all three. The
+// continue URL is also what goes inside the history.replaceState block, which is
+// emitted on this cell and measured absent on the one this project does not
+// serve - see themeReplaceState.
+func WriteThemeExpiredPage(w http.ResponseWriter, cacheControl string,
+	c ThemeChrome, restartURL, continueURL string) {
+	writeThemeHTML(w, http.StatusOK, cacheControl, themeExpiredPageBody(c, restartURL, continueURL))
 }
 
 // WriteThemePage writes the envelope every page the login theme renders shares,

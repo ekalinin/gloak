@@ -303,6 +303,43 @@ type Case struct {
 	// response's scope is the measured example. Their words are sorted
 	// before comparison, so membership stays asserted while order does not.
 	UnorderedWords []string
+
+	// VolatileHTMLQuery names query parameters whose value is minted per
+	// request, wherever a URL carrying one appears in an **HTML body**. Each is
+	// replaced with {{<name>}} at every occurrence, on both sides.
+	//
+	// It is F38, and the four masks above cannot do it: they address a JSON
+	// document. See the block above ReplaceHTMLValues for why ReplaceCaptured,
+	// ReplaceIssuer and ReplaceThemeResource cannot either.
+	//
+	// **The value is masked and the URL around it is not**, which is
+	// VolatileTailHeaders' bargain one level down. A page declaring `tab_id`
+	// still asserts the restart URL's realm and path, the client_id, the
+	// client_data, the skip_logout, the order of all four, and that a non-empty
+	// tab_id is present at exactly the positions the golden holds. On "Page has
+	// expired" that is four positions in three different URLs from one
+	// declaration, which is the answer to F38's ground that this would be a mask
+	// per position.
+	//
+	// A name the body does not carry is an error rather than a silent no-op, and
+	// a name whose values never move is TestNoHTMLMaskVariesNothing's failure.
+	VolatileHTMLQuery []string
+
+	// VolatileHTMLCall names JavaScript functions in an HTML body whose single
+	// quoted argument is minted per request. The argument is replaced with
+	// {{<name>}}; everything else - the import above it, the indentation, the
+	// parentheses, the semicolon - stays compared.
+	//
+	// `checkAuthSession` is the measured one and the reason this exists: its
+	// argument is the KC_AUTH_SESSION_HASH cookie's value, which reaches the
+	// browser only inside a Set-Cookie and so cannot be captured by a fixture
+	// step. It is refused rather than masked when the call's first argument is
+	// not a quoted string, for MaskURLTail's reason.
+	//
+	// `startSessionPolling` is deliberately **not** how the tab_id is masked,
+	// although it is the same shape: its argument is the whole restart URL, and
+	// masking it would assert that a URL is present and nothing else.
+	VolatileHTMLCall []string
 }
 
 // buildRequest turns a Case's Request into an *http.Request aimed at base.

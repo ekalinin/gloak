@@ -36,7 +36,8 @@ type Step struct {
 	CaptureHeader map[string]string
 	// CaptureForm reads values out of the first HTML form in the step's
 	// response. It maps a variable name to what to take: "action" for the
-	// form's action URL, or "input:<name>" for one input's value.
+	// form's action URL, "input:<name>" for one input's value, or
+	// "query:<name>" for one query parameter of that action.
 	//
 	// The login page is why it exists. Its form's action carries five query
 	// parameters - session_code, execution, client_id, tab_id and client_data -
@@ -54,6 +55,15 @@ type Step struct {
 	// form's three inputs are username, password and a value-less hidden
 	// credentialId. It is here so the next flow with a valued hidden field does
 	// not need a second mechanism.
+	//
+	// "query:" exists because "action" is all-or-nothing and one case needs the
+	// action's parameters **with one of them changed**: "Page has expired" is
+	// what a valid session_code with a wrong execution answers, and no request
+	// built from the action whole can send a wrong execution - a repeated key is
+	// measured not to be an error here, and the first value wins. So the four
+	// per-request parameters are captured one at a time and the case spells the
+	// query itself. It also pins the realm's real execution id, which the page
+	// echoes back and which no two installations agree on.
 	CaptureForm map[string]string
 	// CaptureQuery maps a variable name to a query parameter of the Location
 	// header. CaptureHeader cannot do this: it yields a URL's last path
@@ -347,6 +357,10 @@ var Fixtures = map[string]Fixture{
 	"browser-login-plain": browserFormFixture("gloak-probe-browser", "", pkcePlainQuery),
 	"browser-login-frag":  browserFormFixture("gloak-probe-browser", "", map[string]string{"response_mode": "fragment"}),
 	"browser-login-form":  browserFormFixture("gloak-probe-browser", "", map[string]string{"response_mode": "form_post"}),
+	// The login page again, with its action's four per-request parameters taken
+	// one at a time rather than whole, so the case can send a wrong execution
+	// and get "Page has expired". See browserExpiredPageFixture.
+	"browser-page-expired": browserExpiredPageFixture("gloak-probe-browser"),
 	// A login that has already completed, so the case's own request is the
 	// **replay** of its credential POST.
 	//
@@ -2603,6 +2617,45 @@ func browserFormFixture(clientID, attributes string, authQuery map[string]string
 	}
 }
 
+// browserExpiredPageFixture stops at the login page like browserFormFixture and
+// takes its action apart, because the case that follows has to send the action's
+// parameters **with one of them wrong**.
+//
+// "Page has expired" is what a valid session_code with a wrong execution
+// answers, measured 2026-09-03 as a five-cell grid, and no request built from
+// {{login_action}} can express it: a repeated parameter is not an error on this
+// endpoint - the first value wins, and a second `execution` would be ignored.
+//
+// **execution is captured although the case deliberately sends a different
+// one.** The page echoes the realm's *real* execution id back inside its
+// continue link and inside the history.replaceState block, and that id is a
+// per-realm UUID on Keycloak and a digest of the realm id in Gloak. Capturing it
+// is what lets ReplaceCaptured rewrite both sides to {{execution}}; without it
+// the two could never agree on that URL. client_data is **not** captured, and
+// that is the other half of the same judgement: it is a base64 of the
+// authorization request's own parameters, identical on both sides, so a literal
+// keeps it asserted where a capture would mask it away.
+func browserExpiredPageFixture(clientID string) Fixture {
+	step := authorizeStep(clientID, nil)
+	step.CaptureForm = map[string]string{
+		"session_code": "query:session_code",
+		"tab_id":       "query:tab_id",
+		"execution":    "query:execution",
+	}
+	return Fixture{State: "bootstrap", Steps: append(browserClientSteps(clientID, ""), step)}
+}
+
+// browserClientData is what the login flow encodes for the authorization request
+// browserRedirectURI and authorizeStep make: base64url of
+// {"ru":"http://localhost:9999/callback","rt":"code","st":"xyz123"}, unpadded.
+//
+// It is a literal rather than a capture on purpose. The value is a function of
+// the request and nothing else, both servers produce it byte for byte - the
+// seven theme goldens carry it already - so writing it here keeps it compared
+// where a fixture capture would rewrite it to {{client_data}} and give up the
+// one parameter on that URL that is neither pinned nor volatile.
+const browserClientData = "eyJydSI6Imh0dHA6Ly9sb2NhbGhvc3Q6OTk5OS9jYWxsYmFjayIsInJ0IjoiY29kZSIsInN0IjoieHl6MTIzIn0"
+
 // browserCodeFixture runs the whole login, so the case's own request is the
 // code exchange at the token endpoint.
 //
@@ -3531,9 +3584,20 @@ func captureFromForm(body []byte, what, base string) (string, error) {
 		// would send the next step to the wrong server.
 		return strings.TrimPrefix(action, base), nil
 	}
+	if param, ok := strings.CutPrefix(what, "query:"); ok {
+		u, err := url.Parse(action)
+		if err != nil {
+			return "", fmt.Errorf("the form's action is not a URL: %w", err)
+		}
+		values, ok := u.Query()[param]
+		if !ok || len(values) == 0 || values[0] == "" {
+			return "", fmt.Errorf("the form's action carries no %q", param)
+		}
+		return values[0], nil
+	}
 	name, ok := strings.CutPrefix(what, "input:")
 	if !ok {
-		return "", fmt.Errorf("%q is not \"action\" or \"input:<name>\"", what)
+		return "", fmt.Errorf("%q is not \"action\", \"input:<name>\" or \"query:<name>\"", what)
 	}
 	value, ok := inputs[name]
 	if !ok {

@@ -115,7 +115,7 @@ func (h *handler) loginActions(w http.ResponseWriter, r *http.Request) {
 	// code and before the credentials: a bad execution with a wrong password
 	// answers about the execution.
 	if q.Get("execution") != executionID(realm.ID) {
-		httpx.WriteThemePage(w, http.StatusOK, loginActionCacheControl, httpx.ExpiredPageTitle)
+		h.serveExpiredPage(w, realm, client, sess, tab)
 		return
 	}
 
@@ -543,6 +543,49 @@ func (h *handler) loginActionURL(realm *model.Realm, tab *authTab, sessionCode s
 		"tab_id=" + url.QueryEscape(tab.TabID),
 		"client_data=" + url.QueryEscape(data),
 	}, "&"), nil
+}
+
+// serveExpiredPage is the login-login-page-expired template, and it is the
+// first of F146's nine placeholder pages this project serves.
+//
+// **Three URLs to two endpoints on one page, and no two of them agree.** The
+// head's restart URL comes from the chrome and ends `skip_logout=true`; the
+// body's loginRestartLink is the same path with `skip_logout=false`; the body's
+// loginContinueLink is **absolute** and puts `execution` first. Measured
+// 2026-09-03, and building any of the three from either of the others is the
+// tidy-up that breaks it.
+//
+// The continue link's `execution` is the realm's real one even when the request
+// sent a wrong one, which is the same measurement: the URL is rebuilt rather
+// than echoed. `execution=BOGUS` gets the real id back.
+//
+// **The cell reached here is the one that carries the history.replaceState
+// block**, because getting this far means resolveAuthTab accepted the request's
+// session code. The other cell - a code the tab no longer recognises - is a
+// branch Gloak answers with a restart 302 where Keycloak answers this page
+// without the block, which is a disagreement filed on 2026-09-02 and not
+// touched here.
+func (h *handler) serveExpiredPage(w http.ResponseWriter, realm *model.Realm,
+	client *model.Client, sess *authSession, tab *authTab) {
+	data, err := tab.clientData()
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	restart := "/realms/" + realm.Name + "/login-actions/restart?" + strings.Join([]string{
+		"client_id=" + url.QueryEscape(tab.ClientID),
+		"tab_id=" + url.QueryEscape(tab.TabID),
+		"client_data=" + url.QueryEscape(data),
+		"skip_logout=false",
+	}, "&")
+	cont := h.realmBase(realm.Name) + "/login-actions/authenticate?" + strings.Join([]string{
+		"execution=" + url.QueryEscape(executionID(realm.ID)),
+		"client_id=" + url.QueryEscape(tab.ClientID),
+		"tab_id=" + url.QueryEscape(tab.TabID),
+		"client_data=" + url.QueryEscape(data),
+	}, "&")
+	httpx.WriteThemeExpiredPage(w, loginActionCacheControl,
+		h.flowChrome(realm, client, sess, tab), restart, cont)
 }
 
 // writeLoginActionErrorPage is this family's 400, and it is the theme's

@@ -228,7 +228,14 @@ func themeAuthCheck(hash string) string {
 // The four substitutions are the resource version (seven times here, and an
 // eighth inside themeAuthCheck when a page has an authentication session), the
 // <title>'s display name, and the restart URL's realm and parameters.
-func themeHead(c ThemeChrome) string {
+//
+// extra is markup one page appends inside the head, and it is emitted on the
+// same line as </head> because that is where the one page carrying it puts it:
+// "Page has expired" ends its head `…</SCRIPT></head>` with no newline between
+// them. It is a parameter rather than a ThemeChrome field because it is decided
+// by the request - whether the session code was still spendable - where every
+// field on ThemeChrome is decided by the realm or the client.
+func themeHead(c ThemeChrome, extra string) string {
 	v := themeResourceVersion
 	return `<!DOCTYPE html>
 <html class="login-pf" lang="en">
@@ -303,7 +310,7 @@ func themeHead(c ThemeChrome) string {
       // Workaround for https://bugzilla.mozilla.org/show_bug.cgi?id=1404468
       const isFirefox = true;
     </script>
-</head>
+` + extra + `</head>
 
 `
 }
@@ -339,8 +346,8 @@ func themeFeedback(message string) string {
 // feedback is themeFeedback's block or nothing, main is the block inside
 // pf-v5-c-login__main-body, and footer is the one line the device page puts
 // inside the inner footer and the other two leave empty.
-func themeShell(c ThemeChrome, pageID, heading, feedback, main, footer string) string {
-	return themeHead(c) + `<body id="keycloak-bg" class="" data-page-id="` + pageID + `">
+func themeShell(c ThemeChrome, headExtra, pageID, heading, feedback, main, footer string) string {
+	return themeHead(c, headExtra) + `<body id="keycloak-bg" class="" data-page-id="` + pageID + `">
 <div class="pf-v5-c-login">
   <div class="pf-v5-c-login__container">
     <header id="kc-header" class="pf-v5-c-login__header">
@@ -387,7 +394,7 @@ func themeErrorPageBody(c ThemeChrome, instruction string) string {
 			html.EscapeString(c.BackToApplication) + `">« Back to Application</a></p>`
 	}
 	main += "\n" + `        </div>`
-	return themeShell(c, "login-error", "        "+html.EscapeString(ThemeErrorTitle), "", main, "")
+	return themeShell(c, "", "login-error", "        "+html.EscapeString(ThemeErrorTitle), "", main, "")
 }
 
 // themeInfoPageBody is the login-info template, which the device status page is
@@ -399,7 +406,61 @@ func themeInfoPageBody(c ThemeChrome, title, instruction string) string {
 	main := `    <div id="kc-info-message">
         <p class="instruction">` + html.EscapeString(instruction) + `</p>
     </div>`
-	return themeShell(c, "login-info", "            "+html.EscapeString(title), "", main, "")
+	return themeShell(c, "", "login-info", "            "+html.EscapeString(title), "", main, "")
+}
+
+// themeReplaceState is the block "Page has expired" carries when the request's
+// session code was still spendable, and nothing when it was not.
+//
+// Measured 2026-09-03 as a five-cell grid on one container: a valid session_code
+// with a wrong execution and a valid one with no execution both get it; the same
+// request repeated, an absent code and a bogus one all get the page without it.
+// So the rule is the code, not the execution.
+//
+// **The URL inside it is rebuilt rather than echoed** - a request sending
+// execution=BOGUS gets the realm's real execution id back - and it is the same
+// string the page's own loginContinueLink carries, which is why one caller
+// supplies both. The separators are raw here and &amp; in the link, because this
+// one is a JavaScript string literal and that one is an href.
+//
+// The uppercase tag, the two spaces after the brace and the "some title" are
+// Keycloak's own.
+//
+// **Only the cell that carries it is served.** The page's other cell is reached
+// through the required-action landing, whose continue link would have to name an
+// execution nothing has measured, so that site keeps the placeholder rather than
+// getting a guessed URL. See internal/oidc's consent.go.
+func themeReplaceState(url string) string {
+	return `<SCRIPT> if (typeof history.replaceState === 'function') {  ` +
+		`history.replaceState({}, "some title", "` + url + `"); }</SCRIPT>`
+}
+
+// themeExpiredPageBody is the login-login-page-expired template, the fourth body
+// this file serves and the first with two links in it.
+//
+// Measured 2026-09-03. Its heading is indented eight spaces, like the error
+// page's and unlike the info page's, and its instruction is one <p id=
+// "instruction1"> holding both links with a <br/> between them. The trailing
+// " ." after each </a> is Keycloak's, space included.
+//
+// The two hrefs are not the same shape and neither is the head's:
+//
+//	the head's restart URL   relative,   …&client_data=…&skip_logout=true
+//	loginRestartLink         relative,   …&client_data=…&skip_logout=false
+//	loginContinueLink        absolute,   ?execution=…&client_id=…&tab_id=…&client_data=…
+//
+// One page, three URLs to the same two endpoints, disagreeing on the base, on
+// skip_logout and on the parameter order. Building any of them from either of
+// the others is the tidy-up that breaks it.
+func themeExpiredPageBody(c ThemeChrome, restartURL, continueURL string) string {
+	main := `        <p id="instruction1" class="instruction">
+            To restart the login process <a id="loginRestartLink" href="` +
+		html.EscapeString(restartURL) + `">Click here</a> .<br/>
+            To continue the login process <a id="loginContinueLink" href="` +
+		html.EscapeString(continueURL) + `">Click here</a> .
+        </p>`
+	return themeShell(c, themeReplaceState(continueURL), "login-login-page-expired",
+		"        "+html.EscapeString(ExpiredPageTitle), "", main, "")
 }
 
 // deviceVerifyTemplateComment is the FTL comment keycloak.v2 emits three times
@@ -460,7 +521,7 @@ func themeDeviceVerifyBody(c ThemeChrome, action, message string) string {
 	// The footer's comment is followed by a blank line, which is the newline
 	// here plus the one the shell writes. The pages with an empty footer get
 	// that blank line and nothing else, so the two shapes are one template.
-	return themeShell(c, "login-login-oauth2-device-verify-user-code", heading,
+	return themeShell(c, "", "login-login-oauth2-device-verify-user-code", heading,
 		themeFeedback(message), main, deviceVerifyTemplateComment+"\n")
 }
 

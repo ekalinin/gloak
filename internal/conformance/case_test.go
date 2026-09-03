@@ -27,40 +27,14 @@ func TestGoldenIsAssertedFollowsTheStatus(t *testing.T) {
 	}
 }
 
-// TestNoPendingGoldenIsCompared is the same claim read off the catalogue rather
-// than off three constructed cases, so that a status added later without a rule
-// here fails rather than passing by default.
-//
-// **One** Pending case carries a golden today, counted from parkedGoldens
-// rather than from this sentence, which has been wrong on the number three
-// times. It has to come back false, or `make record` is rewriting a file no
-// test reads. Which one, and why it is kept, is parkedGoldens.
-func TestNoPendingGoldenIsCompared(t *testing.T) {
-	parked := 0
-	for _, c := range Catalog {
-		if c.Status != Pending {
-			continue
-		}
-		if GoldenIsAsserted(c) {
-			t.Errorf("%q: Pending, so nothing compares its golden, "+
-				"but the recorder would rewrite it", c.ID)
-		}
-		if _, err := os.Stat(GoldenPath(goldenDir, c.ID)); err == nil {
-			parked++
-		}
-	}
-	// A rule about parked goldens over a catalogue holding none asserts
-	// nothing. The pollution guard fails the same way for the same reason.
-	//
-	// **This is one promotion away from firing**, since 2026-09-01 left exactly
-	// one parked golden. When the last one goes, delete this test rather than
-	// loosening it: a guard that has nothing to guard is worse than none,
-	// because it reads as though something is still being checked.
-	if parked == 0 {
-		t.Fatal("no Pending case has a golden, so this test has stopped checking anything; " +
-			"either they were all promoted or the goldens were removed, and both are worth reading about")
-	}
-}
+// TestNoPendingGoldenIsCompared was here until 2026-09-03 and is deliberately
+// gone rather than loosened. It counted the Pending cases carrying a golden and
+// failed when the count reached zero, saying "delete this test rather than
+// loosening it: a guard that has nothing to guard is worse than none". The count
+// reached zero when oidc/authorization/prompt-create was promoted, which is what
+// F38's HTML mask was built for, so the instruction was followed. What it also
+// asserted - that GoldenIsAsserted is false for Pending - is
+// TestGoldenIsAssertedFollowsTheStatus's, unchanged and one line above.
 
 // parkedGoldens is F72's answer: a Pending case **may** carry a golden, and it
 // has to say so here.
@@ -92,14 +66,13 @@ func TestNoPendingGoldenIsCompared(t *testing.T) {
 // third of the problem and reverted. That was true of prompt-create and false
 // of the other seven, where the segment was the whole of it. A judgement made
 // from one example and generalised.
-var parkedGoldens = map[string]string{
-	"oidc/authorization/prompt-create": "the registration page, and the one of the eight theme " +
-		"goldens that is still a measurement rather than a contract. Its markup is served; what is not " +
-		"comparable is two values inside the body, the tab_id in the restart URL and the authentication " +
-		"session's hash inside checkAuthSession(...), both minted by this request. Read it for the page's " +
-		"shape and for its Cache-Control - it is the record that /auth's own page family disagrees with " +
-		"itself, sending one where max-age-invalid beside it sends none - and not for those two values",
-}
+//
+// **The eighth left on 2026-09-03 and the list is empty**, which is the state
+// F72 anticipated. It stays: an empty exemption list still refuses the next
+// Pending golden that arrives without a reason, which is the half of F72 that
+// was never about how many there were. What went with the last entry is
+// TestNoPendingGoldenIsCompared, whose own comment said to delete it.
+var parkedGoldens = map[string]string{}
 
 // TestEveryParkedGoldenIsDeclared enforces F72 in both directions.
 //

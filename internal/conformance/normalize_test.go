@@ -3,6 +3,8 @@ package conformance
 import (
 	"bytes"
 	"os"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -557,21 +559,27 @@ func TestReplaceThemeResourceIsIdempotent(t *testing.T) {
 // golden churned.
 func TestThemeResourceAppearsOnlyInTheThemePages(t *testing.T) {
 	// Counted from the goldens, not incremented: every theme page carries the
-	// segment seven times, and prompt-create carries an eighth because its
-	// checkAuthSession import is a second script tag.
+	// segment seven times, and the two rendered from **inside** an
+	// authentication flow carry an eighth, because the head's checkAuthSession
+	// block imports authChecker.js a second time. Measured on thirteen responses
+	// on 2026-09-03: eight segments on every page with the block and seven on
+	// every page without one, with no page in between.
 	want := map[string]int{
 		"oidc/authorization/invalid-redirect-uri": 7,
 		"oidc/authorization/unknown-client-id":    7,
 		// The ninth, and the same page as unknown-client-id served for a realm
 		// that is not master: the segment count is a property of the head, not
 		// of the realm, so it is seven here too.
-		"oidc/authorization/second-realm-error-page":   7,
-		"oidc/authorization/max-age-invalid":           7,
-		"oidc/authorization/prompt-create":             8,
-		"oidc/logout/invalid-post-logout-redirect-uri": 7,
-		"oidc/logout/invalid-id-token-hint":            7,
-		"oidc/device/verification-page":                7,
-		"oidc/device/status-page":                      7,
+		"oidc/authorization/second-realm-error-page": 7,
+		"oidc/authorization/max-age-invalid":         7,
+		"oidc/authorization/prompt-create":           8,
+		// The second page with the block, and the first of F146's nine to carry
+		// a golden at all.
+		"oidc/authorization/session-code-wrong-execution": 8,
+		"oidc/logout/invalid-post-logout-redirect-uri":    7,
+		"oidc/logout/invalid-id-token-hint":               7,
+		"oidc/device/verification-page":                   7,
+		"oidc/device/status-page":                         7,
 		// The tenth, and the device verification page served for a realm that
 		// is not master. Seven again, for the ninth's reason: the count is a
 		// property of the head, which every one of these pages shares.
@@ -611,5 +619,172 @@ func TestThemeResourceAppearsOnlyInTheThemePages(t *testing.T) {
 		if !seen[id] {
 			t.Errorf("%q: named here as a theme page and its golden holds no /resources/ segment", id)
 		}
+	}
+}
+
+// themePageFragment is the shape the HTML masks are written against: the two
+// places a per-request value sits in a keycloak.v2 page, both read off a live
+// 26.7.1 on 2026-09-03. The restart URL is inside a JavaScript string and spells
+// its separators raw; the link is inside an href attribute and spells them
+// &amp;. One page carries both spellings, which is why the masker accepts both.
+const themePageFragment = `        startSessionPolling(
+            "/realms/master/login-actions/restart?client_id=gloak-probe-browser&tab_id=oNX0Amj1DZE&client_data=eyJ4IjoxfQ&skip_logout=true"
+        );
+            <a id="loginRestartLink" href="/realms/master/login-actions/restart?client_id=gloak-probe-browser&amp;tab_id=oNX0Amj1DZE&amp;client_data=eyJ4IjoxfQ&amp;skip_logout=false">Click here</a>
+            checkAuthSession(
+                "doFZB1zRPGOwAFS6vATrE1oVD2qWWY6KFelQy8dCVcCt8s6bcYz+IRa0N1Yd/L8w"
+            );`
+
+// TestReplaceHTMLValuesMasksTheValueAndNothingElse is the whole bargain in one
+// assertion: the tab_id goes at both of its spellings, the checkAuthSession
+// argument goes, and every other byte - the realm, the endpoint, the client_id,
+// the client_data, the two different skip_logout values, the order of all of
+// them and the indentation - is still there to be compared.
+func TestReplaceHTMLValuesMasksTheValueAndNothingElse(t *testing.T) {
+	got, err := ReplaceHTMLValues([]byte(themePageFragment), Case{
+		VolatileHTMLQuery: []string{"tab_id"},
+		VolatileHTMLCall:  []string{"checkAuthSession"},
+	})
+	if err != nil {
+		t.Fatalf("mask: %v", err)
+	}
+	want := strings.NewReplacer(
+		"oNX0Amj1DZE", "{{tab_id}}",
+		"doFZB1zRPGOwAFS6vATrE1oVD2qWWY6KFelQy8dCVcCt8s6bcYz+IRa0N1Yd/L8w", "{{checkAuthSession}}",
+	).Replace(themePageFragment)
+	if string(got) != want {
+		t.Fatalf("want:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+// The values a mask covers are what the guard reads, from the same two finders
+// the masker splices with. Two tab_ids, one argument.
+func TestHTMLMaskedValuesReadsWhatTheMaskCovers(t *testing.T) {
+	values, err := HTMLMaskedValues([]byte(themePageFragment), Case{
+		VolatileHTMLQuery: []string{"tab_id", "skip_logout"},
+		VolatileHTMLCall:  []string{"checkAuthSession"},
+	})
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	for name, want := range map[string][]string{
+		"tab_id":           {"oNX0Amj1DZE", "oNX0Amj1DZE"},
+		"skip_logout":      {"true", "false"},
+		"checkAuthSession": {"doFZB1zRPGOwAFS6vATrE1oVD2qWWY6KFelQy8dCVcCt8s6bcYz+IRa0N1Yd/L8w"},
+	} {
+		got := make([]string, 0, len(values[name]))
+		for _, v := range values[name] {
+			got = append(got, string(v))
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: covers %q, want %q", name, got, want)
+		}
+	}
+}
+
+// A mask naming something the body does not carry is refused rather than
+// applied, because the failure it would otherwise produce blames the page.
+// The golden would hold {{tab_id}}, the served body would hold the raw value,
+// and the diff would say the markup was wrong.
+func TestReplaceHTMLValuesRefusesAMaskThatCoversNothing(t *testing.T) {
+	for _, c := range []Case{
+		{VolatileHTMLQuery: []string{"session_code"}},
+		{VolatileHTMLCall: []string{"noSuchFunction"}},
+	} {
+		if _, err := ReplaceHTMLValues([]byte(themePageFragment), c); err == nil {
+			t.Errorf("%+v: a mask over nothing was applied rather than refused", c)
+		}
+	}
+}
+
+// A query mask fires on a whole parameter and not on the tail of a longer one.
+// Without the boundary check `tab_id` would also mask `client_tab_id`, and a
+// mask that reaches further than it says is the disease this file's other
+// comments keep naming.
+func TestHTMLQueryMaskDoesNotFireOnALongerParameterName(t *testing.T) {
+	in := []byte(`href="/x?client_tab_id=AAA&tab_id=BBB"`)
+	got, err := ReplaceHTMLValues(in, Case{VolatileHTMLQuery: []string{"tab_id"}})
+	if err != nil {
+		t.Fatalf("mask: %v", err)
+	}
+	if want := `href="/x?client_tab_id=AAA&tab_id={{tab_id}}"`; string(got) != want {
+		t.Fatalf("want %s, got %s", want, got)
+	}
+}
+
+// The same rule for a call: a function whose name merely ends in the declared
+// one is a different function.
+func TestHTMLCallMaskDoesNotFireOnALongerFunctionName(t *testing.T) {
+	in := []byte(`preCheckAuthSession("A"); checkAuthSession("B");`)
+	got, err := ReplaceHTMLValues(in, Case{VolatileHTMLCall: []string{"checkAuthSession"}})
+	if err != nil {
+		t.Fatalf("mask: %v", err)
+	}
+	if want := `preCheckAuthSession("A"); checkAuthSession("{{checkAuthSession}}");`; string(got) != want {
+		t.Fatalf("want %s, got %s", want, got)
+	}
+}
+
+// A call whose first argument is not a quoted string is refused rather than
+// masked, which is MaskURLTail's rule: covering something of another shape
+// throws away a measurement while looking like it checked one.
+func TestHTMLCallMaskRefusesAnArgumentThatIsNotAString(t *testing.T) {
+	if _, err := ReplaceHTMLValues([]byte(`checkAuthSession(session);`),
+		Case{VolatileHTMLCall: []string{"checkAuthSession"}}); err == nil {
+		t.Fatal("a call with a bare identifier argument was masked rather than refused")
+	}
+}
+
+// An empty value is refused too. A mask over no bytes asserts nothing and hides
+// that it asserts nothing, which is the shape AGENTS.md calls worse than none.
+func TestReplaceHTMLValuesRefusesAnEmptyValue(t *testing.T) {
+	if _, err := ReplaceHTMLValues([]byte(`href="/x?tab_id=&y=1"`),
+		Case{VolatileHTMLQuery: []string{"tab_id"}}); err == nil {
+		t.Fatal("an empty query value was masked rather than refused")
+	}
+	if _, err := ReplaceHTMLValues([]byte(`checkAuthSession("");`),
+		Case{VolatileHTMLCall: []string{"checkAuthSession"}}); err == nil {
+		t.Fatal("an empty call argument was masked rather than refused")
+	}
+}
+
+// TestHTMLMaskKeepsTheURLAroundItCompared is F38's third ground read from the
+// other side. Masking a whole <script> block would do to a page what masking a
+// whole Location did to a create - assert presence and nothing else - so the
+// claim to check is not "the tab_id went" but "everything beside it still
+// decides the comparison". Two bodies differing only in the client_id, with the
+// tab_id masked on both, must not compare equal.
+func TestHTMLMaskKeepsTheURLAroundItCompared(t *testing.T) {
+	c := Case{VolatileHTMLQuery: []string{"tab_id"}}
+	mask := func(body string) string {
+		out, err := ReplaceHTMLValues([]byte(body), c)
+		if err != nil {
+			t.Fatalf("mask %q: %v", body, err)
+		}
+		return string(out)
+	}
+	const one = `href="/realms/master/login-actions/restart?client_id=gloak-probe-browser&tab_id=AAA"`
+	const other = `href="/realms/master/login-actions/restart?client_id=gloak-probe-other&tab_id=BBB"`
+	if mask(one) == mask(other) {
+		t.Fatal("two URLs naming different clients compared equal once the tab_id was masked")
+	}
+	// And the same URL with only the tab_id moved does compare equal, which is
+	// the half that makes the mask worth having.
+	const again = `href="/realms/master/login-actions/restart?client_id=gloak-probe-browser&tab_id=CCC"`
+	if mask(one) != mask(again) {
+		t.Fatal("the same URL with a fresh tab_id did not compare equal")
+	}
+}
+
+// A case declaring no HTML mask has its body handed back untouched, JSON or
+// not. Every body in the catalogue goes through this pass.
+func TestReplaceHTMLValuesLeavesAnUndeclaredBodyAlone(t *testing.T) {
+	in := []byte(`{"tab_id":"AAA","checkAuthSession":"BBB"}`)
+	got, err := ReplaceHTMLValues(in, Case{})
+	if err != nil {
+		t.Fatalf("mask: %v", err)
+	}
+	if !bytes.Equal(got, in) {
+		t.Fatalf("a case with no HTML mask had its body rewritten: %s", got)
 	}
 }
