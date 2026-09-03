@@ -14123,7 +14123,7 @@ var adminCases = []Case{
 	// locator, which the two that already agree do not establish.
 
 	{
-		ID: "admin/organizations/groups-role-mappings",
+		ID: "admin/role-mapper/org-group-all",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Role Mapper: get role mappings of an organization group",
@@ -14144,7 +14144,7 @@ var adminCases = []Case{
 	{
 		// A group holding nothing answers `{}`, the same empty object a user
 		// holder's does.
-		ID: "admin/organizations/groups-role-mappings-empty",
+		ID: "admin/role-mapper/org-group-all-empty",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Role Mapper: the combined view of a group holding nothing",
@@ -14161,7 +14161,7 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 	},
 	{
-		ID: "admin/organizations/groups-role-mappings-realm",
+		ID: "admin/role-mapper/org-group-realm",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Role Mapper: get realm-level role mappings of an organization group",
@@ -14183,7 +14183,7 @@ var adminCases = []Case{
 		// The available listing is unordered here for the reason every role
 		// listing in this repository is: a bare array at the root with no
 		// reproducible order across container starts.
-		ID: "admin/organizations/groups-role-mappings-realm-available",
+		ID: "admin/role-mapper/org-group-realm-available",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Role Mapper: realm roles that can be mapped to an organization group",
@@ -14204,7 +14204,7 @@ var adminCases = []Case{
 		Unordered:     []string{"."},
 	},
 	{
-		ID: "admin/organizations/groups-role-mappings-realm-composite",
+		ID: "admin/role-mapper/org-group-realm-composite",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Role Mapper: effective realm-level role mappings of an organization group",
@@ -14225,7 +14225,7 @@ var adminCases = []Case{
 	},
 	{
 		// The write: 204, all five security headers, no Cache-Control.
-		ID: "admin/organizations/groups-role-mappings-realm-add",
+		ID: "admin/role-mapper/org-group-realm-add",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Role Mapper: add realm-level role mappings to an organization group",
@@ -14248,7 +14248,7 @@ var adminCases = []Case{
 		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control"},
 	},
 	{
-		ID: "admin/organizations/groups-role-mappings-realm-remove",
+		ID: "admin/role-mapper/org-group-realm-remove",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Role Mapper: delete realm-level role mappings of an organization group",
@@ -14273,7 +14273,7 @@ var adminCases = []Case{
 	{
 		// A role the array names that does not exist: the mapping family's
 		// `Role not found`, not the roles chapter's `Could not find role`.
-		ID: "admin/organizations/groups-role-mappings-realm-unknown-role",
+		ID: "admin/role-mapper/org-group-realm-unknown-role",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Role Mapper: a role array naming a role that does not exist",
@@ -14296,7 +14296,7 @@ var adminCases = []Case{
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
-		ID: "admin/organizations/groups-role-mappings-client",
+		ID: "admin/client-role-mappings/org-group-list",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Client Role Mappings: client-level role mappings of an organization group",
@@ -14315,7 +14315,7 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 	},
 	{
-		ID: "admin/organizations/groups-role-mappings-client-available",
+		ID: "admin/client-role-mappings/org-group-available",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Client Role Mappings: available client-level roles for an organization group",
@@ -14334,7 +14334,7 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 	},
 	{
-		ID: "admin/organizations/groups-role-mappings-client-composite",
+		ID: "admin/client-role-mappings/org-group-composite",
 		Doc: Doc{
 			URL: "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section: "Client Role Mappings: effective client-level role mappings " +
@@ -14354,7 +14354,7 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 	},
 	{
-		ID: "admin/organizations/groups-role-mappings-client-add",
+		ID: "admin/client-role-mappings/org-group-add",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Client Role Mappings: add client-level roles to an organization group",
@@ -14378,7 +14378,7 @@ var adminCases = []Case{
 		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control"},
 	},
 	{
-		ID: "admin/organizations/groups-role-mappings-client-remove",
+		ID: "admin/client-role-mappings/org-group-remove",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Client Role Mappings: delete client-level roles from an organization group",
@@ -14405,7 +14405,7 @@ var adminCases = []Case{
 		// A client uuid that resolves to nothing is 404 `Client not found` on
 		// all five client-mapping routes - and the **group** is resolved before
 		// it, which is the group family's order rather than the user family's.
-		ID: "admin/organizations/groups-role-mappings-client-unknown",
+		ID: "admin/client-role-mappings/org-group-unknown-client",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Client Role Mappings: a client uuid that resolves to nothing",
