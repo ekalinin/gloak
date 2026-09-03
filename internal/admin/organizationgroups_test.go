@@ -278,6 +278,100 @@ func TestOrganizationGroupCreateMovesOnAnID(t *testing.T) {
 	}
 }
 
+// TestOrganizationGroupGuardResolvesTheGroupBeforeTheWriteRole pins the
+// resolution order, which is four deep and is **not** the member family's.
+//
+// Measured 2026-09-03 with one token per role: a `view-users` caller is 403 on
+// every route whatever the ids are; a `view-organizations` caller gets
+// `Organization not found.` for an organization that does not exist,
+// `Group does not exist` for a group that does not exist **on a write route it
+// may not use**, and 403 only once both resolve. A guard checking the write
+// role first - which is what the nineteen member routes do - answers 403 where
+// Keycloak answers 404 on every write in this family.
+func TestOrganizationGroupGuardResolvesTheGroupBeforeTheWriteRole(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin, orgID, _, groupID := orgWithGroups(t, h)
+	_ = admin
+
+	viewer := tokenForRoles(t, h, s, realm, "view-organizations")
+	stranger := tokenForRoles(t, h, s, realm, "view-users")
+	const missing = "00000000-0000-4000-8000-000000000000"
+	base := "/admin/realms/master/organizations/"
+
+	for _, tc := range []struct {
+		name, token, method, path, body string
+		status                          int
+		want                            string
+	}{
+		{
+			name:  "a caller outside the tag never sees an id at all",
+			token: stranger, method: http.MethodDelete,
+			path:   base + missing + "/groups/" + missing,
+			status: http.StatusForbidden, want: `{"error":"HTTP 403 Forbidden"}`,
+		},
+		{
+			name:  "the organization comes before the group",
+			token: viewer, method: http.MethodDelete,
+			path:   base + missing + "/groups/" + missing,
+			status: http.StatusNotFound, want: `{"errorMessage":"Organization not found."}`,
+		},
+		{
+			name:  "the group comes before the write role",
+			token: viewer, method: http.MethodDelete,
+			path:   base + orgID + "/groups/" + missing,
+			status: http.StatusNotFound, want: `{"errorMessage":"Group does not exist"}`,
+		},
+		{
+			name:  "and the write role is judged once both resolve",
+			token: viewer, method: http.MethodDelete,
+			path:   base + orgID + "/groups/" + groupID,
+			status: http.StatusForbidden, want: `{"error":"HTTP 403 Forbidden"}`,
+		},
+		{
+			name:  "the same order on the role mappings",
+			token: viewer, method: http.MethodPost,
+			path: base + orgID + "/groups/" + missing + "/role-mappings/realm", body: `[]`,
+			status: http.StatusNotFound, want: `{"errorMessage":"Group does not exist"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := send(t, h, tc.method, tc.path, tc.token, tc.body)
+			if got := strings.TrimSpace(w.Body.String()); w.Code != tc.status || got != tc.want {
+				t.Errorf("got %d %s, want %d %s", w.Code, got, tc.status, tc.want)
+			}
+		})
+	}
+}
+
+// TestOrganizationGroupMemberWriteJudgesTheUserBeforeManageUsers is the fifth
+// step of that chain, and it is the one the member family's guard cannot
+// express.
+//
+// A caller holding `manage-organizations` and no user role gets
+// `404 {"errorMessage":"User does not exist"}` for a user id that resolves to
+// nothing and 403 for one that does - so the user is fetched **before**
+// `manage-users` is judged, and a guard that checked both roles up front would
+// answer 403 to both.
+func TestOrganizationGroupMemberWriteJudgesTheUserBeforeManageUsers(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin, orgID, _, groupID := orgWithGroups(t, h)
+	user := createUserReturningID(t, h, admin, "probe-omega", "aaa@gp-order.example.com")
+
+	manager := tokenForRoles(t, h, s, realm, "manage-organizations")
+	base := "/admin/realms/master/organizations/" + orgID + "/groups/" + groupID + "/members/"
+
+	w := send(t, h, http.MethodPut, base+"00000000-0000-4000-8000-000000000000", manager, "")
+	if got := strings.TrimSpace(w.Body.String()); w.Code != http.StatusNotFound ||
+		got != `{"errorMessage":"User does not exist"}` {
+		t.Errorf("an unknown user: got %d %s, want 404 about the user", w.Code, got)
+	}
+	w = send(t, h, http.MethodPut, base+user, manager, "")
+	if got := strings.TrimSpace(w.Body.String()); w.Code != http.StatusForbidden ||
+		got != `{"error":"HTTP 403 Forbidden"}` {
+		t.Errorf("a real user: got %d %s, want 403", w.Code, got)
+	}
+}
+
 // createUserReturningID posts a user and returns the id its Location names.
 func createUserReturningID(t *testing.T, h http.Handler, token, username, email string) string {
 	t.Helper()
