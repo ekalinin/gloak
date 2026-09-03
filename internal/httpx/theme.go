@@ -115,6 +115,25 @@ type ThemeChrome struct {
 	// alone: measured over five clients, one carrying a rootUrl and no baseUrl
 	// gets no link at all.
 	BackToApplication string
+	// AuthSessionHash is the value the head's checkAuthSession(...) block is
+	// called with, and empty on a page that carries no such block.
+	//
+	// **It is the KC_AUTH_SESSION_HASH cookie's value, byte for byte**, measured
+	// 2026-09-03 on the two responses that carry both - prompt=create's 400 page
+	// and the login page - where the cookie and the argument agreed exactly,
+	// quoting aside.
+	//
+	// Which pages carry the block was measured on one container rather than
+	// inferred from what a page is for: it is on prompt=create's page, the login
+	// page, "Page has expired", the consent page, all four required-action pages
+	// and VERIFY_EMAIL's 500, and it is **not** on /auth's three 400 pages, the
+	// /logout 400 page, the /login-actions 400 page or either device page. The
+	// rule that fits all thirteen is the one this field spells: a page rendered
+	// from inside an authentication flow has a session to poll and the rest do
+	// not. Every page with the block carries **eight** /resources/ segments and
+	// every page without it carries seven, which is what
+	// internal/conformance's TestThemeResourceAppearsOnlyInTheThemePages counts.
+	AuthSessionHash string
 }
 
 // title is what the page's <title> names the realm, before escaping.
@@ -178,11 +197,36 @@ var themeTitleEscaper = strings.NewReplacer(
 	"'", "&#39;",
 )
 
+// themeAuthCheck is the block a page carries when it was rendered from inside an
+// authentication flow, and nothing when it was not.
+//
+// It sits between the data-once-link script and the Firefox workaround, indented
+// eight spaces where its two neighbours are indented four - which is Freemarker's
+// nesting and not a tidy-up waiting to happen. Read off four different pages on
+// one container on 2026-09-03 - prompt=create's 400, "Page has expired", the
+// consent page and UPDATE_PROFILE - and byte-identical on all four apart from the
+// argument. See ThemeChrome.AuthSessionHash for which pages have it.
+//
+// The eighth /resources/ segment of a page that carries one is this import.
+func themeAuthCheck(hash string) string {
+	if hash == "" {
+		return ""
+	}
+	return `        <script type="module">
+            import { checkAuthSession } from "/resources/` + themeResourceVersion + `/login/keycloak.v2/js/authChecker.js";
+
+            checkAuthSession(
+                "` + hash + `"
+            );
+        </script>
+`
+}
+
 // themeHead is the <head> every measured page shares, plus the opening two
 // lines. It ends with the blank line after </head>.
 //
 // The four substitutions are the resource version (seven times here, and an
-// eighth inside the page body when a page has an authentication session), the
+// eighth inside themeAuthCheck when a page has an authentication session), the
 // <title>'s display name, and the restart URL's realm and parameters.
 func themeHead(c ThemeChrome) string {
 	v := themeResourceVersion
@@ -255,7 +299,7 @@ func themeHead(c ThemeChrome) string {
             link.setAttribute("aria-disabled", "true");
         });
     </script>
-    <script>
+` + themeAuthCheck(c.AuthSessionHash) + `    <script>
       // Workaround for https://bugzilla.mozilla.org/show_bug.cgi?id=1404468
       const isFirefox = true;
     </script>
