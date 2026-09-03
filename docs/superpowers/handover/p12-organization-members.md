@@ -638,8 +638,15 @@ rewritten before anybody acts on it.
 ```
                      before      after
 admin/organizations   6 / 36     24 / 36
-total                380 / 540   398 / 540
+total                380 / 540   398 / 540      against this branch's merge base
+total                382 / 541   400 / 541      against main, which moved under it
 ```
+
+The two totals differ because `main` advanced while this cut was in flight -
+`feat/theme-html-masking` merged and took the total to 382 and the denominator
+to 541. **The delta is +18 either way**, which is what CI reports; the branch was
+not merged with `main` mid-flight, so no finding here was taken against a moving
+tree, and `git merge-tree` says the two merge cleanly.
 
 Eighteen of the tag's nineteen remaining non-group operations. The nineteenth is
 `GET /admin/realms/{realm}/organizations/members/{member-id}/organizations`, and
