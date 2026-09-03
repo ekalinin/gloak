@@ -1,0 +1,12 @@
+# GET /admin/realms/gloak-probe-og-grp/organizations/{{org_id}}/groups/{{group_1}}/role-mappings/realm/composite
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"id":"{{realm_role}}","name":"gloak-probe-og-role","description":"the realm role a group holds","composite":false,"clientRole":false,"containerId":"aea510de-21d4-48b7-82e7-f31de59e2bd0"}]

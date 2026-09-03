@@ -1,0 +1,12 @@
+# GET /admin/realms/gloak-probe-og-grp/organizations/{{org_id}}/groups/{{group_1}}/role-mappings/realm/available
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"id":"41c60edb-6c16-402a-bb73-a17f8e61ee29","name":"uma_authorization","description":"${role_uma_authorization}","composite":false,"clientRole":false,"containerId":"aea510de-21d4-48b7-82e7-f31de59e2bd0"},{"id":"5c43f06e-f486-4765-8519-96af43ae980b","name":"offline_access","description":"${role_offline-access}","composite":false,"clientRole":false,"containerId":"aea510de-21d4-48b7-82e7-f31de59e2bd0"},{"id":"c86f6f06-6d3a-49fa-92fe-7dc236ed6f50","name":"default-roles-gloak-probe-og-grp","description":"${role_default-roles}","composite":true,"clientRole":false,"containerId":"aea510de-21d4-48b7-82e7-f31de59e2bd0"}]

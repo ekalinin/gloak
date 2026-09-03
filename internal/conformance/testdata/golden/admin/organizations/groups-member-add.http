@@ -1,0 +1,8 @@
+# PUT /admin/realms/gloak-probe-og-joi/organizations/{{org_id}}/groups/{{group_1}}/members/{{member_id}}
+HTTP/1.1 204 No Content
+Cache-Control: no-cache
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Robots-Tag: none
+

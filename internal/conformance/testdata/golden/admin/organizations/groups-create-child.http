@@ -1,0 +1,13 @@
+# POST /admin/realms/gloak-probe-og-kid/organizations/{{org_id}}/groups/{{group_1}}/children
+HTTP/1.1 201 Created
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json
+Location: {{issuer}}/admin/realms/gloak-probe-og-kid/organizations/{{org_id}}/groups/{{group_1}}/children/{{uuid}}
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"id":"{{string}}","name":"gloak-probe-og-newkid","path":"/gloak-probe-og-zzz/gloak-probe-og-newkid","parentId":"{{group_1}}","subGroups":[],"attributes":{},"realmRoles":[],"clientRoles":{}}
