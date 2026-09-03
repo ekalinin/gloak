@@ -13379,4 +13379,1046 @@ var adminCases = []Case{
 		},
 		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control", "X-Frame-Options"},
 	},
+
+	// ---- P12 third cut: an organization's groups and their role mappings.
+	// Appended at the very end of the slice, for the second cut's reason.
+
+	{
+		// The listing answers the hidden root's **children**, sorted by name,
+		// and the root is never in it. The three groups are created
+		// `zzz, aaa, mmm`, so a handler returning insertion order fails here.
+		//
+		// The five keys are the whole finding: `parentId` is present on a group
+		// at the top of the organization, where the realm listing has none, and
+		// `subGroupCount` and `access` are absent, where the realm listing has
+		// both.
+		ID: "admin/organizations/groups-list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: get organization groups",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/groups",
+		Fixture:   "org-groups",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}/groups",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// briefRepresentation=false adds attributes, realmRoles and clientRoles
+		// - and `realmRoles` is **populated**, which is what says this family
+		// really serves a group's roles rather than the two empty collections
+		// the realm family's representation writes.
+		ID: "admin/organizations/groups-list-full",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: the group listing under briefRepresentation=false",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}/groups",
+			Query:   map[string]string{"briefRepresentation": "false"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **`search` answers its matches flat**, where the realm group listing
+		// answers the matches' top-level ancestors with the matches nested. The
+		// child is what says so: `gloak-probe-og-` matches it and it comes back
+		// as a row of its own with `subGroups` still empty.
+		ID: "admin/organizations/groups-list-search",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: the group listing under search",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}/groups",
+			Query:   map[string]string{"search": "gloak-probe-og-"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// Either bound pages, and the page is taken from the sorted rows.
+		ID: "admin/organizations/groups-list-paged",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: the group listing under first and max",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}/groups",
+			Query:   map[string]string{"first": "1", "max": "1"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The single read: the brief shape plus the three keys, and **no**
+		// `access` block - which is the one key that separates it from
+		// `GET /groups/{id}` in the realm family beyond `subGroupCount`.
+		ID: "admin/organizations/groups-read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: get organization group representation",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/groups/{group-id}",
+		Fixture:   "org-groups",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}/groups/{{group_1}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// A group that does not exist: the twentieth spelling of not-found, and
+		// the answer on twenty-one of this cut's twenty-two routes.
+		ID: "admin/organizations/groups-read-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: a group id that resolves to nothing",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/00000000-0000-4000-8000-000000000000",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// A group of **another** organization is a 400, not a 404 - and its
+		// sentence is one word away from the move's, which says the same thing
+		// about the same pair one code path apart.
+		ID: "admin/organizations/groups-read-other-organization",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: a group of another organization",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{stranger_group}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// group-by-path answers the **brief** shape, where the realm's own
+		// group-by-path answers the single read minus `access`. One route name,
+		// two families, two bodies.
+		ID: "admin/organizations/groups-by-path",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: get organization group by path",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/groups/group-by-path/{path}",
+		Fixture:   "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/group-by-path/gloak-probe-og-aaa/gloak-probe-og-kid",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The path walk starts at the hidden root, so the organization's own id
+		// is not a segment of any path - which is what this 404 says.
+		ID: "admin/organizations/groups-by-path-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: a group path that does not exist",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/group-by-path/{{org_id}}/gloak-probe-og-aaa",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The children listing, which **ignores briefRepresentation** and
+		// always answers the five-key shape. The realm family's honours it and
+		// defaults to the full body, so this case and the next are the pair
+		// that says so.
+		ID: "admin/organizations/groups-children",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: get subgroups of this organization group",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/groups/{group-id}/children",
+		Fixture:   "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{group_2}}/children",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The same rows under briefRepresentation=false: byte-identical to the
+		// case above, which is the assertion.
+		ID: "admin/organizations/groups-children-full-ignored",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: briefRepresentation on the children listing",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{group_2}}/children",
+			Query:   map[string]string{"briefRepresentation": "false"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The group's members: the **organization member** representation,
+		// membershipType and all, not the user shape the realm family's group
+		// members listing serves.
+		ID: "admin/organizations/groups-members",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: get members of this organization group",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/groups/{group-id}/members",
+		Fixture:   "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/members",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/createdTimestamp"},
+	},
+	{
+		// **briefRepresentation defaults to false here and to true on
+		// `GET /organizations/{org}/members` one path segment up.** This case
+		// is the shorter shape and the one above is the default - one
+		// parameter, one representation, two defaults.
+		ID: "admin/organizations/groups-members-brief",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: briefRepresentation on the group member listing",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/members",
+			Query:   map[string]string{"briefRepresentation": "true"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/createdTimestamp"},
+	},
+	{
+		// The member's organization groups. **This route answered an
+		// unconditional `[]` until this cut**, with a comment saying the groups
+		// were F120's and could not exist.
+		ID: "admin/organizations/members-groups-populated",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: a member's organization group memberships",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/members/{{member_id}}/groups",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// A GET under `.../groups/{g}/` that no route serves is the generic 404
+		// **with all five security headers**, not the unmatched-path body with
+		// none of them: the request reached the filter chain through the
+		// group's own sub-resource locator. It is what makes the catch-all
+		// registration more faithful here than the fallback.
+		ID: "admin/organizations/groups-unroutable-tail",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: a path under a group that no route serves",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/gloak-probe-no-such-subresource",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+
+	// ---- the writes. Each mutating case gets a realm of its own, for
+	// org-member-add's reason: a golden that holds only while the catalogue's
+	// order holds is worse than no golden. The refusals share the read fixture,
+	// because a request that fails writes nothing.
+
+	{
+		// **201 with the group in the body**, where the realm's own
+		// POST /groups answers 201 with an empty one - and **no
+		// Cache-Control**, where the child create one path segment down carries
+		// `no-cache`. The Location is under the organization.
+		ID: "admin/organizations/groups-create",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: create a new top-level group",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/organizations/{org-id}/groups",
+		Fixture:   "org-group-create",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-og-new/organizations/{{org_id}}/groups",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-og-fresh"}`),
+		},
+		AssertHeaders:       []string{"Content-Type", "Location"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+		VolatileTailHeaders: []string{"Location"},
+		Volatile:            []string{"id"},
+	},
+	{
+		// A name already at this level. **Its sentence has a full stop and the
+		// sibling create's has none**, and neither quotes the name - where the
+		// realm family's two both quote it and both end in one.
+		ID: "admin/organizations/groups-create-duplicate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: a top-level group name already taken",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}/groups",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-og-aaa"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// An empty body: the one 400 this family shares with the realm one,
+		// word for word.
+		ID: "admin/organizations/groups-create-no-name",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: a group create with no name",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}/groups",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The strict decode, with a position. Three of these routes decode
+		// strictly, which makes eleven strict decoders on this API where
+		// AGENTS.md's bullet lists ten.
+		ID: "admin/organizations/groups-create-unknown-field",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: a group create carrying an unknown field",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}/groups",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-og-bad","bogusField":1}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **A body carrying an `id` is a move**, 204 with an empty body and a
+		// Content-Type on it. The group moves to the top of the organization
+		// and its `path` loses the parent's segment.
+		ID: "admin/organizations/groups-create-moves",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: moving an existing group to top-level",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-group-move",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-og-mov/organizations/{{org_id}}/groups",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"{{child_id}}","name":"gloak-probe-og-kid"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Location"},
+	},
+	{
+		// The move's own 404 is the **realm** family's spelling, on a route
+		// whose every other 404 is `Group does not exist`. One endpoint, two
+		// spellings, decided by which of the two things went missing.
+		ID: "admin/organizations/groups-create-moves-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: moving a group id that resolves to nothing",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}/groups",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"00000000-0000-4000-8000-000000000000","name":"gloak-probe-og-x"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The child create: 201 with the **full** body, `application/json` with
+		// no charset, `Cache-Control: no-cache` - and a `Location` that echoes
+		// the **creating** route, where the realm family's names the addressing
+		// one.
+		ID: "admin/organizations/groups-create-child",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: create or move a subgroup",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/organizations/{org-id}/groups/{group-id}/children",
+		Fixture:   "org-group-child",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/gloak-probe-og-kid/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/children",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-og-newkid"}`),
+		},
+		AssertHeaders:       []string{"Content-Type", "Location", "Cache-Control"},
+		VolatileTailHeaders: []string{"Location"},
+		Volatile:            []string{"id"},
+	},
+	{
+		// The sibling duplicate, whose sentence has **no** full stop where the
+		// top-level one does.
+		ID: "admin/organizations/groups-create-child-duplicate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: a sibling group name already taken",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{group_2}}/children",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-og-kid"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The update: 204, the five security headers because the request had a
+		// JSON body, and no Cache-Control.
+		ID: "admin/organizations/groups-update",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: update organization group",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/organizations/{org-id}/groups/{group-id}",
+		Fixture:   "org-group-update",
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/gloak-probe-og-upd/organizations/{{org_id}}" +
+				"/groups/{{group_2}}",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-og-renamed","attributes":` +
+				`{"gloak-probe-k":["v1","v2"],"gloak-probe-z":["w"]}}`),
+		},
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// What the 204 above hid: the rename moved the **descendant's** path,
+		// and the attributes came back in `javamap.KeyOrder`'s order rather
+		// than sorted - which a Go map would invert.
+		ID: "admin/organizations/groups-update-effect",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: a renamed group and its descendant's path",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-group-updated",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-upn/organizations/{{org_id}}" +
+				"/groups/{{group_2}}/children",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The renamed group itself, whose `attributes` came back in
+		// **javamap.KeyOrder**'s order rather than sorted - `gloak-probe-z`
+		// before `gloak-probe-k`, which a Go map would invert.
+		ID: "admin/organizations/groups-update-attributes",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: a group's attributes in HashMap order",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-group-updated",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-upn/organizations/{{org_id}}" +
+				"/groups/{{group_2}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The hidden root, addressed by the id its children's `parentId` names.
+		// **Its `name` and its `path` are the organization's own id**, and it is
+		// the one body in this family with no `parentId` key at all.
+		ID: "admin/organizations/groups-read-root",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: the hidden root group",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{root_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The delete: 204, no Cache-Control, and **four** of the five security
+		// headers - the request carries no Content-Type, which is what decides
+		// X-Frame-Options.
+		ID: "admin/organizations/groups-delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: delete the organization group",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/organizations/{org-id}/groups/{group-id}",
+		Fixture:   "org-group-delete",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path: "/admin/realms/gloak-probe-og-del/organizations/{{org_id}}" +
+				"/groups/{{group_3}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control", "X-Frame-Options"},
+	},
+	{
+		// The join: 204 with `Cache-Control: no-cache` and no X-Frame-Options,
+		// because the request carries no body.
+		ID: "admin/organizations/groups-member-add",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: add a user to this organization group",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/organizations/{org-id}/groups/{group-id}/members/{userId}",
+		Fixture:   "org-group-join",
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/gloak-probe-og-joi/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/members/{{member_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// **The repeat is a 409**, where `PUT /users/{id}/groups/{gid}` in the
+		// realm family is idempotent - measured 204 twice in the same sweep.
+		ID: "admin/organizations/groups-member-add-duplicate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: joining a group the user is already in",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/members/{{member_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// A user of the realm who is not a member of the **organization** is a
+		// 400: the group membership narrows the organization membership rather
+		// than being a second, independent one.
+		ID: "admin/organizations/groups-member-add-not-a-member",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: joining a group as a non-member",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/members/{{loner_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// A user id that resolves to nothing: `User does not exist` as a
+		// **404**, where the invitation family answers the same words with a
+		// 400.
+		ID: "admin/organizations/groups-member-add-unknown-user",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: joining a group as a user that does not exist",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodPut,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/members/00000000-0000-4000-8000-000000000000",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The leave: 204, and it is the half of the pair that **does** match
+		// the realm family - a repeat and a user who was never in the group are
+		// both 204 too.
+		ID: "admin/organizations/groups-member-remove",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: remove a user from this organization group",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/organizations/{org-id}/groups/{group-id}/members/{userId}",
+		Fixture:   "org-group-leave",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path: "/admin/realms/gloak-probe-og-lea/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/members/{{member_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+
+	// ---- the eleven role mappings. The handlers are the realm group family's,
+	// unchanged; what these cases pin is that the bodies agree on a **third**
+	// locator, which the two that already agree do not establish.
+
+	{
+		ID: "admin/organizations/groups-role-mappings",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: get role mappings of an organization group",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/groups/{group-id}/role-mappings",
+		Fixture:   "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/role-mappings",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// A group holding nothing answers `{}`, the same empty object a user
+		// holder's does.
+		ID: "admin/organizations/groups-role-mappings-empty",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: the combined view of a group holding nothing",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{group_3}}/role-mappings",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/organizations/groups-role-mappings-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: get realm-level role mappings of an organization group",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/groups/{group-id}/role-mappings/realm",
+		Fixture:   "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/role-mappings/realm",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The available listing is unordered here for the reason every role
+		// listing in this repository is: a bare array at the root with no
+		// reproducible order across container starts.
+		ID: "admin/organizations/groups-role-mappings-realm-available",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: realm roles that can be mapped to an organization group",
+			Retrieved: "2026-09-03",
+		},
+		Status: Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/groups/{group-id}" +
+			"/role-mappings/realm/available",
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/role-mappings/realm/available",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+	},
+	{
+		ID: "admin/organizations/groups-role-mappings-realm-composite",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: effective realm-level role mappings of an organization group",
+			Retrieved: "2026-09-03",
+		},
+		Status: Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/groups/{group-id}" +
+			"/role-mappings/realm/composite",
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/role-mappings/realm/composite",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+	},
+	{
+		// The write: 204, all five security headers, no Cache-Control.
+		ID: "admin/organizations/groups-role-mappings-realm-add",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: add realm-level role mappings to an organization group",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/organizations/{org-id}/groups/{group-id}/role-mappings/realm",
+		Fixture:   "org-group-rm-add",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/gloak-probe-og-rma/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/role-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{realm_role}}","name":"gloak-probe-og-role"}]`),
+		},
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/organizations/groups-role-mappings-realm-remove",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: delete realm-level role mappings of an organization group",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/organizations/{org-id}/groups/{group-id}/role-mappings/realm",
+		Fixture:   "org-group-rm-del",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path: "/admin/realms/gloak-probe-og-rmd/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/role-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{realm_role}}","name":"gloak-probe-og-role"}]`),
+		},
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// A role the array names that does not exist: the mapping family's
+		// `Role not found`, not the roles chapter's `Could not find role`.
+		ID: "admin/organizations/groups-role-mappings-realm-unknown-role",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Role Mapper: a role array naming a role that does not exist",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{group_3}}/role-mappings/realm",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"00000000-0000-4000-8000-000000000000",` +
+				`"name":"gloak-probe-og-nope"}]`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "admin/organizations/groups-role-mappings-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Role Mappings: client-level role mappings of an organization group",
+			Retrieved: "2026-09-03",
+		},
+		Status: Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/groups/{group-id}" +
+			"/role-mappings/clients/{client-id}",
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/role-mappings/clients/{{client_uuid}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/organizations/groups-role-mappings-client-available",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Role Mappings: available client-level roles for an organization group",
+			Retrieved: "2026-09-03",
+		},
+		Status: Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/groups/{group-id}" +
+			"/role-mappings/clients/{client-id}/available",
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/role-mappings/clients/{{client_uuid}}/available",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+	},
+	{
+		ID: "admin/organizations/groups-role-mappings-client-composite",
+		Doc: Doc{
+			URL: "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section: "Client Role Mappings: effective client-level role mappings " +
+				"of an organization group",
+			Retrieved: "2026-09-03",
+		},
+		Status: Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/groups/{group-id}" +
+			"/role-mappings/clients/{client-id}/composite",
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/role-mappings/clients/{{client_uuid}}/composite",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
+	},
+	{
+		ID: "admin/organizations/groups-role-mappings-client-add",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Role Mappings: add client-level roles to an organization group",
+			Retrieved: "2026-09-03",
+		},
+		Status: Implemented,
+		Operation: "POST /admin/realms/{realm}/organizations/{org-id}/groups/{group-id}" +
+			"/role-mappings/clients/{client-id}",
+		Fixture: "org-group-crm-add",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/gloak-probe-og-cra/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/role-mappings/clients/{{client_uuid}}",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{client_role}}","name":"gloak-probe-og-crole"}]`),
+		},
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/organizations/groups-role-mappings-client-remove",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Role Mappings: delete client-level roles from an organization group",
+			Retrieved: "2026-09-03",
+		},
+		Status: Implemented,
+		Operation: "DELETE /admin/realms/{realm}/organizations/{org-id}/groups/{group-id}" +
+			"/role-mappings/clients/{client-id}",
+		Fixture: "org-group-crm-del",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path: "/admin/realms/gloak-probe-og-crd/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/role-mappings/clients/{{client_uuid}}",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[{"id":"{{client_role}}","name":"gloak-probe-og-crole"}]`),
+		},
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// A client uuid that resolves to nothing is 404 `Client not found` on
+		// all five client-mapping routes - and the **group** is resolved before
+		// it, which is the group family's order rather than the user family's.
+		ID: "admin/organizations/groups-role-mappings-client-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Role Mappings: a client uuid that resolves to nothing",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "org-groups",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-og-grp/organizations/{{org_id}}" +
+				"/groups/{{group_1}}/role-mappings/clients/00000000-0000-4000-8000-000000000000",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
 }
