@@ -242,7 +242,7 @@ func (h *handler) serveStep(w http.ResponseWriter, realm *model.Realm, sess *aut
 		// rendered from inside the authentication flow. It is what stops this
 		// page being comparable in a golden and does not stop it being served.
 		httpx.WriteThemeErrorPage(w, http.StatusInternalServerError, loginActionCacheControl,
-			h.flowChrome(realm, client, tab), pageVerifyEmailFailed)
+			h.flowChrome(realm, client, sess, tab), pageVerifyEmailFailed)
 		return
 	}
 	spec := requiredActionTable[step]

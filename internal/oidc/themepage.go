@@ -187,15 +187,28 @@ func (h *handler) loginActionChrome(r *http.Request, realm *model.Realm, q url.V
 //
 //	?client_id=<id>&tab_id=<11 chars>&client_data=<base64url>&skip_logout=true
 //
-// Those two extra values are also why neither page can carry a golden. A tab
-// whose client_data will not encode contributes nothing rather than an empty
-// parameter, because an empty client_data is not a shape any measurement shows.
-func (h *handler) flowChrome(realm *model.Realm, client *model.Client, tab *authTab) httpx.ThemeChrome {
+// A tab whose client_data will not encode contributes nothing rather than an
+// empty parameter, because an empty client_data is not a shape any measurement
+// shows.
+//
+// **It is also the only chrome in this package that fills AuthSessionHash**, and
+// that is the same measurement stated once more: a page rendered from inside the
+// flow has a session to poll, so it carries the head's checkAuthSession block
+// and every page outside the flow does not. Measured on thirteen responses on
+// 2026-09-03; ThemeChrome.AuthSessionHash lists them. The session is passed
+// rather than looked up because both call sites already hold it, and a nil one
+// is the error path that leaves the tab without an id too.
+func (h *handler) flowChrome(realm *model.Realm, client *model.Client,
+	sess *authSession, tab *authTab) httpx.ThemeChrome {
 	extra := []string{"tab_id=" + url.QueryEscape(tab.TabID)}
 	if data, err := tab.clientData(); err == nil {
 		extra = append(extra, "client_data="+url.QueryEscape(data))
 	}
-	return h.themeChromeFor(realm, client, extra...)
+	c := h.themeChromeFor(realm, client, extra...)
+	if sess != nil {
+		c.AuthSessionHash = sess.Hash
+	}
+	return c
 }
 
 // clientHomeURL is the href of the error page's "Back to Application" link,

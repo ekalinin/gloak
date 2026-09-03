@@ -239,8 +239,8 @@ func (h *handler) resolveSSO(w http.ResponseWriter, r *http.Request, realm *mode
 		return
 	}
 	if prompt[promptCreate] {
-		tab := h.openSilentSession(w, r, realm, client, k, req)
-		h.writeRegistrationPage(w, realm, client, tab)
+		sess, tab := h.openSilentSession(w, r, realm, client, k, req)
+		h.writeRegistrationPage(w, realm, client, sess, tab)
 		return
 	}
 	if fresh {
@@ -289,10 +289,10 @@ func (h *handler) resolveSSO(w http.ResponseWriter, r *http.Request, realm *mode
 // is about to write a measured rejection, and losing it to a cookie nothing
 // observable asserts would be the worse answer.
 func (h *handler) openSilentSession(w http.ResponseWriter, r *http.Request, realm *model.Realm,
-	client *model.Client, k *keys.RealmKeys, req *authRequest) *authTab {
+	client *model.Client, k *keys.RealmKeys, req *authRequest) (*authSession, *authTab) {
 	tab := req.tab(client)
-	_, _ = h.beginAuthSession(w, r, realm, k, tab, nil)
-	return tab
+	sess, _ := h.beginAuthSession(w, r, realm, k, tab, nil)
+	return sess, tab
 }
 
 // clearPresentedRestart adds a Max-Age=0 KC_RESTART when the request carried
@@ -493,7 +493,7 @@ func (h *handler) attachClientSessionTo(ctx context.Context, session *model.User
 // request, and masking a value at a named position inside HTML is F38's
 // mechanism, which is still declined.
 func (h *handler) writeRegistrationPage(w http.ResponseWriter, realm *model.Realm,
-	client *model.Client, tab *authTab) {
+	client *model.Client, sess *authSession, tab *authTab) {
 	httpx.WriteThemeErrorPage(w, http.StatusBadRequest, loginActionCacheControl,
-		h.flowChrome(realm, client, tab), pageRegistrationNotAllowed)
+		h.flowChrome(realm, client, sess, tab), pageRegistrationNotAllowed)
 }
