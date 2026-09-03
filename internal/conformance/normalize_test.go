@@ -714,13 +714,20 @@ func TestHTMLQueryMaskDoesNotFireOnALongerParameterName(t *testing.T) {
 
 // The same rule for a call: a function whose name merely ends in the declared
 // one is a different function.
+//
+// The prefix here is deliberately lower case. This test read
+// `preCheckAuthSession` until a mutation removed the boundary check and survived
+// it: the capital C means the needle `checkAuthSession(` never occurred in that
+// name at all, so the test named a rule it could not see. A test whose input
+// cannot reach the branch it is about is a test that passes for the wrong
+// reason.
 func TestHTMLCallMaskDoesNotFireOnALongerFunctionName(t *testing.T) {
-	in := []byte(`preCheckAuthSession("A"); checkAuthSession("B");`)
+	in := []byte(`xcheckAuthSession("A"); checkAuthSession("B");`)
 	got, err := ReplaceHTMLValues(in, Case{VolatileHTMLCall: []string{"checkAuthSession"}})
 	if err != nil {
 		t.Fatalf("mask: %v", err)
 	}
-	if want := `preCheckAuthSession("A"); checkAuthSession("{{checkAuthSession}}");`; string(got) != want {
+	if want := `xcheckAuthSession("A"); checkAuthSession("{{checkAuthSession}}");`; string(got) != want {
 		t.Fatalf("want %s, got %s", want, got)
 	}
 }
@@ -728,8 +735,14 @@ func TestHTMLCallMaskDoesNotFireOnALongerFunctionName(t *testing.T) {
 // A call whose first argument is not a quoted string is refused rather than
 // masked, which is MaskURLTail's rule: covering something of another shape
 // throws away a measurement while looking like it checked one.
+//
+// The second quoted string is what makes this test discriminate. Without it a
+// masker that skipped the shape check still failed - on "the argument is not
+// terminated" - so the mutation that removed the check survived. With a quote
+// further down the body the unchecked masker finds one and covers everything
+// between, which is the damage the check exists to stop.
 func TestHTMLCallMaskRefusesAnArgumentThatIsNotAString(t *testing.T) {
-	if _, err := ReplaceHTMLValues([]byte(`checkAuthSession(session);`),
+	if _, err := ReplaceHTMLValues([]byte(`checkAuthSession(session); other("x");`),
 		Case{VolatileHTMLCall: []string{"checkAuthSession"}}); err == nil {
 		t.Fatal("a call with a bare identifier argument was masked rather than refused")
 	}
@@ -763,14 +776,19 @@ func TestHTMLMaskKeepsTheURLAroundItCompared(t *testing.T) {
 		}
 		return string(out)
 	}
-	const one = `href="/realms/master/login-actions/restart?client_id=gloak-probe-browser&tab_id=AAA"`
-	const other = `href="/realms/master/login-actions/restart?client_id=gloak-probe-other&tab_id=BBB"`
+	// The tab_id is deliberately **not** the last parameter. It was, until a
+	// mutation widened the value to "everything up to the closing quote" and
+	// survived: with the tab_id last the two spellings cover the same bytes, so
+	// the test could not see the difference between masking a value and masking
+	// the rest of the URL.
+	const one = `href="/realms/master/login-actions/restart?tab_id=AAA&client_id=gloak-probe-browser&skip_logout=true"`
+	const other = `href="/realms/master/login-actions/restart?tab_id=BBB&client_id=gloak-probe-other&skip_logout=true"`
 	if mask(one) == mask(other) {
 		t.Fatal("two URLs naming different clients compared equal once the tab_id was masked")
 	}
 	// And the same URL with only the tab_id moved does compare equal, which is
 	// the half that makes the mask worth having.
-	const again = `href="/realms/master/login-actions/restart?client_id=gloak-probe-browser&tab_id=CCC"`
+	const again = `href="/realms/master/login-actions/restart?tab_id=CCC&client_id=gloak-probe-browser&skip_logout=true"`
 	if mask(one) != mask(again) {
 		t.Fatal("the same URL with a fresh tab_id did not compare equal")
 	}

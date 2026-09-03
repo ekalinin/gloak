@@ -215,9 +215,6 @@ func htmlCallMatches(raw []byte, name string) ([]htmlMatch, error) {
 		at := i + j
 		i = at + len(needle)
 		// A call whose name merely ends in this one is a different call.
-		if at > 0 && isIdentifierByte(raw[at-1]) {
-			continue
-		}
 		rest := raw[i:]
 		open := bytes.IndexFunc(rest, func(r rune) bool {
 			return r != ' ' && r != '\t' && r != '\r' && r != '\n'
