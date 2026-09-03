@@ -1958,6 +1958,89 @@ func (r *organizationRepo) ByDomain(ctx context.Context, realmID, domain string)
 	return r.ByID(ctx, realmID, id)
 }
 
+// AddMember inserts the pair. The composite primary key is what turns a repeat
+// into ErrConflict, which is the measured 409.
+func (r *organizationRepo) AddMember(ctx context.Context, orgID, userID string) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO organization_member (organization_id, user_id) VALUES ($1, $2)`,
+		orgID, userID)
+	return classify(err)
+}
+
+// RemoveMember deletes the pair, reporting ErrNotFound when there was none -
+// the delete is not idempotent and the second one is a 404.
+func (r *organizationRepo) RemoveMember(ctx context.Context, orgID, userID string) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM organization_member WHERE organization_id = $1 AND user_id = $2`,
+		orgID, userID)
+	if err != nil {
+		return classify(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (r *organizationRepo) IsMember(ctx context.Context, orgID, userID string) (bool, error) {
+	var one int
+	err := r.pool.QueryRow(ctx,
+		`SELECT 1 FROM organization_member WHERE organization_id = $1 AND user_id = $2`,
+		orgID, userID).Scan(&one)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, classify(err)
+	}
+	return true, nil
+}
+
+// Members selects the user rows themselves rather than ids, because the member
+// representation **is** a user representation and a second round trip per
+// member would be a second chance for the two to disagree. The column list is
+// userRepo.ListByRealm's; the order is the same too, and both are measured.
+func (r *organizationRepo) Members(ctx context.Context, orgID string) ([]*model.User, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT u.id, u.realm_id, u.username, u.email, u.email_verified, u.enabled,
+		        u.first_name, u.last_name, u.created_timestamp, u.attributes,
+		        u.required_actions, u.not_before
+		   FROM user_entity u
+		   JOIN organization_member m ON m.user_id = u.id
+		  WHERE m.organization_id = $1 ORDER BY u.username`, orgID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return scanUsers(rows)
+}
+
+// MemberOf returns the organizations one user belongs to.
+//
+// **The ORDER BY is organization.name and the wire order is not**, which is a
+// difference this comment exists to keep: the measured serving order matches
+// neither insertion, nor name, nor id, and is explained by nothing, so the two
+// cases that serve it carry Case.Unordered. Ordering here is what keeps the two
+// drivers from disagreeing with each other, which is a separate promise from
+// agreeing with Keycloak.
+func (r *organizationRepo) MemberOf(ctx context.Context, realmID, userID string) ([]*model.Organization, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT o.id, o.realm_id, o.name, o.alias, o.enabled, o.description, o.redirect_url
+		   FROM organization o
+		   JOIN organization_member m ON m.organization_id = o.id
+		  WHERE o.realm_id = $1 AND m.user_id = $2 ORDER BY o.name`, realmID, userID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	out, err := collectOrganizations(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadOrganizationChildren(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // insertOrganizationChildren writes the domains and the attributes. Both carry
 // an ordinal because both came off the wire in an order a Go map would lose.
 func insertOrganizationChildren(ctx context.Context, tx pgx.Tx, m *model.Organization) error {
@@ -2641,7 +2724,8 @@ type identityProviderRepo struct{ pool *pgxpool.Pool }
 // two cannot come to scan different columns into the same scanner.
 const identityProviderColumns = `internal_id, realm_id, alias, display_name, provider_id,
 	enabled, trust_email, store_token, add_read_token_role_on_create,
-	authenticate_by_default, link_only, hide_on_login, first_broker_login_flow_alias`
+	authenticate_by_default, link_only, hide_on_login, first_broker_login_flow_alias,
+	organization_id`
 
 func (r *identityProviderRepo) Create(ctx context.Context, m *model.IdentityProvider) error {
 	tx, err := r.pool.Begin(ctx)
@@ -2654,13 +2738,13 @@ func (r *identityProviderRepo) Create(ctx context.Context, m *model.IdentityProv
 		   (internal_id, realm_id, alias, display_name, provider_id, enabled,
 		    trust_email, store_token, add_read_token_role_on_create,
 		    authenticate_by_default, link_only, hide_on_login,
-		    first_broker_login_flow_alias)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		    first_broker_login_flow_alias, organization_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		m.InternalID, m.RealmID, m.Alias, m.DisplayName, m.ProviderID,
 		boolToInt(m.Enabled), nullableBool(m.TrustEmail), nullableBool(m.StoreToken),
 		nullableBool(m.AddReadTokenRoleOnCreate), nullableBool(m.AuthenticateByDefault),
 		nullableBool(m.LinkOnly), nullableBool(m.HideOnLogin),
-		m.FirstBrokerLoginFlowAlias); err != nil {
+		m.FirstBrokerLoginFlowAlias, nullableString(m.OrganizationID)); err != nil {
 		return classify(err)
 	}
 	if err := insertIdentityProviderConfig(ctx, tx, m); err != nil {
@@ -2671,6 +2755,13 @@ func (r *identityProviderRepo) Create(ctx context.Context, m *model.IdentityProv
 
 // Update writes every column back, the alias included - see
 // store.IdentityProviderRepo for why that is not the organization's rule.
+//
+// **organization_id is not in the statement**, and that is measured: a PUT
+// replaces everything else - a body naming only the alias and the provider id
+// emptied a four-key config - and the association survived it, so a `PUT` on an
+// associated provider must not clear the column. `POST` and `PUT` do write it,
+// through the body's own `organizationId`, and that goes through
+// SetOrganization rather than here so that the one write has one place.
 func (r *identityProviderRepo) Update(ctx context.Context, m *model.IdentityProvider) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -2753,6 +2844,40 @@ func (r *identityProviderRepo) List(ctx context.Context, realmID string) ([]*mod
 	return out, nil
 }
 
+// ListByOrganization filters List's rows rather than joining a second table,
+// because the association is a column on this one.
+func (r *identityProviderRepo) ListByOrganization(ctx context.Context, realmID, orgID string) ([]*model.IdentityProvider, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+identityProviderColumns+` FROM identity_provider
+		  WHERE realm_id = $1 AND organization_id = $2 ORDER BY alias NULLS FIRST`,
+		realmID, orgID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	out, err := collectIdentityProviders(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.loadIdentityProviderConfig(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SetOrganization writes the association, or clears it when orgID is empty.
+func (r *identityProviderRepo) SetOrganization(ctx context.Context, realmID, alias, orgID string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE identity_provider SET organization_id = $1
+		  WHERE realm_id = $2 AND alias = $3`, nullableString(orgID), realmID, alias)
+	if err != nil {
+		return classify(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func insertIdentityProviderConfig(ctx context.Context, tx pgx.Tx, m *model.IdentityProvider) error {
 	for i, e := range m.Config {
 		if _, err := tx.Exec(ctx,
@@ -2810,15 +2935,18 @@ func collectIdentityProviders(rows pgx.Rows) ([]*model.IdentityProvider, error) 
 
 func scanIdentityProvider(row scanner) (*model.IdentityProvider, error) {
 	m := &model.IdentityProvider{}
-	var alias *string
+	var alias, organizationID *string
 	var enabled int
 	var trustEmail, storeToken, addReadToken, authByDefault, linkOnly, hideOnLogin *int64
 	if err := row.Scan(&m.InternalID, &m.RealmID, &alias, &m.DisplayName, &m.ProviderID,
 		&enabled, &trustEmail, &storeToken, &addReadToken, &authByDefault,
-		&linkOnly, &hideOnLogin, &m.FirstBrokerLoginFlowAlias); err != nil {
+		&linkOnly, &hideOnLogin, &m.FirstBrokerLoginFlowAlias, &organizationID); err != nil {
 		return nil, classify(err)
 	}
 	m.Alias = alias
+	if organizationID != nil {
+		m.OrganizationID = *organizationID
+	}
 	m.Enabled = enabled != 0
 	m.TrustEmail = boolFromNull(trustEmail)
 	m.StoreToken = boolFromNull(storeToken)
@@ -2846,6 +2974,18 @@ func boolFromNull(n *int64) *bool {
 	}
 	v := *n != 0
 	return &v
+}
+
+// nullableString writes "" as NULL. It exists for identity_provider's
+// organization_id, whose two states on the wire are "carries the key" and "has
+// no such key" - there is no third, so the empty string and NULL do not need
+// telling apart, and a NULL is what makes `WHERE organization_id = $2` select
+// nothing for an unassociated provider rather than everything unassociated.
+func nullableString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 type componentRepo struct{ pool *pgxpool.Pool }

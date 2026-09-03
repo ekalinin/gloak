@@ -92,6 +92,23 @@ type IdentityProviderRepo interface {
 	// the measured serving order: three created `zzz, mmm, aaa` came back
 	// `aaa, mmm, zzz`. A provider whose alias was cleared sorts first.
 	List(ctx context.Context, realmID string) ([]*model.IdentityProvider, error)
+	// ListByOrganization returns the providers associated with one
+	// organization, in List's order.
+	//
+	// **An organization's identity providers are a column on the provider, not
+	// a join table**, and both directions are measured: associating one makes
+	// the *realm's* own read of that provider start carrying
+	// `"organizationId"`, and removing the association drops the key and leaves
+	// the provider. So this is a filter over the same rows List returns and the
+	// two can never disagree about what a provider is.
+	ListByOrganization(ctx context.Context, realmID, orgID string) ([]*model.IdentityProvider, error)
+	// SetOrganization writes the association, or clears it when orgID is empty.
+	// It is keyed on the alias because both routes that call it carry one.
+	//
+	// It does not refuse a provider that already belongs to another
+	// organization: that is a 400 naming neither row, so the handler reads the
+	// provider first and this method only writes.
+	SetOrganization(ctx context.Context, realmID, alias, orgID string) error
 }
 
 // IdentityProviderMapperRepo stores a realm's identity provider mappers.
@@ -321,6 +338,40 @@ type OrganizationRepo interface {
 	// other organization by name - "Domain d is already linked to organization
 	// o in realm r" - so the create needs the row rather than a boolean.
 	ByDomain(ctx context.Context, realmID, domain string) (*model.Organization, error)
+
+	// AddMember makes a user a member. A user already in the organization is
+	// ErrConflict, which internal/admin turns into the measured
+	// `409 {"errorMessage":"User is already a member of the organization."}`.
+	//
+	// It takes a user id and not a membership of any kind: a member **is** a
+	// user, addressed by the user's own id on every route in the family.
+	AddMember(ctx context.Context, orgID, userID string) error
+	// RemoveMember takes a user out. A user who is not a member is ErrNotFound,
+	// which becomes the generic `404 {"error":"HTTP 404 Not Found"}` - the same
+	// answer a user id that resolves to nothing gets, so the delete does not
+	// say which of the two it was. It is **not** idempotent: the second delete
+	// is that 404 where a default-group removal is 204.
+	RemoveMember(ctx context.Context, orgID, userID string) error
+	// IsMember answers the four routes that resolve a member without listing
+	// one. It is a predicate rather than a lookup because the user is fetched
+	// through UserRepo anyway - the member representation is a user
+	// representation - and asking the same row for two things would let the two
+	// answers disagree.
+	IsMember(ctx context.Context, orgID, userID string) (bool, error)
+	// Members returns an organization's members **ordered by username**, which
+	// is the measured serving order: three users added `zzz, aaa, mmm` came
+	// back `aaa, mmm, zzz`, on a set whose username order and e-mail order
+	// deliberately disagree. Paging, `search`, `exact` and `membershipType` all
+	// run in internal/admin over this, because `search` here is a
+	// case-insensitive **substring** where the user listing's is a prefix and
+	// writing that difference twice is writing it twice.
+	Members(ctx context.Context, orgID string) ([]*model.User, error)
+	// MemberOf returns the organizations one user belongs to, in **no defined
+	// order**: four organizations came back `mm, zz, aa, fin` on four
+	// consecutive reads of one container - reproducible there, and matching
+	// neither insertion order, nor name, nor organization id. The two routes
+	// that serve it carry Case.Unordered for exactly that.
+	MemberOf(ctx context.Context, realmID, userID string) ([]*model.Organization, error)
 }
 
 // RequiredActionRepo stores a realm's registered required action providers.

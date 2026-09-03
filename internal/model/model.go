@@ -863,6 +863,14 @@ type IdentityProvider struct {
 	// FirstBrokerLoginFlowAlias is omitted when empty, so empty and absent are
 	// one state here and two on the six flags above.
 	FirstBrokerLoginFlowAlias string
+	// OrganizationID is the organization this provider is associated with, and
+	// it is on the provider rather than in a join table because that is where
+	// Keycloak was measured keeping it: associating a provider through
+	// `POST /organizations/{org}/identity-providers` makes the **realm's** own
+	// read of that provider start carrying `"organizationId"`, and removing the
+	// association drops the key. It is empty when there is none, which is every
+	// provider on a default install, and the representation omits it then.
+	OrganizationID string
 	// Config is a slice rather than a map for the reason
 	// OrganizationAttribute is: the wire order is a Java map's and a Go map
 	// would sort it. Unlike an organization's attributes it is single-valued.
