@@ -563,11 +563,37 @@ type GroupRepo interface {
 	// Delete removes the group and, through the schema's cascade, its whole
 	// subtree and every membership in it.
 	Delete(ctx context.Context, realmID, id string) error
-	// ListTopLevel returns the groups with no parent, which is what
+	// ListTopLevel returns the realm's groups with no parent, which is what
 	// GET /groups answers - measured top-level only, while the count beside
 	// it counts the whole tree.
+	//
+	// **It excludes every organization group, and so does ListAll.** A realm
+	// holding two organization groups was measured answering `[]` here and
+	// `{"count":0}` from the count.
+	//
+	// **ListUserGroups does not**, and that is measured rather than an
+	// oversight: `GET /users/{id}/groups` filters them out while
+	// `GET /users/{id}/groups/count` beside it **counts** them - one
+	// membership, two routes, two answers - so the filter has to sit above the
+	// store, where only one of the two applies it.
 	ListTopLevel(ctx context.Context, realmID string) ([]*model.Group, error)
 	ListChildren(ctx context.Context, realmID, parentID string) ([]*model.Group, error)
+	// Move reparents one group. It is separate from Update because Update
+	// deliberately cannot write parent_id: the realm family has no operation
+	// that reparents a group, and the organization family has two - the body's
+	// `id` on both creates is a move rather than a create, measured 204 with an
+	// empty body where the create beside it answers 201 with the group.
+	Move(ctx context.Context, realmID, id, parentID string) error
+	// ListOrganizationAll returns every group of one organization at any
+	// depth, ordered by name, **without** its hidden root. The listing, the
+	// search and the group-by-path walk all read it.
+	ListOrganizationAll(ctx context.Context, realmID, orgID string) ([]*model.Group, error)
+	// OrganizationRoot returns the group Keycloak creates with an
+	// organization. Its `name` and its `path` are the organization's own id,
+	// it is the parent of every group at the top of the organization, and the
+	// listing never shows it - `GET /organizations/{org}/groups` answers its
+	// children.
+	OrganizationRoot(ctx context.Context, realmID, orgID string) (*model.Group, error)
 	// ListAll returns every group in the realm at any depth, ordered by name.
 	// The count and the search both need the whole tree - the count of a
 	// realm with one top-level group and one child was measured answering

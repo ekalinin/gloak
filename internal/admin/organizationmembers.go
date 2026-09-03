@@ -206,20 +206,43 @@ func (h *handler) removeOrganizationMember(w http.ResponseWriter, r *http.Reques
 // listOrganizationMemberGroups serves
 // GET /organizations/{org-id}/members/{member-id}/groups.
 //
-// **It is always an empty array**, and that is the contract rather than a stub.
-// It answers the member's memberships of the *organization's* groups, which are
-// the eleven operations under `/organizations/{org-id}/groups` that F120 blocks
-// and Gloak does not serve - so no organization group can exist here and no
-// member can be in one. A live 26.7.1 answers `[]` for exactly the same reason
-// until somebody creates one.
+// It answers the member's memberships of the *organization's* groups, at any
+// depth, in the five-key listing shape - measured 2026-09-03 on a member of one
+// group and its child, which came back as two flat rows.
+//
+// **This was an unconditional `[]` until this cut**, with a comment saying the
+// groups it would answer were F120's and could not exist. They can now, and the
+// realm's own `GET /users/{id}/groups` is **not** where the rows come from: that
+// route filters organization groups out, while `GET /users/{id}/groups/count`
+// beside it counts them.
 //
 // It still resolves the member first: a user who is not a member of this
 // organization is the generic 404, measured.
 func (h *handler) listOrganizationMemberGroups(w http.ResponseWriter, r *http.Request, rc *reqContext, o *model.Organization) {
-	if _, ok := h.organizationMemberFromPath(w, r, rc, o); !ok {
+	u, ok := h.organizationMemberFromPath(w, r, rc, o)
+	if !ok {
 		return
 	}
-	writeAdminJSON(w, []struct{}{})
+	all, err := h.store.Groups().ListOrganizationAll(r.Context(), rc.realm.ID, o.ID)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	var held []*model.Group
+	for _, g := range all {
+		members, err := h.store.Groups().Members(r.Context(), rc.realm.ID, g.ID)
+		if err != nil {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		for _, m := range members {
+			if m.ID == u.ID {
+				held = append(held, g)
+				break
+			}
+		}
+	}
+	h.writeOrganizationGroups(w, r, rc, held, organizationGroupBrief)
 }
 
 // listOrganizationMemberOrganizations serves

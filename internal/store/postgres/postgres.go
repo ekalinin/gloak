@@ -1177,8 +1177,9 @@ func (r *groupRepo) Create(ctx context.Context, m *model.Group) error {
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO keycloak_group (id, realm_id, parent_id, name) VALUES ($1, $2, $3, $4)`,
-		m.ID, m.RealmID, m.ParentID, m.Name); err != nil {
+		`INSERT INTO keycloak_group (id, realm_id, parent_id, name, organization_id)
+		 VALUES ($1, $2, $3, $4, $5)`,
+		m.ID, m.RealmID, m.ParentID, m.Name, nullableOrganizationID(m.OrganizationID)); err != nil {
 		return classify(err)
 	}
 	if err := insertGroupAttributes(ctx, tx, m); err != nil {
@@ -1189,7 +1190,7 @@ func (r *groupRepo) Create(ctx context.Context, m *model.Group) error {
 
 func (r *groupRepo) ByID(ctx context.Context, realmID, id string) (*model.Group, error) {
 	row := r.pool.QueryRow(ctx,
-		`SELECT id, realm_id, parent_id, name FROM keycloak_group
+		`SELECT id, realm_id, parent_id, name, organization_id FROM keycloak_group
 		 WHERE realm_id = $1 AND id = $2`, realmID, id)
 	m, err := scanGroup(row)
 	if err != nil {
@@ -1274,7 +1275,8 @@ func (r *groupRepo) subtree(ctx context.Context, realmID, id string) ([]string, 
 
 // ListTopLevel is what GET /groups answers: the groups with no parent.
 func (r *groupRepo) ListTopLevel(ctx context.Context, realmID string) ([]*model.Group, error) {
-	return r.list(ctx, `WHERE realm_id = $1 AND parent_id = '' ORDER BY name`, realmID)
+	return r.list(ctx, `WHERE realm_id = $1 AND parent_id = '' AND organization_id IS NULL
+		 ORDER BY name`, realmID)
 }
 
 func (r *groupRepo) ListChildren(ctx context.Context, realmID, parentID string) ([]*model.Group, error) {
@@ -1283,7 +1285,7 @@ func (r *groupRepo) ListChildren(ctx context.Context, realmID, parentID string) 
 
 func (r *groupRepo) list(ctx context.Context, where string, args ...any) ([]*model.Group, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, realm_id, parent_id, name FROM keycloak_group `+where, args...)
+		`SELECT id, realm_id, parent_id, name, organization_id FROM keycloak_group `+where, args...)
 	if err != nil {
 		return nil, classify(err)
 	}
@@ -1299,7 +1301,42 @@ func (r *groupRepo) list(ctx context.Context, where string, args ...any) ([]*mod
 
 // ListAll is every group at any depth, which the count and the search share.
 func (r *groupRepo) ListAll(ctx context.Context, realmID string) ([]*model.Group, error) {
-	return r.list(ctx, `WHERE realm_id = $1 ORDER BY name`, realmID)
+	return r.list(ctx, `WHERE realm_id = $1 AND organization_id IS NULL ORDER BY name`, realmID)
+}
+
+// ListOrganizationAll is every group of one organization, its hidden root
+// excluded - sqlite.go's twin, and the comment there says why the root is
+// dropped here rather than by each caller.
+func (r *groupRepo) ListOrganizationAll(ctx context.Context, realmID, orgID string) ([]*model.Group, error) {
+	return r.list(ctx, `WHERE realm_id = $1 AND organization_id = $2 AND parent_id <> ''
+		 ORDER BY name`, realmID, orgID)
+}
+
+// OrganizationRoot is the one row of the organization with no parent.
+func (r *groupRepo) OrganizationRoot(ctx context.Context, realmID, orgID string) (*model.Group, error) {
+	groups, err := r.list(ctx, `WHERE realm_id = $1 AND organization_id = $2 AND parent_id = ''`,
+		realmID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	if len(groups) == 0 {
+		return nil, store.ErrNotFound
+	}
+	return groups[0], nil
+}
+
+// Move reparents one group, sqlite.go's twin.
+func (r *groupRepo) Move(ctx context.Context, realmID, id, parentID string) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE keycloak_group SET parent_id = $1 WHERE realm_id = $2 AND id = $3`,
+		parentID, realmID, id)
+	if err != nil {
+		return classify(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
 }
 
 // Ancestry walks parent_id upwards and returns the chain nearest last.
@@ -1349,7 +1386,7 @@ func (r *groupRepo) RemoveMember(ctx context.Context, groupID, userID string) er
 
 func (r *groupRepo) ListUserGroups(ctx context.Context, realmID, userID string) ([]*model.Group, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT g.id, g.realm_id, g.parent_id, g.name FROM keycloak_group g
+		`SELECT g.id, g.realm_id, g.parent_id, g.name, g.organization_id FROM keycloak_group g
 		 JOIN group_membership m ON m.group_id = g.id
 		 WHERE g.realm_id = $1 AND m.user_id = $2 ORDER BY g.name`, realmID, userID)
 	if err != nil {
@@ -1367,7 +1404,7 @@ func (r *groupRepo) ListUserGroups(ctx context.Context, realmID, userID string) 
 
 func (r *groupRepo) ListDefaultGroups(ctx context.Context, realmID string) ([]*model.Group, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT g.id, g.realm_id, g.parent_id, g.name FROM keycloak_group g
+		`SELECT g.id, g.realm_id, g.parent_id, g.name, g.organization_id FROM keycloak_group g
 		 JOIN realm_default_group d ON d.group_id = g.id
 		 WHERE d.realm_id = $1 ORDER BY g.name`, realmID)
 	if err != nil {
@@ -1460,10 +1497,22 @@ func collectGroups(rows pgx.Rows) ([]*model.Group, error) {
 
 func scanGroup(row scanner) (*model.Group, error) {
 	m := &model.Group{}
-	if err := row.Scan(&m.ID, &m.RealmID, &m.ParentID, &m.Name); err != nil {
+	var org *string
+	if err := row.Scan(&m.ID, &m.RealmID, &m.ParentID, &m.Name, &org); err != nil {
 		return nil, classify(err)
 	}
+	if org != nil {
+		m.OrganizationID = *org
+	}
 	return m, nil
+}
+
+// nullableOrganizationID writes NULL for a realm group, sqlite.go's twin.
+func nullableOrganizationID(id string) any {
+	if id == "" {
+		return nil
+	}
+	return id
 }
 
 // AssignToGroup is AssignToUser's mirror, idempotent for the same measured

@@ -356,6 +356,21 @@ func (h *handler) createOrganization(w http.ResponseWriter, r *http.Request, rc 
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
+	// **An organization comes with a group.** Keycloak creates a hidden root
+	// group with it whose `name` and `path` are the organization's own id, and
+	// every group under `/organizations/{org}/groups` is a descendant of it.
+	// Nothing on the wire says it was created here - the create's own 201 has
+	// no body - but `GET /organizations/{org}/groups/{that id}` reads it, so an
+	// organization without one is an organization whose group family is a 500.
+	if err := h.store.Groups().Create(r.Context(), &model.Group{
+		ID:             model.NewID(),
+		RealmID:        rc.realm.ID,
+		Name:           o.ID,
+		OrganizationID: o.ID,
+	}); err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
 	w.Header().Set("Location",
 		h.issuerBase+"/admin/realms/"+rc.realm.Name+"/organizations/"+o.ID)
 	w.WriteHeader(http.StatusCreated)
@@ -465,6 +480,18 @@ func (h *handler) updateOrganization(w http.ResponseWriter, r *http.Request, rc 
 // It is **not** idempotent - the second delete is 404, where a group's
 // default-group removal is 204.
 func (h *handler) deleteOrganization(w http.ResponseWriter, r *http.Request, rc *reqContext, o *model.Organization) {
+	// The organization's groups go with it. keycloak_group carries no foreign
+	// key to organization - 0026_organization_group.sql says why - so the root
+	// is removed here and GroupRepo.Delete walks the subtree under it.
+	if root, err := h.store.Groups().OrganizationRoot(r.Context(), rc.realm.ID, o.ID); err == nil {
+		if err := h.store.Groups().Delete(r.Context(), rc.realm.ID, root.ID); err != nil {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
 	if err := h.store.Organizations().Delete(r.Context(), rc.realm.ID, o.ID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeOrganizationNotFound(w)

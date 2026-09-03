@@ -214,6 +214,99 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/identity-providers/{idpAlias}/groups",
 		h.guardOrganizationAnd(organizationReadRoles, identityProviderReadRoles, h.listOrganizationIdentityProviderGroups))
 
+	// Organizations, the third cut: an organization's groups and their role
+	// mappings. Twenty-two operations, and **twenty of them are opened by a
+	// single role** - which is the previous cut's rule inverted, not extended.
+	//
+	// Measured 2026-09-03 with a token minted per caller, one user per role
+	// set, against every one of the twenty-two:
+	//
+	//	the reads over groups     (view|manage-organizations|manage-realm)
+	//	the writes over groups    (manage-organizations|manage-realm)
+	//	GET .../groups/{g}/members            the read pair AND (view|manage|query-users)
+	//	PUT/DELETE .../members/{userID}       the write pair AND manage-users
+	//
+	// So `manage-organizations` alone opens nineteen routes here and was 403 on
+	// every route of the member family. `query-organizations` and
+	// `query-groups` open nothing at all, and `view-realm`, `view-clients` and
+	// `manage-clients` reach nothing.
+	//
+	// **`group-by-path` has no pattern of its own**, and the reason is Go's
+	// ServeMux rather than anything about Keycloak:
+	// `.../groups/group-by-path/{path...}` conflicts with every deeper pattern
+	// under `{groupID}` - `children`, `members`, `role-mappings` and its five
+	// descendants - because `/groups/group-by-path/children` matches both and
+	// neither is a strict subset of the other. Checked against Go 1.26.6 by
+	// registering the intended set one pattern at a time: **eight** panics,
+	// which is F153's shape and eight times its size. A single-segment `{path}`
+	// does not help, and the measured paths are multi-segment anyway. The
+	// literal is read in readOrganizationGroup instead, which is the one place
+	// the two can be told apart without asking the router to decide.
+	// TestOrganizationGroupRoutesRegister is what keeps that honest.
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/groups",
+		h.guardOrganization(organizationReadRoles, h.listOrganizationGroups))
+	mux.HandleFunc("POST /admin/realms/{realm}/organizations/{orgID}/groups",
+		h.guardOrganization(organizationWriteRoles, h.createOrganizationGroup))
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}",
+		h.guardOrganization(organizationReadRoles, h.readOrganizationGroup))
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}/{rest...}",
+		h.guardOrganization(organizationReadRoles, h.readOrganizationGroupTail))
+	mux.HandleFunc("PUT /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}",
+		h.guardOrganizationGroupOf(organizationWriteRoles, h.updateOrganizationGroup))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}",
+		h.guardOrganizationGroupOf(organizationWriteRoles, h.deleteOrganizationGroup))
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}/children",
+		h.guardOrganizationGroupOf(organizationReadRoles, h.listOrganizationGroupChildren))
+	mux.HandleFunc("POST /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}/children",
+		h.guardOrganizationGroupOf(organizationWriteRoles, h.createOrganizationGroupChild))
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}/members",
+		h.guardOrganizationGroupOf(organizationMemberListRoles, h.listOrganizationGroupMembers))
+	mux.HandleFunc("PUT /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}/members/{userID}",
+		h.guardOrganizationGroupOf(organizationWriteRoles, h.joinOrganizationGroup))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}/members/{userID}",
+		h.guardOrganizationGroupOf(organizationWriteRoles, h.leaveOrganizationGroup))
+
+	// The eleven role mappings of an organization group. **The handlers are
+	// groupmappings.go's, unchanged, and the guard is not.**
+	//
+	// That the user and group locators already agree does not establish a
+	// third, so the whole family was re-measured on this one: `{}` for a holder
+	// with nothing, `Client not found` for an unknown client uuid,
+	// `Role not found` for an unknown role in the array, `unknown_error` /
+	// `Cannot parse the JSON` for a malformed body, briefRepresentation
+	// honoured by `.../composite` alone, and the caller-relative rules intact -
+	// a manage-organizations caller reads `.../available` on realm-management
+	// as `[]` and is refused `manage-realm` on the write, where the same caller
+	// holding manage-users too sees the nine roles its own roles confer. All of
+	// it agrees with the two locators this project already serves.
+	//
+	// What does not agree is the guard - these take the organization roles,
+	// where the realm group family's take view-users/manage-users - and the
+	// 404, which is `Group does not exist` rather than
+	// `Could not find group by id`.
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}/role-mappings",
+		h.guardOrganizationGroup(organizationReadRoles, h.allGroupMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}/role-mappings/realm",
+		h.guardOrganizationGroup(organizationReadRoles, h.listGroupRealmMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}/role-mappings/realm/available",
+		h.guardOrganizationGroup(organizationReadRoles, h.availableGroupRealmMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}/role-mappings/realm/composite",
+		h.guardOrganizationGroup(organizationReadRoles, h.compositeGroupRealmMappings))
+	mux.HandleFunc("POST /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}/role-mappings/realm",
+		h.guardOrganizationGroup(organizationWriteRoles, h.assignGroupRealmMappings))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}/role-mappings/realm",
+		h.guardOrganizationGroup(organizationWriteRoles, h.removeGroupRealmMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}/role-mappings/clients/{clientUUID}",
+		h.guardOrganizationGroup(organizationReadRoles, h.listGroupClientMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}/role-mappings/clients/{clientUUID}/available",
+		h.guardOrganizationGroup(organizationReadRoles, h.availableGroupClientMappings))
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}/role-mappings/clients/{clientUUID}/composite",
+		h.guardOrganizationGroup(organizationReadRoles, h.compositeGroupClientMappings))
+	mux.HandleFunc("POST /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}/role-mappings/clients/{clientUUID}",
+		h.guardOrganizationGroup(organizationWriteRoles, h.assignGroupClientMappings))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/organizations/{orgID}/groups/{groupID}/role-mappings/clients/{clientUUID}",
+		h.guardOrganizationGroup(organizationWriteRoles, h.removeGroupClientMappings))
+
 	// The invitations take one family and it is the **write** pair, on all four
 	// operations including the two reads.
 	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/invitations",
@@ -1470,6 +1563,63 @@ func (h *handler) guardOrganizationAnd(a, b []string, next func(http.ResponseWri
 			return
 		}
 		next(w, r, rc, org)
+	})
+}
+
+// guardOrganizationGroupOf resolves the organization and then the group for
+// every route naming a {groupID}, and checks the route's own role set **after**
+// both.
+//
+// **That order is measured, and it is not guardOrganization's.** With one token
+// per role on 2026-09-03:
+//
+//	view-users, on any route, any id            403
+//	view-organizations, unknown organization    404 Organization not found.
+//	view-organizations, DELETE an unknown group 404 Group does not exist
+//	view-organizations, PUT an existing group   403
+//
+// So the tag's **read** pair gates first, the organization and the group are
+// resolved next, and the write pair is judged last. A guard that checked the
+// write role first - which is what the member family's does - would answer 403
+// where Keycloak answers 404 on every write in this family.
+//
+// It is also the **opposite shape** from the member family in the other sense:
+// `manage-organizations` alone opens nineteen of these twenty-two routes and
+// was 403 on all nineteen member routes. Nineteen conjunctions and nineteen
+// single-role routes in one tag, measured separately rather than carried over.
+func (h *handler) guardOrganizationGroupOf(roles []string,
+	next func(http.ResponseWriter, *http.Request, *reqContext, *model.Organization, *model.Group)) http.HandlerFunc {
+	return h.guardOrganization(organizationReadRoles, func(w http.ResponseWriter, r *http.Request, rc *reqContext, o *model.Organization) {
+		// **JAX-RS prefers the group-by-path locator where Go's ServeMux
+		// prefers the literal.** `GET .../groups/group-by-path/children`
+		// answers the group named `children` on a live 26.7.1 - measured with
+		// such a group in the organization - and Go routes it to the children
+		// listing instead, because `children` is a literal segment and
+		// `group-by-path` is only a wildcard's value. Three route names can
+		// collide this way and this is the one place that sees all three.
+		if r.Method == http.MethodGet && r.PathValue("groupID") == organizationGroupByPathSegment {
+			h.readOrganizationGroupByPath(w, r, rc, o)
+			return
+		}
+		g, ok := h.organizationGroupFromPath(w, r, rc, o)
+		if !ok {
+			return
+		}
+		if !rc.caller.hasAny(roles) {
+			writeForbidden(w)
+			return
+		}
+		next(w, r, rc, o, g)
+	})
+}
+
+// guardOrganizationGroup is guardOrganizationGroupOf for the eleven
+// role-mapping routes, whose handlers are groupmappings.go's and take a
+// *model.Group without the organization.
+func (h *handler) guardOrganizationGroup(roles []string,
+	next func(http.ResponseWriter, *http.Request, *reqContext, *model.Group)) http.HandlerFunc {
+	return h.guardOrganizationGroupOf(roles, func(w http.ResponseWriter, r *http.Request, rc *reqContext, _ *model.Organization, g *model.Group) {
+		next(w, r, rc, g)
 	})
 }
 

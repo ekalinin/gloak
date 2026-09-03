@@ -282,6 +282,15 @@ type Group struct {
 	RealmID  string
 	ParentID string
 	Name     string
+	// OrganizationID is empty for a realm group and the organization's id for
+	// one of its groups. An organization's groups are rows of the **realm's**
+	// tree rather than a tree of their own, and that is measured from three
+	// sides: a group under an organization has a parent like any other, moving
+	// one under a realm group is a 204 that leaves it an organization group,
+	// and `GET /users/{id}/groups/count` counts it while the listing beside it
+	// filters it out. Two tables could not express a row that is in one tree
+	// and hidden from one of that tree's two reads.
+	OrganizationID string
 	// Attributes are stored and read back verbatim, like a role's. A group
 	// with none reads back {} rather than being absent, measured.
 	Attributes map[string][]string
