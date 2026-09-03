@@ -98,22 +98,25 @@ func TestTheMemberAddReadsARawUserIDRatherThanJSON(t *testing.T) {
 	}
 }
 
-// TestTheMemberAddRefusesAnAbsentContentType is F149's rule measured on this
-// route, and it is the opposite of the one requireJSONBody carries.
+// TestTheMemberAddAcceptsAnAbsentContentTypeAndRefusesTheWrongOne is the rule
+// this cut got backwards once, and the way it got it back.
 //
-// The scope mappings accept a write with no Content-Type; this one answers 415.
-// One API, two answers, and a single shared helper would get one of them wrong.
-func TestTheMemberAddRefusesAnAbsentContentType(t *testing.T) {
+// The probe that "sent no Content-Type" was Python's urllib, which adds
+// `application/x-www-form-urlencoded` to any POST carrying data that does not
+// already name one - so it measured the 415 of a header it had set itself. The
+// recorder builds its requests by hand and got a 409 where the probe had got a
+// 415, and a socket-level re-measurement settled it: **an absent Content-Type
+// is accepted**, which is requireJSONBody's existing rule, and F149's premise
+// is false on this endpoint.
+func TestTheMemberAddAcceptsAnAbsentContentTypeAndRefusesTheWrongOne(t *testing.T) {
 	h, _, _ := newServer(t)
 	admin := tokenFor(t, h, "admin", "admin")
 	orgID, userID := orgMemberFixture(t, h, admin)
 
-	for _, ct := range []string{"", "text/plain", "application/x-www-form-urlencoded", "application/xml"} {
+	for _, ct := range []string{"text/plain", "application/x-www-form-urlencoded", "application/xml"} {
 		req := httptest.NewRequest(http.MethodPost,
 			"/admin/realms/master/organizations/"+orgID+"/members", strings.NewReader(userID))
-		if ct != "" {
-			req.Header.Set("Content-Type", ct)
-		}
+		req.Header.Set("Content-Type", ct)
 		req.Header.Set("Authorization", "Bearer "+admin)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
@@ -122,9 +125,25 @@ func TestTheMemberAddRefusesAnAbsentContentType(t *testing.T) {
 			t.Errorf("Content-Type %q: got %d %s, want 415 %s", ct, w.Code, w.Body, want)
 		}
 	}
-	// And the one it does accept.
-	if w := addMember(t, h, admin, orgID, userID); w.Code != http.StatusCreated {
-		t.Errorf("application/json: got %d %s, want 201", w.Code, w.Body)
+
+	// No header at all: accepted, and the request reaches the membership check.
+	req := httptest.NewRequest(http.MethodPost,
+		"/admin/realms/master/organizations/"+orgID+"/members", strings.NewReader(userID))
+	req.Header.Set("Authorization", "Bearer "+admin)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Errorf("no Content-Type: got %d %s, want 201", w.Code, w.Body)
+	}
+	// And again, so the second one proves it reached the duplicate check rather
+	// than being refused before it.
+	req = httptest.NewRequest(http.MethodPost,
+		"/admin/realms/master/organizations/"+orgID+"/members", strings.NewReader(userID))
+	req.Header.Set("Authorization", "Bearer "+admin)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusConflict {
+		t.Errorf("no Content-Type, a second time: got %d %s, want 409", w.Code, w.Body)
 	}
 }
 

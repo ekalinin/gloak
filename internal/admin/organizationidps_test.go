@@ -136,13 +136,22 @@ func TestTheOrganizationBrokerErrorsAreFiveSentences(t *testing.T) {
 		t.Errorf("associating elsewhere: got %d %s, want 400 %s", w.Code, w.Body, elsewhere)
 	}
 
-	// The Content-Type is enforced here, as on the member add.
+	// The Content-Type rule is the member add's: a wrong one is a 415 and an
+	// absent one is accepted, so this request reaches the duplicate check.
 	req := httptest.NewRequest(http.MethodPost, base, strings.NewReader(`"gloak-probe-shared"`))
+	req.Header.Set("Content-Type", "text/plain")
 	req.Header.Set("Authorization", "Bearer "+admin)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnsupportedMediaType {
-		t.Errorf("no Content-Type: got %d %s, want 415", rec.Code, rec.Body)
+		t.Errorf("text/plain: got %d %s, want 415", rec.Code, rec.Body)
+	}
+	req = httptest.NewRequest(http.MethodPost, base, strings.NewReader(`"gloak-probe-shared"`))
+	req.Header.Set("Authorization", "Bearer "+admin)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Errorf("no Content-Type: got %d %s, want the 409 - an absent header is accepted", rec.Code, rec.Body)
 	}
 }
 
@@ -288,10 +297,15 @@ func TestTheTwoInviteEndpointsDisagreeAboutEverything(t *testing.T) {
 	if w.Code != http.StatusInternalServerError || strings.TrimSpace(w.Body.String()) != sendFailed {
 		t.Errorf("invite-user for a stranger: got %d %s, want 500 %s", w.Code, w.Body, sendFailed)
 	}
-	// **No Content-Type is accepted here**, where the member add answers 415.
-	w = form(base+"/invite-user", url.Values{"email": {"stranger@example.com"}}, "")
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("invite-user with no Content-Type: got %d %s, want the 500", w.Code, w.Body)
+	// **Without the form Content-Type the body is not read at all**, so the
+	// request answers about the field it is then missing rather than 415. The
+	// member add beside it can answer 415 and these two cannot.
+	for _, ct := range []string{"", "application/json"} {
+		w := form(base+"/invite-user", url.Values{"email": {"stranger@example.com"}}, ct)
+		const want = `{"errorMessage":"Email is required to invite a member"}`
+		if w.Code != http.StatusBadRequest || strings.TrimSpace(w.Body.String()) != want {
+			t.Errorf("invite-user with Content-Type %q: got %d %s, want 400 %s", ct, w.Code, w.Body, want)
+		}
 	}
 
 	// invite-existing-user: the **error** family for a missing field.

@@ -1,0 +1,12 @@
+# GET /admin/realms/gloak-probe-org-mem/organizations/{{org_id}}/members
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"id":"{{member_2}}","username":"gloak-probe-aardvark","firstName":"Alice","lastName":"Alpha","email":"zzz@gloak-probe-members.example.com","emailVerified":false,"enabled":true,"createdTimestamp":"{{number}}","totp":false,"disableableCredentialTypes":[],"requiredActions":[],"notBefore":0,"membershipType":"UNMANAGED"},{"id":"{{member_3}}","username":"gloak-probe-marmot","firstName":"Mary","lastName":"Mu","email":"mmm@gloak-probe-members.example.com","emailVerified":false,"enabled":true,"createdTimestamp":"{{number}}","totp":false,"disableableCredentialTypes":[],"requiredActions":[],"notBefore":0,"membershipType":"UNMANAGED"},{"id":"{{member_1}}","username":"gloak-probe-zebra","firstName":"Zoe","lastName":"Zeta","email":"aaa@gloak-probe-members.example.com","emailVerified":false,"enabled":true,"createdTimestamp":"{{number}}","totp":false,"disableableCredentialTypes":[],"requiredActions":[],"notBefore":0,"membershipType":"UNMANAGED"}]

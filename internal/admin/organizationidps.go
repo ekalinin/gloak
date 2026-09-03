@@ -71,8 +71,9 @@ func (h *handler) listOrganizationIdentityProviderGroups(w http.ResponseWriter, 
 // is a 201 with one. Two adds on one resource, two statuses.
 //
 // The body is the alias, read the same way `POST .../members` reads a user id -
-// raw, with the quotes trimmed - and the Content-Type is enforced: none at all
-// is a 415, like the member add and unlike the two invite endpoints.
+// raw, with the quotes trimmed. `text/plain` is a 415 and an **absent**
+// Content-Type is accepted, which is requireJSONBody's rule and the member
+// add's; the two invite endpoints in the same family cannot answer 415 at all.
 //
 // Its three refusals are three different sentences and two different statuses:
 //
@@ -83,7 +84,7 @@ func (h *handler) listOrganizationIdentityProviderGroups(w http.ResponseWriter, 
 // The 409 and the second 400 differ by one preposition, `to` against `with`.
 // An empty body takes the first branch, because "" resolves to nothing.
 func (h *handler) addOrganizationIdentityProvider(w http.ResponseWriter, r *http.Request, rc *reqContext, o *model.Organization) {
-	if !requireJSONContentType(w, r) {
+	if !requireJSONBody(w, r) {
 		return
 	}
 	body, err := io.ReadAll(r.Body)

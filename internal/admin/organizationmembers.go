@@ -141,8 +141,19 @@ func (h *handler) readOrganizationMember(w http.ResponseWriter, r *http.Request,
 // `409 {"errorMessage":"User is already a member of the organization."}`, with
 // a full stop, where invite-user's sentence for the same condition has none and
 // a different word order.
+//
+// **An absent Content-Type is accepted and `text/plain`,
+// `application/x-www-form-urlencoded` and `application/xml` are 415**, which is
+// requireJSONBody's rule exactly - measured here by building the request at
+// socket level, because the obvious probe cannot see it: Python's urllib adds
+// `application/x-www-form-urlencoded` to any POST carrying data that does not
+// already name one, so a probe that sends "no Content-Type" measures the 415 of
+// a header it set itself. That is how this cut first got the rule backwards,
+// and the recorder is what caught it - it builds the request by hand and got
+// the 409 where the probe had got a 415. A **present but empty** Content-Type
+// is a third answer, `500 unknown_error`, and is not reproduced.
 func (h *handler) addOrganizationMember(w http.ResponseWriter, r *http.Request, rc *reqContext, o *model.Organization) {
-	if !requireJSONContentType(w, r) {
+	if !requireJSONBody(w, r) {
 		return
 	}
 	body, err := io.ReadAll(r.Body)
@@ -288,31 +299,6 @@ func (h *handler) organizationMemberFromPath(w http.ResponseWriter, r *http.Requ
 		return nil, false
 	}
 	return u, true
-}
-
-// requireJSONContentType refuses anything but `application/json`, **including
-// no Content-Type at all**.
-//
-// That last clause is what makes it a second function rather than a call to
-// requireJSONBody, whose own doc comment records the opposite rule measured on
-// the scope mappings: there, an absent Content-Type is accepted. Here it is
-// not - `POST .../members` and `POST .../identity-providers` with none answered
-// `415 {"error":"The content-type header value did not match the value in
-// @Consumes"}`, and so did `text/plain`,
-// `application/x-www-form-urlencoded` and `application/xml`.
-//
-// The two invite endpoints in this same family go the other way again: they
-// consume a form, and `POST .../members/invite-user` with **no** Content-Type
-// answered 204. So one tag holds all three answers, which is why F149 asks for
-// a sweep rather than one line changed everywhere. Nothing outside this file
-// calls this.
-func requireJSONContentType(w http.ResponseWriter, r *http.Request) bool {
-	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-		return true
-	}
-	httpx.WriteMessageError(w, http.StatusUnsupportedMediaType,
-		"The content-type header value did not match the value in @Consumes")
-	return false
 }
 
 // writeOrganizationMemberNotFound is the 404 four routes in this family answer.

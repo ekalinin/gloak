@@ -2,7 +2,6 @@ package admin
 
 import (
 	"errors"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -78,12 +77,12 @@ func writeInvitationNotFound(w http.ResponseWriter) {
 // inviteOrganizationUser serves POST /organizations/{org-id}/members/invite-user.
 //
 // It consumes **`application/x-www-form-urlencoded`** and reads `email`,
-// `firstName` and `lastName`. It does not enforce the Content-Type: the same
-// request with none at all answered 204, and with `application/json` answered
-// the missing-email 400 because the form then parses to nothing. So the two
-// invite endpoints are the half of this tag that does not 415, while
-// `POST .../members` and `POST .../identity-providers` beside them do. See
-// requireJSONContentType and F149.
+// `firstName` and `lastName`. It does not enforce the Content-Type and it does
+// not read the form without it: an absent header and `application/json` both
+// answer the missing-email 400, never a 415. So the two invite endpoints are
+// the half of this tag that cannot answer 415 at all, while
+// `POST .../members` and `POST .../identity-providers` beside them can. See
+// organizationInviteForm.
 //
 // The ladder is measured, in this order:
 //
@@ -176,32 +175,25 @@ func (h *handler) inviteExistingOrganizationUser(w http.ResponseWriter, r *http.
 
 // organizationInviteForm decodes an invite endpoint's body.
 //
-// It is not r.ParseForm, and the difference is measured. Go's parser reads a
-// body only when the Content-Type is `application/x-www-form-urlencoded`; these
-// two endpoints read it when the header is **absent** as well - the same
-// request with no Content-Type answered 204 on a realm that could send mail,
-// which is JAX-RS defaulting to the resource method's single @Consumes. With
-// `application/json` the form is not read at all and the request answers about
-// the field it is then missing, which is the third of the three answers this
-// one tag has to a Content-Type question.
+// **The form is read only when the Content-Type says so**, which is r.ParseForm's
+// own rule and is measured: with the header absent, and with
+// `application/json`, both endpoints answer about the field they are then
+// missing rather than about the header - a 400, never a 415. So these two are
+// the half of this tag that does not enforce a Content-Type at all, where
+// `POST .../members` and `POST .../identity-providers` beside them answer 415
+// to `text/plain`.
 //
-// An undecodable body is not measured here and is treated as an empty form, so
-// it falls into the missing-field branch each endpoint already has.
+// The measurement is at socket level. Python's urllib adds
+// `application/x-www-form-urlencoded` to any POST carrying data that does not
+// name one, so a probe sending "no Content-Type" here silently sends the very
+// header that makes the form parse - which is how this cut first recorded the
+// opposite rule.
 func organizationInviteForm(w http.ResponseWriter, r *http.Request) (url.Values, bool) {
-	ct := r.Header.Get("Content-Type")
-	if ct != "" && !strings.HasPrefix(ct, "application/x-www-form-urlencoded") {
-		return url.Values{}, true
-	}
-	raw, err := io.ReadAll(r.Body)
-	if err != nil {
+	if err := r.ParseForm(); err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return nil, false
 	}
-	values, err := url.ParseQuery(string(raw))
-	if err != nil {
-		return url.Values{}, true
-	}
-	return values, true
+	return r.PostForm, true
 }
 
 // writeInviteEmailFailed is what both invite endpoints answer once their

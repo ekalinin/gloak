@@ -12446,4 +12446,937 @@ var adminCases = []Case{
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},
+	// ---- P12 second cut: an organization's members, invitations and identity
+	// providers. Appended at the very end of adminCases and nowhere else.
+	// Everything below was measured 2026-09-02 against a live 26.7.1.
+	{
+		// **The listing pages by default**, which no other listing in this API
+		// does: `max` is 10 and `first` is 0 when the request says nothing. That
+		// is not visible in this golden - three members fit inside ten - and it
+		// is `TestTheMemberListingPagesByDefault` that pins it. What this golden
+		// holds is the **order** and the brief shape: three members whose
+		// usernames and e-mails sort in opposite directions come back by
+		// username, so a handler sorting by e-mail or returning insertion order
+		// produces different bytes.
+		//
+		// The brief shape is nine keys and ends in `membershipType`, which is a
+		// fourth serialisation of one user in this API.
+		ID: "admin/organizations/members-list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: return a paginated list of organization members",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/members",
+		Fixture:   "org-members",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-org-mem/organizations/{{org_id}}/members",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/createdTimestamp"},
+	},
+	{
+		// briefRepresentation=false adds exactly four keys - totp,
+		// disableableCredentialTypes, requiredActions and notBefore - **before**
+		// membershipType rather than after it, which is what says the member
+		// shape is a user representation with one field appended and not a
+		// shape of its own.
+		ID: "admin/organizations/members-list-full",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: the member listing under briefRepresentation=false",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-members",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-org-mem/organizations/{{org_id}}/members",
+			Query:   map[string]string{"briefRepresentation": "false"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/createdTimestamp"},
+	},
+	{
+		// **search is a case-insensitive substring here and a prefix on the user
+		// listing**, measured side by side with this very needle: `armot` is
+		// inside `gloak-probe-marmot` and is not a prefix of it, and
+		// `GET /users?search=armot` answers `[]` on the same realm.
+		ID: "admin/organizations/members-search",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: the member listing's search",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-members",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-org-mem/organizations/{{org_id}}/members",
+			Query:   map[string]string{"search": "armot"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/createdTimestamp"},
+	},
+	{
+		// The control for the case above, on the same realm and with the same
+		// needle. **This is the pair**: one body holds a row and the other is
+		// empty, and nothing but the route differs.
+		ID: "admin/organizations/members-search-control",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: the user listing's search is a prefix",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-members",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-org-mem/users",
+			Query:   map[string]string{"search": "armot"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// exact narrows search to the whole value of one of the same four
+		// fields - here the last name, which no other seed carries.
+		ID: "admin/organizations/members-search-exact",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: the member listing's exact",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-members",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/admin/realms/gloak-probe-org-mem/organizations/{{org_id}}/members",
+			Query: map[string]string{
+				"search": "Alpha", "exact": "true", "briefRepresentation": "false",
+			},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/createdTimestamp"},
+	},
+	{
+		// membershipType is the one member-only field, and UNMANAGED is the only
+		// value this project can produce - MANAGED belongs to a user the
+		// organization provisioned itself, which needs a mail sender.
+		ID: "admin/organizations/members-membership-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: the member listing's membershipType",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-members",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-org-mem/organizations/{{org_id}}/members",
+			Query:   map[string]string{"membershipType": "MANAGED"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The bounds. `first=2` skips two of the three, which is what says the
+		// listing pages from an offset rather than only capping.
+		ID: "admin/organizations/members-paged",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: the member listing's first and max",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-members",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-org-mem/organizations/{{org_id}}/members",
+			Query:   map[string]string{"first": "2", "max": "5"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/createdTimestamp"},
+	},
+	{
+		ID: "admin/organizations/members-list-empty",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: an organization with no members",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-empty",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-org-mem-nil/organizations/{{org_id}}/members",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **The count reads none of the listing's parameters.** This request
+		// carries the search that answers one row next door and the count still
+		// answers three. The organization count one path segment up honours its
+		// own search, so the two disagree.
+		ID: "admin/organizations/members-count",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: the number of members in an organization",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/members/count",
+		Fixture:   "org-members",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-org-mem/organizations/{{org_id}}/members/count",
+			Query:   map[string]string{"search": "armot", "membershipType": "MANAGED"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/organizations/members-count-empty",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: the member count of an empty organization",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-empty",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-org-mem-nil/organizations/{{org_id}}/members/count",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The full shape, and it is byte-identical to an entry of the listing
+		// under briefRepresentation=false. Neither carries the `access` block
+		// `GET /users/{id}` has, nor its `federatedIdentities`.
+		ID: "admin/organizations/members-read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: return the member with the specified id",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/members/{member-id}",
+		Fixture:   "org-member-one",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-org-one-mem/organizations/{{org_id}}/members/{{member_1}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"createdTimestamp"},
+	},
+	{
+		// **The single read ignores briefRepresentation**, exactly as the
+		// organization single read one path segment up does. This body is the
+		// one above, byte for byte, under a parameter that moves the listing.
+		ID: "admin/organizations/members-read-brief-ignored",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: briefRepresentation does nothing to the single member read",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-member-one",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-org-one-mem/organizations/{{org_id}}/members/{{member_1}}",
+			Query:   map[string]string{"briefRepresentation": "true"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"createdTimestamp"},
+	},
+	{
+		// **A user who exists and is not a member is the generic 404**, the same
+		// bytes a member id that resolves to nothing gets. So the member routes
+		// join the four producers of that body this document already records,
+		// and nothing on the wire tells the two cases apart.
+		ID: "admin/organizations/members-read-not-a-member",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: a member id that is a user of the realm and not a member",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-empty",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-org-mem-nil/organizations/{{org_id}}/members/{{stranger_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The 201's Location ends in the id the caller sent**, not a
+		// server-minted one, which makes this the fifth create in this API whose
+		// tail the caller chose - and the reason VolatileTailHeaders is wrong
+		// for it: once ReplaceCaptured has run there is nothing minted left in
+		// the header, so it is asserted whole.
+		//
+		// The body it sends is the bare user id and **not JSON**; see
+		// `TestTheMemberAddReadsARawUserIDRatherThanJSON` for the ten bodies
+		// that pin the rule, which no single golden can.
+		ID: "admin/organizations/members-add",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: add the user with the specified id as a member",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/organizations/{org-id}/members",
+		Fixture:   "org-member-add",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-org-mem-add/organizations/{{org_id}}/members",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{{stranger_id}}`),
+		},
+		AssertHeaders:       []string{"Location", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// A user id that resolves to nothing, on the write. It is the generic
+		// 404 rather than any of the twenty-five spellings.
+		ID: "admin/organizations/members-add-unknown-user",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: adding a member id that resolves to nothing",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-empty",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-org-mem-nil/organizations/{{org_id}}/members",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`"11111111-2222-3333-4444-555555555555"`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The duplicate sentence has a full stop and reads "is already a
+		// member"**, where invite-user's 409 for the same condition has neither.
+		// One family, one condition, two sentences.
+		ID: "admin/organizations/members-add-duplicate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: adding a user who is already a member",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-member-taken",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-org-mem-dup/organizations/{{org_id}}/members",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{{member_1}}`),
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **An absent Content-Type is accepted**, and this 409 is what says so:
+		// the request reached the duplicate check rather than being refused
+		// ahead of it. A wrong one - `text/plain`,
+		// `application/x-www-form-urlencoded`, `application/xml` - is a 415,
+		// which is `requireJSONBody`'s existing rule.
+		//
+		// **F149's premise is false here**, and the way this cut found out is
+		// worth keeping: the probe that "sent no Content-Type" was Python's
+		// urllib, which adds `application/x-www-form-urlencoded` to any POST
+		// carrying data that does not already name one, so it measured the 415
+		// of a header it had set itself. The recorder builds its requests by
+		// hand, recorded this 409, and a socket-level re-measurement settled it.
+		ID: "admin/organizations/members-add-no-content-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: adding a member with no Content-Type",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-member-taken",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/gloak-probe-org-mem-dup/organizations/{{org_id}}/members",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			Body:    []byte(`{{member_1}}`),
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The 204 carries neither Cache-Control nor X-Frame-Options: the request
+		// sends no Content-Type, which is what decides the second, and this
+		// endpoint is one of those that send no Cache-Control on a 204 at all.
+		ID: "admin/organizations/members-remove",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: remove the user with the specified id from the organization",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/organizations/{org-id}/members/{member-id}",
+		Fixture:   "org-member-delete",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/gloak-probe-org-mem-del/organizations/{{org_id}}/members/{{member_1}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control", "X-Frame-Options"},
+	},
+	{
+		// **The member's organization groups are always empty**, and that is the
+		// contract rather than a stub: the groups it answers are the
+		// organization's own, which are F120's eleven blocked operations, and a
+		// live 26.7.1 answers `[]` too until somebody creates one.
+		ID: "admin/organizations/members-groups",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: the organization group memberships of a member",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/members/{member-id}/groups",
+		Fixture:   "org-member-one",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-org-one-mem/organizations/{{org_id}}" +
+				"/members/{{member_1}}/groups",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The **brief organization shape**, which is the listing's default one
+		// path segment up: no attributes, and no domains because this
+		// organization has none.
+		ID: "admin/organizations/members-organizations",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: the organizations associated with a member",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/members/{member-id}/organizations",
+		Fixture:   "org-member-one",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-org-one-mem/organizations/{{org_id}}" +
+				"/members/{{member_1}}/organizations",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// briefRepresentation=false adds `attributes` and nothing else - the
+		// same one key it adds to the organization listing, and the reason this
+		// route is not a fourth organization shape.
+		ID: "admin/organizations/members-organizations-full",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: a member's organizations under briefRepresentation=false",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-member-one",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-org-one-mem/organizations/{{org_id}}" +
+				"/members/{{member_1}}/organizations",
+			Query:   map[string]string{"briefRepresentation": "false"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **The invitation listing carries no Cache-Control**, where every other
+		// read in this tag carries `no-cache`. One endpoint of nine, pinned per
+		// endpoint the way Cache-Control on a 204 already is - which is why this
+		// case names it in AssertAbsentHeaders rather than leaving it out.
+		//
+		// It is `[]` on every realm this project can build, and that is the
+		// contract: both invite endpoints need a mail sender, so no invitation
+		// can exist. See internal/admin/organizationinvitations.go.
+		ID: "admin/organizations/invitations-list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: get invitations for the organization",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/invitations",
+		Fixture:   "org-empty",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-org-mem-nil/organizations/{{org_id}}/invitations",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// `Invitation not found` - the twenty-fifth spelling of not-found, with
+		// no full stop where `Organization not found.` one path segment up has
+		// one.
+		ID: "admin/organizations/invitations-read-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: get invitation by ID",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/invitations/{id}",
+		Fixture:   "org-empty",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-org-mem-nil/organizations/{{org_id}}" +
+				"/invitations/gloak-probe-no-such-invitation",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "admin/organizations/invitations-delete-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: delete an invitation",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/organizations/{org-id}/invitations/{id}",
+		Fixture:   "org-empty",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path: "/admin/realms/gloak-probe-org-mem-nil/organizations/{{org_id}}" +
+				"/invitations/gloak-probe-no-such-invitation",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **A resend is not a resend**, measured against a family populated
+		// through a throwaway SMTP sink: it answers 204 and the invitation it
+		// names is gone, replaced by one with a new id, a new sentDate and a new
+		// link. None of that is reachable here, so what this golden holds is the
+		// 404 - which is what every default container answers.
+		ID: "admin/organizations/invitations-resend-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: resend an invitation",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/organizations/{org-id}/invitations/{id}/resend",
+		Fixture:   "org-empty",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/gloak-probe-org-mem-nil/organizations/{{org_id}}" +
+				"/invitations/gloak-probe-no-such-invitation/resend",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The 500 is the contract.** Both invite endpoints send an e-mail, and
+		// a realm with no smtpServer - master's and every realm
+		// POST /admin/realms creates - answers this for every well-formed
+		// request. It is the same shape as VERIFY_EMAIL's 500 and CIBA's 503.
+		ID: "admin/organizations/invite-user",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: invite a user by e-mail address",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/organizations/{org-id}/members/invite-user",
+		Fixture:   "org-empty",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-org-mem-nil/organizations/{{org_id}}/members/invite-user",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/x-www-form-urlencoded",
+			},
+			Form: map[string]string{"email": "gloak-probe-invitee@gloak-probe-members.example.com"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The missing required field is the errorMessage family here** and the
+		// bare-`error` family on invite-existing-user one path segment away.
+		ID: "admin/organizations/invite-user-no-email",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: inviting with no e-mail address",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-empty",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-org-mem-nil/organizations/{{org_id}}/members/invite-user",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/x-www-form-urlencoded",
+			},
+			Form: map[string]string{"firstName": "gloak-probe-nobody"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The 409 for a member's e-mail: **no full stop and "already a
+		// member"**, where POST .../members answers the same condition with a
+		// full stop and "is already a member".
+		ID: "admin/organizations/invite-user-already-a-member",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: inviting the e-mail address of a member",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-member-one",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/gloak-probe-org-one-mem/organizations/{{org_id}}" +
+				"/members/invite-user",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/x-www-form-urlencoded",
+			},
+			Form: map[string]string{"email": "solo@gloak-probe-members.example.com"},
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The bare-`error` family for a missing required field**, which is the
+		// half of this pair that surprises: its sibling above answers the same
+		// kind of failure with `errorMessage`.
+		ID: "admin/organizations/invite-existing-user-no-id",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: inviting an existing user with no id",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-empty",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/gloak-probe-org-mem-nil/organizations/{{org_id}}" +
+				"/members/invite-existing-user",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/x-www-form-urlencoded",
+			},
+			Form: map[string]string{"nothing": "gloak-probe-nothing"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "admin/organizations/invite-existing-user-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: inviting an existing user id that resolves to nothing",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-empty",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/gloak-probe-org-mem-nil/organizations/{{org_id}}" +
+				"/members/invite-existing-user",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/x-www-form-urlencoded",
+			},
+			Form: map[string]string{"id": "11111111-2222-3333-4444-555555555555"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **It does not check membership.** The person invite-user refuses with
+		// a 409 reaches the mail sender here, which is what makes the two
+		// endpoints two endpoints.
+		ID: "admin/organizations/invite-existing-user",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: invite an existing user by id",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/organizations/{org-id}/members/invite-existing-user",
+		Fixture:   "org-member-one",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/gloak-probe-org-one-mem/organizations/{{org_id}}" +
+				"/members/invite-existing-user",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/x-www-form-urlencoded",
+			},
+			Form: map[string]string{"id": "{{member_1}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The organization's identity providers, and the body is the identity
+		// provider chapter's own - `organizationId` and all. That is the
+		// finding: the association is a **column on the provider**, so this
+		// listing serves rows the realm's own listing serves too.
+		ID: "admin/organizations/identity-providers-list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: all identity providers associated with the organization",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/identity-providers",
+		Fixture:   "org-broker",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-org-brk/organizations/{{org_id}}/identity-providers",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/organizations/identity-providers-list-empty",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: an organization with no identity providers",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-broker-loose",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-org-brk-new/organizations/{{org_id}}/identity-providers",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/organizations/identity-providers-read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: the identity provider with the specified alias",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/identity-providers/{alias}",
+		Fixture:   "org-broker",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-org-brk/organizations/{{org_id}}" +
+				"/identity-providers/gloak-probe-org-idp",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The realm's own read of the same provider, which is where the
+		// `organizationId` key turns up. **Two chapters, one row**: this is what
+		// says the association is a column rather than a join table.
+		ID: "admin/organizations/identity-providers-realm-read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Identity Providers: a provider associated with an organization",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-broker",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-org-brk/identity-provider/instances/gloak-probe-org-idp",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **The read's 404 is not the delete's.** The same missing association
+		// answers `Identity provider not associated with the organization` here
+		// and `Identity provider not found with the given alias` from the
+		// delete, measured on one alias in one session.
+		ID: "admin/organizations/identity-providers-read-unassociated",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: an alias not associated with the organization",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-broker-loose",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-org-brk-new/organizations/{{org_id}}" +
+				"/identity-providers/gloak-probe-org-idp",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The other sentence, from the delete, on the same missing association.
+		ID: "admin/organizations/identity-providers-delete-unassociated",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: removing an alias not associated with the organization",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-broker-loose",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path: "/admin/realms/gloak-probe-org-brk-new/organizations/{{org_id}}" +
+				"/identity-providers/gloak-probe-org-idp",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The association is a 204 with no Location**, where the member add in
+		// the same family is a 201 with one. Two adds on one resource, two
+		// statuses.
+		ID: "admin/organizations/identity-providers-add",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: add the identity provider with the specified id",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/organizations/{org-id}/identity-providers",
+		Fixture:   "org-broker-add",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-org-brk-add/organizations/{{org_id}}/identity-providers",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`"gloak-probe-org-idp"`),
+		},
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control", "Location"},
+	},
+	{
+		// An alias that resolves to nothing is a **400** carrying the delete's
+		// sentence - one set of words reaching the wire under two statuses.
+		ID: "admin/organizations/identity-providers-add-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: associating an alias that resolves to nothing",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-broker-loose",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-org-brk-new/organizations/{{org_id}}/identity-providers",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`"gloak-probe-no-such-broker"`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The 409 whose sentence differs from the 400 beside it by one
+		// preposition - `to` against `with`.
+		ID: "admin/organizations/identity-providers-add-duplicate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: associating an alias the organization already holds",
+			Retrieved: "2026-09-02",
+		},
+		Status:  Implemented,
+		Fixture: "org-broker",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-org-brk/organizations/{{org_id}}/identity-providers",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`"gloak-probe-org-idp"`),
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **Always an empty array**, for the member-groups case's reason: the
+		// groups it answers are the organization's own, which are F120's.
+		ID: "admin/organizations/identity-providers-groups",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: organization groups for the identity provider",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/{org-id}/identity-providers/{alias}/groups",
+		Fixture:   "org-broker",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-org-brk/organizations/{{org_id}}" +
+				"/identity-providers/gloak-probe-org-idp/groups",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The 204 that ends the family, and the one operation whose effect is
+		// visible two chapters away: after it the realm's own read of that
+		// provider stops carrying `organizationId`.
+		ID: "admin/organizations/identity-providers-delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: remove the identity provider from the organization",
+			Retrieved: "2026-09-02",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/organizations/{org-id}/identity-providers/{alias}",
+		Fixture:   "org-broker-delete",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path: "/admin/realms/gloak-probe-org-brk-del/organizations/{{org_id}}" +
+				"/identity-providers/gloak-probe-org-idp",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control", "X-Frame-Options"},
+	},
 }
