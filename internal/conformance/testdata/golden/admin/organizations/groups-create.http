@@ -1,0 +1,12 @@
+# POST /admin/realms/gloak-probe-og-new/organizations/{{org_id}}/groups
+HTTP/1.1 201 Created
+Content-Length: {{volatile}}
+Content-Type: application/json
+Location: {{issuer}}/admin/realms/gloak-probe-og-new/organizations/{{org_id}}/groups/{{uuid}}
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"id":"{{string}}","name":"gloak-probe-og-fresh","path":"/gloak-probe-og-fresh","parentId":"{{root_id}}","subGroups":[]}

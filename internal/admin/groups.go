@@ -598,6 +598,12 @@ func (h *handler) listUserGroups(w http.ResponseWriter, r *http.Request, rc *req
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
+	// **The listing drops an organization's groups and the count next door
+	// keeps them.** Measured on one membership: `GET /users/{id}/groups`
+	// answered `[]` for a user in an organization group while
+	// `GET /users/{id}/groups/count` answered `{"count":1}`. So the filter is
+	// here rather than in the store, which serves both.
+	groups = realmGroupsOnly(groups)
 	q := r.URL.Query()
 	groups = pageGroups(groups, q)
 	shape := groupMembership
@@ -712,6 +718,19 @@ func (h *handler) membershipSubject(w http.ResponseWriter, r *http.Request, rc *
 		return nil, nil, false
 	}
 	return user, group, true
+}
+
+// realmGroupsOnly drops an organization's groups from a membership set. It has
+// exactly one caller, and the count beside that caller deliberately does not
+// use it - see listUserGroups.
+func realmGroupsOnly(in []*model.Group) []*model.Group {
+	out := make([]*model.Group, 0, len(in))
+	for _, g := range in {
+		if g.OrganizationID == "" {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 // writeMembershipNoContent is the 204 both writes send: Cache-Control: no-cache

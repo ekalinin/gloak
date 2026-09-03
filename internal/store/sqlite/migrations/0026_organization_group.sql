@@ -1,0 +1,36 @@
+-- An organization's groups.
+--
+-- **One nullable column on the realm's own tree, not a table of its own.**
+-- Measured 2026-09-03 on a live 26.7.1, from three directions that a separate
+-- table could not satisfy at once:
+--
+--   * an organization group has a parent like any other group, and the
+--     hidden root Keycloak creates with the organization is itself a row of
+--     keycloak_group whose `name` and `path` are the organization's own id;
+--   * `POST /groups/{realm group}/children` naming an organization group is a
+--     **204** and moves it under a realm group, where it stays an organization
+--     group - the realm's own read of it is still the 400 below;
+--   * `GET /users/{id}/groups` filters organization groups out and
+--     `GET /users/{id}/groups/count` beside it **counts them**, so one
+--     membership row has to be visible to one read and not to the other.
+--
+-- The realm group family refuses every route naming one of these rows with
+-- `400 {"errorMessage":"Cannot manage organization related group via non
+-- Organization API."}` - the read, the update, the delete, the children listing
+-- and the role mappings alike - which is what makes the column a filter rather
+-- than a second tree.
+--
+-- It is nullable rather than NOT NULL DEFAULT '' because the two states are
+-- "this is a realm group" and "this belongs to organization X", and every
+-- statement that cares asks `organization_id IS NULL`. parent_id next to it is
+-- '' for the opposite reason: there the empty string is a real value the tree
+-- walks through.
+--
+-- There is no REFERENCES organization (id) clause, for
+-- identity_provider.organization_id's reason one migration back: the realm is
+-- not on this row's join path to the organization, and adding it to get the
+-- constraint would put the realm in two places that could disagree.
+-- OrganizationRepo.Delete removes the organization's groups itself.
+ALTER TABLE keycloak_group ADD COLUMN organization_id TEXT;
+
+CREATE INDEX keycloak_group_organization ON keycloak_group (realm_id, organization_id);

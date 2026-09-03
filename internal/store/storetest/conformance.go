@@ -3346,6 +3346,125 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 			t.Errorf("an organization with no providers: got %v, %v", rows, err)
 		}
 	})
+
+	// ---- P12 third cut: an organization's groups.
+	//
+	// The names, the ids and the order they are created in are all deliberately
+	// different: the groups are created `zzz, aaa, mmm` and the assertions read
+	// the *first* row, so a driver returning insertion order fails where one
+	// ordering by name passes. Five mutation survivors in four cuts were tests
+	// using one string for two things.
+	t.Run("an organization's groups are hidden from the realm tree and sorted by name", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := newRealm(t, s)
+		org := &model.Organization{
+			ID: model.NewID(), RealmID: realm.ID,
+			Name: "gloak-probe-og-groups", Alias: "gloak-probe-og-groups-alias", Enabled: true,
+		}
+		if err := s.Organizations().Create(ctx, org); err != nil {
+			t.Fatalf("Organizations().Create: %v", err)
+		}
+		root := &model.Group{
+			ID: model.NewID(), RealmID: realm.ID, Name: org.ID, OrganizationID: org.ID,
+		}
+		if err := s.Groups().Create(ctx, root); err != nil {
+			t.Fatalf("creating the root: %v", err)
+		}
+		// A realm group beside them, so every "hidden" assertion below has
+		// something it is allowed to see.
+		outsider := &model.Group{ID: model.NewID(), RealmID: realm.ID, Name: "gloak-probe-outsider"}
+		if err := s.Groups().Create(ctx, outsider); err != nil {
+			t.Fatalf("creating the realm group: %v", err)
+		}
+
+		ids := map[string]string{}
+		for _, name := range []string{"gloak-probe-zzz", "gloak-probe-aaa", "gloak-probe-mmm"} {
+			g := &model.Group{
+				ID: model.NewID(), RealmID: realm.ID, ParentID: root.ID,
+				Name: name, OrganizationID: org.ID,
+			}
+			if err := s.Groups().Create(ctx, g); err != nil {
+				t.Fatalf("creating %s: %v", name, err)
+			}
+			ids[name] = g.ID
+		}
+
+		// The realm's own three reads see the outsider and nothing else.
+		tops, err := s.Groups().ListTopLevel(ctx, realm.ID)
+		if err != nil || len(tops) != 1 || tops[0].ID != outsider.ID {
+			t.Errorf("ListTopLevel: got %v, %v; want only the realm group", tops, err)
+		}
+		all, err := s.Groups().ListAll(ctx, realm.ID)
+		if err != nil || len(all) != 1 || all[0].ID != outsider.ID {
+			t.Errorf("ListAll: got %v, %v; want only the realm group", all, err)
+		}
+
+		// The organization's own read sees the three and **not** the root.
+		orgAll, err := s.Groups().ListOrganizationAll(ctx, realm.ID, org.ID)
+		if err != nil || len(orgAll) != 3 {
+			t.Fatalf("ListOrganizationAll: got %v, %v; want three", orgAll, err)
+		}
+		if orgAll[0].Name != "gloak-probe-aaa" {
+			t.Errorf("ListOrganizationAll order: got %s first, want gloak-probe-aaa", orgAll[0].Name)
+		}
+		for _, g := range orgAll {
+			if g.OrganizationID != org.ID {
+				t.Errorf("%s: organization %q, want %q", g.Name, g.OrganizationID, org.ID)
+			}
+		}
+
+		gotRoot, err := s.Groups().OrganizationRoot(ctx, realm.ID, org.ID)
+		if err != nil || gotRoot.ID != root.ID {
+			t.Errorf("OrganizationRoot: got %v, %v; want %s", gotRoot, err, root.ID)
+		}
+		if _, err := s.Groups().OrganizationRoot(ctx, realm.ID, "00000000-0000-4000-8000-000000000000"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("OrganizationRoot of an organization with none: want ErrNotFound, got %v", err)
+		}
+
+		// Move puts one under another, and the ancestry follows it.
+		if err := s.Groups().Move(ctx, realm.ID, ids["gloak-probe-mmm"], ids["gloak-probe-aaa"]); err != nil {
+			t.Fatalf("Move: %v", err)
+		}
+		chain, err := s.Groups().Ancestry(ctx, realm.ID, ids["gloak-probe-mmm"])
+		if err != nil || len(chain) != 3 || chain[0].ID != root.ID || chain[1].ID != ids["gloak-probe-aaa"] {
+			t.Errorf("Ancestry after Move: got %v, %v", chain, err)
+		}
+		// The move survives the round trip: the row itself carries the parent.
+		moved, err := s.Groups().ByID(ctx, realm.ID, ids["gloak-probe-mmm"])
+		if err != nil || moved.ParentID != ids["gloak-probe-aaa"] {
+			t.Errorf("after Move: got %+v, %v", moved, err)
+		}
+		if err := s.Groups().Move(ctx, realm.ID, "00000000-0000-4000-8000-000000000000", root.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("Move of a group that does not exist: want ErrNotFound, got %v", err)
+		}
+
+		// A membership of an organization group is invisible to the realm's
+		// listing and visible to everything that does not filter - which is
+		// what makes the count and the listing disagree one layer up.
+		u := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "gloak-probe-og-member"}
+		if err := s.Users().Create(ctx, u); err != nil {
+			t.Fatalf("Users().Create: %v", err)
+		}
+		if err := s.Groups().AddMember(ctx, ids["gloak-probe-zzz"], u.ID); err != nil {
+			t.Fatalf("AddMember: %v", err)
+		}
+		held, err := s.Groups().ListUserGroups(ctx, realm.ID, u.ID)
+		if err != nil || len(held) != 1 || held[0].ID != ids["gloak-probe-zzz"] {
+			t.Errorf("ListUserGroups: got %v, %v; want the organization group", held, err)
+		}
+
+		// Deleting the root takes the subtree and leaves the realm group.
+		if err := s.Groups().Delete(ctx, realm.ID, root.ID); err != nil {
+			t.Fatalf("Delete the root: %v", err)
+		}
+		if left, err := s.Groups().ListOrganizationAll(ctx, realm.ID, org.ID); err != nil || len(left) != 0 {
+			t.Errorf("after deleting the root: got %v, %v; want none", left, err)
+		}
+		if _, err := s.Groups().ByID(ctx, realm.ID, outsider.ID); err != nil {
+			t.Errorf("the realm group went with it: %v", err)
+		}
+	})
 }
 
 // strPtr is the "absent is not empty" helper the organization cases need, and

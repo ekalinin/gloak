@@ -1,0 +1,12 @@
+# GET /admin/realms/gloak-probe-og-grp/organizations/{{org_id}}/groups/{{group_2}}/children
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"id":"{{child_id}}","name":"gloak-probe-og-kid","path":"/gloak-probe-og-aaa/gloak-probe-og-kid","parentId":"{{group_2}}","subGroups":[]}]

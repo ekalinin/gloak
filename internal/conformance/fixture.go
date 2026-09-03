@@ -1258,6 +1258,47 @@ var Fixtures = map[string]Fixture{
 	// The two writes get realms of their own, for org-member-add's reason.
 	"org-broker-add":    organizationBrokerFixture("gloak-probe-org-brk-add", "c3", false),
 	"org-broker-delete": organizationBrokerFixture("gloak-probe-org-brk-del", "c4", true),
+
+	// ---- P12 third cut: an organization's groups and their role mappings.
+	// Appended at the very end of the map, and the helpers after the last
+	// helper, for the second cut's reason.
+
+	// The read fixture. It carries **two** organizations, three top-level
+	// groups whose names sort the other way round from the order they are
+	// created in, one child, one member in a group, and one realm role and one
+	// client role mapped to that group - which is everything the eighteen reads
+	// of this cut assert between them.
+	//
+	// The second organization is not decoration: `GET .../groups/{id}` for a
+	// group of another organization is a **400** rather than a 404, and one
+	// organization cannot show that.
+	"org-groups": organizationGroupFixture("gloak-probe-og-grp", true),
+
+	// One realm per mutating case, for org-member-add's reason: a golden that
+	// holds only while the catalogue's order holds is worse than no golden.
+	"org-group-create": organizationGroupFixture("gloak-probe-og-new", false),
+	"org-group-child":  organizationGroupFixture("gloak-probe-og-kid", false),
+	"org-group-update": organizationGroupFixture("gloak-probe-og-upd", false),
+	// The two cases that read what the update's 204 hid do the update **in
+	// their own fixture** rather than depending on the update case having run:
+	// a golden that holds only while the catalogue's order holds is worse than
+	// no golden.
+	//
+	// **They get one realm each**, and that is the whole of why this fixture is
+	// declared twice: its rename cannot be idempotent, so a fixture two cases
+	// named would run twice and collide with itself. See
+	// organizationGroupRenameFixture, which records the two cheaper fixes that
+	// were tried and refuted.
+	"org-group-updated": organizationGroupRenameFixture("gloak-probe-og-upn"),
+	"org-group-attrs":   organizationGroupRenameFixture("gloak-probe-og-upa"),
+	"org-group-delete":  organizationGroupFixture("gloak-probe-og-del", false),
+	"org-group-move":    organizationGroupFixture("gloak-probe-og-mov", false),
+	"org-group-join":    organizationGroupFixture("gloak-probe-og-joi", false),
+	"org-group-leave":   organizationGroupFixture("gloak-probe-og-lea", true),
+	"org-group-rm-add":  organizationGroupFixture("gloak-probe-og-rma", false),
+	"org-group-rm-del":  organizationGroupFixture("gloak-probe-og-rmd", true),
+	"org-group-crm-add": organizationGroupFixture("gloak-probe-og-cra", false),
+	"org-group-crm-del": organizationGroupFixture("gloak-probe-og-crd", true),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -5932,4 +5973,274 @@ func organizationBrokerFixture(realm, group string, associate bool) Fixture {
 		})
 	}
 	return f
+}
+
+// organizationGroupFixture builds a realm with organizations on, two
+// organizations, a group tree under the first and the roles a mapping case
+// needs.
+//
+// `mapped` decides whether the member joins the group and the two roles are
+// assigned to it. The reads need all of that; a case that *writes* one of them
+// needs it absent, which is why it is a flag rather than always on.
+//
+// **Every name and every id in here is a different string on purpose.** The
+// three top-level groups are created `zzz, aaa, mmm` and the listing is
+// asserted in name order, so a handler returning insertion order fails; the
+// member's username is `gloak-probe-og-user` and its e-mail sorts the other way
+// from its username, for organizationMemberFixture's reason; and the child is
+// named after neither its parent nor the organization, so `path` cannot come
+// out right by accident.
+//
+// Every id is captured with a read rather than taken from a `Location`, for
+// organizationFixture's reason: the recorder runs a fixture twice on a shared
+// container and the second create has nothing to capture.
+func organizationGroupFixture(realm string, mapped bool) Fixture {
+	f := organizationRealmFixture(realm)
+	f.Steps = append(f.Steps,
+		orgFixtureCreate(realm, "/organizations",
+			`{"name":"gloak-probe-og-one","alias":"gloak-probe-og-one-alias"}`),
+		orgFixtureCapture(realm, "/organizations", map[string]string{
+			"search": "gloak-probe-og-one", "exact": "true",
+		}, "org_id"),
+		orgFixtureCreate(realm, "/organizations",
+			`{"name":"gloak-probe-og-two","alias":"gloak-probe-og-two-alias"}`),
+		orgFixtureCapture(realm, "/organizations", map[string]string{
+			"search": "gloak-probe-og-two", "exact": "true",
+		}, "other_org_id"),
+	)
+
+	// The three top-level groups, created in an order that disagrees with the
+	// order they come back in.
+	base := "/organizations/{{org_id}}/groups"
+	for i, name := range []string{"gloak-probe-og-zzz", "gloak-probe-og-aaa", "gloak-probe-og-mmm"} {
+		f.Steps = append(f.Steps,
+			orgFixtureCreate(realm, base, `{"name":"`+name+`"}`),
+			orgFixtureCapture(realm, base, map[string]string{"search": name, "exact": "true"},
+				"group_"+strconv.Itoa(i+1)),
+		)
+	}
+	// The hidden root, captured off a child's `parentId` because nothing lists
+	// it: `GET .../groups` answers its children. That is the only way a case
+	// can address it, and it is what the root read asserts.
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/" + realm + base,
+			Query:   map[string]string{"search": "gloak-probe-og-aaa", "exact": "true"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		Capture: map[string]string{"root_id": "0/parentId"},
+	})
+
+	// A child of the **second** group by name, so the path a case asserts is
+	// not the path of the group the fixture happened to make first.
+	f.Steps = append(f.Steps,
+		orgFixtureCreate(realm, base+"/{{group_2}}/children", `{"name":"gloak-probe-og-kid"}`),
+		orgFixtureCapture(realm, base, map[string]string{"search": "gloak-probe-og-kid", "exact": "true"},
+			"child_id"),
+	)
+	// One group in the **other** organization, for the 400 that says a group
+	// belongs to one organization and is refused by the other.
+	f.Steps = append(f.Steps,
+		orgFixtureCreate(realm, "/organizations/{{other_org_id}}/groups",
+			`{"name":"gloak-probe-og-stranger"}`),
+		orgFixtureCapture(realm, "/organizations/{{other_org_id}}/groups",
+			map[string]string{"search": "gloak-probe-og-stranger", "exact": "true"}, "stranger_group"),
+	)
+
+	// The member, the realm role and the client role. The user is a member of
+	// the organization in every case, because the group join's 400 for a
+	// non-member needs a *second* user rather than this one.
+	f.Steps = append(f.Steps, orgUserSteps(realm, orgMemberSeed{
+		"gloak-probe-og-user", "zzz@gloak-probe-og.example.com", "Og", "User",
+	}, "member_id")...)
+	f.Steps = append(f.Steps, orgUserSteps(realm, orgMemberSeed{
+		"gloak-probe-og-loner", "aaa@gloak-probe-og.example.com", "Lo", "Ner",
+	}, "loner_id")...)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/" + realm + "/organizations/{{org_id}}/members",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte("{{member_id}}"),
+		},
+		ExpectStatus: idempotentCreate,
+	})
+
+	// **Two realm roles, created and assigned in the order that disagrees with
+	// their names.** `gloak-probe-og-role` is made first and named in the
+	// assignment array first; `gloak-probe-og-arole` sorts before it. So the
+	// full shape's `realmRoles` is an assertion about order rather than about
+	// membership: a serving path in insertion order answers the other way
+	// round. With one role it was neither, and the mutation pass is what said
+	// so - a sort over one element is the identity.
+	f.Steps = append(f.Steps,
+		orgFixtureCreate(realm, "/roles",
+			`{"name":"gloak-probe-og-role","description":"the realm role a group holds"}`),
+		orgFixtureCapture(realm, "/roles", map[string]string{"search": "gloak-probe-og-role"},
+			"realm_role"),
+		orgFixtureCreate(realm, "/roles",
+			`{"name":"gloak-probe-og-arole","description":"the realm role that sorts first"}`),
+		orgFixtureCapture(realm, "/roles", map[string]string{"search": "gloak-probe-og-arole"},
+			"realm_role_a"),
+		orgFixtureCreate(realm, "/clients",
+			`{"clientId":"gloak-probe-og-client","enabled":true}`),
+		orgFixtureCapture(realm, "/clients", map[string]string{"clientId": "gloak-probe-og-client"},
+			"client_uuid"),
+		orgFixtureCreate(realm, "/clients/{{client_uuid}}/roles",
+			`{"name":"gloak-probe-og-crole","description":"the client role a group holds"}`),
+		orgFixtureCapture(realm, "/clients/{{client_uuid}}/roles",
+			map[string]string{"search": "gloak-probe-og-crole"}, "client_role"),
+	)
+
+	if mapped {
+		f.Steps = append(f.Steps,
+			Step{
+				Request: Request{
+					Method: http.MethodPut,
+					Path: "/admin/realms/" + realm +
+						"/organizations/{{org_id}}/groups/{{group_1}}/members/{{member_id}}",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				// The join is 204 the first time and 409 the second, so a
+				// fixture the recorder runs twice needs both - the member add
+				// one chapter up is 201/409 for the same reason.
+				ExpectStatus: []int{http.StatusNoContent, http.StatusConflict},
+			},
+			orgFixtureRoleWrite(realm, "/organizations/{{org_id}}/groups/{{group_1}}/role-mappings/realm",
+				`[{"id":"{{realm_role}}","name":"gloak-probe-og-role"},`+
+					`{"id":"{{realm_role_a}}","name":"gloak-probe-og-arole"}]`),
+			orgFixtureRoleWrite(realm,
+				"/organizations/{{org_id}}/groups/{{group_1}}/role-mappings/clients/{{client_uuid}}",
+				`[{"id":"{{client_role}}","name":"gloak-probe-og-crole"}]`),
+		)
+	}
+	return f
+}
+
+// organizationGroupRenameFixture builds the smallest realm the two update cases
+// need: one organization, one group, one child of it, and the rename whose
+// effect the cases then read.
+//
+// **The rename step cannot be idempotent, so the fixture is instantiated once
+// per case instead.** Measured 2026-09-03: the rename frees
+// `gloak-probe-og-aaa`, so a fixture two cases name runs twice, run two's create
+// takes the freed name and makes a *new* group, and run two's rename collides
+// with run one's -
+// `409 {"error":"conflict","error_description":"Duplicate resource error"}`,
+// which is a different error family from the create's
+// `{"errorMessage":"Group with the given name already exists."}`.
+//
+// Two cheaper fixes were tried and the repository refuted both:
+//
+//   - **Tolerating the 409 with ExpectStatus** leaves the case reading run
+//     two's group, which carries no attributes at all. That is F34's failure -
+//     a green recording over an empty body.
+//   - **Dropping the rename** and sending the group's own name makes the step
+//     idempotent and destroys a measured claim: `groups-update-effect` asserts
+//     that a child's `path` follows its parent's rename, and its golden moved
+//     from `/gloak-probe-og-renamed/…` to `/gloak-probe-og-aaa/…` the moment
+//     the rename went. A golden one directory away refuted "the rename adds
+//     nothing".
+//
+// So the pre-state is made deterministic by giving each case a realm rather
+// than by making the step tolerant. It does **not** reuse
+// organizationGroupFixture, whose twenty-eight steps build a second
+// organization, three groups, two users, a client and two roles that neither of
+// these cases reads: two of these are nine steps each and cost less than the one
+// they replace.
+func organizationGroupRenameFixture(realm string) Fixture {
+	f := organizationRealmFixture(realm)
+	base := "/organizations/{{org_id}}/groups"
+	f.Steps = append(f.Steps,
+		orgFixtureCreate(realm, "/organizations",
+			`{"name":"gloak-probe-og-one","alias":"gloak-probe-og-one-alias"}`),
+		orgFixtureCapture(realm, "/organizations", map[string]string{
+			"search": "gloak-probe-og-one", "exact": "true",
+		}, "org_id"),
+		orgFixtureCreate(realm, base, `{"name":"gloak-probe-og-aaa"}`),
+		orgFixtureCapture(realm, base, map[string]string{
+			"search": "gloak-probe-og-aaa", "exact": "true",
+		}, "group_id"),
+		// The hidden root, off the group's own `parentId` - the only place it
+		// is on the wire, because nothing lists it. Without this capture the
+		// single read's golden holds the recording container's root uuid and
+		// no replay can reproduce it.
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/" + realm + base,
+				Query:   map[string]string{"search": "gloak-probe-og-aaa", "exact": "true"},
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"root_id": "0/parentId"},
+		},
+		// The child is created **before** the rename, so its own `path` was
+		// minted under the old name. That is what makes the cascade a claim
+		// rather than a coincidence: a handler storing `path` at create time
+		// serves `/gloak-probe-og-aaa/gloak-probe-og-kid` here.
+		orgFixtureCreate(realm, base+"/{{group_id}}/children", `{"name":"gloak-probe-og-kid"}`),
+		orgFixtureCapture(realm, base, map[string]string{
+			"search": "gloak-probe-og-kid", "exact": "true",
+		}, "child_id"),
+		Step{
+			Request: Request{
+				Method: http.MethodPut,
+				Path: "/admin/realms/" + realm +
+					"/organizations/{{org_id}}/groups/{{group_id}}",
+				Headers: map[string]string{
+					"Authorization": "Bearer {{access_token}}",
+					"Content-Type":  "application/json",
+				},
+				// The two attribute keys are chosen so javamap.KeyOrder moves
+				// them: `gloak-probe-z` comes back before `gloak-probe-k`,
+				// where a Go map would sort them the other way.
+				Body: []byte(`{"name":"gloak-probe-og-renamed","attributes":` +
+					`{"gloak-probe-k":["v1","v2"],"gloak-probe-z":["w"]}}`),
+			},
+		},
+	)
+	return f
+}
+
+// orgFixtureCreate is one idempotent POST under a realm.
+func orgFixtureCreate(realm, path, body string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/" + realm + path,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(body),
+		},
+		ExpectStatus: idempotentCreate,
+	}
+}
+
+// orgFixtureCapture reads a listing back and captures the first row's id.
+func orgFixtureCapture(realm, path string, query map[string]string, name string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/" + realm + path,
+			Query:   query,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		Capture: map[string]string{name: "0/id"},
+	}
+}
+
+// orgFixtureRoleWrite assigns a role array. A role-mapping write is idempotent
+// - measured 204 on the repeat - so this needs no second accepted status.
+func orgFixtureRoleWrite(realm, path, body string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/" + realm + path,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(body),
+		},
+	}
 }
