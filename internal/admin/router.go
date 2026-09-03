@@ -130,6 +130,101 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /admin/realms/{realm}/organizations/{orgID}",
 		h.guardOrganization(organizationWriteRoles, h.deleteOrganization))
 
+	// Organizations, the second cut: members, invitations and the identity
+	// providers an organization owns. Nineteen operations, and **not one of
+	// them is opened by a single role**.
+	//
+	// Measured 2026-09-02 with a token minted per caller, one user per role
+	// set, against every route in the family. Four shapes:
+	//
+	//	the member reads      (view|manage-organizations|manage-realm) AND (view|manage|query-users)
+	//	the member sub-reads  the same, minus query-users
+	//	the member writes     (manage-organizations|manage-realm)      AND manage-users
+	//	the broker family     (view|manage-organizations|manage-realm) AND (view|manage-identity-providers)
+	//	the broker writes     (manage-organizations|manage-realm)      AND manage-identity-providers
+	//	the invitations       (manage-organizations|manage-realm)      and no second family at all
+	//
+	// The last of those is the finding: **the invitation reads refuse the view
+	// role**, which AGENTS.md records happening on exactly two routes in the
+	// whole API before this.
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/members",
+		h.guardOrganizationAnd(organizationReadRoles, organizationMemberListRoles, h.listOrganizationMembers))
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/members/count",
+		h.guardOrganizationAnd(organizationReadRoles, organizationMemberListRoles, h.countOrganizationMembers))
+	mux.HandleFunc("POST /admin/realms/{realm}/organizations/{orgID}/members",
+		h.guardOrganizationAnd(organizationWriteRoles, organizationMemberWriteRoles, h.addOrganizationMember))
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/members/{memberID}",
+		h.guardOrganizationAnd(organizationReadRoles, organizationMemberReadRoles, h.readOrganizationMember))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/organizations/{orgID}/members/{memberID}",
+		h.guardOrganizationAnd(organizationWriteRoles, organizationMemberWriteRoles, h.removeOrganizationMember))
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/members/{memberID}/groups",
+		h.guardOrganizationAnd(organizationReadRoles, organizationMemberReadRoles, h.listOrganizationMemberGroups))
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/members/{memberID}/organizations",
+		h.guardOrganizationAnd(organizationReadRoles, organizationMemberReadRoles, h.listOrganizationMemberOrganizations))
+	mux.HandleFunc("POST /admin/realms/{realm}/organizations/{orgID}/members/invite-user",
+		h.guardOrganizationAnd(organizationWriteRoles, organizationMemberWriteRoles, h.inviteOrganizationUser))
+	mux.HandleFunc("POST /admin/realms/{realm}/organizations/{orgID}/members/invite-existing-user",
+		h.guardOrganizationAnd(organizationWriteRoles, organizationMemberWriteRoles, h.inviteExistingOrganizationUser))
+
+	// **`GET /organizations/members/{member-id}/organizations` is the one
+	// operation of this cut that is not served, and the reason is Go's
+	// ServeMux rather than anything about Keycloak.**
+	//
+	// It and `GET /organizations/{orgID}/members/{memberID}` above are both
+	// four segments, and they overlap on exactly one concrete path -
+	// `/organizations/members/members/organizations`. Neither matches a strict
+	// subset of the other, so `net/http` calls them conflicting and panics at
+	// registration. Registering the overlap as a third, fully literal pattern
+	// does **not** resolve it: `conflictsWith` is pairwise and knows nothing
+	// about a third pattern, checked against Go 1.26.6 rather than inferred
+	// from the documentation, which reads as though it might.
+	//
+	// The two ways out both cost more than the route is worth. A dispatcher on
+	// `organizations/{a}/{b}/{c}` would swallow every four-segment path under
+	// the tag that Gloak does not serve - the eleven F120 group routes among
+	// them - and those answer the unmatched-path 404 **with none of the five
+	// security headers**, which only WithKeycloakFallbacks can produce; a
+	// handler writing that body itself would get the headers wrong. Dropping
+	// the org-scoped read instead loses a route that matters more.
+	//
+	// Keycloak's own answers to the overlap are measured, so the next cut needs
+	// no container:
+	//
+	//	/organizations/members/members/organizations  404 {"error":"HTTP 404 Not Found"}
+	//	/organizations/members/members                404 {"errorMessage":"Organization not found."}
+	//
+	// The first is the top-level route reading `members` as a user id that
+	// resolves to nothing; the second is the org-scoped route reading it as an
+	// organization id. So JAX-RS prefers the literal segment on the
+	// four-segment shape and the wildcard on the three-segment one.
+	//
+	// Its guard is measured too, and it is **not** its org-scoped twin's:
+	// `query-organizations` opens it and is 403 on the other, while
+	// `query-users` opens neither. Two routes serving byte-identical bodies,
+	// two role sets.
+
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/identity-providers",
+		h.guardOrganizationAnd(organizationReadRoles, identityProviderReadRoles, h.listOrganizationIdentityProviders))
+	mux.HandleFunc("POST /admin/realms/{realm}/organizations/{orgID}/identity-providers",
+		h.guardOrganizationAnd(organizationWriteRoles, identityProviderWriteRoles, h.addOrganizationIdentityProvider))
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/identity-providers/{idpAlias}",
+		h.guardOrganizationAnd(organizationReadRoles, identityProviderReadRoles, h.readOrganizationIdentityProvider))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/organizations/{orgID}/identity-providers/{idpAlias}",
+		h.guardOrganizationAnd(organizationWriteRoles, identityProviderWriteRoles, h.removeOrganizationIdentityProvider))
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/identity-providers/{idpAlias}/groups",
+		h.guardOrganizationAnd(organizationReadRoles, identityProviderReadRoles, h.listOrganizationIdentityProviderGroups))
+
+	// The invitations take one family and it is the **write** pair, on all four
+	// operations including the two reads.
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/invitations",
+		h.guardOrganization(organizationWriteRoles, h.listOrganizationInvitations))
+	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/invitations/{invitationID}",
+		h.guardOrganization(organizationWriteRoles, h.readOrganizationInvitation))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/organizations/{orgID}/invitations/{invitationID}",
+		h.guardOrganization(organizationWriteRoles, h.deleteOrganizationInvitation))
+	mux.HandleFunc("POST /admin/realms/{realm}/organizations/{orgID}/invitations/{invitationID}/resend",
+		h.guardOrganization(organizationWriteRoles, h.resendOrganizationInvitation))
+
 	// Authorization services. Twenty-nine operations of the description's
 	// thirty-one untagged ones - the resource server as a resource, the two
 	// provider catalogues, the scope family, the resource family, the policy
@@ -1317,13 +1412,61 @@ func (h *handler) guardOrganizations(roles []string, next func(http.ResponseWrit
 // resource, so the tag does not predict it here either.
 func (h *handler) guardOrganization(roles []string, next func(http.ResponseWriter, *http.Request, *reqContext, *model.Organization)) http.HandlerFunc {
 	return h.guardOrganizations(roles, func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
-		org, err := h.store.Organizations().ByID(r.Context(), rc.realm.ID, r.PathValue("orgID"))
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				writeOrganizationNotFound(w)
-				return
-			}
-			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		org, ok := h.organizationFromPath(w, r, rc)
+		if !ok {
+			return
+		}
+		next(w, r, rc, org)
+	})
+}
+
+// organizationFromPath resolves the {orgID} segment, or writes the 404. It is
+// shared by the two guards above so that the twenty-one routes naming an
+// organization cannot come to answer a missing one differently.
+func (h *handler) organizationFromPath(w http.ResponseWriter, r *http.Request, rc *reqContext) (*model.Organization, bool) {
+	org, err := h.store.Organizations().ByID(r.Context(), rc.realm.ID, r.PathValue("orgID"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeOrganizationNotFound(w)
+			return nil, false
+		}
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return nil, false
+	}
+	return org, true
+}
+
+// guardOrganizationsAnd is guardOrganizations for a route that needs a role
+// from each of two families rather than any of one. It is separate from
+// guardOrganizationAnd below because the family has a route with no {orgID} in
+// its path, which is measured and unserved for a routing reason.
+//
+// **Nineteen routes need one and none of them is opened by a single role.**
+// Measured 2026-09-02: `manage-organizations` alone is 403 on every member
+// route and so is `manage-users` alone; `view-organizations` together with
+// `view-users` is 200. That is guardAnyAndAny's shape - `/roles/{name}/users`
+// is the only other place in this API with it - with the realm flag checked in
+// between, which is why it is built here rather than there.
+func (h *handler) guardOrganizationsAnd(a, b []string, next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
+	return h.guardOrganizations(a, func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+		if !rc.caller.hasAny(b) {
+			writeForbidden(w)
+			return
+		}
+		next(w, r, rc)
+	})
+}
+
+// guardOrganizationAnd is guardOrganizationsAnd with the {orgID} resolved, for
+// the eighteen routes that name one. The organization comes **after** both role
+// checks, which is guardOrganization's measured order and holds here too: an
+// org id that resolves to nothing answers 403 to a caller holding nothing and
+// `404 {"errorMessage":"Organization not found."}` to a full administrator, on
+// every one of the eighteen.
+func (h *handler) guardOrganizationAnd(a, b []string, next func(http.ResponseWriter, *http.Request, *reqContext, *model.Organization)) http.HandlerFunc {
+	return h.guardOrganizationsAnd(a, b, func(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+		org, ok := h.organizationFromPath(w, r, rc)
+		if !ok {
 			return
 		}
 		next(w, r, rc, org)
@@ -1578,7 +1721,34 @@ var organizationsListReadRoles = []string{
 
 // organizationWriteRoles is what the create, the update and the delete accept.
 // view-organizations reads and does not write; manage-realm does both.
+//
+// It is also the **whole** guard of all four invitation routes, the two reads
+// included - see the router. A read that refuses the view role is a shape this
+// API has had twice before.
 var organizationWriteRoles = []string{"manage-organizations", "manage-realm"}
+
+// organizationMemberListRoles is the *user*-side half of the conjunction the
+// member listing and the member count need, on top of an organization role.
+//
+// **query-users is in it and it opens those two routes and nothing else** -
+// the single member read, its groups and its organizations all answer a
+// `view-organizations` + `query-users` caller 403 while the listing and the
+// count answer 200. That is exactly `GET /users`' role set against
+// `GET /users/{id}`'s, reproduced one tag away and measured here rather than
+// inherited.
+var organizationMemberListRoles = []string{"view-users", "manage-users", "query-users"}
+
+// organizationMemberReadRoles is the same half for the three routes that
+// resolve a single member: the read, its groups and its organizations. The
+// top-level `.../members/{id}/organizations` takes it too and is unserved for a
+// routing reason - see the router.
+var organizationMemberReadRoles = []string{"view-users", "manage-users"}
+
+// organizationMemberWriteRoles is the half the member add, the member remove
+// and the two invite endpoints need. **It is manage-users alone**:
+// `manage-organizations` with `view-users` is 403 on all four, and so is
+// `manage-realm` with `view-users`.
+var organizationMemberWriteRoles = []string{"manage-users"}
 
 // identityProviderReadRoles is what six of the seven reads on the tag accept.
 //
