@@ -389,11 +389,13 @@ var Fixtures = map[string]Fixture{
 	// password *changed* by the case that follows it, so a second case reusing
 	// that username would log in with a password the first case replaced.
 	// The **landing page** the redirect below points at has no case, and the
-	// reason changed on 2026-09-01. It was "its /resources/<hash>/ segment
-	// churns on every re-record", and ReplaceThemeResource has answered that.
-	// What is left is that Gloak serves the placeholder body here: the
-	// required-action pages are among the nine theme pages nobody has measured
-	// the instruction and the chrome of. See themePageBody in internal/httpx.
+	// reason has changed twice. It was "its /resources/<hash>/ segment churns on
+	// every re-record", which ReplaceThemeResource answered on 2026-09-01; then
+	// it was that nobody had measured the page, which 2026-09-02 answered; and
+	// on 2026-09-03 its two remaining per-request values - a session_code the
+	// render mints and the KC_AUTH_SESSION_HASH - became maskable. What is left
+	// is 10887 bytes of unwritten markup and nothing else. See themePageBody in
+	// internal/httpx.
 	"temporary-password":      temporaryPasswordUserFixture("gloak-probe-temp-password"),
 	"disabled-user":           disabledUserFixture("gloak-probe-disabled-user"),
 	"browser-required-action": requiredActionLoginFixture(),

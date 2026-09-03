@@ -570,7 +570,13 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-20",
 		},
 		Status: Pending,
-		Reason: "the harness cannot mask a per-request value inside an HTML body",
+		Reason: "Gloak answers this request the 400 page: form_post is in responseModes and not in " +
+			"servableResponseModes, so the transport does not exist. That is F51. The harness's own " +
+			"blocker is gone - this Reason said 'the harness cannot mask a per-request value inside an " +
+			"HTML body' until 2026-09-03, and the tab_id in the history.replaceState URL is exactly " +
+			"Case.VolatileHTMLQuery's shape now. What is still missing on the mask side is an INPUT " +
+			"VALUE frame for the form's own code and session_state, which no case in the catalogue " +
+			"consumes yet",
 		// Measured 2026-08-29 and recorded in the observed spec: form_post
 		// answers **200** with an auto-submitting form, not a redirect, and
 		// its Content-Type is text/html with no charset where the login page's
