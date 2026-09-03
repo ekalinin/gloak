@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 
 	"github.com/ekalinin/gloak/internal/httpx"
@@ -216,8 +215,20 @@ func (h *handler) organizationGroupOf(ctx context.Context, realmID string, g *mo
 }
 
 // groupRoleNames reads a group's directly assigned roles as the two projections
-// the full shape carries: realm role names sorted, and client role names by
-// clientId in Keycloak's map order.
+// the full shape carries: realm role names, and client role names by clientId in
+// Keycloak's map order.
+//
+// **Both name lists come back sorted by name and nothing here sorts them.**
+// Measured on a group given `ogattr`, then `zz-role`, `aa-role`, `mm-role`,
+// which read back `aa-role, mm-role, ogattr, zz-role`; the order arrives from
+// RoleRepo.ListGroupRoles' own `ORDER BY r.name`, which both drivers carry and
+// the store suite covers.
+//
+// This function had a `sort.Strings` on each list until the mutation pass, and
+// **both were dead**: the rows are already in name order when they arrive, so
+// removing either changed no byte of any golden. A line that cannot change
+// behaviour reads as a claim about where the order is decided, and it was
+// pointing at the wrong place.
 func (h *handler) groupRoleNames(ctx context.Context, realmID, groupID string) ([]string, []namedValues, error) {
 	roles, err := h.store.Roles().ListGroupRoles(ctx, groupID)
 	if err != nil {
@@ -235,10 +246,6 @@ func (h *handler) groupRoleNames(ctx context.Context, realmID, groupID string) (
 			return nil, nil, err
 		}
 		byClient[c.ClientID] = append(byClient[c.ClientID], role.Name)
-	}
-	sort.Strings(realmRoles)
-	for _, names := range byClient {
-		sort.Strings(names)
 	}
 	return realmRoles, orderJavaMap(byClient), nil
 }

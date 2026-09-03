@@ -6070,11 +6070,22 @@ func organizationGroupFixture(realm string, mapped bool) Fixture {
 		ExpectStatus: idempotentCreate,
 	})
 
+	// **Two realm roles, created and assigned in the order that disagrees with
+	// their names.** `gloak-probe-og-role` is made first and named in the
+	// assignment array first; `gloak-probe-og-arole` sorts before it. So the
+	// full shape's `realmRoles` is an assertion about order rather than about
+	// membership: a serving path in insertion order answers the other way
+	// round. With one role it was neither, and the mutation pass is what said
+	// so - a sort over one element is the identity.
 	f.Steps = append(f.Steps,
 		orgFixtureCreate(realm, "/roles",
 			`{"name":"gloak-probe-og-role","description":"the realm role a group holds"}`),
 		orgFixtureCapture(realm, "/roles", map[string]string{"search": "gloak-probe-og-role"},
 			"realm_role"),
+		orgFixtureCreate(realm, "/roles",
+			`{"name":"gloak-probe-og-arole","description":"the realm role that sorts first"}`),
+		orgFixtureCapture(realm, "/roles", map[string]string{"search": "gloak-probe-og-arole"},
+			"realm_role_a"),
 		orgFixtureCreate(realm, "/clients",
 			`{"clientId":"gloak-probe-og-client","enabled":true}`),
 		orgFixtureCapture(realm, "/clients", map[string]string{"clientId": "gloak-probe-og-client"},
@@ -6100,7 +6111,8 @@ func organizationGroupFixture(realm string, mapped bool) Fixture {
 				ExpectStatus: []int{http.StatusNoContent, http.StatusConflict},
 			},
 			orgFixtureRoleWrite(realm, "/organizations/{{org_id}}/groups/{{group_1}}/role-mappings/realm",
-				`[{"id":"{{realm_role}}","name":"gloak-probe-og-role"}]`),
+				`[{"id":"{{realm_role}}","name":"gloak-probe-og-role"},`+
+					`{"id":"{{realm_role_a}}","name":"gloak-probe-og-arole"}]`),
 			orgFixtureRoleWrite(realm,
 				"/organizations/{{org_id}}/groups/{{group_1}}/role-mappings/clients/{{client_uuid}}",
 				`[{"id":"{{client_role}}","name":"gloak-probe-og-crole"}]`),
