@@ -9,4 +9,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-{"id":"{{group_id}}","name":"gloak-probe-og-renamed","path":"/gloak-probe-og-renamed","parentId":"1c4ce08f-907a-410b-beef-0579344b0aff","subGroups":[],"attributes":{"gloak-probe-z":["w"],"gloak-probe-k":["v1","v2"]},"realmRoles":[],"clientRoles":{}}
+{"id":"{{group_id}}","name":"gloak-probe-og-renamed","path":"/gloak-probe-og-renamed","parentId":"{{root_id}}","subGroups":[],"attributes":{"gloak-probe-z":["w"],"gloak-probe-k":["v1","v2"]},"realmRoles":[],"clientRoles":{}}
