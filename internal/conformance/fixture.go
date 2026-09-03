@@ -6120,24 +6120,7 @@ func organizationGroupRenamedFixture(realm string) Fixture {
 				"Authorization": "Bearer {{access_token}}",
 				"Content-Type":  "application/json",
 			},
-			// **The name is the group's own and the rename is gone.** This
-			// step used to rename gloak-probe-og-aaa to
-			// gloak-probe-og-renamed, and two cases name this fixture, so the
-			// recorder ran it twice: the second run's create found the name
-			// free, made a *new* group, and its rename collided with the first
-			// run's - `409 {"error":"conflict","error_description":"Duplicate
-			// resource error"}`. Tolerating that 409 would have been worse than
-			// the failure, because the case would then have read the new group,
-			// which carries no attributes at all - F34's failure exactly.
-			//
-			// What the case asserts is the attribute order, and the rename
-			// added nothing to it. Sending the same name makes the step
-			// idempotent: a repeat sets the name it already has.
-			//
-			// A body carrying attributes and **no** name is
-			// `400 {"errorMessage":"Group name is missing"}`, so the name has to
-			// be here.
-			Body: []byte(`{"name":"gloak-probe-og-aaa","attributes":` +
+			Body: []byte(`{"name":"gloak-probe-og-renamed","attributes":` +
 				`{"gloak-probe-k":["v1","v2"],"gloak-probe-z":["w"]}}`),
 		},
 	})
