@@ -1209,6 +1209,55 @@ var Fixtures = map[string]Fixture{
 	"idp-mapper-create": identityProviderMapperFixture("gloak-probe-map-broker-new", "33", nil),
 	"idp-mapper-noname": identityProviderMapperFixture("gloak-probe-map-broker-non", "34", nil),
 	"idp-mapper-empty":  identityProviderMapperFixture("gloak-probe-map-broker-emp", "35", nil),
+
+	// ---- P12 second cut: an organization's members, invitations and identity
+	// providers. Appended at the very end of the map, and the helpers after the
+	// last helper, because another stream inserts mid-map this round.
+
+	// An organization with three members whose usernames and e-mails sort in
+	// **opposite** orders. That is what makes the listing's order an assertion:
+	// `aardvark` has the last e-mail and `zebra` the first, so a handler
+	// sorting by e-mail, or one returning insertion order, produces a different
+	// body from these three rows.
+	"org-members": organizationMemberFixture("gloak-probe-org-mem", []orgMemberSeed{
+		{"gloak-probe-zebra", "aaa@gloak-probe-members.example.com", "Zoe", "Zeta"},
+		{"gloak-probe-aardvark", "zzz@gloak-probe-members.example.com", "Alice", "Alpha"},
+		{"gloak-probe-marmot", "mmm@gloak-probe-members.example.com", "Mary", "Mu"},
+	}),
+
+	// One member, for the single read, the count, the `.../organizations` shapes
+	// and the empty groups listing. Its own realm, because the recorder shares a
+	// container and a fixture two cases name runs twice.
+	"org-member-one": organizationMemberFixture("gloak-probe-org-one-mem", []orgMemberSeed{
+		{"gloak-probe-solo", "solo@gloak-probe-members.example.com", "Solo", "Single"},
+	}),
+
+	// A member the case removes, and one the case adds a second time.
+	"org-member-delete": organizationMemberFixture("gloak-probe-org-mem-del", []orgMemberSeed{
+		{"gloak-probe-doomed", "doomed@gloak-probe-members.example.com", "Doo", "Med"},
+	}),
+	"org-member-taken": organizationMemberFixture("gloak-probe-org-mem-dup", []orgMemberSeed{
+		{"gloak-probe-taken", "taken@gloak-probe-members.example.com", "Ta", "Ken"},
+	}),
+
+	// An organization with no members at all, for the empty listing, the zero
+	// count, the invitation family and the four 404s - every one of which needs
+	// the outsider this fixture creates and does not add.
+	"org-empty": organizationMemberFixture("gloak-probe-org-mem-nil", nil),
+
+	// The member add gets a realm of its own **because it mutates one**. A
+	// golden that holds only while the catalogue's order holds is worse than no
+	// golden, and sharing org-empty would make the empty listing and the zero
+	// count depend on this case running after them.
+	"org-member-add": organizationMemberFixture("gloak-probe-org-mem-add", nil),
+
+	// An organization holding one identity provider, and the same without the
+	// association for the create and the read's 404.
+	"org-broker":       organizationBrokerFixture("gloak-probe-org-brk", "c1", true),
+	"org-broker-loose": organizationBrokerFixture("gloak-probe-org-brk-new", "c2", false),
+	// The two writes get realms of their own, for org-member-add's reason.
+	"org-broker-add":    organizationBrokerFixture("gloak-probe-org-brk-add", "c3", false),
+	"org-broker-delete": organizationBrokerFixture("gloak-probe-org-brk-del", "c4", true),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -5701,4 +5750,186 @@ func identityProviderMapperFixture(alias, group string, seeds []idpMapperSeed) F
 // prefix, and so that two seeds cannot silently pick one id.
 func idpMapperID(suffix string) string {
 	return "1de07000-0000-4000-8000-0000000000" + suffix
+}
+
+// ---------------------------------------------------------------------------
+// P12 second cut: organization members and brokers.
+//
+// After the last helper, for the reason the fixtures are after the last map
+// entry: another stream owns the middle of this file this round.
+// ---------------------------------------------------------------------------
+
+// idempotentAssociation is idempotentCreate for a write whose success is a 204.
+// `POST /organizations/{org}/identity-providers` answers 204 the first time and
+// 409 the second, so a fixture the recorder runs twice needs both.
+var idempotentAssociation = []int{http.StatusNoContent, http.StatusConflict}
+
+// orgMemberSeed is one user a fixture creates and then adds to its
+// organization.
+//
+// The username, the e-mail, the first name and the last name are four separate
+// fields rather than one derived from another **on purpose**. `search` on this
+// family matches all four, and a seed whose username was a substring of its
+// e-mail would let a handler that searched one field pass a case meant to
+// assert four.
+type orgMemberSeed struct {
+	username, email, firstName, lastName string
+}
+
+// organizationMemberFixture builds a realm with organizations on, one
+// organization in it, one user who never joins, and one member per seed.
+//
+// It does not reuse organizationFixture: that one creates an organization
+// carrying a description, a redirect URL, an attribute and a domain, and all
+// four turn up inside the `.../organizations` bodies these cases assert. A
+// plainer organization is what lets those goldens say which keys the brief
+// shape has rather than which keys the fixture happened to set.
+//
+// The organization's id is read back with a second request rather than taken
+// from the create's Location, for organizationFixture's reason: the recorder
+// runs a fixture twice on a shared container and the second create is a 409
+// with nothing to capture. Every member id is captured the same way, and
+// `member_1`.. are what the cases and ReplaceCaptured both name.
+func organizationMemberFixture(realm string, seeds []orgMemberSeed) Fixture {
+	f := organizationRealmFixture(realm)
+	f.Steps = append(f.Steps,
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/" + realm + "/organizations",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"name":"gloak-probe-org-members",` +
+					`"alias":"gloak-probe-org-members-alias"}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/" + realm + "/organizations",
+				Query:   map[string]string{"search": "gloak-probe-org-members", "exact": "true"},
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"org_id": "0/id"},
+		},
+	)
+	// One user who joins nothing, on every one of these realms. It is what the
+	// four 404-for-a-user-that-exists cases address, and it costs one row.
+	f.Steps = append(f.Steps, orgUserSteps(realm, orgMemberSeed{
+		"gloak-probe-outsider", "outsider@gloak-probe-members.example.com", "Out", "Sider",
+	}, "stranger_id")...)
+
+	for i, seed := range seeds {
+		name := "member_" + strconv.Itoa(i+1)
+		f.Steps = append(f.Steps, orgUserSteps(realm, seed, name)...)
+		f.Steps = append(f.Steps, Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "/admin/realms/" + realm + "/organizations/{{org_id}}/members",
+				Headers: map[string]string{
+					"Authorization": "Bearer {{access_token}}",
+					"Content-Type":  "application/json",
+				},
+				// The body is the bare user id, which is what this endpoint
+				// takes - see organizationMemberID in internal/admin.
+				Body: []byte("{{" + name + "}}"),
+			},
+			ExpectStatus: idempotentCreate,
+		})
+	}
+	return f
+}
+
+// orgUserSteps creates one user and captures its id under the given name.
+func orgUserSteps(realm string, seed orgMemberSeed, capture string) []Step {
+	return []Step{
+		{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/" + realm + "/users",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"username":"` + seed.username + `","email":"` + seed.email +
+					`","firstName":"` + seed.firstName + `","lastName":"` + seed.lastName +
+					`","enabled":true}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/" + realm + "/users",
+				Query:   map[string]string{"username": seed.username, "exact": "true"},
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{capture: "0/id"},
+		},
+	}
+}
+
+// organizationBrokerFixture builds a realm with organizations on, one
+// organization, one identity provider and - when associate is true - the
+// association between them.
+//
+// The provider's internalId is named rather than captured, the way
+// identityProviderMapperFixture names its own, so a case can assert a whole
+// body. The organization's id cannot be: POST /organizations reads the body's
+// id and **discards** it, which is the inverse of this very create's rule and
+// the reason the two ids in one fixture are obtained two different ways.
+//
+// group is the byte that keeps two fixtures' provider ids apart, and it is not
+// decoration: an identity provider's internalId is its **primary key and is
+// global**, so two fixtures naming one id are fine apart and fail together on
+// the shared container the recorder uses. That is exactly what happened on the
+// first recording of this cut - five cases failed, all of them on the second
+// fixture, and every one of them passed when run alone.
+func organizationBrokerFixture(realm, group string, associate bool) Fixture {
+	f := organizationRealmFixture(realm)
+	f.Steps = append(f.Steps,
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/" + realm + "/organizations",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"name":"gloak-probe-org-broker",` +
+					`"alias":"gloak-probe-org-broker-alias"}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/" + realm + "/organizations",
+				Query:   map[string]string{"search": "gloak-probe-org-broker", "exact": "true"},
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"org_id": "0/id"},
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/" + realm + "/identity-provider/instances",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"alias":"gloak-probe-org-idp",` +
+					`"internalId":"1de07000-0000-4000-8000-0000000000` + group + `",` +
+					`"providerId":"oidc","config":{"clientId":"gloak-probe-cid",` +
+					`"clientSecret":"gloak-probe-secret"}}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+	)
+	if associate {
+		f.Steps = append(f.Steps, Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "/admin/realms/" + realm + "/organizations/{{org_id}}/identity-providers",
+				Headers: map[string]string{
+					"Authorization": "Bearer {{access_token}}",
+					"Content-Type":  "application/json",
+				},
+				Body: []byte(`"gloak-probe-org-idp"`),
+			},
+			ExpectStatus: idempotentAssociation,
+		})
+	}
+	return f
 }

@@ -46,19 +46,25 @@ import (
 //     attributes and unlike its domains.
 //   - **Types is always present** and is derived from the provider id.
 type identityProviderRepresentation struct {
-	Alias                     string                 `json:"alias,omitempty"`
-	DisplayName               string                 `json:"displayName,omitempty"`
-	InternalID                string                 `json:"internalId"`
-	ProviderID                string                 `json:"providerId"`
-	Enabled                   bool                   `json:"enabled"`
-	TrustEmail                *bool                  `json:"trustEmail,omitempty"`
-	StoreToken                *bool                  `json:"storeToken,omitempty"`
-	AddReadTokenRoleOnCreate  *bool                  `json:"addReadTokenRoleOnCreate,omitempty"`
-	AuthenticateByDefault     *bool                  `json:"authenticateByDefault,omitempty"`
-	LinkOnly                  *bool                  `json:"linkOnly,omitempty"`
-	HideOnLogin               *bool                  `json:"hideOnLogin,omitempty"`
-	FirstBrokerLoginFlowAlias string                 `json:"firstBrokerLoginFlowAlias,omitempty"`
-	Config                    identityProviderConfig `json:"config"`
+	Alias                     string `json:"alias,omitempty"`
+	DisplayName               string `json:"displayName,omitempty"`
+	InternalID                string `json:"internalId"`
+	ProviderID                string `json:"providerId"`
+	Enabled                   bool   `json:"enabled"`
+	TrustEmail                *bool  `json:"trustEmail,omitempty"`
+	StoreToken                *bool  `json:"storeToken,omitempty"`
+	AddReadTokenRoleOnCreate  *bool  `json:"addReadTokenRoleOnCreate,omitempty"`
+	AuthenticateByDefault     *bool  `json:"authenticateByDefault,omitempty"`
+	LinkOnly                  *bool  `json:"linkOnly,omitempty"`
+	HideOnLogin               *bool  `json:"hideOnLogin,omitempty"`
+	FirstBrokerLoginFlowAlias string `json:"firstBrokerLoginFlowAlias,omitempty"`
+	// OrganizationID sits between firstBrokerLoginFlowAlias and config, which
+	// is where it was measured 2026-09-02 on a provider carrying every other
+	// field. briefRepresentation=true drops it, so it is a **ninth** thing that
+	// parameter drops rather than the eighth this file used to record. It is
+	// omitted when there is none, which is every provider on a default install.
+	OrganizationID string                 `json:"organizationId,omitempty"`
+	Config         identityProviderConfig `json:"config"`
 	// Types is a pointer so that briefRepresentation=true can drop the key
 	// outright, which is one of the four things that parameter does - see
 	// identityProviderRepresentationOf. The single read **ignores** it and
@@ -151,6 +157,7 @@ func identityProviderRepresentationOf(p *model.IdentityProvider, brief bool) ide
 	rep.LinkOnly = p.LinkOnly
 	rep.HideOnLogin = p.HideOnLogin
 	rep.FirstBrokerLoginFlowAlias = p.FirstBrokerLoginFlowAlias
+	rep.OrganizationID = p.OrganizationID
 	rep.Config = orderIdentityProviderConfig(p.Config)
 	types := model.IdentityProviderTypes(p.ProviderID)
 	rep.Types = &types
@@ -360,7 +367,8 @@ func (h *handler) reloadIdentityProviderKeys(w http.ResponseWriter, r *http.Requ
 // The field set is what a create was measured accepting and no more, so the
 // three fields the server takes and never echoes are here and unused:
 // `updateProfileFirstLoginMode` and `postBrokerLoginFlowAlias` are read and
-// discarded, and `organizationId` is refused below rather than stored.
+// discarded, and `organizationId` is resolved below and stored when it names a
+// real organization.
 type identityProviderBody struct {
 	Alias                       *string           `json:"alias"`
 	DisplayName                 string            `json:"displayName"`
@@ -378,6 +386,10 @@ type identityProviderBody struct {
 	PostBrokerLoginFlowAlias    string            `json:"postBrokerLoginFlowAlias"`
 	OrganizationID              *string           `json:"organizationId"`
 	Config                      map[string]string `json:"config"`
+	// resolvedOrganizationID is what checkBrokerOrganization put there, and it
+	// is not a wire field - it carries the organization the body named across
+	// to identityProviderOf so that the resolution happens once.
+	resolvedOrganizationID string
 }
 
 // createIdentityProvider serves
@@ -407,7 +419,7 @@ func (h *handler) createIdentityProvider(w http.ResponseWriter, r *http.Request,
 	if !decodeStrict(w, r, "IdentityProviderRepresentation", &body) {
 		return
 	}
-	if !checkBrokerOrganization(w, &body) {
+	if !h.checkBrokerOrganization(w, r, rc, &body) {
 		return
 	}
 	if body.Alias == nil || *body.Alias == "" {
@@ -474,7 +486,7 @@ func (h *handler) updateIdentityProvider(w http.ResponseWriter, r *http.Request,
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	if !checkBrokerOrganization(w, &body) {
+	if !h.checkBrokerOrganization(w, r, rc, &body) {
 		return
 	}
 	// A **present** alias that differs is refused; an absent one is not a
@@ -504,6 +516,18 @@ func (h *handler) updateIdentityProvider(w http.ResponseWriter, r *http.Request,
 	case err != nil:
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
+	}
+	// **The update leaves the association alone unless the body names one**,
+	// which is two measurements rather than one: a PUT carrying no
+	// organizationId kept an existing association while emptying the config
+	// beside it, and a PUT carrying a real one associated a provider that had
+	// none. So this write is here and not in the store's Update.
+	if body.resolvedOrganizationID != "" && updated.Alias != nil {
+		if err := h.store.IdentityProviders().SetOrganization(
+			r.Context(), rc.realm.ID, *updated.Alias, body.resolvedOrganizationID); err != nil {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
 	}
 	w.Header().Set("Cache-Control", "no-cache")
 	httpx.WriteNoContent(w, r)
@@ -551,17 +575,36 @@ func checkIdentityProviderID(w http.ResponseWriter, providerID *string) bool {
 	return true
 }
 
-// checkBrokerOrganization refuses any organizationId, including the empty
-// string.
+// checkBrokerOrganization resolves the body's organizationId, and refuses one
+// that names no organization in this realm.
 //
-// **An empty string is not an absent field here**, measured: a create carrying
-// `"organizationId":""` alongside a complete and otherwise valid body answered
-// 400. Nothing in this cut creates a broker inside an organization, so every
-// value that reaches this function names an organization that does not exist,
-// and the message is the same for all of them.
-func checkBrokerOrganization(w http.ResponseWriter, body *identityProviderBody) bool {
+// **This function used to refuse every value, and that was wrong.** The rule it
+// carried - "organizationId is a 400 for any value including the empty
+// string" - was measured on `master`, where organizations are switched off and
+// no organization can exist, so every value the probe could try was one that
+// resolved to nothing. Re-measured 2026-09-02 in a realm with
+// `organizationsEnabled` on: a create naming a **real** organization id answers
+// **201** and the provider is associated with it - it appears in
+// `GET /organizations/{org}/identity-providers` and its own read carries
+// `organizationId`. `PUT` does the same. So there are three routes that write
+// the association, not one.
+//
+// `""`, a non-uuid and a uuid that resolves to nothing are all still the 400,
+// and the message does not distinguish them.
+func (h *handler) checkBrokerOrganization(w http.ResponseWriter, r *http.Request, rc *reqContext, body *identityProviderBody) bool {
 	if body.OrganizationID == nil {
 		return true
+	}
+	if *body.OrganizationID != "" {
+		org, err := h.store.Organizations().ByID(r.Context(), rc.realm.ID, *body.OrganizationID)
+		if err == nil {
+			body.resolvedOrganizationID = org.ID
+			return true
+		}
+		if !errors.Is(err, store.ErrNotFound) {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return false
+		}
 	}
 	httpx.WriteAdminError(w, http.StatusBadRequest,
 		"Organization associated with broker does not exist")
@@ -585,6 +628,7 @@ func identityProviderOf(realmID string, body *identityProviderBody) *model.Ident
 		LinkOnly:                  body.LinkOnly,
 		HideOnLogin:               body.HideOnLogin,
 		FirstBrokerLoginFlowAlias: body.FirstBrokerLoginFlowAlias,
+		OrganizationID:            body.resolvedOrganizationID,
 		Config:                    identityProviderConfigOf(body.Config),
 	}
 	if body.ProviderID != nil {

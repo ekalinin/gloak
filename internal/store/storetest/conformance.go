@@ -3126,6 +3126,226 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 			t.Errorf("the second Delete: want ErrNotFound, got %v", err)
 		}
 	})
+
+	// An organization's members. A member is a user and nothing else, so the
+	// two things a driver can get wrong here are the ordering and the two
+	// cascades - and the cascades point in opposite directions, which is what
+	// the last third of this subtest is about.
+	t.Run("organization members are users, ordered by username, and cascade both ways", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := newRealm(t, s)
+
+		org := &model.Organization{
+			ID: model.NewID(), RealmID: realm.ID,
+			Name: "gloak-probe-members-org", Alias: "gloak-probe-members-alias", Enabled: true,
+		}
+		if err := s.Organizations().Create(ctx, org); err != nil {
+			t.Fatalf("Organizations().Create: %v", err)
+		}
+		other := &model.Organization{
+			ID: model.NewID(), RealmID: realm.ID,
+			Name: "gloak-probe-members-other", Alias: "gloak-probe-members-other-alias", Enabled: true,
+		}
+		if err := s.Organizations().Create(ctx, other); err != nil {
+			t.Fatalf("Organizations().Create: %v", err)
+		}
+
+		// Created zzz, aaa, mmm so that insertion order and username order
+		// disagree - and given e-mail addresses that sort the **other** way, so
+		// that a driver ordering by e-mail is caught too.
+		//
+		// The second half is not decoration. This subtest carried
+		// `name + "@members.example.com"` until a mutation swapping the ORDER BY
+		// to `u.email` survived it: one string was doing the work of two, which
+		// is the shape of hole AGENTS.md records swallowing four survivors in
+		// three cuts.
+		emails := map[string]string{
+			"gloak-probe-zzz": "aaa@members.example.com",
+			"gloak-probe-aaa": "zzz@members.example.com",
+			"gloak-probe-mmm": "mmm@members.example.com",
+		}
+		users := map[string]*model.User{}
+		for _, name := range []string{"gloak-probe-zzz", "gloak-probe-aaa", "gloak-probe-mmm"} {
+			u := &model.User{
+				ID: model.NewID(), RealmID: realm.ID, Username: name,
+				Email: emails[name], Enabled: true,
+			}
+			if err := s.Users().Create(ctx, u); err != nil {
+				t.Fatalf("Users().Create %s: %v", name, err)
+			}
+			users[name] = u
+			if err := s.Organizations().AddMember(ctx, org.ID, u.ID); err != nil {
+				t.Fatalf("AddMember %s: %v", name, err)
+			}
+		}
+
+		members, err := s.Organizations().Members(ctx, org.ID)
+		if err != nil {
+			t.Fatalf("Members: %v", err)
+		}
+		var got []string
+		for _, m := range members {
+			got = append(got, m.Username)
+		}
+		want := []string{"gloak-probe-aaa", "gloak-probe-mmm", "gloak-probe-zzz"}
+		if !slices.Equal(got, want) {
+			t.Errorf("Members order: got %v, want %v", got, want)
+		}
+		// The rows are whole users, not ids: the member representation is a
+		// user representation and a driver returning bare ids would compile.
+		// The e-mail asserted here is the one that sorts **last**, which is the
+		// other half of the ORDER BY assertion.
+		if members[0].Email != "zzz@members.example.com" {
+			t.Errorf("Members should carry the whole user: got %+v", members[0])
+		}
+
+		if err := s.Organizations().AddMember(ctx, org.ID, users["gloak-probe-aaa"].ID); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("a repeated AddMember: want ErrConflict, got %v", err)
+		}
+		if ok, err := s.Organizations().IsMember(ctx, org.ID, users["gloak-probe-aaa"].ID); err != nil || !ok {
+			t.Errorf("IsMember of a member: got %v, %v", ok, err)
+		}
+		if ok, err := s.Organizations().IsMember(ctx, other.ID, users["gloak-probe-aaa"].ID); err != nil || ok {
+			t.Errorf("IsMember of another organization: got %v, %v", ok, err)
+		}
+		if ok, err := s.Organizations().IsMember(ctx, org.ID, "00000000-0000-4000-8000-000000000000"); err != nil || ok {
+			t.Errorf("IsMember of a stranger: got %v, %v", ok, err)
+		}
+
+		// One user in two organizations, so MemberOf cannot pass by returning
+		// whatever single row it found.
+		if err := s.Organizations().AddMember(ctx, other.ID, users["gloak-probe-aaa"].ID); err != nil {
+			t.Fatalf("AddMember to the second organization: %v", err)
+		}
+		orgs, err := s.Organizations().MemberOf(ctx, realm.ID, users["gloak-probe-aaa"].ID)
+		if err != nil || len(orgs) != 2 {
+			t.Fatalf("MemberOf: got %v, %v; want two", orgs, err)
+		}
+		if orgs[0].Name != "gloak-probe-members-org" || orgs[1].Name != "gloak-probe-members-other" {
+			t.Errorf("MemberOf order: got %s, %s", orgs[0].Name, orgs[1].Name)
+		}
+		if rows, err := s.Organizations().MemberOf(ctx, realm.ID, users["gloak-probe-mmm"].ID); err != nil || len(rows) != 1 {
+			t.Errorf("MemberOf of a single-organization member: got %v, %v", rows, err)
+		}
+
+		if err := s.Organizations().RemoveMember(ctx, org.ID, users["gloak-probe-mmm"].ID); err != nil {
+			t.Fatalf("RemoveMember: %v", err)
+		}
+		if err := s.Organizations().RemoveMember(ctx, org.ID, users["gloak-probe-mmm"].ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("the second RemoveMember: want ErrNotFound, got %v", err)
+		}
+		// The user survives the removal - a member delete is 204 and the user
+		// still reads 200.
+		if _, err := s.Users().ByID(ctx, realm.ID, users["gloak-probe-mmm"].ID); err != nil {
+			t.Errorf("the user should outlive the membership: %v", err)
+		}
+
+		// Deleting the user takes the membership with it.
+		if err := s.Users().Delete(ctx, realm.ID, users["gloak-probe-zzz"].ID); err != nil {
+			t.Fatalf("Users().Delete: %v", err)
+		}
+		if rows, err := s.Organizations().Members(ctx, org.ID); err != nil || len(rows) != 1 {
+			t.Errorf("after deleting a user: got %v, %v; want one member", rows, err)
+		}
+		// Deleting the organization takes the memberships with it.
+		if err := s.Organizations().Delete(ctx, realm.ID, other.ID); err != nil {
+			t.Fatalf("Organizations().Delete: %v", err)
+		}
+		if rows, err := s.Organizations().MemberOf(ctx, realm.ID, users["gloak-probe-aaa"].ID); err != nil || len(rows) != 1 {
+			t.Errorf("after deleting an organization: got %v, %v; want one", rows, err)
+		}
+	})
+
+	// An organization's identity providers are a column on the provider, so
+	// the two things to assert are that the filter reads that column and that
+	// Update leaves it alone.
+	t.Run("an identity provider carries its organization and keeps it across an update", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		realm := newRealm(t, s)
+		org := &model.Organization{
+			ID: model.NewID(), RealmID: realm.ID,
+			Name: "gloak-probe-broker-org", Alias: "gloak-probe-broker-org-alias", Enabled: true,
+		}
+		if err := s.Organizations().Create(ctx, org); err != nil {
+			t.Fatalf("Organizations().Create: %v", err)
+		}
+
+		linked := &model.IdentityProvider{
+			InternalID: model.NewID(), RealmID: realm.ID,
+			Alias: strPtr("gloak-probe-linked"), ProviderID: "oidc", Enabled: true,
+			Config: []model.IdentityProviderConfigEntry{{Name: "clientId", Value: "c"}},
+		}
+		loose := &model.IdentityProvider{
+			InternalID: model.NewID(), RealmID: realm.ID,
+			Alias: strPtr("gloak-probe-loose"), ProviderID: "oidc", Enabled: true,
+		}
+		for _, p := range []*model.IdentityProvider{linked, loose} {
+			if err := s.IdentityProviders().Create(ctx, p); err != nil {
+				t.Fatalf("IdentityProviders().Create: %v", err)
+			}
+		}
+		// A provider created carrying the organization keeps it, which is the
+		// create path POST /identity-provider/instances takes.
+		withOrg := &model.IdentityProvider{
+			InternalID: model.NewID(), RealmID: realm.ID,
+			Alias: strPtr("gloak-probe-born-linked"), ProviderID: "oidc", Enabled: true,
+			OrganizationID: org.ID,
+		}
+		if err := s.IdentityProviders().Create(ctx, withOrg); err != nil {
+			t.Fatalf("Create with an organization: %v", err)
+		}
+
+		if err := s.IdentityProviders().SetOrganization(ctx, realm.ID, "gloak-probe-linked", org.ID); err != nil {
+			t.Fatalf("SetOrganization: %v", err)
+		}
+		got, err := s.IdentityProviders().ByAlias(ctx, realm.ID, "gloak-probe-linked")
+		if err != nil || got.OrganizationID != org.ID {
+			t.Errorf("ByAlias after SetOrganization: got %+v, %v", got, err)
+		}
+		if unlinked, err := s.IdentityProviders().ByAlias(ctx, realm.ID, "gloak-probe-loose"); err != nil || unlinked.OrganizationID != "" {
+			t.Errorf("an unassociated provider: got %+v, %v", unlinked, err)
+		}
+
+		list, err := s.IdentityProviders().ListByOrganization(ctx, realm.ID, org.ID)
+		if err != nil || len(list) != 2 {
+			t.Fatalf("ListByOrganization: got %v, %v; want two", list, err)
+		}
+		if *list[0].Alias != "gloak-probe-born-linked" || *list[1].Alias != "gloak-probe-linked" {
+			t.Errorf("ListByOrganization order: got %s, %s", *list[0].Alias, *list[1].Alias)
+		}
+		if list[1].Config == nil || list[1].Config[0].Name != "clientId" {
+			t.Errorf("ListByOrganization should load the config: got %+v", list[1].Config)
+		}
+
+		// The update replaces everything else and must not clear the column:
+		// a PUT on an associated provider was measured keeping it while
+		// emptying the config beside it.
+		got.Config = nil
+		got.DisplayName = "touched"
+		got.OrganizationID = ""
+		if err := s.IdentityProviders().Update(ctx, got); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		after, err := s.IdentityProviders().ByAlias(ctx, realm.ID, "gloak-probe-linked")
+		if err != nil || after.OrganizationID != org.ID || after.DisplayName != "touched" {
+			t.Errorf("after Update: got %+v, %v", after, err)
+		}
+
+		if err := s.IdentityProviders().SetOrganization(ctx, realm.ID, "gloak-probe-linked", ""); err != nil {
+			t.Fatalf("SetOrganization to nothing: %v", err)
+		}
+		if rows, err := s.IdentityProviders().ListByOrganization(ctx, realm.ID, org.ID); err != nil || len(rows) != 1 {
+			t.Errorf("after clearing one: got %v, %v; want one", rows, err)
+		}
+		if err := s.IdentityProviders().SetOrganization(ctx, realm.ID, "gloak-probe-nosuch", org.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("SetOrganization on an alias that does not exist: want ErrNotFound, got %v", err)
+		}
+		if rows, err := s.IdentityProviders().ListByOrganization(ctx, realm.ID, "00000000-0000-4000-8000-000000000000"); err != nil || len(rows) != 0 {
+			t.Errorf("an organization with no providers: got %v, %v", rows, err)
+		}
+	})
 }
 
 // strPtr is the "absent is not empty" helper the organization cases need, and

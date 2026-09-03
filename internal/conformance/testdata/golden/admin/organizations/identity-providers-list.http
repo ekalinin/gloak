@@ -1,0 +1,12 @@
+# GET /admin/realms/gloak-probe-org-brk/organizations/{{org_id}}/identity-providers
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"alias":"gloak-probe-org-idp","internalId":"1de07000-0000-4000-8000-0000000000c1","providerId":"oidc","enabled":true,"organizationId":"{{org_id}}","config":{"clientSecret":"**********","clientId":"gloak-probe-cid"},"types":["USER_AUTHENTICATION","CLIENT_ASSERTION","TRUST_MATERIAL","EXCHANGE_EXTERNAL_TOKEN","JWT_AUTHORIZATION_GRANT"]}]
