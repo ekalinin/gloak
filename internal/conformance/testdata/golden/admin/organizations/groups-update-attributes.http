@@ -1,0 +1,12 @@
+# GET /admin/realms/gloak-probe-og-upn/organizations/{{org_id}}/groups/{{group_2}}
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"id":"{{group_2}}","name":"gloak-probe-og-aaa","path":"/gloak-probe-og-aaa","parentId":"{{root_id}}","subGroups":[],"attributes":{"gloak-probe-z":["w"],"gloak-probe-k":["v1","v2"]},"realmRoles":[],"clientRoles":{}}

@@ -6120,6 +6120,26 @@ func organizationGroupRenamedFixture(realm string) Fixture {
 				"Authorization": "Bearer {{access_token}}",
 				"Content-Type":  "application/json",
 			},
+			// **This step is not idempotent and two cases name this fixture,
+			// so the recorder runs it twice and the second run is a 409.**
+			// Measured 2026-09-03: the rename frees gloak-probe-og-aaa, run
+			// two's create takes the freed name and makes a *new* group, and
+			// its rename collides with run one's -
+			// `409 {"error":"conflict","error_description":"Duplicate resource
+			// error"}`, which is a different error family from the create's
+			// `{"errorMessage":"Group with the given name already exists."}`.
+			//
+			// Two fixes were tried and both are wrong. Tolerating the 409 with
+			// ExpectStatus leaves the case reading run two's group, which
+			// carries no attributes - F34's failure exactly. Dropping the
+			// rename and sending the group's own name makes the step
+			// idempotent and **destroys a measured claim**:
+			// groups-update-effect asserts that a child's `path` follows its
+			// parent's rename, and its golden moved from
+			// `/gloak-probe-og-renamed/...` to `/gloak-probe-og-aaa/...`.
+			//
+			// So the fixture needs a deterministic pre-state rather than a
+			// tolerant step, and that is unbuilt. See the handover.
 			Body: []byte(`{"name":"gloak-probe-og-renamed","attributes":` +
 				`{"gloak-probe-k":["v1","v2"],"gloak-probe-z":["w"]}}`),
 		},
