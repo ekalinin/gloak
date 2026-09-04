@@ -363,6 +363,55 @@ func TestSessionListingsAreSortedById(t *testing.T) {
 	}
 }
 
+// TestTheClientReadsCountTheClientAndNotTheRealm was written because a
+// mutation survived.
+//
+// Replacing ListUserSessionsByClient with ListUserSessionsByRealm in
+// clientSessionCount left the whole admin package and the whole conformance
+// suite green: every fixture in this family has **one** client with sessions in
+// its realm, so realm-wide and client-wide agree on all of them. The
+// distinguishing input is a second client in the same realm that nobody has
+// logged into - which master has five of, and which no case had asked about.
+//
+// Both reads are checked here rather than only the one the mutation touched:
+// the listing has the same shape and the same way of going wrong.
+func TestTheClientReadsCountTheClientAndNotTheRealm(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := adminToken(t, h)
+	createUserWithPassword(t, s, realm, "gloak-probe-per-client", "pw")
+	sessionFor(t, h, "gloak-probe-per-client", "pw")
+	sessionFor(t, h, "gloak-probe-per-client", "pw")
+	// The realm now holds three sessions - these two and the administrator's -
+	// and every one of them is at admin-cli.
+	all, err := s.Sessions().ListUserSessionsByRealm(t.Context(), realm.ID)
+	if err != nil {
+		t.Fatalf("ListUserSessionsByRealm: %v", err)
+	}
+	if len(all) < 2 {
+		t.Fatalf("want at least two sessions in the realm, got %d", len(all))
+	}
+	account, err := s.Clients().ByClientID(t.Context(), realm.ID, "account")
+	if err != nil {
+		t.Fatalf("ByClientID(account): %v", err)
+	}
+
+	w := get(t, h, "/admin/realms/master/clients/"+account.ID+"/session-count", admin)
+	if got := strings.TrimSpace(w.Body.String()); got != `{"count":0}` {
+		t.Errorf("a client nobody has used counts %s, and the realm holds %d sessions",
+			got, len(all))
+	}
+	w = get(t, h, "/admin/realms/master/clients/"+account.ID+"/user-sessions", admin)
+	if got := strings.TrimSpace(w.Body.String()); got != `[]` {
+		t.Errorf("a client nobody has used lists %s", got)
+	}
+	// The control: the client they *are* at reports them, so the zero above is
+	// the join and not a read that answers zero for everything.
+	w = get(t, h, "/admin/realms/master/clients/"+adminCLIUUID(t, s, realm)+"/session-count", admin)
+	if got := strings.TrimSpace(w.Body.String()); got == `{"count":0}` {
+		t.Errorf("the client the sessions are at counts %s too", got)
+	}
+}
+
 // TestTheTwoMissingClientSpellingsDiffer is the pair this family adds.
 //
 // One missing client, two sentences, one route family apart - and the user is
