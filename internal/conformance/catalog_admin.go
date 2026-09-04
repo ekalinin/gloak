@@ -15925,10 +15925,12 @@ var adminCases = []Case{
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
-		// **`Could not find parent component` is the twenty-eighth spelling of
-		// not-found**, distinct from the `Could not find component` the read one
-		// path segment up answers for the very same id. One missing component,
-		// two sentences, decided by which route went looking.
+		// **`Could not find parent component` is distinct from the `Could not
+		// find component` the read one path segment up answers for the very same
+		// id.** One missing component, two sentences, decided by which route
+		// went looking. Both are already in AGENTS.md's list, at (22) and (23),
+		// so this chapter adds no spelling to it - which is worth saying,
+		// because a family with two 404 strings in it looks like it should.
 		ID: "admin/component/sub-component-types-missing-parent",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
