@@ -14422,4 +14422,502 @@ var adminCases = []Case{
 		AssertHeaders:       []string{"Content-Type"},
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
+	// ---- P4's remainder: the localization family, seven operations, and the
+	// client description converter.
+	//
+	// **Nothing in the localization family carries Cache-Control**, success or
+	// refusal, on any of the seven - which is why every case below asserts its
+	// absence. The realm's own reads one path segment away all carry `no-cache`.
+	{
+		// The listing is **sorted**: the fixture writes `en`, `de` and
+		// `gloak-fb` in that order and this is what comes back.
+		ID: "admin/realms-admin/localization-locales",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get the locales a realm has texts for",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/localization",
+		Fixture:   "localization-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-loc/localization",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The key order is the contract and it is not the request's.** The
+		// fixture posts the same six keys twice; the first post stores them in
+		// the order it named them and the second re-buckets the whole document
+		// through a Java map, so this body is `k3,k4,k5,k6,k1,k2` where the
+		// request said `k1..k6`. A handler storing a Go map answers them
+		// sorted, which is the request's order here and therefore also wrong.
+		ID: "admin/realms-admin/localization-texts",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get a locale's texts",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/localization/{locale}",
+		Fixture:   "localization-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-loc/localization/en",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// A locale nobody has written is a **200 with an empty object**, where
+		// the DELETE beside it answers 404 for the same absence.
+		ID: "admin/realms-admin/localization-texts-unknown-locale",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get the texts of a locale that has none",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "localization-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-loc/localization/gloak-nosuch",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The fallback merges the realm's defaultLocale bundle **under** this
+		// one: `gloak-probe-k1` is in both and keeps `en`'s value, and
+		// `gloak-probe-only-fb` is added. It is driven by `defaultLocale`
+		// alone - the fixture never turns internationalizationEnabled on.
+		ID: "admin/realms-admin/localization-texts-fallback",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get a locale's texts with the realm default as a fallback",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "localization-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-loc/localization/en",
+			Query:   map[string]string{"useRealmDefaultLocaleFallback": "true"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **This API's only text/plain 200, and it omits X-Frame-Options.**
+		// The 404 on the same route two cases down is application/json and
+		// carries it, which is what says the response's media type decides
+		// rather than the endpoint - see AGENTS.md's security-header bullet,
+		// whose userinfo exception this generalises.
+		ID: "admin/realms-admin/localization-text",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get one localization text",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/localization/{locale}/{key}",
+		Fixture:   "localization-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-loc/localization/en/gloak-probe-k1",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control", "X-Frame-Options"},
+	},
+	{
+		// `Localization text not found`, with **no** full stop - where the
+		// locale delete's 404 has one.
+		ID: "admin/realms-admin/localization-text-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get a localization text that does not exist",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "localization-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-loc/localization/en/gloak-probe-nosuch",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// A locale left with **no document at all** by an empty POST body.
+		// Keycloak's own defect, reproduced: the row exists, the listing shows
+		// it, and every read of it is a 500 for ever.
+		ID: "admin/realms-admin/localization-texts-without-a-document",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get the texts of a locale an empty POST body created",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "localization-nodoc",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-locn/localization/gloak-nul",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "admin/realms-admin/localization-import",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: import localization texts for a locale",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/localization/{locale}",
+		Fixture:   "localization-write",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-locw/localization/gloak-imp",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"gloak-probe-imported":"v"}`),
+		},
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// `{` on an object endpoint is invalid_request and `[]` is
+		// unknown_error - the "per body shape, not per endpoint" rule met on a
+		// family that had never been asked.
+		ID: "admin/realms-admin/localization-import-malformed",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: import a body that is not JSON",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "localization-write",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-locw/localization/gloak-imp",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "admin/realms-admin/localization-import-array",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: import a JSON array where an object belongs",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "localization-write",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-locw/localization/gloak-imp",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`[]`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **text/plain, and an absent Content-Type would do too.** The 204
+		// carries no X-Frame-Options because the request declared text/plain,
+		// which is httpx.WriteNoContent's measured rule.
+		ID: "admin/realms-admin/localization-set-text",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: set one localization text",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/localization/{locale}/{key}",
+		Fixture:   "localization-write",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-locw/localization/gloak-put/gloak-probe-set",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "text/plain",
+			},
+			Body: []byte("a value"),
+		},
+		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control", "X-Frame-Options"},
+	},
+	{
+		// The only 415 outside the scope mappings, and the same body: this
+		// route consumes text/plain and refuses application/json.
+		ID: "admin/realms-admin/localization-set-text-unsupported-media-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: set a localization text with a refused Content-Type",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "localization-write",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-locw/localization/gloak-put/gloak-probe-set",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`"a value"`),
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "admin/realms-admin/localization-delete-text",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: delete one localization text",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/localization/{locale}/{key}",
+		Fixture:   "localization-write",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/gloak-probe-locw/localization/gloak-dk/gloak-probe-doomed",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control", "X-Frame-Options"},
+	},
+	{
+		ID: "admin/realms-admin/localization-delete-text-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: delete a localization text that does not exist",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "localization-write",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/gloak-probe-locw/localization/gloak-dk/gloak-probe-nosuch",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "admin/realms-admin/localization-delete-locale",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: delete a locale's texts",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/localization/{locale}",
+		Fixture:   "localization-write",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/gloak-probe-locw/localization/gloak-dl",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control", "X-Frame-Options"},
+	},
+	{
+		// **`No localization texts for locale <l> found.`, with a full stop
+		// and naming the locale** - a spelling of not-found this API did not
+		// have, and one of a pair whose other half has no full stop.
+		ID: "admin/realms-admin/localization-delete-locale-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: delete a locale that has no texts",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "localization-write",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/gloak-probe-locw/localization/gloak-nosuch",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// An unknown realm is 404 `Realm not found.` on every route of the
+		// family, and this one is issued with **no Authorization header at
+		// all** to pin the order: the realm is resolved before the caller.
+		ID: "admin/realms-admin/localization-unknown-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: localization under a realm that does not exist",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-nosuchrealm/localization",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The converter's smallest body. **No Cache-Control**, where every
+		// other admin read of this shape carries `no-cache`.
+		ID: "admin/realms-admin/client-description-converter",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: convert a client description",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/client-description-converter",
+		Fixture:   "realm-for-a-converter",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-cdc/client-description-converter",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"client_id":"gloak-probe-cdc-client",` +
+				`"redirect_uris":["https://example.com/cb"],` +
+				`"token_endpoint_auth_method":"client_secret_post"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The body's **shape** is what the endpoint reads, not its
+		// Content-Type: this one is sent as application/json and refused for
+		// carrying no `redirect_uris`.
+		ID: "admin/realms-admin/client-description-converter-unsupported",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: convert a description in no recognised format",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "realm-for-a-converter",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-cdc/client-description-converter",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"client_id":"gloak-probe-cdc-min"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// A body that passes the string test and then will not decode is a
+		// **500**, and its description is `Cannot parse the JSON` where the
+		// unregistered-auth-method 500 one case along says something else.
+		ID: "admin/realms-admin/client-description-converter-undecodable",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: convert a description that looks OIDC and is not",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "realm-for-a-converter",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-cdc/client-description-converter",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"gloak-probe-x":"redirect_uris"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **Recorded, not Implemented, and the reason is the key order of one
+		// map.** A body naming `grant_types` produces eight attributes, and
+		// Keycloak's map holds them at capacity 32 where javamap.KeyOrder gives
+		// 16 for eight entries. The capacity is not a function of the key set -
+		// three keys came back at 16 and six, eight and eighteen at 32 - so no
+		// function in that package can be handed the right table, and Gloak
+		// serves the same eight attributes in a different order. Everything
+		// else in this body it does reproduce.
+		ID: "admin/realms-admin/client-description-converter-grant-types",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: convert a description naming grant types",
+			Retrieved: "2026-09-03",
+		},
+		Status: Recorded,
+		Reason: "the eight attributes a grant_types body produces are a Java map at " +
+			"capacity 32, and javamap has no function that can be given that table: " +
+			"the capacity is not a function of the key set",
+		Fixture: "realm-for-a-converter",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-cdc/client-description-converter",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"client_id":"gloak-probe-cdc-gt",` +
+				`"redirect_uris":["https://example.com/cb"],` +
+				`"grant_types":["refresh_token","urn:ietf:params:oauth:grant-type:device_code"]}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **Recorded: the SAML half of this endpoint is not built.** Keycloak
+		// converts a SAML EntityDescriptor here as well as an OIDC client
+		// registration body, and Gloak answers the `Unsupported format` 400.
+		// The golden is what the next cut implements against.
+		ID: "admin/realms-admin/client-description-converter-saml",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: convert a SAML entity descriptor",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Recorded,
+		Reason:  "the SAML branch needs a metadata parser this cut does not build",
+		Fixture: "realm-for-a-converter",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-cdc/client-description-converter",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/xml",
+			},
+			Body: []byte(`<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" ` +
+				`entityID="https://saml.example.com/sp"><SPSSODescriptor ` +
+				`protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">` +
+				`<AssertionConsumerService ` +
+				`Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" ` +
+				`Location="https://saml.example.com/acs" index="0"/>` +
+				`</SPSSODescriptor></EntityDescriptor>`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
 }
