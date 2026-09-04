@@ -1359,6 +1359,15 @@ var Fixtures = map[string]Fixture{
 	"client-initial-access-create": realmFixture("gloak-probe-cia-new"),
 	"client-initial-access-count":  realmFixture("gloak-probe-cia-cnt"),
 	"client-initial-access-delete": clientInitialAccessDeleteFixture(),
+
+	// The session family. Four realms rather than one, because three of the
+	// eleven operations end sessions and would empty the realm the reads
+	// measure - and because the empty state has to be a realm nothing has
+	// logged into.
+	"session-family":        sessionFixture("gloak-probe-sess", probeSessionClientID, "gloak-probe-sess-user"),
+	"session-family-empty":  sessionEmptyFixture("gloak-probe-sess-none", probeSessionEmptyClientID, "gloak-probe-sess-none-user"),
+	"session-family-spent":  sessionFixture("gloak-probe-sess-del", probeSessionSpentClientID, "gloak-probe-sess-del-user"),
+	"session-family-logout": sessionFixture("gloak-probe-sess-out", probeSessionLogoutClientID, "gloak-probe-sess-out-user"),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -6596,4 +6605,136 @@ func clientInitialAccessStep(realm, body string) Step {
 			Body: []byte(body),
 		},
 	}
+}
+
+// ---------------------------------------------------------------------------
+// The session family: eleven operations across three tags.
+//
+// See docs/superpowers/plans/2026-09-03-session-family.md for the measurements.
+// These sit at the end of the file for the reason the block above gives.
+// ---------------------------------------------------------------------------
+
+// The fixed client UUIDs the session fixtures use. A client create honours the
+// body's id, so naming them here rather than capturing keeps the golden's
+// `clients` map key a literal that both sides produce - and the map's key is
+// the one place in this family where a captured value would have to be
+// rewritten inside a JSON *key* rather than a value.
+// A client id is the primary key of the whole installation and not of one
+// realm, so the four differ: reusing one across two realms is a 409 on the
+// second create, which idempotentCreate would then wave through and leave the
+// second realm holding no client at all.
+const (
+	probeSessionClientID       = "5e551040-0000-4000-8000-000000000001"
+	probeSessionEmptyClientID  = "5e551040-0000-4000-8000-000000000002"
+	probeSessionSpentClientID  = "5e551040-0000-4000-8000-000000000003"
+	probeSessionLogoutClientID = "5e551040-0000-4000-8000-000000000004"
+)
+
+// sessionFixture builds a realm holding **exactly one** user session: a realm,
+// a public client with direct access grants, a fully-profiled user with a
+// password, and one password grant.
+//
+// Three things about it are measured rather than chosen.
+//
+// **The realm is its own and never master.** Every count in this family is
+// realm-wide or client-wide, and the recorder's own admin token is a session in
+// master - so a count taken there would include the recorder and move with the
+// catalogue.
+//
+// **The user carries an email, a firstName and a lastName.** In a realm created
+// through POST /admin/realms all three are required before the password grant
+// works: without them 26.7.1 answers
+// `{"error":"invalid_grant","error_description":"Account is not fully set up"}`,
+// while the same user in master grants with none of them. Measured as a 2x6
+// matrix on 2026-09-03. Nothing in the error names the profile, so a fixture
+// that dropped one of the three would fail with a message about the account.
+//
+// **logout-all runs before the grant.** The recorder shares one container and a
+// fixture more than one case names runs its steps more than once; a create
+// answers 409 the second time and changes nothing, but a password grant is not
+// idempotent - it mints another session every time. Clearing the realm first is
+// what makes "exactly one" true on the eighth run as well as the first, and it
+// is why these goldens do not depend on catalogue order.
+func sessionFixture(realm, clientUUID, username string) Fixture {
+	f := realmFixture(realm)
+	f.Steps = append(f.Steps, sessionSetupSteps(realm, clientUUID, username)...)
+	f.Steps = append(f.Steps, sessionGrantStep(realm, username))
+	return f
+}
+
+// sessionSetupSteps is everything up to the grant: the client, the user, the
+// user's id, and the sweep that empties the realm.
+func sessionSetupSteps(realm, clientUUID, username string) []Step {
+	return []Step{
+		{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/" + realm + "/clients",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"id":"` + clientUUID + `","clientId":"` + username + `-app",` +
+					`"enabled":true,"publicClient":true,"directAccessGrantsEnabled":true}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/" + realm + "/users",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"username":"` + username + `","enabled":true,` +
+					`"email":"` + username + `@example.com","firstName":"Probe","lastName":"User",` +
+					`"credentials":[{"type":"password","value":"probe-pass","temporary":false}]}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/" + realm + "/users",
+				Query:   map[string]string{"username": username, "exact": "true"},
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"session_user_id": "0/id"},
+		},
+		{
+			// Empty the realm so the grant below is the only session in it,
+			// however many times this fixture has already run.
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/" + realm + "/logout-all",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+		},
+	}
+}
+
+// sessionGrantStep is the login that makes the session, and it captures the
+// session id from session_state - the one value in the family a case has to
+// name in a path.
+func sessionGrantStep(realm, username string) Step {
+	return Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/" + realm + "/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type": "password",
+				"client_id":  username + "-app",
+				"username":   username,
+				"password":   "probe-pass",
+			},
+		},
+		Capture: map[string]string{"session_id": "session_state"},
+	}
+}
+
+// sessionEmptyFixture is sessionFixture without the grant: a realm holding a
+// client and a user that have never been used.
+//
+// It is what records the answer to "none exists", which is the whole reachable
+// state of the offline half of this family and is a 200 on ten of the eleven
+// operations rather than the 404 a reader would expect.
+func sessionEmptyFixture(realm, clientUUID, username string) Fixture {
+	f := realmFixture(realm)
+	f.Steps = append(f.Steps, sessionSetupSteps(realm, clientUUID, username)...)
+	return f
 }

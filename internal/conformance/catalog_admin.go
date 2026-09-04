@@ -15948,4 +15948,316 @@ var adminCases = []Case{
 		AssertHeaders:       []string{"Content-Type"},
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
+
+	// -----------------------------------------------------------------------
+	// The session family: eleven operations across Clients, Users and Realms
+	// Admin. Measured 2026-09-03; see
+	// docs/superpowers/plans/2026-09-03-session-family.md.
+	// -----------------------------------------------------------------------
+	{
+		// One session at one client. The row's `clients` map holds one key,
+		// which is what keeps every ordering question out of this golden: the
+		// map is a Java map and javamap.KeyOrder is measured wrong on a
+		// colliding six-client set, so a case with two clients in it would need
+		// a retreat this one does not.
+		ID: "admin/clients/session-count",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get application session count",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/session-count",
+		Fixture:   "session-family",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-sess/clients/" + probeSessionClientID + "/session-count",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The count with nothing to count. It is `{"count":0}` and not a 404,
+		// which is this family's whole shape: ten of the eleven answer 200 for
+		// a realm nobody has logged into.
+		ID: "admin/clients/session-count-empty",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: session count for a client nobody has used",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "session-family-empty",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-sess-none/clients/" + probeSessionEmptyClientID + "/session-count",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The nine keys of a UserSessionRepresentation, in order.
+		//
+		// What moves per run and is masked: the two timestamps and the address
+		// the login came from. Everything else stays asserted - the username
+		// and the client UUID because the fixture named them, and the userId
+		// **and the session id** because the fixture captured both. The session
+		// id carried a Volatile mask until TestNoVolatileMaskCoversACapturedValue
+		// refused it: the grant's session_state is the row's id, so the golden
+		// can say which session this is rather than that there is one.
+		//
+		// **ipAddress is masked and Gloak serves it empty.** The recorded value
+		// is the container's view of the recorder and the served one is
+		// whatever this process has, so no golden here could compare them
+		// either way; the gap is real and this suite is structurally blind to
+		// it. See the handover.
+		ID: "admin/clients/user-sessions",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get user sessions for client",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/user-sessions",
+		Fixture:   "session-family",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-sess/clients/" + probeSessionClientID + "/user-sessions",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/ipAddress", "*/start", "*/lastAccess"},
+	},
+	{
+		// Zero on a client holding a live session, which is what says the two
+		// counts are over two sets rather than one filtered.
+		ID: "admin/clients/offline-session-count",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get application offline session count",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/offline-session-count",
+		Fixture:   "session-family",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-sess/clients/" + probeSessionClientID + "/offline-session-count",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// `[]` beside a user-sessions listing that has a row in it. An offline
+		// session needs `scope=offline_access` on a real grant and Gloak cannot
+		// make one: grantedScope drops the scope before anything is stored.
+		// There is no offline session table behind this - see F157 and
+		// internal/admin/sessions.go.
+		ID: "admin/clients/offline-sessions",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get offline sessions for client",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/offline-sessions",
+		Fixture:   "session-family",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-sess/clients/" + probeSessionClientID + "/offline-sessions",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// An empty GlobalRequestResult is `{}` - both arrays omitted rather
+		// than emitted empty - and the 200 carries **no Cache-Control**, where
+		// every read in this family carries `no-cache`.
+		//
+		// The body is `{}` because no client here has an adminUrl, which is
+		// true of every default install. A client that has one draws a real
+		// outbound POST from Keycloak and a per-URL verdict; Gloak makes no
+		// such call and no fixture here can ask it to, since the suite must
+		// never need the network. See the handover's disposition of F122.
+		ID: "admin/clients/push-revocation",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: push the client's revocation policy",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/clients/{client-uuid}/push-revocation",
+		Fixture:   "session-family",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/gloak-probe-sess/clients/" + probeSessionClientID + "/push-revocation",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The same representation the client listing serves, from the other end
+		// of the join.
+		ID: "admin/users/sessions",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get sessions associated with the user",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/users/{user-id}/sessions",
+		Fixture:   "session-family",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-sess/users/{{session_user_id}}/sessions",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/ipAddress", "*/start", "*/lastAccess"},
+	},
+	{
+		// `[]` for a user holding a live session at this very client, which is
+		// what separates the offline listing from the online one beside it.
+		ID: "admin/users/offline-sessions",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get offline sessions for the user and client",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/users/{user-id}/offline-sessions/{clientUuid}",
+		Fixture:   "session-family",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-sess/users/{{session_user_id}}/offline-sessions/" +
+				probeSessionClientID,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// One row per client that has a session, and its four keys are a Java
+		// map's: `offline, clientId, active, id`, with both counts as
+		// **strings**. The description's schema says the row is a
+		// Map<String,String> and javamap.KeyOrder returns exactly that order
+		// over the four names - two independent sources agreeing.
+		//
+		// The array itself is a Java map keyed on the client UUID, which a
+		// six-client sweep confirmed KeyOrder places exactly. One row here, so
+		// the order is the identity and a mask would be inert.
+		ID: "admin/realms-admin/client-session-stats",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get client session stats",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/client-session-stats",
+		Fixture:   "session-family",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-sess/client-session-stats",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// 204, no body, no Content-Type and no Cache-Control - and, because
+		// this request declares no Content-Type, no X-Frame-Options either.
+		// That is the third confirmation of the bodyless-204 rule on a delete.
+		ID: "admin/realms-admin/delete-session",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: remove a specific user session",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/sessions/{session}",
+		Fixture:   "session-family-spent",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/gloak-probe-sess-del/sessions/{{session_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control", "X-Frame-Options"},
+	},
+	{
+		// **`Sesssion not found`, with three `s`s.** Keycloak's own typo, and
+		// the twenty-eighth spelling of not-found on this API - the first that
+		// is misspelled. It is the same body for an id that is not a UUID.
+		//
+		// A live session id asked for in the offline space answers this too,
+		// because `isOffline` selects which of two disjoint id spaces the path
+		// segment is looked up in rather than filtering one.
+		ID: "admin/realms-admin/delete-session-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: remove a session that does not exist",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "session-family-spent",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/gloak-probe-sess-del/sessions/gloak-probe-no-such-session",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// It ends every session in the realm - the offline ones included, where
+		// POST /users/{id}/logout leaves those alone - stamps the **realm's**
+		// notBefore, and answers a GlobalRequestResult.
+		//
+		// **The realm is its own and could not be master.** logout-all ends the
+		// caller's own session along with everything else, so a case addressing
+		// master would end the recorder's session and break every case after
+		// it.
+		//
+		// The body reports every client carrying an adminUrl as a *success*
+		// whether or not it is reachable - measured against an unroutable
+		// address, where push-revocation on the same client reports a failure -
+		// so it is a pure function of the realm's clients and needs no outbound
+		// call. Here no client has one, so it is `{}`.
+		ID: "admin/realms-admin/logout-all",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: remove all user sessions",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/logout-all",
+		Fixture:   "session-family-logout",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/gloak-probe-sess-out/logout-all",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The realm-wide push. It stamps nothing - measured on a fresh realm
+		// with the realm and its client read before and after - which is the
+		// half of this pair a reader is most likely to get backwards, since
+		// logout-all next door does stamp.
+		ID: "admin/realms-admin/push-revocation",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: push the realm's revocation policy",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/push-revocation",
+		Fixture:   "session-family",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/gloak-probe-sess/push-revocation",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
 }
