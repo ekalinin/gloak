@@ -30,10 +30,10 @@ import (
 // and `declarative-user-profile` has no `helpText` key at all - so omitempty
 // would drop two real values and a plain string would invent one.
 type componentTypeEntry struct {
-	ID         string                 `json:"id"`
-	HelpText   *string                `json:"helpText,omitempty"`
+	ID         string                  `json:"id"`
+	HelpText   *string                 `json:"helpText,omitempty"`
 	Properties []componentTypeProperty `json:"properties"`
-	Metadata   componentTypeMetadata  `json:"metadata"`
+	Metadata   componentTypeMetadata   `json:"metadata"`
 }
 
 // componentTypeProperty is `ConfigPropertyRepresentation` again, and it is a

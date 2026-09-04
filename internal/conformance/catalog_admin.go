@@ -13413,6 +13413,18 @@ var adminCases = []Case{
 		// - and `realmRoles` is **populated**, which is what says this family
 		// really serves a group's roles rather than the two empty collections
 		// the realm family's representation writes.
+		//
+		// **The order inside `realmRoles` is not reproducible, refuted
+		// 2026-09-03.** The cut that added the second realm role recorded this
+		// array as an assertion; the next recording answered it the other way
+		// round. Measured straight afterwards on a live 26.7.1: six fresh
+		// realms given the same two roles in the same order answered two
+		// different orders, and four fresh realms given four roles answered
+		// four different orders - matching neither name order, assignment
+		// order, reverse assignment order, nor the role ids ascending or
+		// descending. The two-role sample fits "descending role id" and the
+		// four-role sample refutes it, which is what a coincidence over two
+		// elements looks like.
 		ID: "admin/organizations/groups-list-full",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -13428,6 +13440,7 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"*/realmRoles"},
 	},
 	{
 		// **`search` answers its matches flat**, where the realm group listing
@@ -13472,6 +13485,9 @@ var adminCases = []Case{
 		// The single read: the brief shape plus the three keys, and **no**
 		// `access` block - which is the one key that separates it from
 		// `GET /groups/{id}` in the realm family beyond `subGroupCount`.
+		//
+		// `realmRoles` is Unordered for the reason the listing above is: the
+		// order was refuted on 2026-09-03 over ten fresh realms.
 		ID: "admin/organizations/groups-read",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -13487,6 +13503,7 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"realmRoles"},
 	},
 	{
 		// A group that does not exist: the twentieth spelling of not-found, and
@@ -14123,6 +14140,15 @@ var adminCases = []Case{
 	// locator, which the two that already agree do not establish.
 
 	{
+		// **`realmMappings` is Unordered, refuted 2026-09-03.** The cut that
+		// added the second realm role recorded this array's order as an
+		// assertion; the next recording answered it the other way round.
+		// Measured straight afterwards: six fresh realms given the same two
+		// roles in the same order answered two different orders, and four fresh
+		// realms given four roles answered four different orders, matching
+		// neither name order, assignment order, reverse assignment order, nor
+		// the role ids either way. It is the realm role listings' situation
+		// reached from a different route.
 		ID: "admin/role-mapper/org-group-all",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -14140,6 +14166,7 @@ var adminCases = []Case{
 		},
 		Volatile:      []string{"realmMappings/*/containerId"},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"realmMappings"},
 	},
 	{
 		// A group holding nothing answers `{}`, the same empty object a user
@@ -14161,6 +14188,7 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 	},
 	{
+		// Unordered for `org-group-all`'s reason, one route up.
 		ID: "admin/role-mapper/org-group-realm",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -14178,6 +14206,7 @@ var adminCases = []Case{
 		},
 		Volatile:      []string{"*/containerId"},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
 	},
 	{
 		// The available listing is unordered here for the reason every role
@@ -14204,6 +14233,7 @@ var adminCases = []Case{
 		Unordered:     []string{"."},
 	},
 	{
+		// Unordered for `org-group-all`'s reason, three routes up.
 		ID: "admin/role-mapper/org-group-realm-composite",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -14222,6 +14252,7 @@ var adminCases = []Case{
 		},
 		Volatile:      []string{"*/containerId"},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
 	},
 	{
 		// The write: 204, all five security headers, no Cache-Control.
@@ -15098,6 +15129,12 @@ var adminCases = []Case{
 		// equal either way round. Measured insertion order on two container
 		// starts and two reads apiece, with ids that are random UUIDs and do not
 		// sort that way - so the array is **not** declared Unordered.
+		//
+		// **No `Cache-Control` on any 2xx of this family**, listing and creates
+		// alike, where nearly every other Admin API read sends `no-cache`. The
+		// hand probe that measured this endpoint had it transcribed wrong and
+		// the recorded golden is what refuted it, which is the fifth time a
+		// golden has corrected a probe in this repository.
 		ID: "admin/client-initial-access/list",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -15112,8 +15149,9 @@ var adminCases = []Case{
 			Path:    "/admin/realms/gloak-probe-cia/clients-initial-access",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
-		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Volatile:      []string{"*/id", "*/timestamp"},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+		Volatile:            []string{"*/id", "*/timestamp"},
 	},
 	{
 		// The delete. 204, no body, and the request declares no `Content-Type`,
@@ -15338,13 +15376,18 @@ var adminCases = []Case{
 	},
 	{
 		// **A create naming an id the realm already holds is the 409 with the
-		// `Duplicate resource error` body - and it carries none of the five
-		// security headers.** That is a new member of the family AGENTS.md's
-		// header bullet and F147 leave unexplained, recorded here so the split's
-		// tally is computed over one more case rather than argued about.
+		// `Duplicate resource error` body**, and a duplicate **name** is a 201 -
+		// so the collision this case makes is on the id and only on the id.
 		//
-		// A duplicate **name** is a 201 on this family, so the collision this
-		// case makes is on the id and only on the id.
+		// **The five security headers on this response are not a function of the
+		// request, and this case is the first measurement that shows it
+		// directly.** Four identical duplicate-id creates against an untouched
+		// row answered none, then all five, all five, all five, and that
+		// reproduced in each of two fresh realms; twenty repeats after the first
+		// were all five every time. The fixture therefore makes the collision
+		// once itself, so this case's request is never the first occurrence and
+		// the golden is reproducible. A hand probe of this endpoint recorded
+		// none of the five and was measuring its own first occurrence. See F147.
 		ID: "admin/component/create-duplicate-id",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -15365,11 +15408,11 @@ var adminCases = []Case{
 				`"providerType":"org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy",` +
 				`"subType":"anonymous","config":{"max-clients":["9"]}}`),
 		},
-		AssertHeaders: []string{"Content-Type"},
-		AssertAbsentHeaders: []string{
-			"Cache-Control", "Referrer-Policy", "Strict-Transport-Security",
+		AssertHeaders: []string{
+			"Content-Type", "Referrer-Policy", "Strict-Transport-Security",
 			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
 		},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
 		// **A pair that does not resolve is a 400, whichever half is wrong.**

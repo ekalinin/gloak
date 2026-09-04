@@ -1,0 +1,12 @@
+# POST /admin/realms/gloak-probe-cia-cnt/clients-initial-access
+HTTP/1.1 201 Created
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Location: {{issuer}}/admin/realms/gloak-probe-cia-cnt/clients-initial-access/{{uuid}}
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"id":"{{string}}","token":"{{string}}","timestamp":"{{number}}","expiration":600,"count":3,"remainingCount":3}

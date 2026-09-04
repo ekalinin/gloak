@@ -106,6 +106,13 @@ type initialAccessClaims struct {
 // in one realm came back in creation order on two container starts and two
 // reads apiece, and their ids are random UUIDs that do not sort that way. An
 // exhausted row stays in the list at `remainingCount: 0`; nothing sweeps.
+//
+// **No `Cache-Control`, which is why this does not go through
+// writeAdminJSON.** Every 2xx in this family omits it - the listing and both
+// creates - where nearly every other Admin API read sends `no-cache`. It is one
+// more member of the "pinned per endpoint" bullet, and it was found by the
+// recorded golden rather than by the hand probe that had this endpoint's header
+// block transcribed wrong.
 func (h *handler) listClientInitialAccess(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 	rows, err := h.store.ClientInitialAccess().List(r.Context(), rc.realm.ID)
 	if err != nil {
@@ -116,7 +123,7 @@ func (h *handler) listClientInitialAccess(w http.ResponseWriter, r *http.Request
 	for _, m := range rows {
 		out = append(out, clientInitialAccessRepresentationOf(m, ""))
 	}
-	writeAdminJSON(w, out)
+	httpx.WriteJSONCharset(w, http.StatusOK, out)
 }
 
 // createClientInitialAccess serves POST /admin/realms/{realm}/clients-initial-access.

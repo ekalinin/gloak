@@ -1323,9 +1323,22 @@ var Fixtures = map[string]Fixture{
 	// One realm per mutating case. The create's realm is seeded with nothing;
 	// the duplicate-id case needs a row for its own create to collide with.
 	"component-create": componentFixture("gloak-probe-cmp-new"),
+
+	// The duplicate-id fixture seeds the row **and collides with it once**, so
+	// the case's own collision is never the first one.
+	//
+	// That is not tidiness. The five security headers on this 409 are not a
+	// function of the request: four identical duplicate-id creates against an
+	// untouched row answered **none, then all five, all five, all five**, and
+	// that pattern reproduced in each of two fresh realms. Twenty repeats after
+	// the first were all five of five. So the first occurrence is the odd one,
+	// and a case whose request is the first occurrence records a golden the
+	// next recording will not reproduce. See F147, which this is the first
+	// measurement to bear on.
 	"component-dup-id": componentFixture("gloak-probe-cmp-dup",
 		componentSeedStep("gloak-probe-cmp-dup", probeComponentDupID,
-			"gloak-probe-taken-policy", `{"max-clients":["42"]}`)),
+			"gloak-probe-taken-policy", `{"max-clients":["42"]}`),
+		componentCollideStep("gloak-probe-cmp-dup", probeComponentDupID)),
 	"component-update": componentFixture("gloak-probe-cmp-upd",
 		componentSeedStep("gloak-probe-cmp-upd", probeComponentUpdateID,
 			"gloak-probe-update-policy", `{"max-clients":["42"]}`)),
@@ -6435,6 +6448,16 @@ func componentSeedStep(realm, id, name, config string) Step {
 		},
 		ExpectStatus: idempotentCreate,
 	}
+}
+
+// componentCollideStep POSTs a component whose id is already taken, which is
+// the measured 409. It exists so that a case measuring that 409 is never the
+// **first** request to make it: see the note on the "component-dup-id" fixture,
+// and F147.
+func componentCollideStep(realm, id string) Step {
+	step := componentSeedStep(realm, id, "gloak-probe-first-collision", `{"max-clients":["1"]}`)
+	step.ExpectStatus = []int{http.StatusConflict}
+	return step
 }
 
 // componentFixture is a realm plus zero or more seeded components.

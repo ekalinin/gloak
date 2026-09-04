@@ -22,7 +22,7 @@ package model
 var componentSubTypes = map[string][]ComponentTypeEntry{
 	"org.keycloak.keys.KeyProvider": {
 		{
-			ID: "rsa",
+			ID:       "rsa",
 			HelpText: strptr("RSA signature key provider that can optionally generated a self-signed certificate"),
 			Properties: []ProviderProperty{
 				{Name: "priority", Label: "Priority", HelpText: "Priority for the provider", Type: "String", DefaultValue: "0"},
@@ -34,7 +34,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "rsa-generated",
+			ID:       "rsa-generated",
 			HelpText: strptr("Generates RSA signature keys and creates a self-signed certificate"),
 			Properties: []ProviderProperty{
 				{Name: "priority", Label: "Priority", HelpText: "Priority for the provider", Type: "String", DefaultValue: "0"},
@@ -45,7 +45,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "java-keystore",
+			ID:       "java-keystore",
 			HelpText: strptr("Loads keys from a Java keys file"),
 			Properties: []ProviderProperty{
 				{Name: "priority", Label: "Priority", HelpText: "Priority for the provider", Type: "String", DefaultValue: "0"},
@@ -61,7 +61,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "ecdh-generated",
+			ID:       "ecdh-generated",
 			HelpText: strptr("Generates ECDH keys"),
 			Properties: []ProviderProperty{
 				{Name: "priority", Label: "Priority", HelpText: "Priority for the provider", Type: "String", DefaultValue: "0"},
@@ -73,7 +73,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "rsa-enc-generated",
+			ID:       "rsa-enc-generated",
 			HelpText: strptr("Generates RSA keys for key encryption and creates a self-signed certificate"),
 			Properties: []ProviderProperty{
 				{Name: "priority", Label: "Priority", HelpText: "Priority for the provider", Type: "String", DefaultValue: "0"},
@@ -84,7 +84,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "aes-generated",
+			ID:       "aes-generated",
 			HelpText: strptr("Generates AES secret key"),
 			Properties: []ProviderProperty{
 				{Name: "priority", Label: "Priority", HelpText: "Priority for the provider", Type: "String", DefaultValue: "0"},
@@ -94,7 +94,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "ecdsa-generated",
+			ID:       "ecdsa-generated",
 			HelpText: strptr("Generates ECDSA keys"),
 			Properties: []ProviderProperty{
 				{Name: "priority", Label: "Priority", HelpText: "Priority for the provider", Type: "String", DefaultValue: "0"},
@@ -105,7 +105,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "rsa-enc",
+			ID:       "rsa-enc",
 			HelpText: strptr("RSA for key encryption provider that can optionally generated a self-signed certificate"),
 			Properties: []ProviderProperty{
 				{Name: "priority", Label: "Priority", HelpText: "Priority for the provider", Type: "String", DefaultValue: "0"},
@@ -117,7 +117,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "hmac-generated",
+			ID:       "hmac-generated",
 			HelpText: strptr("Generates HMAC secret key"),
 			Properties: []ProviderProperty{
 				{Name: "priority", Label: "Priority", HelpText: "Priority for the provider", Type: "String", DefaultValue: "0"},
@@ -128,7 +128,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "eddsa-generated",
+			ID:       "eddsa-generated",
 			HelpText: strptr("Generates EdDSA keys"),
 			Properties: []ProviderProperty{
 				{Name: "priority", Label: "Priority", HelpText: "Priority for the provider", Type: "String", DefaultValue: "0"},
@@ -140,7 +140,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 	},
 	"org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy": {
 		{
-			ID: "allowed-client-templates",
+			ID:       "allowed-client-templates",
 			HelpText: strptr("When present, it allows to specify whitelist of client scopes, which will be allowed in representation of registered (or updated) client"),
 			Properties: []ProviderProperty{
 				{Name: "allowed-client-scopes", Label: "allowed-client-scopes.label", HelpText: "allowed-client-scopes.tooltip", Type: "MultivaluedList"},
@@ -148,38 +148,38 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "registration-web-origins",
+			ID:       "registration-web-origins",
 			HelpText: strptr("Allowed web origins for client registration requests"),
 			Properties: []ProviderProperty{
 				{Name: "web-origins", Label: "registration-web-origins.label", HelpText: "registration-web-origins.tooltip", Type: "MultivaluedString"},
 			},
 		},
 		{
-			ID: "client-disabled",
-			HelpText: strptr("When present, then newly registered client will be disabled and admin needs to manually enable them"),
+			ID:         "client-disabled",
+			HelpText:   strptr("When present, then newly registered client will be disabled and admin needs to manually enable them"),
 			Properties: []ProviderProperty{},
 		},
 		{
-			ID: "scope",
-			HelpText: strptr("When present, then newly registered client won't have full scope allowed"),
+			ID:         "scope",
+			HelpText:   strptr("When present, then newly registered client won't have full scope allowed"),
 			Properties: []ProviderProperty{},
 		},
 		{
-			ID: "max-clients",
+			ID:       "max-clients",
 			HelpText: strptr("When present, then it won't be allowed to register new client if count of existing clients in realm is same or bigger than configured limit"),
 			Properties: []ProviderProperty{
 				{Name: "max-clients", Label: "max-clients.label", HelpText: "max-clients.tooltip", Type: "String", DefaultValue: "200"},
 			},
 		},
 		{
-			ID: "allowed-protocol-mappers",
+			ID:       "allowed-protocol-mappers",
 			HelpText: strptr("When present, it allows to specify whitelist of protocol mapper types, which will be allowed in representation of registered (or updated) client"),
 			Properties: []ProviderProperty{
 				{Name: "allowed-protocol-mapper-types", Label: "allowed-protocol-mappers.label", HelpText: "allowed-protocol-mappers.tooltip", Type: "MultivaluedList", Options: []string{"oidc-claims-param-token-mapper", "oidc-usermodel-realm-role-mapper", "saml-user-attribute-nameid-mapper", "oidc-claims-param-value-idtoken-mapper", "oidc-usersessionmodel-note-mapper", "saml-authn-context-class-ref-mapper", "oidc-sub-mapper", "oidc-address-mapper", "oidc-organization-group-membership-mapper", "oidc-organization-membership-mapper", "saml-audience-resolve-mapper", "saml-organization-membership-mapper", "saml-user-session-note-mapper", "oidc-role-name-mapper", "oidc-usermodel-client-role-mapper", "oidc-acr-mapper", "oidc-usermodel-property-mapper", "saml-audience-mapper", "saml-group-membership-mapper", "docker-v2-allow-all-mapper", "oidc-hardcoded-role-mapper", "oidc-nonce-backwards-compatible-mapper", "oidc-hardcoded-claim-mapper", "oidc-sha256-pairwise-sub-mapper", "saml-role-name-mapper", "saml-user-property-mapper", "oidc-amr-mapper", "saml-role-list-mapper", "oidc-full-name-mapper", "oidc-allowed-origins-mapper", "oidc-audience-mapper", "oidc-usermodel-attribute-mapper", "oidc-session-state-mapper", "saml-hardcode-attribute-mapper", "oidc-group-membership-mapper", "saml-user-attribute-mapper", "saml-organization-group-membership-mapper", "saml-hardcode-role-mapper", "oidc-audience-resolve-mapper"}},
 			},
 		},
 		{
-			ID: "trusted-hosts",
+			ID:       "trusted-hosts",
 			HelpText: strptr("Allows to specify from which hosts is user able to register and which redirect URIs can client use in it's configuration"),
 			Properties: []ProviderProperty{
 				{Name: "trusted-hosts", Label: "trusted-hosts.label", HelpText: "trusted-hosts.tooltip", Type: "MultivaluedString"},
@@ -188,14 +188,14 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "consent-required",
-			HelpText: strptr("When present, then newly registered client will always have 'consentRequired' switch enabled"),
+			ID:         "consent-required",
+			HelpText:   strptr("When present, then newly registered client will always have 'consentRequired' switch enabled"),
 			Properties: []ProviderProperty{},
 		},
 	},
 	"org.keycloak.storage.UserStorageProvider": {
 		{
-			ID: "ldap",
+			ID:       "ldap",
 			HelpText: strptr(""),
 			Properties: []ProviderProperty{
 				{Name: "editMode", Type: "String"},
@@ -239,7 +239,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "kerberos",
+			ID:       "kerberos",
 			HelpText: strptr(""),
 			Properties: []ProviderProperty{
 				{Name: "kerberosRealm", Label: "kerberos-realm", HelpText: "kerberos-realm.tooltip", Type: "String"},
@@ -254,8 +254,8 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 	},
 	"org.keycloak.storage.ldap.mappers.LDAPStorageMapper": {
 		{
-			ID: "kerberos-principal-attribute-mapper",
-			HelpText: strptr("This mapper will update Kerberos principal attribute in the DB when the attribute changes in LDAP."),
+			ID:         "kerberos-principal-attribute-mapper",
+			HelpText:   strptr("This mapper will update Kerberos principal attribute in the DB when the attribute changes in LDAP."),
 			Properties: []ProviderProperty{},
 			Metadata: []ComponentTypeMetadata{
 				{Name: "fedToKeycloakSyncSupported", Value: false},
@@ -263,7 +263,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "msad-user-account-control-mapper",
+			ID:       "msad-user-account-control-mapper",
 			HelpText: strptr("Mapper specific to MSAD. It's able to integrate the MSAD user account state into Keycloak account state (account enabled, password is expired etc). It's using userAccountControl and pwdLastSet MSAD attributes for that. For example if pwdLastSet is 0, the Keycloak user is required to update password, if userAccountControl is 514 (disabled account) the Keycloak user is disabled as well etc. Mapper is also able to handle exception code from LDAP user authentication."),
 			Properties: []ProviderProperty{
 				{Name: "ldap.password.policy.hints.enabled", Label: "Password Policy Hints Enabled", HelpText: "Applicable just for writable MSAD. If on, then updating password of MSAD user will use LDAP_SERVER_POLICY_HINTS_OID extension, which means that advanced MSAD password policies like 'password history' or 'minimal password age' will be applied. This extension works just for MSAD 2008 R2 or newer.", Type: "boolean", DefaultValue: "false"},
@@ -275,7 +275,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "msad-lds-user-account-control-mapper",
+			ID:       "msad-lds-user-account-control-mapper",
 			HelpText: strptr("Mapper specific to MSAD LDS. It's able to integrate the MSAD LDS user account state into Keycloak account state (account enabled, password is expired etc). It's using msDS-UserAccountDisabled and pwdLastSet MSAD attributes for that. For example if pwdLastSet is 0, the Keycloak user is required to update password, if msDS-UserAccountDisabled is 'TRUE' the Keycloak user is disabled as well etc. Mapper is also able to handle exception code from LDAP user authentication."),
 			Properties: []ProviderProperty{
 				{Name: "always.read.enabled.value.from.ldap", Label: "Always Read Enabled Value From LDAP", HelpText: "If on, the user enabled/disabled state will always be read from MSAD LDS by checking the msDS-UserAccountDisabled attribute", Type: "boolean", DefaultValue: "false"},
@@ -286,7 +286,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "group-ldap-mapper",
+			ID:       "group-ldap-mapper",
 			HelpText: strptr("Used to map group mappings of groups from some LDAP DN to Keycloak group mappings"),
 			Properties: []ProviderProperty{
 				{Name: "groups.dn", Label: "LDAP Groups DN", HelpText: "LDAP DN where groups of this tree are saved. For example 'ou=groups,dc=example,dc=org' ", Type: "String", Required: true},
@@ -315,7 +315,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "user-attribute-ldap-mapper",
+			ID:       "user-attribute-ldap-mapper",
 			HelpText: strptr("Used to map single attribute from LDAP user to attribute of UserModel in Keycloak DB"),
 			Properties: []ProviderProperty{
 				{Name: "user.model.attribute", Label: "User Model Attribute", HelpText: "Name of the UserModel property or attribute you want to map the LDAP attribute into. For example 'firstName', 'lastName, 'email', 'street' etc.", Type: "UserProfileAttributeList", Required: true},
@@ -334,7 +334,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "role-ldap-mapper",
+			ID:       "role-ldap-mapper",
 			HelpText: strptr("Used to map role mappings of roles from some LDAP DN to Keycloak role mappings of either realm roles or client roles of particular client"),
 			Properties: []ProviderProperty{
 				{Name: "roles.dn", Label: "LDAP Roles DN", HelpText: "LDAP DN where are roles of this tree saved. For example 'ou=finance,dc=example,dc=org' ", Type: "String", Required: true},
@@ -359,7 +359,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "hardcoded-attribute-mapper",
+			ID:       "hardcoded-attribute-mapper",
 			HelpText: strptr("This mapper will hardcode any model user attribute and some property (like emailVerified or enabled) when importing user from ldap."),
 			Properties: []ProviderProperty{
 				{Name: "user.model.attribute", Label: "User Model Attribute Name", HelpText: "Name of the model attribute, which will be added when importing user from ldap", Type: "UserProfileAttributeList", Required: true},
@@ -371,7 +371,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "hardcoded-ldap-role-mapper",
+			ID:       "hardcoded-ldap-role-mapper",
 			HelpText: strptr("When user is imported from LDAP, he will be automatically added into this configured role."),
 			Properties: []ProviderProperty{
 				{Name: "role", Label: "Role", HelpText: "Role to grant to user.  Click 'Select Role' button to browse roles, or just type it in the textbox.  To reference a client role the syntax is clientname.clientrole, i.e. myclient.myrole", Type: "Role", Required: true},
@@ -382,7 +382,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "certificate-ldap-mapper",
+			ID:       "certificate-ldap-mapper",
 			HelpText: strptr("Used to map single attribute which contains a certificate from LDAP user to attribute of UserModel in Keycloak DB"),
 			Properties: []ProviderProperty{
 				{Name: "user.model.attribute", Label: "User Model Attribute", HelpText: "Name of the UserModel property or attribute you want to map the LDAP attribute into. For example 'firstName', 'lastName, 'email', 'street' etc.", Type: "UserProfileAttributeList", Required: true},
@@ -402,7 +402,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "full-name-ldap-mapper",
+			ID:       "full-name-ldap-mapper",
 			HelpText: strptr("Used to map full-name of user from single attribute in LDAP (usually 'cn' attribute) to firstName and lastName attributes of UserModel in Keycloak DB"),
 			Properties: []ProviderProperty{
 				{Name: "ldap.full.name.attribute", Label: "LDAP Full Name Attribute", HelpText: "Name of LDAP attribute, which contains fullName of user. Usually it will be 'cn' ", Type: "String", DefaultValue: "cn"},
@@ -415,7 +415,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "hardcoded-ldap-group-mapper",
+			ID:       "hardcoded-ldap-group-mapper",
 			HelpText: strptr("When user is imported from LDAP, he will be automatically added into this configured group."),
 			Properties: []ProviderProperty{
 				{Name: "group", Label: "Group", HelpText: "Group to add the user in. Fill the full path of the group including path. For example '/root-group/child-group'", Type: "String", Required: true},
@@ -426,7 +426,7 @@ var componentSubTypes = map[string][]ComponentTypeEntry{
 			},
 		},
 		{
-			ID: "hardcoded-ldap-attribute-mapper",
+			ID:       "hardcoded-ldap-attribute-mapper",
 			HelpText: strptr("This mapper is supported just if syncRegistrations is enabled. When new user is registered in Keycloak, he will be written to the LDAP with the hardcoded value of some specified attribute."),
 			Properties: []ProviderProperty{
 				{Name: "ldap.attribute.name", Label: "LDAP Attribute Name", HelpText: "Name of the LDAP attribute, which will be added to the new user during registration", Type: "String", Required: true},
@@ -580,4 +580,3 @@ var componentProviderRegistry = map[string][]string{
 		"saml-xpath-attribute-idp-mapper", "stackoverflow-user-attribute-mapper",
 	},
 }
-
