@@ -4263,10 +4263,31 @@ request or the response distinguishes the two**. Reproducing it means matching
 Keycloak's exception path rather than any observable, which is why Gloak pins
 these per golden and states no rule.
 
-What would settle it is not another probe on the wire. It is reading which
-Keycloak exception each of the fifteen throws and which of them reaches the
-filter that adds the headers. Until somebody does that, **"not explained" is the
-entry**, and it is cheaper than the sixth wrong explanation.
+**One more hypothesis was raised and did not survive: "the first occurrence of a
+given failure sends none and later ones send all five."** It was reported on
+2026-09-03 from four identical duplicate-id creates reading
+`none, all five, all five, all five` in each of two fresh realms. It does not
+reproduce. On a **completely fresh container**, the very first
+`Duplicate resource error` that container ever produced -
+`POST /components` with a taken id - carried **all five**, and so did six
+repeats after it; the `admin/component/create-duplicate-id` golden recorded in
+the same cut holds all five too, which agrees.
+
+**The verification of that hypothesis went wrong first, in a way worth keeping.**
+The first counting run reported `0 of five` on every response, including the
+201s, which should have been the giveaway. The counter was an `awk` script using
+`IGNORECASE`, which is a **gawk** extension: BSD `awk` on macOS ignores it
+silently, so a lowercase pattern never matched `Referrer-Policy`. The tool
+answered a question about the tool - the third instance of that in this project,
+after the `urllib` probe that set the header it then measured (F149) and a
+pipeline that reported `tail`'s exit code instead of `go test`'s. **A probe that
+reports the same answer for every input is measuring itself**, and it is worth a
+control that is known to differ before believing any of it.
+
+What would settle F147 is not another probe on the wire. It is reading which
+Keycloak exception each of the goldens' responses throws and which of them
+reaches the filter that adds the headers. Until somebody does that, **"not
+explained" is the entry**, and it is cheaper than the sixth wrong explanation.
 
 ## F148: the two `evaluate` operations need an RPT, which lives in `internal/token`
 
@@ -4435,3 +4456,57 @@ capacity is not a function of its key set (16 for three keys, 32 for six, eight,
 eighteen and forty-one), so no existing constructor can be handed the right table
 size. Whoever takes it needs the sizing rule first, and the two `Recorded` cases
 are the evidence it has to satisfy.
+
+## F157: `attack-detection` stores nothing, because nothing in Gloak counts a failed authentication
+
+All three operations are served and every one is byte-exact, because the whole
+tag's reachable state is the zero record. A brute-force record's seven keys are
+written by a failed **authentication**, and no code path in this project counts
+one - so the table a reader would expect was deliberately not added. **A column
+nothing writes is a claim about the model that is not true.**
+
+It closes when the login path counts failures, which is where the record's values
+would come from. Until then the chapter is complete and honest: the reads answer
+what Keycloak answers for a user with no failures, which is also what it answers
+for a user id that names nothing.
+
+## F158: the component validators refuse deeper than this project can reach
+
+`POST`/`PUT /components` validate a submitted config against the provider's
+declared properties, and past the first refusal the deeper validators want a real
+keystore file, a decodable PEM or a reachable LDAP server. Those branches are
+measured as far as the first refusal and no further.
+
+Filed rather than guessed: a validator reproduced from its error message alone is
+a rule with one data point behind it, and this project has paid for that five
+times.
+
+## F159: two `PUT /components/{id}` defects, measured and deliberately not reproduced
+
+Recorded so the next cut finds them here rather than by accident. Both leave the
+row in a state the API cannot produce deliberately; reproducing data corruption
+is not what "compatibility" is for, which is the argument F131 already makes for
+the scope id collision.
+
+## F160: the initial access token is minted in `internal/admin` and Gloak's own registration endpoint refuses it
+
+`POST /clients-initial-access` mints a token that
+`POST /realms/{realm}/clients-registrations/openid-connect` should accept.
+It does not, and the two halves sit in packages one branch may not touch
+together - the token is `internal/admin`'s and the registration endpoint is
+`internal/oidc`'s.
+
+This is the second finding of that shape after F122's back-channel logout: a
+boundary decision wearing the clothes of a bug.
+
+## F161: `client-attribute-certificate` needs a harness decision before it needs handlers
+
+All seven operations are unserved. Two answer a **binary JKS or PKCS12
+keystore** and three take **`multipart/form-data`**, and **no golden in this
+repository holds a non-text body**. A generated keystore is also different bytes
+on every request, so even a byte-holding golden could assert nothing but a
+length.
+
+So the chapter is a question about `internal/conformance` - what a golden over a
+binary body would assert - before it is seven handlers, and it should not be
+taken as a parity cut until that question has an answer.
