@@ -3,7 +3,6 @@ package admin
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -28,7 +27,7 @@ import (
 // decode. Measured: a caller holding nothing gets 403 for a body that would
 // have been a 400.
 func (h *handler) convertClientDescription(w http.ResponseWriter, r *http.Request, _ *reqContext) {
-	body, err := io.ReadAll(r.Body)
+	body, err := readRequestBody(r)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return

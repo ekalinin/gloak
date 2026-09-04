@@ -1,0 +1,11 @@
+# POST /admin/realms/gloak-probe-cdc/client-description-converter
+HTTP/1.1 200 OK
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"clientId":"https://saml.example.com/sp","redirectUris":["https://saml.example.com/acs"],"protocol":"saml","attributes":{"saml.signature.algorithm":"RSA_SHA256","saml.authnstatement":"true","saml_assertion_consumer_url_post":"https://saml.example.com/acs","saml.server.signature":"true","saml.server.signature.keyinfo.ext":"false"},"fullScopeAllowed":true,"protocolMappers":[]}

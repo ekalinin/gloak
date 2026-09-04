@@ -91,9 +91,15 @@ func (h *handler) readLocalizationTexts(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		if fallback != nil {
+			// **The fallback merge re-buckets**, where the read of a single
+			// locale serves the stored document untouched: the merged map is
+			// built in Java at read time and never stored, so its order is the
+			// Java map's rather than either document's. Measured on a
+			// two-key default merged under a six-key locale, whose seven come
+			// back in neither document's order.
 			texts = &model.LocalizationTexts{
 				Locale: texts.Locale,
-				Texts:  mergeLocalizationTexts(fallback.Texts, texts.Texts),
+				Texts:  orderLocalizationMerge(mergeLocalizationTexts(fallback.Texts, texts.Texts)),
 			}
 		}
 	}
@@ -135,7 +141,7 @@ func (h *handler) readLocalizationText(w http.ResponseWriter, r *http.Request, r
 // TestLocalizationMergeReproducesTheMeasuredOrders.
 func (h *handler) importLocalizationTexts(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 	locale := r.PathValue("locale")
-	body, err := io.ReadAll(r.Body)
+	body, err := readRequestBody(r)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
@@ -174,9 +180,57 @@ func (h *handler) importLocalizationTexts(w http.ResponseWriter, r *http.Request
 
 	next := &model.LocalizationTexts{Locale: locale, Texts: incoming}
 	if existing != nil {
-		next.Texts = orderLocalizationMerge(mergeLocalizationTexts(existing.Texts, incoming))
+		merged := mergeLocalizationTexts(existing.Texts, incoming)
+		// **A POST that changes nothing changes nothing at all, the order
+		// included.** Measured 2026-09-03: the same six keys with the same six
+		// values posted three times over left the document in the order the
+		// first post stored it, where the same body with **one value changed**
+		// came back re-bucketed. So the re-ordering is a consequence of the row
+		// being written, and a body that writes no row leaves the bytes alone.
+		// A handler that re-buckets unconditionally is wrong on every repeated
+		// import, which is the commonest thing a caller does with this route.
+		if sameLocalizationTexts(existing.Texts, merged) {
+			httpx.WriteNoContent(w, r)
+			return
+		}
+		next.Texts = orderLocalizationMerge(merged)
 	}
 	h.putLocalizationTexts(w, r, rc, next)
+}
+
+// sameLocalizationTexts reports whether two documents hold the same pairs,
+// **ignoring their order**. The order is what the caller is about to decide,
+// so comparing it here would answer the question with itself.
+func sameLocalizationTexts(a, b []model.LocalizationText) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	byKey := make(map[string]string, len(a))
+	for _, e := range a {
+		byKey[e.Key] = e.Value
+	}
+	for _, e := range b {
+		was, ok := byKey[e.Key]
+		if !ok || was != e.Value {
+			return false
+		}
+	}
+	return true
+}
+
+// readRequestBody reads a request body that may not be there.
+//
+// r.Body is nil rather than empty when the request was built by
+// http.NewRequest with no body, which is what the conformance verifier hands
+// the handler for a case sending none. net/http's server never does that, so
+// io.ReadAll alone is correct in production and panics in the one place the
+// measured "no body at all" case is exercised - which is exactly how it was
+// found, on the run that recorded this family's goldens.
+func readRequestBody(r *http.Request) ([]byte, error) {
+	if r.Body == nil {
+		return nil, nil
+	}
+	return io.ReadAll(r.Body)
 }
 
 // setLocalizationText serves PUT /admin/realms/{realm}/localization/{locale}/{key}.
@@ -189,7 +243,7 @@ func (h *handler) setLocalizationText(w http.ResponseWriter, r *http.Request, rc
 		return
 	}
 	locale := r.PathValue("locale")
-	value, err := io.ReadAll(r.Body)
+	value, err := readRequestBody(r)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return

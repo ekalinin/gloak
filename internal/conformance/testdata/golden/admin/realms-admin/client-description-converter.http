@@ -1,0 +1,11 @@
+# POST /admin/realms/gloak-probe-cdc/client-description-converter
+HTTP/1.1 200 OK
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"clientId":"gloak-probe-cdc-client","clientAuthenticatorType":"client-secret","redirectUris":["https://example.com/cb"],"standardFlowEnabled":true,"implicitFlowEnabled":false,"directAccessGrantsEnabled":false,"publicClient":false,"frontchannelLogout":false,"protocol":"openid-connect","attributes":{"client.secret.authentication.allowed.method":"client_secret_post","backchannel.logout.session.required":"true","frontchannel.logout.session.required":"false","backchannel.logout.revoke.offline.tokens":"false"}}

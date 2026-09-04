@@ -1,0 +1,10 @@
+# GET /admin/realms/gloak-probe-loc/localization/en/gloak-probe-k1
+HTTP/1.1 200 OK
+Content-Length: {{volatile}}
+Content-Type: text/plain;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Robots-Tag: none
+
+1

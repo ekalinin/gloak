@@ -161,6 +161,47 @@ func assertLocalizationBody(t *testing.T, h http.Handler, token, locale, want st
 	}
 }
 
+// TestLocalizationImportThatChangesNothingReordersNothing is the rule the
+// re-bucketing hangs off, and it is the one a handler gets wrong by being
+// thorough: a POST whose body the document already holds writes no row, and a
+// document that is not written keeps its bytes.
+//
+// Measured 2026-09-03 as three probes on one container: the same six pairs
+// posted three times over never moved, the same six keys with **one value
+// changed** came back re-bucketed, and five keys plus a sixth came back
+// re-bucketed too. The three together are what separate "the POST re-orders"
+// from "a write re-orders".
+func TestLocalizationImportThatChangesNothingReordersNothing(t *testing.T) {
+	h, _, _ := newServer(t)
+	admin := adminToken(t, h)
+	const six = `{"k1":"1","k2":"2","k3":"3","k4":"4","k5":"5","k6":"6"}`
+
+	for i := range 3 {
+		if w := send(t, h, http.MethodPost, localizationBase+"/same", admin, six); w.Code != http.StatusNoContent {
+			t.Fatalf("import %d: %d %s", i, w.Code, w.Body)
+		}
+		assertLocalizationBody(t, h, admin, "same", six)
+	}
+
+	// One value changed, and the whole document moves.
+	if w := send(t, h, http.MethodPost, localizationBase+"/same", admin,
+		`{"k3":"CHANGED"}`); w.Code != http.StatusNoContent {
+		t.Fatalf("changing import: %d %s", w.Code, w.Body)
+	}
+	assertLocalizationBody(t, h, admin, "same",
+		`{"k3":"CHANGED","k4":"4","k5":"5","k6":"6","k1":"1","k2":"2"}`)
+
+	// A subset whose values already match writes nothing either, which is what
+	// says the comparison is over the merged document rather than over the
+	// request's own keys.
+	if w := send(t, h, http.MethodPost, localizationBase+"/same", admin,
+		`{"k5":"5"}`); w.Code != http.StatusNoContent {
+		t.Fatalf("subset import: %d %s", w.Code, w.Body)
+	}
+	assertLocalizationBody(t, h, admin, "same",
+		`{"k3":"CHANGED","k4":"4","k5":"5","k6":"6","k1":"1","k2":"2"}`)
+}
+
 // TestLocalizationEmptyBodyPoisonsTheLocale is Keycloak's own defect,
 // reproduced: a POST with no body at all creates a locale nothing can read.
 //
@@ -346,41 +387,53 @@ func TestLocalizationKeyReadIsPlainTextWithoutXFrameOptions(t *testing.T) {
 	}
 }
 
-// TestLocalizationDefaultLocaleFallback pins the merge and the two things that
-// do not drive it.
+// TestLocalizationDefaultLocaleFallback replays the sequence this behaviour was
+// measured with on 2026-09-03, step for step, and asserts the bytes the server
+// answered.
+//
+// The keys and the two-step seeding are the measurement's own: `k` is in both
+// locales and is what says the requested locale wins, and each locale is built
+// by two posts so that its stored order is the re-bucketed one rather than a
+// request's.
 func TestLocalizationDefaultLocaleFallback(t *testing.T) {
 	h, _, _ := newServer(t)
 	admin := adminToken(t, h)
 
-	if w := send(t, h, http.MethodPost, localizationBase+"/aa", admin,
-		`{"only.aa":"a","shared":"from-aa"}`); w.Code != http.StatusNoContent {
-		t.Fatalf("seed aa: %d %s", w.Code, w.Body)
+	for _, seed := range []struct{ locale, body string }{
+		{"aa", `{"k":"aa"}`},
+		{"zz", `{"k":"zz"}`},
+		{"zz", `{"only.zz":"z"}`},
+		{"aa", `{"only.aa":"a"}`},
+	} {
+		if w := send(t, h, http.MethodPost, localizationBase+"/"+seed.locale, admin,
+			seed.body); w.Code != http.StatusNoContent {
+			t.Fatalf("seed %s %s: %d %s", seed.locale, seed.body, w.Code, w.Body)
+		}
 	}
-	if w := send(t, h, http.MethodPost, localizationBase+"/zz", admin,
-		`{"only.zz":"z","shared":"from-zz"}`); w.Code != http.StatusNoContent {
-		t.Fatalf("seed zz: %d %s", w.Code, w.Body)
-	}
+	assertLocalizationBody(t, h, admin, "aa", `{"only.aa":"a","k":"aa"}`)
+	assertLocalizationBody(t, h, admin, "zz", `{"only.zz":"z","k":"zz"}`)
 
 	// With no defaultLocale the parameter does nothing at all.
 	assertLocalizationQuery(t, h, admin, "zz?useRealmDefaultLocaleFallback=true",
-		`{"only.zz":"z","shared":"from-zz"}`)
+		`{"only.zz":"z","k":"zz"}`)
 
 	if w := send(t, h, http.MethodPut, "/admin/realms/master", admin,
 		`{"defaultLocale":"aa"}`); w.Code != http.StatusNoContent {
 		t.Fatalf("set defaultLocale: %d %s", w.Code, w.Body)
 	}
 
-	// The requested locale wins on a shared key and the default's own keys are
-	// added. internationalizationEnabled is still off, which is what says the
-	// fallback follows defaultLocale alone.
+	// The requested locale wins on `k` and the default's own key is added, and
+	// **the merged map is re-bucketed** rather than served in either
+	// document's order. internationalizationEnabled is still off, which is
+	// what says the fallback follows defaultLocale alone.
 	assertLocalizationQuery(t, h, admin, "zz?useRealmDefaultLocaleFallback=true",
-		`{"only.aa":"a","shared":"from-zz","only.zz":"z"}`)
+		`{"only.aa":"a","only.zz":"z","k":"zz"}`)
 	assertLocalizationQuery(t, h, admin, "zz?useRealmDefaultLocaleFallback=false",
-		`{"only.zz":"z","shared":"from-zz"}`)
-	assertLocalizationQuery(t, h, admin, "zz", `{"only.zz":"z","shared":"from-zz"}`)
+		`{"only.zz":"z","k":"zz"}`)
+	assertLocalizationQuery(t, h, admin, "zz", `{"only.zz":"z","k":"zz"}`)
 	// A locale that does not exist answers the default's texts outright.
 	assertLocalizationQuery(t, h, admin, "nosuch?useRealmDefaultLocaleFallback=true",
-		`{"only.aa":"a","shared":"from-aa"}`)
+		`{"only.aa":"a","k":"aa"}`)
 	// The single-key read ignores the parameter, measured: it is a 404 for a
 	// key only the default locale holds.
 	if w := get(t, h, localizationBase+"/zz/only.aa?useRealmDefaultLocaleFallback=true", admin); w.Code != http.StatusNotFound {
