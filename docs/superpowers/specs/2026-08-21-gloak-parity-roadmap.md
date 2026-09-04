@@ -234,11 +234,12 @@ operations is allocated below; none is left unassigned.
 | P13 second cut | SSO and the consent pages, **done 2026-08-30** | P13 first cut, P7 first cut | no operations: F65, F77 and F101 close, so a browser that has signed in once gets a code without a form and a user can finish a device login. `oidc/authorization` 12->14, `oidc/device` 11->13 | 0 ops |
 | P13 first cut | The browser login, end to end | P3, P5 | no operations, and the column that matters is `oidc/authorization`'s `recorded` going **4 -> 0**: the chapter no longer holds a case waiting on an endpoint nobody built. The flow is served - authentication session, login form, `/login-actions/authenticate`, authorization code - and the theme's markup is not | 0 ops |
 | **P14** | Operational parity | P4 | events and audit, SMTP, health and metrics, clustering | not in OpenAPI |
+| P14 first cut | The localization family and the converter, **done 2026-09-03** | P4 | `admin/realms-admin` 21->29. Counted from the description rather than from a hint: the chapter's 24 unserved fall into **eight** families, of which localization is **seven** operations and the client policies and `client-types` were already served. The events family is left alone - it needs an event store and is P14's own next cut | 8 ops |
 
 Denominator today: **413 Admin API operations plus 122 protocol behaviours, 535
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **422 of 541**
-after the organization group family, and **P2, P4 and P5 are complete** - as are
+surface is not counted and which the report says so about. Served: **430 of 541**
+after the localization family, and **P2, P4 and P5 are complete** - as are
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
 locator, and the `Roles`,
 `Roles (by ID)` and `Groups` chapters, which P10 closed by measuring what their
@@ -267,7 +268,37 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-03 (fourteenth fold).** `make conformance` reports **422 of
+**Updated 2026-09-03 (fifteenth fold).** `make conformance` reports **430 of
+541**. `admin/realms-admin` went 21 to 29 of 45 - the localization family and the
+client-description converter.
+
+**The round's lesson is that an approximate number corrupts a scope even when it
+is labelled approximate.** I gave the cut a breakdown of the whole tag as a hint,
+said plainly that it was a hint and not a scope, and told it to count the
+remainder itself. The hint was wrong three ways and all in the same direction:
+localization is **seven** operations rather than six - the family the same brief
+warned had twice been undersized, undersized again by me - client policies are
+already served in full, and so is `client-types`. Nine of the twenty-four
+appeared in no line of it. The real scope was eight operations, not "about
+twelve". What saved it was the instruction to count from the list first, which is
+the only part of that brief that did any work.
+
+**And the most-corrected bullet in AGENTS.md got smaller for the first time.**
+The `X-Frame-Options` exception is about the **response's media type**, not the
+endpoint. Computed over every committed golden: six `text/plain` responses carry
+none of the five headers, fifteen `text/html` carry them, and of 569
+`application/json` exactly thirteen do not - twelve being the known
+`Duplicate resource error` split and the thirteenth the unmatched path. The
+`userinfo` exception this file carried for a fortnight dissolves into it:
+`userinfo`'s rejections are `text/plain` and its 200s are `application/json`, and
+its own six goldens said so the whole time. Five exceptions became four, and it is
+the first correction in that sequence to **remove** a rule rather than add one.
+
+The measurement that made it visible was the Admin API's only `text/plain` 200,
+`GET .../localization/{locale}/{key}` - whose **own 404 is `application/json` and
+carries the header**. One route, one verb, two media types, two header sets.
+
+**Earlier on 2026-09-03 (fourteenth fold).** `make conformance` reports **422 of
 541**. The organization group family landed all twenty-two of its operations,
 `admin/organizations` reached 35 of 36, and **`admin/role-mapper` and
 `admin/client-role-mappings` are complete** - both closed by their third locator
