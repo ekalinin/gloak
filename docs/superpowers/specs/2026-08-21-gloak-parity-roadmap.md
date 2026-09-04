@@ -235,11 +235,14 @@ operations is allocated below; none is left unassigned.
 | P13 first cut | The browser login, end to end | P3, P5 | no operations, and the column that matters is `oidc/authorization`'s `recorded` going **4 -> 0**: the chapter no longer holds a case waiting on an endpoint nobody built. The flow is served - authentication session, login form, `/login-actions/authenticate`, authorization code - and the theme's markup is not | 0 ops |
 | **P14** | Operational parity | P4 | events and audit, SMTP, health and metrics, clustering | not in OpenAPI |
 | P14 first cut | The localization family and the converter, **done 2026-09-03** | P4 | `admin/realms-admin` 21->29. Counted from the description rather than from a hint: the chapter's 24 unserved fall into **eight** families, of which localization is **seven** operations and the client policies and `client-types` were already served. The events family is left alone - it needs an event store and is P14's own next cut | 8 ops |
+| Small chapters | attack-detection, client-initial-access and the component writes, **done 2026-09-03** | P9 second cut | Three chapters closed outright, +10. **`attack-detection` stores nothing**: its record is written by a failed authentication and nothing in this project counts one, so no table was added - F157. F145 was **disagreed with** and `DELETE /components/{id}` built. `client-attribute-certificate` is left: two of its seven answer a **binary keystore** and no golden here holds a non-text body - F161 | 10 ops |
 
 Denominator today: **413 Admin API operations plus 122 protocol behaviours, 535
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **430 of 541**
-after the localization family, and **P2, P4 and P5 are complete** - as are
+surface is not counted and which the report says so about. Served: **440 of 541**
+after three small chapters closed outright, and **P2, P4 and P5 are complete** -
+as are `admin/attack-detection`, `admin/client-initial-access`,
+`admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
 locator, and the `Roles`,
 `Roles (by ID)` and `Groups` chapters, which P10 closed by measuring what their
@@ -268,7 +271,36 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-03 (fifteenth fold).** `make conformance` reports **430 of
+**Updated 2026-09-03 (sixteenth fold).** `make conformance` reports **440 of
+541**. Three chapters closed outright - `admin/attack-detection` 3 of 3,
+`admin/client-initial-access` 3 of 3 and `admin/component` 6 of 6.
+
+**The round's lesson is that a probe reporting the same answer for every input is
+measuring itself, and the giveaway is in the run rather than in the reasoning.**
+A hypothesis arrived that would have explained the one header split this project
+has never explained: that the **first** occurrence of a failure sends none of the
+five security headers and later ones send all five, reported from two fresh
+realms. It does not reproduce - a completely fresh container's very first
+`Duplicate resource error` carried all five, as did six repeats, and the golden
+recorded alongside agrees.
+
+My own attempt to check it went wrong first and in the same family. The counter
+reported `0 of five` for every response **including the 201s**, which should have
+been the giveaway; it used `awk`'s `IGNORECASE`, a gawk extension that BSD `awk`
+on macOS ignores silently, so a lowercase pattern never matched
+`Referrer-Policy`. That is the third time in a fortnight a tool has answered a
+question about itself - after the `urllib` probe that set the header it then
+measured, and a pipeline that reported `tail`'s exit status instead of
+`go test`'s.
+
+**The cheap defence is a control known to differ.** All three would have been
+caught in one command by a case the probe should have answered differently.
+
+So the header bullet keeps its correction - four exceptions, the response's
+media type - and F147 gains a ruled-out hypothesis rather than a sixth
+explanation.
+
+**Earlier on 2026-09-03 (fifteenth fold).** `make conformance` reports **430 of
 541**. `admin/realms-admin` went 21 to 29 of 45 - the localization family and the
 client-description converter.
 

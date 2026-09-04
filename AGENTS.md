@@ -160,6 +160,14 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `-other-container` are the same route, the same verb and the same 67 bytes,
   and one sends all five while the other sends none. They differ only in which
   internal failure produced the 409. See F147.
+  A sixth explanation was raised on 2026-09-03 - "the **first** occurrence of a
+  given failure sends none and later ones send all five" - and **it does not
+  reproduce**: on a completely fresh container the very first
+  `Duplicate resource error` it ever produced carried all five, as did six
+  repeats, and the golden recorded in the same cut agrees. The run that appeared
+  to support it reported `0 of five` for every response including the 201s,
+  because its counter used `awk`'s `IGNORECASE`, which BSD `awk` ignores. **A
+  probe that reports the same answer for every input is measuring itself.**
   **This bullet has been wrong five times, twice refuted by the very golden it
   cited, and the correction of 2026-09-03 is the first that removes an exception
   rather than adding one.** Before writing a rule about headers, grep the
@@ -1874,6 +1882,25 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `software_statement` is RFC 7591's obvious next field name and Keycloak
   answers it a **500**, so declaring it would make Gloak accept a body Keycloak
   refuses.
+
+- **A brute-force status is 200 for a user that does not exist**, with the same
+  seven-key zero record a real user with no failures gets - and so is the realm's
+  own id. The route does not resolve the user at all, so **the 404 anybody would
+  add here is a status Keycloak does not send**, and the tag has no not-found
+  branch. `lastIPFailure` is the string `n/a` rather than an empty string or a
+  null. Both deletes answer 204 for an id that names nothing.
+- **`Attack Detection` is authorised out of the *users* pair**, and
+  `query-users` - which opens `GET /users` - opens neither of its routes. Three
+  small chapters landed together and each took a **different** role pair, none of
+  them predicted by the tag.
+- **`GET /clients-initial-access` sends no `Cache-Control`.** A hand
+  transcription said otherwise and the recorded golden refuted it; that is the
+  fifth hand probe recording has caught.
+- **The organization group role order is not reproducible.** Ten fresh realms:
+  six with two roles gave two orders and four with four roles gave four,
+  matching neither name, assignment, reverse-assignment nor id order. Five cases
+  carry `Unordered` for it now. A cut that records those goldens without the mask
+  will see five files move and read it as its own doing.
 
 ## Boundaries
 
