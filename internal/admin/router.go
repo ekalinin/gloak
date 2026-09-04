@@ -55,6 +55,28 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /admin/realms/{realm}", h.guardAny(realmWriteRoles, h.updateRealm))
 	mux.HandleFunc("DELETE /admin/realms/{realm}", h.guardAny(realmWriteRoles, h.deleteRealm))
 
+	// The realm half of the session family - four operations the description
+	// tags `Realms Admin`, taking **three different guards**. Measured one role
+	// at a time; nothing in the tag predicts any of them.
+	//
+	// client-session-stats is the realm read pair, push-revocation is
+	// manage-realm alone, and logout-all and DELETE .../sessions/{session} are
+	// **manage-users** alone - the users family's write role, on routes that
+	// name no user. A manage-users caller gets 404 rather than 403 on the
+	// delete, which is what says the role is checked before the session is
+	// resolved.
+	//
+	// This is the third time the description's tag has failed to predict a
+	// guard and the first time one tag has answered three ways at once.
+	mux.HandleFunc("GET /admin/realms/{realm}/client-session-stats",
+		h.guardAny(realmConfigReadRoles, h.clientSessionStats))
+	mux.HandleFunc("POST /admin/realms/{realm}/push-revocation",
+		h.guardAny(realmWriteRoles, h.pushRealmRevocation))
+	mux.HandleFunc("POST /admin/realms/{realm}/logout-all",
+		h.guardAny(userWriteRoles, h.logoutAll))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/sessions/{sessionID}",
+		h.guardAny(userWriteRoles, h.deleteSession))
+
 	// The whole of the description's Key tag. view-realm or manage-realm,
 	// measured across all 22 realm-management roles and a caller holding none -
 	// the same pair the realm's own configuration reads take, and measured on
@@ -700,6 +722,15 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /admin/realms/{realm}/users/{userID}/disable-credential-types", h.guardUserSubject(userWriteRoles, h.disableCredentialTypes))
 	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/logout", h.guardUserSubject(userWriteRoles, h.logoutUser))
 
+	// The user half of the session family. Both take userReadRoles - the
+	// *read* pair, where the logout one line above takes the write role - so
+	// the family's two reads and its one write split the way the rest of this
+	// tag does. Measured one role at a time; query-users opens neither.
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/sessions",
+		h.guardUserSubject(userReadRoles, h.userSessions))
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/offline-sessions/{clientUUID}",
+		h.guardUserSubject(userReadRoles, h.userOfflineSessions))
+
 	// A user's group membership. Same combinator and same role sets as the
 	// rest of the user family, which is what the sweep says: the coarse gate
 	// is usersReadRoles - query-users opens none of these four and still gets
@@ -858,6 +889,31 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /admin/realms/{realm}/clients/{clientUUID}/client-secret/rotated",
 		h.guardRejecting("manage-clients", deleteRotatedSecretRejection, h.deleteRotatedSecret))
 	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/service-account-user", h.guard("view-clients", h.readServiceAccountUser))
+
+	// The client half of the session family. The four reads take view-clients
+	// **or manage-clients** and push-revocation takes manage-clients alone -
+	// measured one role at a time over eight candidates, and query-clients
+	// opens none of the five.
+	//
+	// The read pair is clientRolesReadRoles rather than h.guard("view-clients")
+	// deliberately, and the difference is measured: the four routes above that
+	// take the single-role form refuse manage-clients where 26.7.1 answers
+	// them 200. That is a divergence this cut found and did not fix, because
+	// it belongs to the client chapter and no case pins it; see the handover.
+	//
+	// The two offline reads are served from the empty set and are guarded and
+	// resolved in full; see internal/admin/sessions.go for why there is no
+	// offline session table behind them.
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/session-count",
+		h.guardAny(clientRolesReadRoles, h.clientSessionCount))
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/user-sessions",
+		h.guardAny(clientRolesReadRoles, h.clientUserSessions))
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/offline-session-count",
+		h.guardAny(clientRolesReadRoles, h.clientOfflineSessionCount))
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/offline-sessions",
+		h.guardAny(clientRolesReadRoles, h.clientOfflineSessions))
+	mux.HandleFunc("POST /admin/realms/{realm}/clients/{clientUUID}/push-revocation",
+		h.guard("manage-clients", h.pushClientRevocation))
 
 	// Client scopes. The whole family is authorised out of the **clients**
 	// role set, which is the surprise: view-realm and manage-realm are 403 on
