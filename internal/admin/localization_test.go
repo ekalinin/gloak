@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -465,6 +466,7 @@ func TestLocalizationGuards(t *testing.T) {
 	viewUsers := tokenForRole(t, h, s, realm, "view-users")
 	impersonation := tokenForRole(t, h, s, realm, "impersonation")
 	nobody := tokenFor(t, h, mustCreateUserWithNoRoles(t, s, realm), "pw")
+	createRealm := tokenForRealmRole(t, h, s, realm, "gloak-probe-loc-cr", "create-realm")
 
 	// Every container role but impersonation opens all three reads.
 	for _, token := range []string{viewRealm, viewUsers} {
@@ -480,6 +482,20 @@ func TestLocalizationGuards(t *testing.T) {
 			if w := get(t, h, path, token); w.Code != http.StatusForbidden {
 				t.Errorf("read %s by a caller that may not: %d %s", path, w.Code, w.Body)
 			}
+		}
+	}
+
+	// **The three reads do not share one admission, and a create-realm holder
+	// is what separates them.** It owns no container at all, so
+	// GET /admin/realms/{realm}'s guard admits it and the container's own role
+	// set does not - measured on all three routes. Without this caller the two
+	// guards are indistinguishable and swapping them passes.
+	if w := get(t, h, localizationBase+"/en", createRealm); w.Code != http.StatusOK {
+		t.Errorf("the locale read by a create-realm holder: %d %s", w.Code, w.Body)
+	}
+	for _, path := range []string{localizationBase, localizationBase + "/en/k"} {
+		if w := get(t, h, path, createRealm); w.Code != http.StatusForbidden {
+			t.Errorf("%s by a create-realm holder: %d %s, want 403", path, w.Code, w.Body)
 		}
 	}
 
@@ -511,4 +527,22 @@ func mustCreateUserWithNoRoles(t *testing.T, s store.Store, realm *model.Realm) 
 	t.Helper()
 	createUserWithPassword(t, s, realm, "gloak-probe-loc-nobody", "pw")
 	return "gloak-probe-loc-nobody"
+}
+
+// tokenForRealmRole is tokenForRole for a **realm** role rather than a role on
+// the realm's admin container. `create-realm` is one of the two that exist in
+// master alone, and it is the caller that separates GET /admin/realms/{realm}'s
+// admission from the container's own role set.
+func tokenForRealmRole(t *testing.T, h http.Handler, s store.Store, realm *model.Realm, username, role string) string {
+	t.Helper()
+	ctx := context.Background()
+	u := createUserWithPassword(t, s, realm, username, "pw")
+	r, err := s.Roles().ByName(ctx, realm.ID, "", role)
+	if err != nil {
+		t.Fatalf("ByName(%s): %v", role, err)
+	}
+	if err := s.Roles().AssignToUser(ctx, u.ID, r.ID); err != nil {
+		t.Fatalf("AssignToUser: %v", err)
+	}
+	return tokenFor(t, h, username, "pw")
 }
