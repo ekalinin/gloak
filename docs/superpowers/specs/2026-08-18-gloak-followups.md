@@ -4407,3 +4407,31 @@ configuration in the fixture before it means anything.
 This is the second `briefRepresentation` finding after the identity provider
 listing's six-key shape, and both say the same thing: **it is a different
 representation, not the full one minus a field.**
+
+## F155: a mismatched `Accept` is a 406 across the whole Admin API and Gloak implements it nowhere
+
+Measured 2026-09-03 while building the localization family. Keycloak answers
+`406` to a request whose `Accept` no endpoint can satisfy; Gloak serves the body
+regardless, on every route.
+
+It is one predicate and its blast radius is the whole API, which is why it is
+filed rather than fixed inside a family cut - the same shape as the `Content-Type`
+sweep that turned out to be a probe measuring itself (F149), and the lesson from
+that one applies here: **measure it at socket level before writing the rule**,
+because an `Accept` header is exactly what a convenience library fills in.
+
+No golden covers it. The cut that takes it wants a sweep establishing which
+routes answer 406 and which do not, and goldens for the ones that move.
+
+## F156: the converter's SAML branch and its key order are two `Recorded` cases
+
+`POST .../client-description-converter` is served for the OIDC branch. Its SAML
+branch, and the `attributes` key order for a descriptor carrying five or more
+attributes, are measured and **declared as `Recorded`** rather than written into
+prose - which is what `Recorded` is for.
+
+The key order cannot be reproduced by `internal/javamap` today: the map's
+capacity is not a function of its key set (16 for three keys, 32 for six, eight,
+eighteen and forty-one), so no existing constructor can be handed the right table
+size. Whoever takes it needs the sizing rule first, and the two `Recorded` cases
+are the evidence it has to satisfy.

@@ -107,67 +107,64 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `{"error":"HTTP 405 Method Not Allowed"}`, measured independently on the
   protocol and admin sides on the same day, so the fallback family has five
   bodies rather than four. See F31 before adding a 405 or defending the 404.
-- **The five security headers have five exceptions, and no two are decided by the same thing.** A route match
-  and a known path hit with the wrong method both get `Referrer-Policy`,
-  `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`
-  and `X-Robots-Tag`. A path matching no route at all gets none of them,
-  because that request never reaches Keycloak's filter chain. **`userinfo`'s
-  rejections send four of the five, omitting `X-Frame-Options`** - they do
-  reach the filter chain, so this one is not explained by routing, and its
-  own 200 sends all five, so it is not explained by the endpoint either. And
-  **a 204 carries `X-Frame-Options` only when the request declared an
-  `application/*` `Content-Type`**: measured across seven Content-Type values
-  on one endpoint, every one answering 204. That covers every delete (no
-  Content-Type, so no header), the client and user updates (JSON, so the
-  header), and `PUT .../userLabel` (`text/plain`, so no header).
-  `httpx.WriteNoContent` is the one place that decides. Applying them
-  uniformly "for consistency" is the fix that would break all three.
-  **The fourth, added 2026-08-30: an `OPTIONS` 200 sends four of the five,
-  omitting `X-Frame-Options`.** Measured on `/auth/device`, `/auth`, `/logout`
-  and `/token`, all four on one container and all four alike - three of them
-  surface this project has served since P1 and P3. The other three exceptions
-  are about the path, the endpoint and the request's `Content-Type`; this one is
-  about the method, and none of them covers it. Gloak answers `OPTIONS` through
-  `WithKeycloakFallbacks`, so nothing was changed on the strength of it; the
-  same sweep also found that **`/auth` is the only one of the four whose
-  `OPTIONS` carries an `Allow` header**. See F31.
-  **The fifth is not explained, and every explanation offered so far has been
-  refuted by goldens already in this repository.** A dozen and a half committed
-  goldens answer the byte-identical 67-byte `Duplicate resource error` body, and
-  **this bullet no longer carries the tally** -
-  `TestTheDuplicateResourceErrorSplitIsNotDecidedByTheVerb` computes it and
-  prints it, and asserts the claim rather than the count.
-  That test exists because the number written here drifted three times, and the
-  last time it drifted **inside one commit**: the bullet said "fifteen" while the
-  tree held sixteen, because the sixteenth arrived in the very fold that wrote
-  the sentence. The conclusion survived and the arithmetic did not, and the
-  arithmetic is what the paragraph offers as evidence. This file's own advice
-  about counts in prose applies to this file.
-  So the status is out, the body is out, its length is out, emptiness is out
-  (none of them is empty), the request's `Content-Type` is out - varied over four
-  spellings on one of them without moving it - and **the verb is out**, which was
-  this bullet's last surviving lead: both verbs answer this one body both ways.
-  "The endpoint decides" does not survive either. `admin/protocol-mappers/`
-  `add-models-duplicate-id-same-container` and `-other-container` are the **same
-  route, the same verb, the same `Content-Type` and the same 67 bytes**, and one
-  sends all five while the other sends none. They differ only in which internal
-  failure produced the 409 - a duplicate id inside one container against one
-  across two.
-  What is measured, and it is all that is measured: **the header set follows
-  whatever produced the response, and nothing about the request or the response
-  distinguishes the two.** An empty body does send none of the five - every 204
-  that omits them, every empty 404 and the resource search's empty 400 agree -
-  but emptiness explains only the empty answers and none of these fifteen.
-  So four exceptions are decided by the path, the endpoint, the request's
-  `Content-Type` and the method; the fifth is a split nobody has explained, and
-  a sixth is likelier than a unifying one. See F147.
-  **This bullet has now been wrong five times, twice refuted by the very golden
-  it cited.** "A 409"; then "an empty response body", folded in from a cut that
-  had measured one case, while the golden refuting it was committed in that same
-  cut; then "a `POST` keeps them and a `PUT` drops them", which fourteen further
-  goldens refute. Its own closing advice was written in the commit that broke it.
-  **Before writing a rule about headers, grep the goldens for a case that would
-  break it** - and prefer "not explained" to the next explanation.
+- **The five security headers have four exceptions, and two of them turned out
+  to be one rule about the response's media type.** A route match and a known
+  path hit with the wrong method both get `Referrer-Policy`,
+  `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options` and
+  `X-Robots-Tag`.
+  **(1) A path matching no route at all gets none of them**, because that request
+  never reaches Keycloak's filter chain.
+  **(2) The media type of the response decides.** Computed over every committed
+  golden on 2026-09-03:
+
+  ```
+  text/plain          6 goldens    none carries the five
+  text/html          15            all carry them
+  application/json  556 carry them, 13 do not
+  ```
+
+  and **twelve of those thirteen are the `Duplicate resource error` family**
+  below, with the thirteenth being the unmatched path of (1). Nothing else
+  disagrees.
+  This absorbs what this file recorded for a fortnight as a `userinfo`
+  exception: `userinfo`'s rejections are `text/plain` and omit the five, its 200s
+  are `application/json` and carry them, and **it was never about the endpoint**.
+  `GET .../localization/{locale}/{key}` is what made it visible - the only
+  `text/plain` 200 in the Admin API, omitting the header under three different
+  request `Content-Type`s, while its **own** 404 is `application/json` and
+  carries it.
+  **(3) A bodyless 204 carries `X-Frame-Options` only when the *request*
+  declared an `application/*` `Content-Type`** - measured across seven
+  Content-Type values on one endpoint, every one answering 204. That is a
+  different axis from (2), because a 204 has no media type of its own, and it
+  covers every delete (no Content-Type, so no header), the client and user
+  updates (JSON, so the header), and `PUT .../userLabel` (`text/plain`, so no
+  header). `httpx.WriteNoContent` is the one place that decides.
+  **(4) An `OPTIONS` 200 sends four of the five, omitting `X-Frame-Options`** -
+  measured on `/auth/device`, `/auth`, `/logout` and `/token`. **No golden
+  records it**, so it cannot be checked from the tree the way (2) can, and
+  whether it is (2) wearing a different hat is unmeasured: the request that
+  would say so is an `OPTIONS` whose response carries a JSON body. The same
+  sweep found that `/auth` is the only one of the four whose `OPTIONS` carries
+  an `Allow` header. See F31.
+  **The `Duplicate resource error` split is what is left, and it is not
+  explained.** A dozen and a half committed goldens answer the byte-identical
+  67-byte body, and **this bullet does not carry the tally** -
+  `TestTheDuplicateResourceErrorSplitIsNotDecidedByTheVerb` computes it, prints
+  it, and asserts the claim rather than the count. That test exists because the
+  number written here drifted three times, the last time **inside one commit**.
+  Ruled out by goldens already in this repository: the status, the body, its
+  length, emptiness, the request's `Content-Type`, **the verb** - both verbs
+  answer this one body both ways - and **the endpoint**:
+  `admin/protocol-mappers/add-models-duplicate-id-same-container` and
+  `-other-container` are the same route, the same verb and the same 67 bytes,
+  and one sends all five while the other sends none. They differ only in which
+  internal failure produced the 409. See F147.
+  **This bullet has been wrong five times, twice refuted by the very golden it
+  cited, and the correction of 2026-09-03 is the first that removes an exception
+  rather than adding one.** Before writing a rule about headers, grep the
+  goldens for a case that would break it - and prefer "not explained" to the
+  next explanation.
 - **That rule was wrong once already.** P2's Task 11 recorded it as "a
   successful `DELETE`'s 204 omits it", from four deletes that all happened to
   send no `Content-Type`. When a new 204 disagrees with a header rule, measure
@@ -498,7 +495,7 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **Role listings have no stable order across container starts.** Every one of
   them is a bare array at the root of the body, which is why `Case.Unordered`
   learned the root path spelling `"."`.
-- **Twenty-five spellings of not-found in the admin API now**, including four for
+- **Twenty-seven spellings of not-found in the admin API now**, including four for
   one resource, **four** for a missing group, and three *pairs* that differ only
   in a full stop. Counted from the list, not incremented: (1) `Could not find client`, (2) `Client not found`,
   (3) `User not found`, (4) `Realm not found.` with its full stop,
@@ -524,7 +521,11 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   (24) `Model not found` from the identity provider mapper read and delete, and
   (25) `User does not exist` as a **404** from the organization group member
   writes - the invitation family answers the same words with a **400**, so the
-  spelling is shared and the status is not.
+  spelling is shared and the status is not - (26) `No localization texts for
+  locale <l> found.` from `DELETE .../localization/{locale}`, where the **`GET`
+  on the same missing locale is `200 {}`**, and (27) `Localization text not
+  found`, which has **no** full stop and does not name the key: the fourth pair
+  in this list separated by punctuation alone.
   An unknown identity provider alias adds nothing here: the read, the update and
   the delete all answer the generic `HTTP 404 Not Found`, so two neighbouring
   chapters measured in one cut contributed two spellings and none.
@@ -1820,6 +1821,59 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   is the opposite of an unmatched path, which gets none of the five, and it is
   what makes a catch-all under `group-by-path` more faithful than the fallback
   rather than less.
+
+- **A localization import that changes nothing changes nothing at all, the key
+  order included.** `POST .../localization/{locale}` re-buckets the whole
+  document through a Java map - `k1..k5` then `{k6}` came back
+  `k3,k4,k5,k6,k1,k2` - but the same six pairs posted three times over never
+  moved, and a subset whose values already match never moved either. Change one
+  value and the whole document re-buckets. **The re-ordering follows the row
+  being written, not the verb**, so a handler that re-buckets unconditionally is
+  wrong on every repeated import, which is the commonest thing a caller does
+  with this route. Found by a recorded golden disagreeing with a handler written
+  from a three-probe model.
+- **The four localization writes give three ordering rules.** `POST` re-buckets;
+  `PUT .../{key}` appends a new key at the end and replaces an existing one **in
+  place**; `DELETE .../{key}` removes one and moves nothing, and the surviving
+  order is the document's own rather than what the same key set would re-bucket
+  to. A create on a locale that does not exist stores the request's own key
+  order.
+- **`POST .../localization/{locale}` with an empty body or a literal `null` is a
+  204 that leaves the locale unreadable for ever.** The row is created,
+  `GET /localization` lists it, and the three reads, the `PUT` and a further
+  `POST` are all `500 unknown_error`; only the two deletes still work. `{}` is a
+  different body and a different outcome. Keycloak's own defect, reproduced -
+  and **the poisoning is not idempotent**: the first empty `POST` is 204 and
+  every one after it is 500.
+- **`GET .../localization/{locale}` leaks across a realm boundary and its two
+  siblings do not.** A master caller holding any `master-realm` admin role reads
+  another realm's texts **in full**, where the realm read next door serves that
+  caller its shortest shape; the collection listing and the single-key read
+  answer the same caller 403. A caller holding only `create-realm` reads it too.
+  So this API has **two** reads that reach sideways, one family holds two
+  admissions one path segment apart, and `create-realm` is the caller that tells
+  them apart.
+- **`useRealmDefaultLocaleFallback` follows `defaultLocale` alone**, and
+  `internationalizationEnabled` changes nothing either way. It merges the
+  default's bundle **under** the requested one and **re-buckets the result**, so
+  neither document's own order survives; a locale that does not exist answers the
+  default's texts outright; and the single-key read and the collection listing
+  ignore the parameter entirely.
+- **The localization import has two 400s and the first byte does not pick.** A
+  body that is not JSON is `invalid_request`; one that is JSON and is not an
+  object of scalars is `unknown_error`, **whether it starts with `[` or `{`**.
+  `{"n":{}}` is the body that separates the two readings, and eleven earlier
+  probes of this rule all sent a truncated object. Inside the object a number and
+  a boolean are coerced to strings and a **`null` is dropped**, which a decoder
+  into `map[string]string` gets wrong by storing four characters.
+- **`client-description-converter` reads the body's shape and never the
+  `Content-Type`**, and it is authorised out of the **clients** role set rather
+  than the realm's. A converted client's `attributes` capacity is **not a
+  function of its key set** - 16 for three keys and 32 for six, eight, eighteen
+  and forty-one - so no `javamap` function can be handed the right table.
+  `software_statement` is RFC 7591's obvious next field name and Keycloak
+  answers it a **500**, so declaring it would make Gloak accept a body Keycloak
+  refuses.
 
 ## Boundaries
 
