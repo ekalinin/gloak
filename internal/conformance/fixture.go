@@ -1307,6 +1307,45 @@ var Fixtures = map[string]Fixture{
 	"localization-write":    localizationWriteFixture(),
 	"localization-nodoc":    localizationNoDocumentFixture(),
 	"realm-for-a-converter": realmFixture("gloak-probe-cdc"),
+
+	// ---- The small chapters: attack detection, client initial access and the
+	// component writes. Appended at the very end of the map, and the helpers
+	// after the last helper, for the reason the two blocks above are.
+
+	// The component read realm: one seeded client-registration policy that
+	// every non-mutating case addresses. `sub-component-types` needs a parent
+	// component only to decide whether the request is a 404, so one seed serves
+	// all nine of its cases.
+	"component-read": componentFixture("gloak-probe-cmp",
+		componentSeedStep("gloak-probe-cmp", probeComponentReadID,
+			"gloak-probe-read-policy", `{"max-clients":["42"]}`)),
+
+	// One realm per mutating case. The create's realm is seeded with nothing;
+	// the duplicate-id case needs a row for its own create to collide with.
+	"component-create": componentFixture("gloak-probe-cmp-new"),
+	"component-dup-id": componentFixture("gloak-probe-cmp-dup",
+		componentSeedStep("gloak-probe-cmp-dup", probeComponentDupID,
+			"gloak-probe-taken-policy", `{"max-clients":["42"]}`)),
+	"component-update": componentFixture("gloak-probe-cmp-upd",
+		componentSeedStep("gloak-probe-cmp-upd", probeComponentUpdateID,
+			"gloak-probe-update-policy", `{"max-clients":["42"]}`)),
+	"component-delete": componentFixture("gloak-probe-cmp-del",
+		componentSeedStep("gloak-probe-cmp-del", probeComponentDeleteID,
+			"gloak-probe-delete-policy", `{"max-clients":["42"]}`)),
+
+	// The three fixtures whose own writes are the measurement, read back by a
+	// case rather than asserted through a 201 or a 204 that carries no body.
+	"component-filtered": componentFilteredFixture(),
+	"component-no-name":  componentNoNameFixture(),
+	"component-merged":   componentMergedFixture(),
+	"component-deleted":  componentDeletedFixture(),
+
+	// The initial access family. The read realm holds two rows with different
+	// counts, which is what makes the listing's order assertable.
+	"client-initial-access":        clientInitialAccessFixture(),
+	"client-initial-access-create": realmFixture("gloak-probe-cia-new"),
+	"client-initial-access-count":  realmFixture("gloak-probe-cia-cnt"),
+	"client-initial-access-delete": clientInitialAccessDeleteFixture(),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -6343,6 +6382,190 @@ func localizationImportStep(realm, locale, body string) Step {
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/admin/realms/" + realm + "/localization/" + locale,
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(body),
+		},
+	}
+}
+
+// ---- The small chapters: attack detection, client initial access and the
+// component writes. Appended after the last helper, for the reason the two
+// blocks above are appended where they are.
+
+// The component ids the fixtures below create with. They are spelled out for
+// the reason the client-scope ids are: `POST /components` honours the body's
+// `id`, measured, so a case can name the same constant its fixture used and
+// nothing has to be captured from a `Location` on a shared container.
+//
+// **The ids and the names differ deliberately.** A fixture whose object is
+// named after its id cannot fail a handler that confuses the two.
+const (
+	probeComponentReadID   = "c0e00000-0000-4000-8000-000000000001"
+	probeComponentDupID    = "c0e00000-0000-4000-8000-000000000002"
+	probeComponentFilterID = "c0e00000-0000-4000-8000-000000000003"
+	probeComponentNoNameID = "c0e00000-0000-4000-8000-000000000004"
+	probeComponentUpdateID = "c0e00000-0000-4000-8000-000000000005"
+	probeComponentMergeID  = "c0e00000-0000-4000-8000-000000000006"
+	probeComponentDeleteID = "c0e00000-0000-4000-8000-000000000007"
+	probeComponentGoneID   = "c0e00000-0000-4000-8000-000000000008"
+)
+
+// componentPolicyType is the provider type every seeded component below uses.
+// A client-registration policy is the safe family to seed: a key provider would
+// add a key to `GET .../keys` and to the JWKS, and the user-profile provider is
+// the one whose second row breaks every login in the realm.
+const componentPolicyType = "org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy"
+
+// componentSeedStep creates one component with a fixed id and config.
+func componentSeedStep(realm, id, name, config string) Step {
+	return Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/" + realm + "/components",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"` + id + `","name":"` + name + `",` +
+				`"providerId":"max-clients","providerType":"` + componentPolicyType + `",` +
+				`"subType":"anonymous","config":` + config + `}`),
+		},
+		ExpectStatus: idempotentCreate,
+	}
+}
+
+// componentFixture is a realm plus zero or more seeded components.
+//
+// **One realm per mutating case**, which is the convention the organization
+// group fixtures state: a golden that holds only while the catalogue's order
+// holds is worse than no golden, and a fixture two cases name runs twice on the
+// recorder's shared container.
+func componentFixture(realm string, seeds ...Step) Fixture {
+	f := realmFixture(realm)
+	f.Steps = append(f.Steps, seeds...)
+	return f
+}
+
+// componentFilteredFixture creates a component whose config carries a key the
+// provider does not declare, so the case that reads it back is what says the
+// create **filtered** rather than stored what it was sent. The create's own 201
+// has an empty body and can say nothing about it.
+func componentFilteredFixture() Fixture {
+	const realm = "gloak-probe-cmp-flt"
+	return componentFixture(realm, componentSeedStep(realm, probeComponentFilterID,
+		"gloak-probe-filtered-policy",
+		`{"max-clients":["42"],"zzzUndeclared":["dropped"]}`))
+}
+
+// componentNoNameFixture creates a component with **no `name` at all**, which
+// is a 201 and reads back with no `name` key.
+//
+// That is the state master's `declarative-user-profile` row is in, reached
+// through the API rather than through bootstrap - so the case reading it back
+// is what says a `name` column that cannot be null is wrong twice over.
+func componentNoNameFixture() Fixture {
+	const realm = "gloak-probe-cmp-non"
+	f := realmFixture(realm)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/" + realm + "/components",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"` + probeComponentNoNameID + `",` +
+				`"providerId":"scope","providerType":"` + componentPolicyType + `",` +
+				`"subType":"anonymous"}`),
+		},
+		ExpectStatus: idempotentCreate,
+	})
+	return f
+}
+
+// componentMergedFixture seeds a component holding three config keys and then
+// PUTs a body naming two of them plus one the provider does not declare.
+//
+// The case that reads it afterwards is what says the `PUT` **merged and
+// re-filtered**: the untouched key survives, the undeclared one is dropped and
+// the two named ones move. The update case's own 204 cannot see any of that,
+// and doing the PUT here rather than depending on the update case having run is
+// the rule about catalogue order.
+func componentMergedFixture() Fixture {
+	const realm = "gloak-probe-cmp-mrg"
+	f := componentFixture(realm, componentSeedStep(realm, probeComponentMergeID,
+		"gloak-probe-merged-policy", `{"max-clients":["42"]}`))
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/" + realm + "/components/" + probeComponentMergeID,
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-merged-renamed",` +
+				`"providerId":"trusted-hosts","providerType":"` + componentPolicyType + `",` +
+				`"subType":"anonymous","config":{"trusted-hosts":["gloak.example"],` +
+				`"host-sending-registration-request-must-match":["true"],` +
+				`"client-uris-must-match":["true"],"zzzUndeclared":["dropped"]}}`),
+		},
+	})
+	return f
+}
+
+// componentDeletedFixture seeds a component and deletes it, so the case can
+// measure what a **second** delete answers - a 404, where the initial access
+// tokens one chapter away answer a repeat delete with a 204.
+func componentDeletedFixture() Fixture {
+	const realm = "gloak-probe-cmp-dl2"
+	f := componentFixture(realm, componentSeedStep(realm, probeComponentGoneID,
+		"gloak-probe-doomed-policy", `{"max-clients":["42"]}`))
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/" + realm + "/components/" + probeComponentGoneID,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+	})
+	return f
+}
+
+// clientInitialAccessFixture is a realm plus the rows a case reads.
+//
+// The two rows carry **different counts and expirations**, which is what makes
+// the listing's order an assertion rather than a shape: every other value in
+// the body is a volatile id or a timestamp, so two identical rows would compare
+// equal in either order. Measured insertion order on two container starts.
+func clientInitialAccessFixture() Fixture {
+	const realm = "gloak-probe-cia"
+	f := realmFixture(realm)
+	f.Steps = append(f.Steps,
+		clientInitialAccessStep(realm, `{"count":1,"expiration":0}`),
+		clientInitialAccessStep(realm, `{"count":5,"expiration":600}`),
+	)
+	return f
+}
+
+// clientInitialAccessDeleteFixture creates one row and captures its id, which
+// has to come from the `Location` header: the create's id is server-minted and
+// this family has no body key a case could name.
+func clientInitialAccessDeleteFixture() Fixture {
+	const realm = "gloak-probe-cia-del"
+	f := realmFixture(realm)
+	step := clientInitialAccessStep(realm, `{"count":2,"expiration":0}`)
+	step.CaptureHeader = map[string]string{"initial_access_id": "Location"}
+	f.Steps = append(f.Steps, step)
+	return f
+}
+
+func clientInitialAccessStep(realm, body string) Step {
+	return Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/" + realm + "/clients-initial-access",
 			Headers: map[string]string{
 				"Authorization": "Bearer {{access_token}}",
 				"Content-Type":  "application/json",
