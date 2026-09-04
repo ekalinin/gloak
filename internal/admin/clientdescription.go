@@ -86,14 +86,16 @@ func looksLikeOIDCClientDescription(body []byte) bool {
 // oidcClientDescription is Keycloak's OIDCClientRepresentation.
 //
 // **Every field name it accepts is declared, including the ones this cut does
-// not map**, because the decode is strict: a name that is not here is a 500,
-// and Keycloak accepts all forty-eight. All forty-eight were sent in one body
-// and answered 200, so the list is measured rather than copied out of a
-// specification.
+// not map**, because the decode is strict: a name that is not here is a 500.
+// Every name below was sent to the server and answered 200, so the list is
+// measured rather than copied out of a specification - and the measurement
+// earned its keep, because `software_statement` is in RFC 7591, is the obvious
+// fifty-fifth name, and is the **500**: Keycloak's representation has no such
+// field. Declaring it would have made Gloak accept a body Keycloak refuses.
 //
-// The unmapped block below is a declared gap, not an oversight: the golden of
-// `admin/realms-admin/client-description-converter-every-field` records what
-// Keycloak answers for all of them and is `Recorded` for exactly that reason.
+// The unmapped block below is a declared gap rather than an oversight; §1.9 of
+// docs/superpowers/handover/realms-admin-remainder.md records what Keycloak
+// answers for all of them.
 type oidcClientDescription struct {
 	ClientID                          *string   `json:"client_id"`
 	ClientName                        *string   `json:"client_name"`
@@ -137,7 +139,6 @@ type oidcClientDescription struct {
 	RequestURIs                                json.RawMessage `json:"request_uris"`
 	SoftwareID                                 json.RawMessage `json:"software_id"`
 	SoftwareVersion                            json.RawMessage `json:"software_version"`
-	SoftwareStatement                          json.RawMessage `json:"software_statement"`
 	TLSClientCertificateBoundAccessTokens      json.RawMessage `json:"tls_client_certificate_bound_access_tokens"`
 	TLSClientAuthSubjectDN                     json.RawMessage `json:"tls_client_auth_subject_dn"`
 	AuthorizationSignedResponseAlg             json.RawMessage `json:"authorization_signed_response_alg"`

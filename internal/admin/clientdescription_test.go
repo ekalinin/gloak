@@ -434,6 +434,53 @@ func TestClientDescriptionConverterRefusals(t *testing.T) {
 	}
 }
 
+// TestClientDescriptionConverterAcceptsEveryMeasuredFieldName sends the whole
+// accepted set in one body, and one name beside it that is **not** accepted.
+//
+// `software_statement` is RFC 7591's and is the obvious next name to declare;
+// Keycloak's representation has no such field and answers it the strict
+// decoder's 500. It is here because declaring it would have made Gloak accept a
+// body Keycloak refuses, and nothing but sending it says so.
+func TestClientDescriptionConverterAcceptsEveryMeasuredFieldName(t *testing.T) {
+	h, _, _ := newServer(t)
+	admin := adminToken(t, h)
+
+	const every = `{"redirect_uris":["https://e.com/cb"],"response_types":["code"],` +
+		`"grant_types":["authorization_code"],"application_type":"web","contacts":["a@b.c"],` +
+		`"client_name":"n","logo_uri":"https://l","client_uri":"https://u",` +
+		`"policy_uri":"https://p","tos_uri":"https://t","jwks_uri":"https://j",` +
+		`"jwks":{"keys":[]},"sector_identifier_uri":"https://s","subject_type":"public",` +
+		`"id_token_signed_response_alg":"RS256","id_token_encrypted_response_alg":"RSA-OAEP",` +
+		`"id_token_encrypted_response_enc":"A128CBC-HS256","userinfo_signed_response_alg":"RS256",` +
+		`"userinfo_encrypted_response_alg":"RSA-OAEP","userinfo_encrypted_response_enc":"A128CBC-HS256",` +
+		`"request_object_signing_alg":"RS256","request_object_encryption_alg":"RSA-OAEP",` +
+		`"request_object_encryption_enc":"A128CBC-HS256","token_endpoint_auth_method":"client_secret_basic",` +
+		`"token_endpoint_auth_signing_alg":"RS256","default_max_age":60,"require_auth_time":true,` +
+		`"default_acr_values":["1"],"initiate_login_uri":"https://i","request_uris":["https://r"],` +
+		`"client_id":"gloak-probe-every","software_id":"sw","software_version":"1",` +
+		`"tls_client_certificate_bound_access_tokens":true,"tls_client_auth_subject_dn":"CN=x",` +
+		`"backchannel_logout_uri":"https://bc","backchannel_logout_session_required":true,` +
+		`"frontchannel_logout_uri":"https://fc","frontchannel_logout_session_required":true,` +
+		`"post_logout_redirect_uris":["https://pl"],"authorization_signed_response_alg":"RS256",` +
+		`"authorization_encrypted_response_alg":"RSA-OAEP",` +
+		`"authorization_encrypted_response_enc":"A128CBC-HS256",` +
+		`"backchannel_token_delivery_mode":"poll",` +
+		`"backchannel_client_notification_endpoint":"https://bn",` +
+		`"backchannel_authentication_request_signing_alg":"RS256",` +
+		`"require_pushed_authorization_requests":true,"dpop_bound_access_tokens":true,` +
+		`"client_secret":"s","client_secret_expires_at":0,"client_id_issued_at":0,` +
+		`"registration_access_token":"t","registration_client_uri":"https://r","scope":"openid"}`
+
+	if w := send(t, h, http.MethodPost, converterPath, admin, every); w.Code != http.StatusOK {
+		t.Errorf("the whole accepted field set: %d %s", w.Code, w.Body)
+	}
+	w := send(t, h, http.MethodPost, converterPath, admin,
+		`{"redirect_uris":["https://e.com/cb"],"software_statement":"s"}`)
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("software_statement: %d %s, want 500", w.Code, w.Body)
+	}
+}
+
 // TestClientDescriptionConverterIgnoresTheContentType is a measurement a
 // reviewer would otherwise assume the other way: the route's @Consumes covers
 // three media types and none of them decides anything.
