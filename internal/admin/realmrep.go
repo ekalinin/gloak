@@ -137,13 +137,25 @@ type realmRepresentation struct {
 	AdminEventsEnabled          bool     `json:"adminEventsEnabled"`
 	AdminEventsDetailsEnabled   bool     `json:"adminEventsDetailsEnabled"`
 	InternationalizationEnabled bool     `json:"internationalizationEnabled"`
-	BrowserFlow                 string   `json:"browserFlow"`
-	RegistrationFlow            string   `json:"registrationFlow"`
-	DirectGrantFlow             string   `json:"directGrantFlow"`
-	ResetCredentialsFlow        string   `json:"resetCredentialsFlow"`
-	ClientAuthenticationFlow    string   `json:"clientAuthenticationFlow"`
-	DockerAuthenticationFlow    string   `json:"dockerAuthenticationFlow"`
-	FirstBrokerLoginFlow        string   `json:"firstBrokerLoginFlow"`
+	// DefaultLocale is **absent until it is set** and present as "" once it
+	// has been - measured 2026-09-03: master carries no such key, a realm sent
+	// `{"defaultLocale":"aa"}` carries it between supportedLocales and
+	// browserFlow, and one sent `{"defaultLocale":""}` carries the empty
+	// string. A plain string would emit it on every realm and a plain string
+	// with omitempty could not express the third state, which is why it is a
+	// pointer.
+	//
+	// It is read by GET .../localization/{locale}'s
+	// useRealmDefaultLocaleFallback, which is driven by this field **alone** -
+	// internationalizationEnabled changed nothing either way.
+	DefaultLocale            *string `json:"defaultLocale,omitempty"`
+	BrowserFlow              string  `json:"browserFlow"`
+	RegistrationFlow         string  `json:"registrationFlow"`
+	DirectGrantFlow          string  `json:"directGrantFlow"`
+	ResetCredentialsFlow     string  `json:"resetCredentialsFlow"`
+	ClientAuthenticationFlow string  `json:"clientAuthenticationFlow"`
+	DockerAuthenticationFlow string  `json:"dockerAuthenticationFlow"`
+	FirstBrokerLoginFlow     string  `json:"firstBrokerLoginFlow"`
 
 	// Attributes is a Java map in hash order, which the conformance suite
 	// normalises with Case.UnorderedKeys rather than reproducing - the same

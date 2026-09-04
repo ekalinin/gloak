@@ -3465,11 +3465,124 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 			t.Errorf("the realm group went with it: %v", err)
 		}
 	})
+
+	runLocalizationConformance(t, newStore)
 }
 
 // strPtr is the "absent is not empty" helper the organization cases need, and
 // nothing else in this file has wanted one.
 func strPtr(s string) *string { return &s }
+
+// runLocalizationConformance is the localization bundle's half of
+// RunConformance. It is a function rather than another inline t.Run so that
+// the two drivers' test files can name it in a failure without counting
+// subtests.
+func runLocalizationConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
+	t.Run("a localization bundle keeps its order and tells nil from empty", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		realm := newRealm(t, s)
+		other := &model.Realm{ID: model.NewID(), Name: "gloak-probe-loc-other", Enabled: true}
+		if err := s.Realms().Create(ctx, other); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+
+		if locales, err := s.Localizations().Locales(ctx, realm.ID); err != nil || len(locales) != 0 {
+			t.Errorf("Locales on an empty realm: got %v, %v; want none", locales, err)
+		}
+		if _, err := s.Localizations().ByLocale(ctx, realm.ID, "zz"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("ByLocale of a locale that does not exist: want ErrNotFound, got %v", err)
+		}
+		if err := s.Localizations().DeleteLocale(ctx, realm.ID, "zz"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("DeleteLocale of a locale that does not exist: want ErrNotFound, got %v", err)
+		}
+
+		// The order is the contract: these three are stored in an order that
+		// is neither alphabetical nor its reverse, and it has to come back
+		// exactly as it went in.
+		zz := &model.LocalizationTexts{Locale: "zz", Texts: []model.LocalizationText{
+			{Key: "gloak-probe-mid", Value: "m"},
+			{Key: "gloak-probe-aaa", Value: "a"},
+			{Key: "gloak-probe-zzz", Value: "z"},
+		}}
+		if err := s.Localizations().Put(ctx, realm.ID, zz); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		got, err := s.Localizations().ByLocale(ctx, realm.ID, "zz")
+		if err != nil {
+			t.Fatalf("ByLocale: %v", err)
+		}
+		if !slices.Equal(got.Texts, zz.Texts) {
+			t.Errorf("ByLocale: got %v, want %v", got.Texts, zz.Texts)
+		}
+		if got.Locale != "zz" {
+			t.Errorf("ByLocale locale: got %q", got.Locale)
+		}
+
+		// The empty document and the absent one are two rows, and both are in
+		// the locale listing.
+		if err := s.Localizations().Put(ctx, realm.ID,
+			&model.LocalizationTexts{Locale: "ee", Texts: []model.LocalizationText{}}); err != nil {
+			t.Fatalf("Put an empty bundle: %v", err)
+		}
+		if err := s.Localizations().Put(ctx, realm.ID,
+			&model.LocalizationTexts{Locale: "nn"}); err != nil {
+			t.Fatalf("Put a nil bundle: %v", err)
+		}
+		empty, err := s.Localizations().ByLocale(ctx, realm.ID, "ee")
+		if err != nil || empty.Texts == nil || len(empty.Texts) != 0 {
+			t.Errorf("the empty bundle: got %#v, %v; want a non-nil empty slice", empty, err)
+		}
+		absent, err := s.Localizations().ByLocale(ctx, realm.ID, "nn")
+		if err != nil || absent.Texts != nil {
+			t.Errorf("the nil bundle: got %#v, %v; want a nil slice", absent, err)
+		}
+
+		// Locales sorts, which is measured rather than tidy, and the two
+		// realms do not see each other.
+		if err := s.Localizations().Put(ctx, other.ID,
+			&model.LocalizationTexts{Locale: "aa", Texts: []model.LocalizationText{{Key: "k", Value: "v"}}}); err != nil {
+			t.Fatalf("Put in the other realm: %v", err)
+		}
+		locales, err := s.Localizations().Locales(ctx, realm.ID)
+		if err != nil || !slices.Equal(locales, []string{"ee", "nn", "zz"}) {
+			t.Errorf("Locales: got %v, %v; want [ee nn zz]", locales, err)
+		}
+		if _, err := s.Localizations().ByLocale(ctx, realm.ID, "aa"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("the other realm's locale is visible here: %v", err)
+		}
+
+		// Put replaces rather than merging: the second document names one of
+		// the first's keys and nothing of the first survives.
+		replacement := &model.LocalizationTexts{Locale: "zz", Texts: []model.LocalizationText{
+			{Key: "gloak-probe-aaa", Value: "replaced"},
+		}}
+		if err := s.Localizations().Put(ctx, realm.ID, replacement); err != nil {
+			t.Fatalf("Put a replacement: %v", err)
+		}
+		got, err = s.Localizations().ByLocale(ctx, realm.ID, "zz")
+		if err != nil || !slices.Equal(got.Texts, replacement.Texts) {
+			t.Errorf("after a replacing Put: got %v, %v", got.Texts, err)
+		}
+
+		if err := s.Localizations().DeleteLocale(ctx, realm.ID, "zz"); err != nil {
+			t.Fatalf("DeleteLocale: %v", err)
+		}
+		locales, err = s.Localizations().Locales(ctx, realm.ID)
+		if err != nil || !slices.Equal(locales, []string{"ee", "nn"}) {
+			t.Errorf("after DeleteLocale: got %v, %v; want [ee nn]", locales, err)
+		}
+
+		// The bundles go with the realm, which is the cascade rather than any
+		// clause in bootstrap.DeleteRealm.
+		if err := s.Realms().Delete(ctx, other.ID); err != nil {
+			t.Fatalf("Realms().Delete: %v", err)
+		}
+		if locales, err := s.Localizations().Locales(ctx, other.ID); err != nil || len(locales) != 0 {
+			t.Errorf("after the realm went: got %v, %v; want none", locales, err)
+		}
+	})
+}
 
 // newRealm creates one realm for a subtest that only needs somewhere to hang
 // its objects.

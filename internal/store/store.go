@@ -60,7 +60,78 @@ type Store interface {
 	IdentityProviders() IdentityProviderRepo
 	IdentityProviderMappers() IdentityProviderMapperRepo
 	Components() ComponentRepo
+	Localizations() LocalizationRepo
 	Close() error
+}
+
+// LocalizationRepo stores a realm's message bundles, one document per locale.
+//
+// **It decides nothing about key order.** Which order a write leaves behind is
+// a measured Keycloak behaviour that differs per write path - `POST` re-buckets
+// the whole document through a Java map and the other three preserve it - and
+// putting that behind a SQL boundary would hide a contract from the package
+// whose job is to reproduce it. `Put` therefore replaces the document with
+// exactly the slice internal/admin computed.
+type LocalizationRepo interface {
+	// Locales returns the locales the realm has a document for, **sorted**.
+	// Measured: five locales inserted `zz, aa, mm, ru, de-CH` came back
+	// `aa, de-CH, mm, ru, zz`. A locale whose document is nil is in the list -
+	// that is how the empty-body POST's defect is visible at all.
+	Locales(ctx context.Context, realmID string) ([]string, error)
+	// ByLocale reads one document. ErrNotFound means the realm has no row for
+	// that locale, which the read turns into `200 {}` and the delete into a
+	// 404 - two answers to one absence, measured on each.
+	ByLocale(ctx context.Context, realmID, locale string) (*model.LocalizationTexts, error)
+	// Put replaces the whole document, creating the row when there is none.
+	// A nil Texts stores the "no document" state that only an empty POST body
+	// reaches; see model.LocalizationTexts.
+	Put(ctx context.Context, realmID string, t *model.LocalizationTexts) error
+	// DeleteLocale removes the row. ErrNotFound becomes
+	// `404 {"error":"No localization texts for locale <l> found."}`.
+	DeleteLocale(ctx context.Context, realmID, locale string) error
+}
+
+// EncodeLocalizationTexts renders a bundle for the drivers' one nullable
+// column, and DecodeLocalizationTexts reads it back.
+//
+// **They live here rather than once per driver because the null is the
+// contract.** A nil Texts is the state an empty POST body leaves behind, an
+// empty Texts is the state `{}` leaves, and the two answer differently for
+// ever after; a copy of this in each driver is a copy that can come to
+// disagree about which is which, and the suite would see it only through
+// whichever driver a test happened to open. The two drivers already duplicate
+// their scanners, and those decode columns that cannot mean two things.
+func EncodeLocalizationTexts(t *model.LocalizationTexts) any {
+	if t == nil || t.Texts == nil {
+		return nil
+	}
+	b, err := json.Marshal(t.Texts)
+	if err != nil {
+		// model.LocalizationText holds two strings, so this cannot happen; the
+		// same judgement each driver's own encode makes.
+		return nil
+	}
+	return string(b)
+}
+
+// DecodeLocalizationTexts turns a column back into a bundle. An invalid column
+// is reported rather than smoothed over: nothing but EncodeLocalizationTexts
+// writes it, so a value that will not parse is a corrupted row and not a state
+// the API can reach.
+func DecodeLocalizationTexts(locale string, column *string) (*model.LocalizationTexts, error) {
+	t := &model.LocalizationTexts{Locale: locale}
+	if column == nil {
+		return t, nil
+	}
+	if err := json.Unmarshal([]byte(*column), &t.Texts); err != nil {
+		return nil, err
+	}
+	// A stored "null" would decode to a nil slice and read as the defect
+	// state, so the encoder's two shapes are the only two this returns.
+	if t.Texts == nil {
+		t.Texts = []model.LocalizationText{}
+	}
+	return t, nil
 }
 
 // IdentityProviderRepo stores a realm's identity providers.

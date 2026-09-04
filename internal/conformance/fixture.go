@@ -1299,6 +1299,14 @@ var Fixtures = map[string]Fixture{
 	"org-group-rm-del":  organizationGroupFixture("gloak-probe-og-rmd", true),
 	"org-group-crm-add": organizationGroupFixture("gloak-probe-og-cra", false),
 	"org-group-crm-del": organizationGroupFixture("gloak-probe-og-crd", true),
+
+	// The localization family's three fixtures. See localizationReadFixture for
+	// why the reads and the writes cannot share one realm, and why every POST
+	// in the read fixture is issued twice.
+	"localization-read":     localizationReadFixture(),
+	"localization-write":    localizationWriteFixture(),
+	"localization-nodoc":    localizationNoDocumentFixture(),
+	"realm-for-a-converter": realmFixture("gloak-probe-cdc"),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -6241,6 +6249,105 @@ func orgFixtureRoleWrite(realm, path, body string) Step {
 			Path:    "/admin/realms/" + realm + path,
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body:    []byte(body),
+		},
+	}
+}
+
+// localizationReadFixture is the realm every localization **read** case
+// addresses, and it is a realm of its own for two reasons that master cannot
+// satisfy: `GET /localization` is a realm-wide listing, so a locale any other
+// case wrote would show up in it, and the fallback needs the realm's
+// `defaultLocale` set, which is a change to the realm itself.
+//
+// **Every POST is issued twice, and that is the fixture's whole shape.** A POST
+// onto a locale that does not exist stores the request's own key order and a
+// POST onto one that does re-buckets the document through a Java map, so a
+// fixture that posted once would leave one state on the recorder's shared
+// container - where it has already run for an earlier case - and a different
+// one on the verifier's fresh handler, which runs it exactly once. Posting
+// twice reaches the fixed point on the first run, and the golden then pins the
+// re-bucketed order rather than the request's.
+func localizationReadFixture() Fixture {
+	const realm = "gloak-probe-loc"
+	f := realmFixture(realm)
+	// Six keys named in an order that is neither their bucket order nor its
+	// reverse, so the golden this produces cannot be reached by sorting.
+	const six = `{"gloak-probe-k1":"1","gloak-probe-k2":"2","gloak-probe-k3":"3",` +
+		`"gloak-probe-k4":"4","gloak-probe-k5":"5","gloak-probe-k6":"6"}`
+	for range 2 {
+		f.Steps = append(f.Steps,
+			localizationImportStep(realm, "en", six),
+			localizationImportStep(realm, "de", `{"gloak-probe-only-de":"eins"}`),
+			localizationImportStep(realm, "gloak-fb", `{"gloak-probe-only-fb":"fallback","gloak-probe-k1":"from-fb"}`),
+		)
+	}
+	// The default locale is what useRealmDefaultLocaleFallback reads, and it
+	// is the realm's own state rather than the bundle's. `gloak-fb` is a
+	// locale name no browser sends, so nothing else can be reading it.
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/" + realm,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`{"defaultLocale":"gloak-fb"}`),
+		},
+	})
+	return f
+}
+
+// localizationWriteFixture is the realm the write cases address. Their answers
+// are 204s and refusals with no body, so it does not matter that they run in
+// catalogue order - but the two deletes have to have something to delete, and
+// each destructive case is given a locale of its own so that one deleting it
+// cannot make another's fixture the thing that repaired it.
+func localizationWriteFixture() Fixture {
+	const realm = "gloak-probe-locw"
+	f := realmFixture(realm)
+	f.Steps = append(f.Steps,
+		localizationImportStep(realm, "gloak-dk", `{"gloak-probe-doomed":"v","gloak-probe-kept":"w"}`),
+		localizationImportStep(realm, "gloak-dl", `{"gloak-probe-kept":"w"}`),
+		localizationImportStep(realm, "gloak-put", `{"gloak-probe-kept":"w"}`),
+	)
+	return f
+}
+
+// localizationNoDocumentFixture leaves a locale with no document at all, which
+// is what `POST .../localization/{locale}` with an empty request body does.
+//
+// **The step accepts 500 as well as 204 and that is the measurement, not a
+// concession.** Poisoning a locale is not idempotent: the first empty POST
+// answers 204 and creates the row, and every one after it answers 500, because
+// the merge it tries to do has nothing to merge into. A fixture more than one
+// case names runs twice on the recorder's shared container, so the second run
+// has to be allowed to fail the way the server fails it.
+func localizationNoDocumentFixture() Fixture {
+	const realm = "gloak-probe-locn"
+	f := realmFixture(realm)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/" + realm + "/localization/gloak-nul",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+		},
+		ExpectStatus: []int{http.StatusNoContent, http.StatusInternalServerError},
+	})
+	return f
+}
+
+// localizationImportStep is one POST of a bundle.
+func localizationImportStep(realm, locale, body string) Step {
+	return Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/" + realm + "/localization/" + locale,
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(body),
 		},
 	}
 }

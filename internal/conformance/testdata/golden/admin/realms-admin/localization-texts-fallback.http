@@ -1,0 +1,11 @@
+# GET /admin/realms/gloak-probe-loc/localization/en
+HTTP/1.1 200 OK
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"gloak-probe-k5":"5","gloak-probe-k6":"6","gloak-probe-only-fb":"fallback","gloak-probe-k3":"3","gloak-probe-k4":"4","gloak-probe-k1":"1","gloak-probe-k2":"2"}
