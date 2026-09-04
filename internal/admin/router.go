@@ -100,6 +100,45 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /admin/realms/{realm}/client-policies/profiles",
 		h.guardAny(realmWriteRoles, h.updateClientProfiles))
 
+	// Localization, seven operations. Measured 2026-09-03; see
+	// docs/superpowers/plans/2026-09-03-realms-admin-remainder.md.
+	//
+	// **The three reads do not share one admission and the difference is one
+	// path segment.** `GET .../localization/{locale}` takes
+	// GET /admin/realms/{realm}'s own guard - a create-realm holder reads it,
+	// and a master caller holding any master-realm admin role reads **another
+	// realm's** texts in full - while the collection listing and the single-key
+	// read beside it refuse both and take the realm container's roles instead.
+	// Swept one role at a time over all 21 of the realm's container, the two
+	// master-only realm roles and a caller holding none, on each of the three.
+	// So this is the second read in this API measured reaching sideways across
+	// a realm boundary, and its two siblings are not.
+	//
+	// The four writes take manage-realm alone, which the same sweep says.
+	mux.HandleFunc("GET /admin/realms/{realm}/localization",
+		h.guardRealmContainerAny(h.listLocales))
+	mux.HandleFunc("GET /admin/realms/{realm}/localization/{locale}",
+		h.guardRealmRead(h.readLocalizationTexts))
+	mux.HandleFunc("POST /admin/realms/{realm}/localization/{locale}",
+		h.guardAny(realmWriteRoles, h.importLocalizationTexts))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/localization/{locale}",
+		h.guardAny(realmWriteRoles, h.deleteLocale))
+	mux.HandleFunc("GET /admin/realms/{realm}/localization/{locale}/{key}",
+		h.guardRealmContainerAny(h.readLocalizationText))
+	mux.HandleFunc("PUT /admin/realms/{realm}/localization/{locale}/{key}",
+		h.guardAny(realmWriteRoles, h.setLocalizationText))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/localization/{locale}/{key}",
+		h.guardAny(realmWriteRoles, h.deleteLocalizationText))
+
+	// The client description converter, and **it is not a Realms Admin guard**
+	// although the description tags it one: manage-clients alone opens it,
+	// measured across the same 22 callers, and manage-realm is 403. That is the
+	// client-scope family's direction - the fourth time this tag has failed to
+	// predict a guard - and the caller is judged **before** the body, so a
+	// caller holding nothing gets 403 for a body that would have been a 400.
+	mux.HandleFunc("POST /admin/realms/{realm}/client-description-converter",
+		h.guard("manage-clients", h.convertClientDescription))
+
 	// Client types, whose entire contract on a default 26.7.1 is a 501.
 	// CLIENT_TYPES is a disabled preview feature, the same situation as
 	// GET .../client-secret/rotated's permanent 404. See guardRealmFeature for
@@ -1388,6 +1427,44 @@ func (h *handler) guardRealmRead(next func(http.ResponseWriter, *http.Request, *
 			return
 		}
 		if !ok {
+			writeForbidden(w)
+			return
+		}
+		next(w, r, &reqContext{realm: realm, caller: c})
+	}
+}
+
+// guardRealmContainerAny admits any admin role of the realm's **own**
+// container except impersonation, and nothing else.
+//
+// It is the realm listing's per-row question - containerRoleNames plus
+// opensARealm - asked as a route guard, and it is measured rather than
+// borrowed. Swept 2026-09-03 on GET .../localization and
+// GET .../localization/{locale}/{key} over all 21 roles of the target realm's
+// container, a caller holding only the realm role create-realm, and one holding
+// nothing:
+//
+//	every container role but impersonation   200
+//	impersonation                            403
+//	create-realm                             403
+//	nothing                                  403
+//	a role on **another** realm's container   403
+//
+// The two roles that separate it from guardRealmRead are the last two rows.
+// guardRealmRead admits a create-realm holder and reaches sideways into other
+// realms; this does neither, and the third read in the same family takes that
+// other guard. One family, two admissions, one path segment apart.
+func (h *handler) guardRealmContainerAny(next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		realm := h.resolveRealm(w, r)
+		if realm == nil {
+			return
+		}
+		c := h.resolveCaller(w, r, realm)
+		if c == nil {
+			return
+		}
+		if !opensARealm(containerRoleNames(c.container, c.effective)) {
 			writeForbidden(w)
 			return
 		}
