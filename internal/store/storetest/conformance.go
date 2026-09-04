@@ -3582,6 +3582,8 @@ func runLocalizationConformance(t *testing.T, newStore func(t *testing.T) store.
 			t.Errorf("after the realm went: got %v, %v; want none", locales, err)
 		}
 	})
+
+	runComponentWritesAndInitialAccess(t, newStore)
 }
 
 // newRealm creates one realm for a subtest that only needs somewhere to hang
@@ -3593,4 +3595,193 @@ func newRealm(t *testing.T, s store.Store) *model.Realm {
 		t.Fatalf("Realms().Create: %v", err)
 	}
 	return realm
+}
+
+// runComponentWritesAndInitialAccess covers the methods the small-chapters cut
+// added: ComponentRepo's Update and Delete and the whole of
+// ClientInitialAccessRepo.
+//
+// It is a function rather than three more subtests inside RunConformance
+// because that one is already the length it is, and it is **called from**
+// RunConformance rather than from the two driver tests: a second exported entry
+// point is a thing one driver can forget to call, which is exactly the
+// divergence this package exists to prevent.
+func runComponentWritesAndInitialAccess(t *testing.T, newStore func(t *testing.T) store.Store) {
+	t.Run("a component update replaces the row and rewrites its whole config", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		realm := newRealm(t, s)
+
+		c := &model.Component{
+			ID: model.NewID(), RealmID: realm.ID, Name: strPtr("gloak-probe-before"),
+			ProviderID: "max-clients", ParentID: realm.ID, SubType: "anonymous",
+			ProviderType: "org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy",
+			Config: []model.ComponentConfigEntry{
+				{Name: "max-clients", Values: []string{"42"}},
+				{Name: "zz", Values: []string{"one", "two"}},
+			},
+		}
+		if err := s.Components().Create(ctx, c); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+
+		// The merge and the filter are internal/admin's; this replaces.
+		c.Name = strPtr("gloak-probe-after")
+		c.ProviderID = "trusted-hosts"
+		c.SubType = "authenticated"
+		c.Config = []model.ComponentConfigEntry{
+			{Name: "client-uris-must-match", Values: []string{"true"}},
+		}
+		if err := s.Components().Update(ctx, c); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+		got, err := s.Components().ByID(ctx, realm.ID, c.ID)
+		if err != nil {
+			t.Fatalf("ByID: %v", err)
+		}
+		if got.Name == nil || *got.Name != "gloak-probe-after" || got.ProviderID != "trusted-hosts" ||
+			got.SubType != "authenticated" {
+			t.Errorf("after Update: %+v", got)
+		}
+		if len(got.Config) != 1 || got.Config[0].Name != "client-uris-must-match" {
+			t.Errorf("the old config survived the update: %v", got.Config)
+		}
+
+		// A row the realm does not have is ErrNotFound rather than a silent
+		// no-op, which is what the 404 on the route rests on.
+		missing := *c
+		missing.ID = model.NewID()
+		if err := s.Components().Update(ctx, &missing); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("Update of a missing component: %v, want ErrNotFound", err)
+		}
+
+		// A name may repeat: the wire has no uniqueness on it, measured.
+		twin := &model.Component{
+			ID: model.NewID(), RealmID: realm.ID, Name: strPtr("gloak-probe-after"),
+			ProviderID: "scope", ParentID: realm.ID,
+			ProviderType: "org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy",
+		}
+		if err := s.Components().Create(ctx, twin); err != nil {
+			t.Errorf("a repeated component name: %v, want it accepted", err)
+		}
+		// An id that repeats is not, which is the measured 409.
+		clash := &model.Component{
+			ID: c.ID, RealmID: realm.ID, Name: strPtr("gloak-probe-clash"),
+			ProviderID: "scope", ParentID: realm.ID,
+			ProviderType: "org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy",
+		}
+		if err := s.Components().Create(ctx, clash); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("a repeated component id: %v, want ErrConflict", err)
+		}
+	})
+
+	t.Run("a component delete takes its config and answers a missing row", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		realm := newRealm(t, s)
+
+		c := &model.Component{
+			ID: model.NewID(), RealmID: realm.ID, Name: strPtr("gloak-probe-doomed"),
+			ProviderID: "max-clients", ParentID: realm.ID,
+			ProviderType: "org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy",
+			Config: []model.ComponentConfigEntry{
+				{Name: "max-clients", Values: []string{"42"}},
+			},
+		}
+		if err := s.Components().Create(ctx, c); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := s.Components().Delete(ctx, realm.ID, c.ID); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		if _, err := s.Components().ByID(ctx, realm.ID, c.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("after Delete: %v, want ErrNotFound", err)
+		}
+		// The repeat is ErrNotFound, which is what makes the route's second
+		// delete a 404 where the initial access tokens' is a 204.
+		if err := s.Components().Delete(ctx, realm.ID, c.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("deleting twice: %v, want ErrNotFound", err)
+		}
+		// Recreating the same id works, so the config rows went with the row
+		// rather than being left to collide.
+		if err := s.Components().Create(ctx, c); err != nil {
+			t.Errorf("recreating the deleted id: %v", err)
+		}
+	})
+
+	t.Run("initial access tokens keep insertion order and cascade with the realm", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		realm := newRealm(t, s)
+		other := &model.Realm{ID: model.NewID(), Name: "gloak-probe-other", Enabled: true}
+		if err := s.Realms().Create(ctx, other); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+
+		// The counts are what the order is asserted with: the ids are random
+		// and would sort a different way.
+		want := []int{7, 1, 4}
+		ids := make([]string, 0, len(want))
+		for _, n := range want {
+			m := &model.ClientInitialAccess{
+				ID: model.NewID(), RealmID: realm.ID, Timestamp: 1788528000,
+				Expiration: int64(n) * 100, Count: n, RemainingCount: n,
+			}
+			if err := s.ClientInitialAccess().Create(ctx, m); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			ids = append(ids, m.ID)
+		}
+		// One in the other realm, which List must not see.
+		if err := s.ClientInitialAccess().Create(ctx, &model.ClientInitialAccess{
+			ID: model.NewID(), RealmID: other.ID, Timestamp: 1, Count: 9, RemainingCount: 9,
+		}); err != nil {
+			t.Fatalf("Create in the other realm: %v", err)
+		}
+
+		rows, err := s.ClientInitialAccess().List(ctx, realm.ID)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(rows) != len(want) {
+			t.Fatalf("List returned %d rows, want %d", len(rows), len(want))
+		}
+		for i, n := range want {
+			if rows[i].Count != n || rows[i].ID != ids[i] {
+				t.Errorf("row %d is %+v, want count %d and id %s", i, rows[i], n, ids[i])
+			}
+			if rows[i].RemainingCount != n || rows[i].Expiration != int64(n)*100 ||
+				rows[i].Timestamp != 1788528000 {
+				t.Errorf("row %d did not round-trip: %+v", i, rows[i])
+			}
+		}
+
+		// The delete swallows a missing id, which is what the route's 204 for
+		// an id that never existed rests on - and it is realm-scoped.
+		if err := s.ClientInitialAccess().Delete(ctx, realm.ID, "gloak-probe-no-such-token"); err != nil {
+			t.Errorf("deleting an id that is not there: %v", err)
+		}
+		if err := s.ClientInitialAccess().Delete(ctx, other.ID, ids[0]); err != nil {
+			t.Errorf("deleting through the wrong realm: %v", err)
+		}
+		if rows, err := s.ClientInitialAccess().List(ctx, realm.ID); err != nil || len(rows) != 3 {
+			t.Errorf("the wrong realm's delete removed a row: %v, %v", rows, err)
+		}
+		if err := s.ClientInitialAccess().Delete(ctx, realm.ID, ids[1]); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		rows, err = s.ClientInitialAccess().List(ctx, realm.ID)
+		if err != nil || len(rows) != 2 || rows[0].ID != ids[0] || rows[1].ID != ids[2] {
+			t.Errorf("after the delete: %v, %v", rows, err)
+		}
+
+		// The rows go with the realm, which is the cascade rather than any
+		// clause in bootstrap.DeleteRealm.
+		if err := s.Realms().Delete(ctx, other.ID); err != nil {
+			t.Fatalf("Realms().Delete: %v", err)
+		}
+		if rows, err := s.ClientInitialAccess().List(ctx, other.ID); err != nil || len(rows) != 0 {
+			t.Errorf("after the realm went: %v, %v", rows, err)
+		}
+	})
 }

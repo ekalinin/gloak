@@ -13413,6 +13413,18 @@ var adminCases = []Case{
 		// - and `realmRoles` is **populated**, which is what says this family
 		// really serves a group's roles rather than the two empty collections
 		// the realm family's representation writes.
+		//
+		// **The order inside `realmRoles` is not reproducible, refuted
+		// 2026-09-03.** The cut that added the second realm role recorded this
+		// array as an assertion; the next recording answered it the other way
+		// round. Measured straight afterwards on a live 26.7.1: six fresh
+		// realms given the same two roles in the same order answered two
+		// different orders, and four fresh realms given four roles answered
+		// four different orders - matching neither name order, assignment
+		// order, reverse assignment order, nor the role ids ascending or
+		// descending. The two-role sample fits "descending role id" and the
+		// four-role sample refutes it, which is what a coincidence over two
+		// elements looks like.
 		ID: "admin/organizations/groups-list-full",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -13428,6 +13440,7 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"*/realmRoles"},
 	},
 	{
 		// **`search` answers its matches flat**, where the realm group listing
@@ -13472,6 +13485,9 @@ var adminCases = []Case{
 		// The single read: the brief shape plus the three keys, and **no**
 		// `access` block - which is the one key that separates it from
 		// `GET /groups/{id}` in the realm family beyond `subGroupCount`.
+		//
+		// `realmRoles` is Unordered for the reason the listing above is: the
+		// order was refuted on 2026-09-03 over ten fresh realms.
 		ID: "admin/organizations/groups-read",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -13487,6 +13503,7 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"realmRoles"},
 	},
 	{
 		// A group that does not exist: the twentieth spelling of not-found, and
@@ -14123,6 +14140,15 @@ var adminCases = []Case{
 	// locator, which the two that already agree do not establish.
 
 	{
+		// **`realmMappings` is Unordered, refuted 2026-09-03.** The cut that
+		// added the second realm role recorded this array's order as an
+		// assertion; the next recording answered it the other way round.
+		// Measured straight afterwards: six fresh realms given the same two
+		// roles in the same order answered two different orders, and four fresh
+		// realms given four roles answered four different orders, matching
+		// neither name order, assignment order, reverse assignment order, nor
+		// the role ids either way. It is the realm role listings' situation
+		// reached from a different route.
 		ID: "admin/role-mapper/org-group-all",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -14140,6 +14166,7 @@ var adminCases = []Case{
 		},
 		Volatile:      []string{"realmMappings/*/containerId"},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"realmMappings"},
 	},
 	{
 		// A group holding nothing answers `{}`, the same empty object a user
@@ -14161,6 +14188,7 @@ var adminCases = []Case{
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 	},
 	{
+		// Unordered for `org-group-all`'s reason, one route up.
 		ID: "admin/role-mapper/org-group-realm",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -14178,6 +14206,7 @@ var adminCases = []Case{
 		},
 		Volatile:      []string{"*/containerId"},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
 	},
 	{
 		// The available listing is unordered here for the reason every role
@@ -14204,6 +14233,7 @@ var adminCases = []Case{
 		Unordered:     []string{"."},
 	},
 	{
+		// Unordered for `org-group-all`'s reason, three routes up.
 		ID: "admin/role-mapper/org-group-realm-composite",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -14222,6 +14252,7 @@ var adminCases = []Case{
 		},
 		Volatile:      []string{"*/containerId"},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Unordered:     []string{"."},
 	},
 	{
 		// The write: 204, all five security headers, no Cache-Control.
@@ -14916,6 +14947,1003 @@ var adminCases = []Case{
 				`Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" ` +
 				`Location="https://saml.example.com/acs" index="0"/>` +
 				`</SPSSODescriptor></EntityDescriptor>`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+
+	// ---- Three small chapters and the component remainder ----------------
+	//
+	// Appended at the very end of the slice. Every value below was measured
+	// against a live 26.7.1 on 2026-09-03, container kc-small on port 8165;
+	// docs/superpowers/plans/2026-09-03-small-chapters.md carries the sweeps.
+	//
+	// Ten operations: three on `Attack Detection`, three on `Client Initial
+	// Access` and the four `Component` had left. The extra cases are the pairs
+	// and the refusals, and each of them is a rule a single happy path would
+	// record as a body and prove nothing about.
+	{
+		// **The whole chapter's body, and Gloak's only reachable state.** There
+		// is no brute-force detector in this tree, so the seven-key zero record
+		// is what every request can produce - and it is byte for byte what
+		// Keycloak answers for a user with no failures.
+		//
+		// The key order is `javamap.KeyOrder`'s over the seven names, which is
+		// the fifteenth measured key set for that function and the first from
+		// this chapter. It is asserted here rather than masked: the struct's
+		// field order reproduces it.
+		//
+		// **`lastIPFailure` is the string `n/a`**, which is the one value in the
+		// record that cannot be guessed from its type.
+		ID: "admin/attack-detection/brute-force-status",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Attack Detection: the brute-force status of one user",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/attack-detection/brute-force/users/{userId}",
+		Fixture:   "admin-token-admin-user",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/attack-detection/brute-force/users/{{user_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **A user id that resolves to nothing answers 200, not 404** - the same
+		// zero record a real user gets. So the route does not resolve the user
+		// at all, and a lookup added "to be safe" would invent a status Keycloak
+		// does not send. It is the pair with the case above that says so: one
+		// case alone would look like an ordinary read.
+		ID: "admin/attack-detection/brute-force-status-unknown-user",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Attack Detection: the brute-force status of a user that does not exist",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/attack-detection/brute-force/users/gloak-probe-no-such-user",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The per-user clear. **204 with no `Cache-Control`**, and the request
+		// declares no `Content-Type`, so the response omits `X-Frame-Options` -
+		// rule (3) of AGENTS.md's security-header bullet, confirmed on a third
+		// family.
+		ID: "admin/attack-detection/clear-user",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Attack Detection: clear one user's brute-force record",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/attack-detection/brute-force/users/{userId}",
+		Fixture:   "admin-token-admin-user",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/attack-detection/brute-force/users/{{user_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Type", "Cache-Control"},
+	},
+	{
+		// The realm-wide clear, sent **with** an `application/json`
+		// `Content-Type` and nothing else changed. Its `X-Frame-Options` is
+		// present where the case above's is absent, which is the pair that pins
+		// rule (3) rather than the two 204s merely agreeing.
+		ID: "admin/attack-detection/clear-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Attack Detection: clear every brute-force record in the realm",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/attack-detection/brute-force/users",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method: http.MethodDelete,
+			Path:   "/admin/realms/master/attack-detection/brute-force/users",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+		},
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+
+	// ---- Client Initial Access -------------------------------------------
+	{
+		// **The create's six keys, where the listing below has five.** The
+		// token is minted once and never stored, so there is nothing for the
+		// listing to serve it from - which is the whole difference between the
+		// two serialisations of one row.
+		//
+		// `{}` is the body, so this also records the two defaults: one
+		// registration and no expiry.
+		//
+		// The token, the id and the timestamp are per-request and masked; what
+		// the golden asserts is the key set, the key order, the defaults and
+		// the `Location`'s shape.
+		ID: "admin/client-initial-access/create",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Initial Access: create a token with the default count and expiry",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/clients-initial-access",
+		Fixture:   "client-initial-access-create",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-cia-new/clients-initial-access",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{}`),
+		},
+		AssertHeaders:       []string{"Content-Type", "Location"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+		VolatileTailHeaders: []string{"Location"},
+		Volatile:            []string{"id", "token", "timestamp"},
+	},
+	{
+		// The same create with both fields named, which is what says they are
+		// stored rather than defaulted: `count` and `remainingCount` start
+		// equal, and `expiration` is the **interval** the caller sent rather
+		// than an instant.
+		ID: "admin/client-initial-access/create-with-count",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Initial Access: create a token with a count and an expiry",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "client-initial-access-count",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-cia-cnt/clients-initial-access",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"count":3,"expiration":600}`),
+		},
+		AssertHeaders:       []string{"Content-Type", "Location"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+		VolatileTailHeaders: []string{"Location"},
+		Volatile:            []string{"id", "token", "timestamp"},
+	},
+	{
+		// **Five keys, and no `token` on any row.** The two rows carry different
+		// counts and expirations so that the order is an assertion: every other
+		// value in the body is masked, and two identical rows would compare
+		// equal either way round. Measured insertion order on two container
+		// starts and two reads apiece, with ids that are random UUIDs and do not
+		// sort that way - so the array is **not** declared Unordered.
+		//
+		// **No `Cache-Control` on any 2xx of this family**, listing and creates
+		// alike, where nearly every other Admin API read sends `no-cache`. The
+		// hand probe that measured this endpoint had it transcribed wrong and
+		// the recorded golden is what refuted it, which is the fifth time a
+		// golden has corrected a probe in this repository.
+		ID: "admin/client-initial-access/list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Initial Access: list a realm's tokens",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients-initial-access",
+		Fixture:   "client-initial-access",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-cia/clients-initial-access",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+		Volatile:            []string{"*/id", "*/timestamp"},
+	},
+	{
+		// The delete. 204, no body, and the request declares no `Content-Type`,
+		// so no `X-Frame-Options`.
+		ID: "admin/client-initial-access/delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Initial Access: delete a token",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/clients-initial-access/{id}",
+		Fixture:   "client-initial-access-delete",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/gloak-probe-cia-del/clients-initial-access/{{initial_access_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Type", "Cache-Control"},
+	},
+	{
+		// **An id that never existed is a 204**, not a 404 - so this chapter
+		// adds no spelling of not-found to the twenty-seven, and it is the
+		// opposite of `DELETE /components/{id}` in the next block, whose repeat
+		// is a 404. The two are in one branch on purpose.
+		ID: "admin/client-initial-access/delete-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Initial Access: delete a token that does not exist",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "client-initial-access",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/gloak-probe-cia/clients-initial-access/gloak-probe-no-such-token",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Type", "Cache-Control"},
+	},
+	{
+		// **The request shape is not the response shape.** The decoder is
+		// `ClientInitialAccessCreatePresentation`, which declares `count` and
+		// `expiration` and nothing else, so four of the six keys the 201 serves
+		// are refused on the way in. `id` is the one this case sends, because a
+		// caller trying to round-trip a row is the way anybody would meet it.
+		ID: "admin/client-initial-access/create-unrecognised-field",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Initial Access: a create naming a key only the response has",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "client-initial-access",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-cia/clients-initial-access",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"gloak-probe-chosen","count":2}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// A negative count. **Zero is not refused** - `{"count":0}` is a 201
+		// creating a token that can never be used - so this is a sign test and
+		// not a positivity one, and the sentence names the field.
+		ID: "admin/client-initial-access/create-negative-count",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Initial Access: a create with a negative count",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "client-initial-access",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-cia/clients-initial-access",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"count":-5}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The other sign test, and the pair is the point: the two sentences
+		// differ in more than the field name - "The count" against "The
+		// expiration time interval" - so they are two strings rather than one
+		// with a substitution, and a handler sharing one would be right on one
+		// of them.
+		ID: "admin/client-initial-access/create-negative-expiration",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Initial Access: a create with a negative expiration",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "client-initial-access",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-cia/clients-initial-access",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"expiration":-1}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// An empty body is a 500 where `{` is a 400 - the same split the
+		// identity provider mapper create has, and the reason the decode reads
+		// the bytes before it parses them.
+		ID: "admin/client-initial-access/create-empty-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Initial Access: a create with an empty request body",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "client-initial-access",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-cia/clients-initial-access",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+
+	// ---- Component: the four operations the family had left ---------------
+	{
+		// The create. **201 with an empty body and a `Location`**, no
+		// `Cache-Control`, and the tail is the id the **body** chose - which is
+		// `POST /clients`' rule and is the qualifier AGENTS.md's Location bullet
+		// gives the identity provider mapper create and not this one.
+		//
+		// The tail is masked anyway, because a create that named no id would
+		// mint one: what the golden pins is the header's shape.
+		ID: "admin/component/create",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: create a client-registration policy",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/components",
+		Fixture:   "component-create",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-cmp-new/components",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-new-policy","providerId":"max-clients",` +
+				`"providerType":"org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy",` +
+				`"subType":"anonymous","config":{"max-clients":["7"]}}`),
+		},
+		AssertHeaders:       []string{"Location"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+		VolatileTailHeaders: []string{"Location"},
+	},
+	{
+		// **The create filters the config to the provider's declared
+		// properties.** The fixture sent `zzzUndeclared` beside `max-clients`
+		// and this read is what says it was dropped: the 201 has an empty body
+		// and can say nothing about it.
+		//
+		// It also records the row's shape from a create rather than from
+		// bootstrap - `subType` present, `parentId` the realm's own id.
+		ID: "admin/component/read-created-filters-the-config",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: a created component reads back without its undeclared config keys",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-filtered",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-cmp-flt/components/" + probeComponentFilterID,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"parentId"},
+	},
+	{
+		// **A create with no `name` is a 201 and the row reads back with no
+		// `name` key.** That is the state master's `declarative-user-profile`
+		// row is in, reached through the API - so "the nameless component" is
+		// not a bootstrap peculiarity and a `name` column that cannot be null is
+		// wrong twice over.
+		//
+		// `config` is `{}` because the body named none, and `subType` is present
+		// because it did.
+		ID: "admin/component/read-created-without-a-name",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: a component created with no name",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-no-name",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-cmp-non/components/" + probeComponentNoNameID,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"parentId"},
+	},
+	{
+		// **A create naming an id the realm already holds is the 409 with the
+		// `Duplicate resource error` body**, and a duplicate **name** is a 201 -
+		// so the collision this case makes is on the id and only on the id.
+		//
+		// **The five security headers on this response are not a function of the
+		// request, and this case is the first measurement that shows it
+		// directly.** Four identical duplicate-id creates against an untouched
+		// row answered none, then all five, all five, all five, and that
+		// reproduced in each of two fresh realms; twenty repeats after the first
+		// were all five every time. The fixture therefore makes the collision
+		// once itself, so this case's request is never the first occurrence and
+		// the golden is reproducible. A hand probe of this endpoint recorded
+		// none of the five and was measuring its own first occurrence. See F147.
+		ID: "admin/component/create-duplicate-id",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: a create naming an id that is taken",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-dup-id",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-cmp-dup/components",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"` + probeComponentDupID + `","name":"gloak-probe-second-policy",` +
+				`"providerId":"max-clients",` +
+				`"providerType":"org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy",` +
+				`"subType":"anonymous","config":{"max-clients":["9"]}}`),
+		},
+		AssertHeaders: []string{
+			"Content-Type", "Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
+		},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **A pair that does not resolve is a 400, whichever half is wrong.**
+		// This case sends an unknown `providerId` under a **known** type;
+		// measured over all eighteen registered types, an unknown type gives the
+		// identical sentence. So the message is about the pair, whatever its
+		// wording suggests.
+		ID: "admin/component/create-unknown-provider",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: a create naming a provider that is not registered",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-read",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-cmp/components",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-nowhere","providerId":"gloak-probe-no-such-provider",` +
+				`"providerType":"org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **A registered Workflow provider is a 403 with a sentence of its
+		// own**, and it is the only one of the eighteen types that answers this
+		// way. It is not about the caller: the same administrator creates a
+		// client-registration policy in the same realm.
+		ID: "admin/component/create-workflow-provider",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: a create naming a Workflow provider",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-read",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-cmp/components",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-workflow","providerId":"notify-user",` +
+				`"providerType":"org.keycloak.models.workflow.WorkflowStepProvider"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **A registered provider under one of the other eleven types is a
+		// 500.** Three answers for three kinds of provider, and only a registry
+		// of all 245 registered pairs tells them apart - which is why
+		// internal/model carries one and not just the 33 with declared
+		// properties.
+		ID: "admin/component/create-unsupported-provider",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: a create naming a real provider the endpoint cannot make",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-read",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-cmp/components",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-mapper","providerId":"oidc-sub-mapper",` +
+				`"providerType":"org.keycloak.protocol.ProtocolMapper"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The `required` flag in the provider catalogue is not the
+		// validator.** `max-clients` declares its one property `required:false`
+		// and a bare create is still refused - and the sentence interpolates
+		// `'Max Clients Per Realm'`, a resolved message-bundle label the
+		// catalogue does not carry: the property's own `label` is
+		// `max-clients.label`.
+		ID: "admin/component/create-missing-required-config",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: a create missing a property the provider insists on",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-read",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-cmp/components",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-bare-limit","providerId":"max-clients",` +
+				`"providerType":"org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy",` +
+				`"subType":"anonymous"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The other half of the same property's rules: **presence and value are
+		// two checks with two sentences**, and the value one runs second. A
+		// handler with one branch per property gets one of them wrong.
+		ID: "admin/component/create-non-numeric-config",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: a create whose config value is the wrong kind",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-read",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-cmp/components",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-bad-limit","providerId":"max-clients",` +
+				`"providerType":"org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy",` +
+				`"subType":"anonymous","config":{"max-clients":["not-a-number"]}}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The strict decoder, naming `ComponentRepresentation`, a line and a
+		// column - which is what makes this endpoint one of the fourteen
+		// AGENTS.md counts and one of the ones that report a position.
+		ID: "admin/component/create-unrecognised-field",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: a create carrying a field the representation does not declare",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-read",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-cmp/components",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"providerId":"scope","zzUnknown":1}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The update. 204, no `Cache-Control`, and `X-Frame-Options` present
+		// because the request declares `application/json`.
+		ID: "admin/component/update",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: update a component",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/components/{id}",
+		Fixture:   "component-update",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-cmp-upd/components/" + probeComponentUpdateID,
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-update-policy","providerId":"max-clients",` +
+				`"providerType":"org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy",` +
+				`"subType":"anonymous","config":{"max-clients":["99"]}}`),
+		},
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+	},
+	{
+		// **The PUT merges the config, re-filters it against the body's
+		// `providerId` and renames the row.** The fixture moved a `max-clients`
+		// policy to `trusted-hosts` naming three declared keys and one
+		// undeclared one; this read is what says `max-clients` was dropped -
+		// because `trusted-hosts` does not declare it - and `zzzUndeclared` with
+		// it, while the three that survived came back in `javamap.KeyOrder`.
+		//
+		// The 204 above can see none of that, and a mutation replacing the merge
+		// with a replacement passes it.
+		ID: "admin/component/read-updated-merges-the-config",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: an updated component reads back merged and re-filtered",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-merged",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-cmp-mrg/components/" + probeComponentMergeID,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"parentId"},
+	},
+	{
+		// A `PUT` to an id that does not exist, carrying a body that is
+		// otherwise good: `Could not find component`, the same spelling the read
+		// answers.
+		ID: "admin/component/update-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: an update addressed to an id that resolves to nothing",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-read",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-cmp/components/gloak-probe-no-such-component",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"providerId":"max-clients",` +
+				`"providerType":"org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy",` +
+				`"config":{"max-clients":["3"]}}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The strict decode runs before the path's id is resolved.** The same
+		// missing id, with an unknown field added, answers the 400 rather than
+		// the 404 above. It is the pair that says so; either case alone would be
+		// an ordinary refusal.
+		ID: "admin/component/update-unrecognised-field-on-a-missing-id",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: an unknown field beats a component that does not exist",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-read",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-cmp/components/gloak-probe-no-such-component",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"providerId":"max-clients","zzUnknown":1}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **A `PUT` naming neither `providerId` nor `providerType` is a 500**,
+		// and so is one naming only one of them. A body a caller would think of
+		// as a partial update is not accepted at all here, which is the opposite
+		// of the merge the config gets.
+		ID: "admin/component/update-partial-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: an update whose body names no provider",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-read",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-cmp/components/" + probeComponentReadID,
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"name":"gloak-probe-renamed-nowhere"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The delete. 204, no `Cache-Control`, and no `X-Frame-Options` because
+		// the request declares no `Content-Type` - the pair with the update
+		// above, which does.
+		ID: "admin/component/delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: delete a component",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/components/{id}",
+		Fixture:   "component-delete",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/gloak-probe-cmp-del/components/" + probeComponentDeleteID,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Type", "Cache-Control"},
+	},
+	{
+		// **A second delete of the same id is a 404**, where a second delete of
+		// an initial access token is a 204. Two families in one branch, one
+		// verb, opposite answers to the same repeat - and the fixture does the
+		// first delete rather than the case depending on the case above having
+		// run.
+		ID: "admin/component/delete-twice",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: deleting a component that has already gone",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-deleted",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/gloak-probe-cmp-dl2/components/" + probeComponentGoneID,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// `sub-component-types` for the one provider type whose body is small
+		// enough to read: one entry, one property, 163 bytes.
+		//
+		// **It is the only entry of the thirty-three with no `helpText` key at
+		// all**, and its one property is one of the thirty-six with no `label`
+		// and no `helpText` - so this smallest body is the one that fixes both
+		// omitempty decisions in the serialiser.
+		ID: "admin/component/sub-component-types-user-profile",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: the sub-component types of the user profile provider",
+			Retrieved: "2026-09-03",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/components/{id}/sub-component-types",
+		Fixture:   "component-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-cmp/components/" + probeComponentReadID + "/sub-component-types",
+			Query:   map[string]string{"type": "org.keycloak.userprofile.UserProfileProvider"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The client-registration policies: eight entries, eight properties, and
+		// the body that carries **both** JSON types of `defaultValue` - the
+		// literal `true` on `allow-default-scopes` and the string `"true"` on
+		// `trusted-hosts`' two booleans, eight lines apart.
+		//
+		// It also holds the 39-element `options` array of
+		// `allowed-protocol-mapper-types`, asserted **in order**: the whole
+		// table was byte-identical across three parent components, two realms
+		// and two container starts, so nothing here is Unordered.
+		ID: "admin/component/sub-component-types-client-registration-policies",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: the sub-component types of the client registration policies",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-read",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/admin/realms/gloak-probe-cmp/components/" + probeComponentReadID + "/sub-component-types",
+			Query: map[string]string{
+				"type": "org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy",
+			},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The ten key providers, 12488 bytes. This is the body a create has to
+		// be validated against, and it is the one that carries the three option
+		// lists whose refusals the create cases above use.
+		ID: "admin/component/sub-component-types-key-providers",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: the sub-component types of the key providers",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-cmp/components/" + probeComponentReadID + "/sub-component-types",
+			Query:   map[string]string{"type": "org.keycloak.keys.KeyProvider"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The two user storage providers, and the entry that carries the
+		// **third** state of the entry `helpText`: `ldap`'s is the empty string
+		// where `declarative-user-profile`'s key is absent. It is also where 35
+		// of the 36 label-less properties live, and where the one-key
+		// `{"synchronizable":true}` metadata object is.
+		ID: "admin/component/sub-component-types-user-storage",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: the sub-component types of the user storage providers",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-cmp/components/" + probeComponentReadID + "/sub-component-types",
+			Query:   map[string]string{"type": "org.keycloak.storage.UserStorageProvider"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The twelve LDAP mappers, 25921 bytes - the biggest body in the family
+		// and the one carrying the four-key sync `metadata` maps, whose order is
+		// **not** alphabetical: `fedToKeycloakSyncSupported,
+		// keycloakToFedSyncSupported, fedToKeycloakSyncMessage,
+		// keycloakToFedSyncMessage`. Marshalling that from a Go map sorts it and
+		// gets all four wrong.
+		ID: "admin/component/sub-component-types-ldap-mappers",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: the sub-component types of the LDAP mappers",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-cmp/components/" + probeComponentReadID + "/sub-component-types",
+			Query:   map[string]string{"type": "org.keycloak.storage.ldap.mappers.LDAPStorageMapper"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **Thirteen of the eighteen registered provider types answer `[]`**,
+		// and that is a different answer from a type nobody registered. A
+		// handler with one table and no registry answers both the same way and
+		// is wrong on one of them.
+		ID: "admin/component/sub-component-types-empty",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: a registered provider type with no sub-component types",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-cmp/components/" + probeComponentReadID + "/sub-component-types",
+			Query:   map[string]string{"type": "org.keycloak.validate.Validator"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **A type nobody registered is a 500**, where the empty case above is a
+		// 200. And the comparison is case-sensitive: the same eighteen names
+		// upper-cased all land here.
+		ID: "admin/component/sub-component-types-unknown-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: a provider type that is not registered",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-cmp/components/" + probeComponentReadID + "/sub-component-types",
+			Query:   map[string]string{"type": "gloak.probe.NoSuchProvider"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **No `type` at all is `must specify a subtype`, and it beats the
+		// parent's 404.** This case addresses a component that exists, so it
+		// records the sentence; the pair below addresses one that does not and
+		// still answers this, which is what fixes the order.
+		ID: "admin/component/sub-component-types-no-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: sub-component types with no type parameter",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-cmp/components/" + probeComponentReadID + "/sub-component-types",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **`Could not find parent component` is distinct from the `Could not
+		// find component` the read one path segment up answers for the very same
+		// id.** One missing component, two sentences, decided by which route
+		// went looking. Both are already in AGENTS.md's list, at (22) and (23),
+		// so this chapter adds no spelling to it - which is worth saying,
+		// because a family with two 404 strings in it looks like it should.
+		ID: "admin/component/sub-component-types-missing-parent",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Component: sub-component types under a parent that does not exist",
+			Retrieved: "2026-09-03",
+		},
+		Status:  Implemented,
+		Fixture: "component-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-cmp/components/gloak-probe-no-such-parent/sub-component-types",
+			Query:   map[string]string{"type": "org.keycloak.userprofile.UserProfileProvider"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders:       []string{"Content-Type"},
 		AssertAbsentHeaders: []string{"Cache-Control"},

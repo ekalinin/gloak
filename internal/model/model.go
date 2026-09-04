@@ -1083,3 +1083,37 @@ func (t *LocalizationTexts) Value(key string) (string, bool) {
 	}
 	return "", false
 }
+
+// ClientInitialAccess is one row of
+// `/admin/realms/{realm}/clients-initial-access`: a bearer token that may
+// register clients through the dynamic client registration endpoint, and a
+// count of how many registrations it has left.
+//
+// **The token itself is not stored.** It is a JWT signed with the realm's HMAC
+// key whose `jti` is this row's id, so a presented token is recognised by
+// verifying it and looking the id up - the shape the registration access token
+// already uses. That is also why the token is on the create's 201 and on
+// nothing else: `GET /clients-initial-access` serves five keys where the create
+// serves six, measured, and the missing one is the only thing the resource is
+// for.
+//
+// Timestamp and Expiration are seconds, Expiration being an interval rather
+// than an instant: `{"count":3,"expiration":600}` produces a token whose `exp`
+// is `iat + 600`, and `expiration: 0` produces one whose `exp` is the literal
+// `0` and which never expires.
+type ClientInitialAccess struct {
+	ID      string
+	RealmID string
+	// Timestamp is when the row was created, in seconds.
+	Timestamp int64
+	// Expiration is the interval in seconds, 0 meaning no expiry.
+	Expiration int64
+	// Count is what the caller asked for. **A negative one is refused and zero
+	// is not**: `{"count":0}` is a 201 creating a token that can never be used,
+	// which is a state the Admin API reaches deliberately.
+	Count int
+	// RemainingCount starts equal to Count and is decremented by a
+	// registration. An exhausted row **stays in the listing** at zero rather
+	// than being swept, measured.
+	RemainingCount int
+}

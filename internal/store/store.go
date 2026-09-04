@@ -61,7 +61,31 @@ type Store interface {
 	IdentityProviderMappers() IdentityProviderMapperRepo
 	Components() ComponentRepo
 	Localizations() LocalizationRepo
+	ClientInitialAccess() ClientInitialAccessRepo
 	Close() error
+}
+
+// ClientInitialAccessRepo stores a realm's initial access tokens.
+//
+// **There is no Update and no ByID**, and both absences are measured. Nothing
+// in the Admin API reads one row - `GET /clients-initial-access` is the
+// collection and there is no single-row route - and the only mutation Keycloak
+// has is the registration endpoint decrementing `remainingCount`, which lives
+// in a package this repository's boundary table keeps away from the Admin API.
+// A method nothing calls is a claim about the model that is not true.
+type ClientInitialAccessRepo interface {
+	// Create inserts one row. The token is not stored: it is a JWT whose `jti`
+	// is this id, so recognising one is verifying it and looking the id up.
+	Create(ctx context.Context, c *model.ClientInitialAccess) error
+	// List returns a realm's rows **in insertion order**, which is measured
+	// rather than chosen: three rows created in one realm came back in creation
+	// order on two container starts and two reads apiece, and their ids are
+	// random UUIDs that do not sort that way.
+	List(ctx context.Context, realmID string) ([]*model.ClientInitialAccess, error)
+	// Delete removes one by id. **It reports no error for an id that is not
+	// there**, because the endpoint is a 204 for an id that never existed and
+	// for one deleted twice - measured on both.
+	Delete(ctx context.Context, realmID, id string) error
 }
 
 // LocalizationRepo stores a realm's message bundles, one document per locale.
@@ -230,11 +254,23 @@ type IdentityProviderMapperRepo interface {
 // value on any of them is a measured `[]` rather than a 404, so they are a
 // filter over rows this returns and never a lookup that can fail.
 type ComponentRepo interface {
-	// Create inserts a component and its config, in the order given. Nothing in
-	// this cut serves `POST /components` - the write filters the config to the
-	// provider's declared properties, which needs a catalogue that is not built
-	// - so the only caller is the bootstrap.
+	// Create inserts a component and its config, in the order given. The
+	// filtering of the config to the provider's declared properties happens in
+	// internal/admin, where the catalogue is: this writes what it is handed.
 	Create(ctx context.Context, c *model.Component) error
+	// Update replaces the row and its whole config with what it is handed.
+	// **The merge is not here.** `PUT /components/{id}` merges the config and
+	// re-filters it against the body's providerId, and both of those need the
+	// catalogue, so internal/admin computes the resulting config and this
+	// writes it. Putting the merge behind the SQL boundary would hide a
+	// measured contract from the package whose job is to reproduce it -
+	// LocalizationRepo's reason, for the same kind of behaviour.
+	Update(ctx context.Context, c *model.Component) error
+	// Delete removes one by id, and its config with it. ErrNotFound for an id
+	// the realm does not have, which is the measured 404: a second delete of
+	// the same id answers `Could not find component`, unlike the initial access
+	// tokens next door whose repeat delete is a 204.
+	Delete(ctx context.Context, realmID, id string) error
 	// ByID resolves one. ErrNotFound becomes
 	// `404 {"error":"Could not find component"}`, which is a spelling of
 	// not-found this API did not previously have. **The realm's own id answers

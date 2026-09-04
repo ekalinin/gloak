@@ -1,0 +1,11 @@
+# GET /admin/realms/gloak-probe-cmp/components/c0e00000-0000-4000-8000-000000000001/sub-component-types
+HTTP/1.1 400 Bad Request
+Content-Length: {{volatile}}
+Content-Type: application/json
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"error":"must specify a subtype"}

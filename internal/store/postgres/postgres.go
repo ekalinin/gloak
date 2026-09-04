@@ -164,6 +164,10 @@ func (s *Store) Localizations() store.LocalizationRepo {
 	return &localizationRepo{s.pool}
 }
 
+func (s *Store) ClientInitialAccess() store.ClientInitialAccessRepo {
+	return &clientInitialAccessRepo{s.pool}
+}
+
 // classify maps driver errors onto the store's sentinels so handlers never
 // inspect driver-specific error text.
 func classify(err error) error {
@@ -3081,6 +3085,59 @@ func (r *componentRepo) Create(ctx context.Context, m *model.Component) error {
 	return tx.Commit(ctx)
 }
 
+// Update replaces the row and rewrites its whole config. The config arrives
+// already merged and already filtered - internal/admin owns both, because both
+// need the provider catalogue - so this deletes and reinserts rather than
+// diffing, which is also what keeps the ordinals contiguous.
+//
+// The row's `ordinal` is left alone, so an updated component keeps its place in
+// the listing. Nothing measured says it should move and nothing measured says
+// it should not; leaving it is the smaller claim.
+func (r *componentRepo) Update(ctx context.Context, m *model.Component) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx,
+		`UPDATE component
+		    SET name = $1, provider_id = $2, provider_type = $3, parent_id = $4, sub_type = $5
+		  WHERE realm_id = $6 AND id = $7`,
+		m.Name, m.ProviderID, m.ProviderType, m.ParentID, m.SubType, m.RealmID, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM component_config WHERE component_id = $1`, m.ID); err != nil {
+		return classify(err)
+	}
+	for i, e := range m.Config {
+		for j, v := range e.Values {
+			if _, err := tx.Exec(ctx,
+				`INSERT INTO component_config (component_id, name, value, ordinal)
+				 VALUES ($1, $2, $3, $4)`, m.ID, e.Name, v, i*1000+j); err != nil {
+				return classify(err)
+			}
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *componentRepo) Delete(ctx context.Context, realmID, id string) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM component WHERE realm_id = $1 AND id = $2`, realmID, id)
+	if err != nil {
+		return classify(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func (r *componentRepo) ByID(ctx context.Context, realmID, id string) (*model.Component, error) {
 	row := r.pool.QueryRow(ctx,
 		`SELECT `+componentColumns+` FROM component WHERE realm_id = $1 AND id = $2`,
@@ -3378,4 +3435,69 @@ func (r *localizationRepo) DeleteLocale(ctx context.Context, realmID, locale str
 		return classify(err)
 	}
 	return affectedOne(tag.RowsAffected())
+}
+
+type clientInitialAccessRepo struct{ pool *pgxpool.Pool }
+
+// clientInitialAccessColumns is the SELECT list, so List cannot come to scan a
+// different set from what a future single-row read would.
+const clientInitialAccessColumns = `id, realm_id, created_timestamp, expiration, total_count, remaining_count`
+
+func (r *clientInitialAccessRepo) Create(ctx context.Context, m *model.ClientInitialAccess) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var ordinal int
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(MAX(ordinal), -1) + 1 FROM client_initial_access WHERE realm_id = $1`,
+		m.RealmID).Scan(&ordinal); err != nil {
+		return classify(err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO client_initial_access
+		   (id, realm_id, created_timestamp, expiration, total_count, remaining_count, ordinal)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		m.ID, m.RealmID, m.Timestamp, m.Expiration, m.Count, m.RemainingCount,
+		ordinal); err != nil {
+		return classify(err)
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *clientInitialAccessRepo) List(ctx context.Context, realmID string) ([]*model.ClientInitialAccess, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT `+clientInitialAccessColumns+`
+		   FROM client_initial_access WHERE realm_id = $1 ORDER BY ordinal`, realmID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	defer rows.Close()
+	out := []*model.ClientInitialAccess{}
+	for rows.Next() {
+		m, err := scanClientInitialAccess(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+// Delete swallows a missing row on purpose: the endpoint answers 204 for an id
+// that never existed and for one deleted twice, both measured.
+func (r *clientInitialAccessRepo) Delete(ctx context.Context, realmID, id string) error {
+	_, err := r.pool.Exec(ctx,
+		`DELETE FROM client_initial_access WHERE realm_id = $1 AND id = $2`, realmID, id)
+	return classify(err)
+}
+
+func scanClientInitialAccess(row scanner) (*model.ClientInitialAccess, error) {
+	m := &model.ClientInitialAccess{}
+	if err := row.Scan(&m.ID, &m.RealmID, &m.Timestamp, &m.Expiration, &m.Count,
+		&m.RemainingCount); err != nil {
+		return nil, classify(err)
+	}
+	return m, nil
 }
