@@ -382,15 +382,20 @@ func clientAuthenticator(method *string) (authenticator string, public bool, all
 	return "", false, "", false
 }
 
-// splitScope is Java's String.split(" ") with the empty string special-cased.
+// splitScope is Keycloak's answer to the `scope` string.
 //
 // Measured: `""` answers `[]` and `"a  b "` answers `["a","","b"]` - the inner
-// empty survives and the trailing one does not, which is exactly what
-// String.split does, and the empty input is the one case it disagrees with.
+// empty survives and the trailing one does not, which is what Java's
+// String.split(" ") does, except on the empty string, where Java answers `[""]`
+// and Keycloak answers `[]`.
+//
+// **Go needs no special case for that, and a mutation is what said so.** An
+// explicit `if scope == ""` block was written first and survived being deleted:
+// `strings.Split("", " ")` is `[""]`, and the trailing-empty trim below - which
+// exists because Go's Split keeps trailing empties where Java's drops them -
+// removes it. One loop covers both differences, and the block that looked like
+// it was covering one of them changed no byte of any answer.
 func splitScope(scope string) []string {
-	if scope == "" {
-		return []string{}
-	}
 	parts := strings.Split(scope, " ")
 	for len(parts) > 0 && parts[len(parts)-1] == "" {
 		parts = parts[:len(parts)-1]
