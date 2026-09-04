@@ -5,8 +5,11 @@ Branch: `feat/realms-admin-remainder`
 Plan: `docs/superpowers/plans/2026-09-03-realms-admin-remainder.md`
 
 Everything below was measured against a live Keycloak 26.7.1 on `:8164`, on
-2026-09-03. Every write was done in a realm created for the sweep; nothing on
-`master` was created except users for the guard sweeps.
+2026-09-03. Every destructive probe was done in a realm created for the sweep.
+What `master` received is exactly two things, both of them additive: the users
+the guard sweeps needed, and one localization bundle, which the cross-realm half
+of the guard sweep had to read on master as well as on a created realm. No
+component was created anywhere, which is the sweep that has cost two containers.
 
 ## 1. Measurements
 
