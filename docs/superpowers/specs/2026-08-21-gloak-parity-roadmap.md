@@ -226,6 +226,7 @@ operations is allocated below; none is left unassigned.
 | **P11** | SAML 2.0 | P4 | descriptors, SSO and SLO bindings | not in OpenAPI |
 | **P12** | Organizations and Workflows, **first cut done 2026-08-31** | P4 | Organizations 36, Workflows 9. **The row's 45 is 56**: eleven more operations live under `/organizations/{org-id}/groups/.../role-mappings` and are counted under `Role Mapper` and `Client Role Mappings`, so building this unlocks them. 47 operations live under `/organizations` in all | 56 ops |
 | P12 second cut | Members, invitations and linked brokers, **done 2026-09-02** | P12 first cut | `admin/organizations` 6->24. A member **is a user**, addressed by the user id, and `POST .../members` takes it as **raw bytes rather than JSON**. Nineteen routes, five different role conjunctions, and no single role opens any of them. **F120 is unblocked** - the hidden root group's name and path are the organization's own id - leaving the eleven group operations as ordinary work. One operation is left, F153: it overlaps a sibling on one path and `ServeMux` panics | 18 ops |
+| P12 third cut | Organization groups and their role mappings, **done 2026-09-03** | P12 second cut | `admin/organizations` 24->35, and **`admin/role-mapper` 12->18 and `admin/client-role-mappings` 10->15 are complete** - the third locator of two tags served twice before. **Only three of the eleven group operations behave like the realm group family's**, and the key sets are disjoint. F120 closed. One operation is left, F153's member route | 22 ops |
 | P12 first cut | The organization as a resource | P4 | `admin/organizations` 0->6. `ORGANIZATION` is **not** a preview feature: what is off is the realm's `organizationsEnabled`, and the refusal sits **after** the caller's roles - the opposite of `client-types` | 6 ops |
 | **P13** | Themes, i18n, account console, admin console, **first cut done 2026-08-30, markup cut done 2026-09-01** | P5 | - . The markup cut served the login theme's error and info pages and took seven parked goldens to contracts (+7). Nine theme pages still serve the placeholder body (F146) and the login-actions family is F109 | not in OpenAPI |
 | P13 pages cut | The login-action page and the nine measured, **done 2026-09-02** | P13 markup cut | no operations of its own; `oidc/authorization` 18->23 and the denominator +5. **F109 closed**: twelve call sites answer three sentences and four are not that page. The nine remaining pages are measured and none is served - each carries a `tab_id` minted by its own request, so F146 is blocked on **F38, reopened** | 0 ops |
@@ -236,9 +237,10 @@ operations is allocated below; none is left unassigned.
 
 Denominator today: **413 Admin API operations plus 122 protocol behaviours, 535
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **400 of 541**
-after the organization member family, and **P2, P4 and P5 are complete** - as are
-the `Roles`,
+surface is not counted and which the report says so about. Served: **422 of 541**
+after the organization group family, and **P2, P4 and P5 are complete** - as are
+`admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
+locator, and the `Roles`,
 `Roles (by ID)` and `Groups` chapters, which P10 closed by measuring what their
 last operations refuse - up from 8 before P1, 25 after it, 89 after the second cut's
 roles half, 100 after that cut was complete, 109 after the group tree and 113
@@ -265,7 +267,41 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-02 (thirteenth fold).** `make conformance` reports **400 of
+**Updated 2026-09-03 (fourteenth fold).** `make conformance` reports **422 of
+541**. The organization group family landed all twenty-two of its operations,
+`admin/organizations` reached 35 of 36, and **`admin/role-mapper` and
+`admin/client-role-mappings` are complete** - both closed by their third locator
+after being served twice already.
+
+**The round's lesson is that a neighbouring family is a hypothesis, not a
+shortcut.** Only **three of the eleven** organization group operations behave like
+the realm group family's, and the two families' key sets are disjoint. Pointing
+the existing handlers at these rows would have got eight of eleven wrong: the
+children listing ignores `briefRepresentation` where the realm's honours it, the
+create answers 201 with the group where the realm's answers an empty body, the
+member join is a 409 on the repeat where the realm's is idempotent, and `path`
+drops the hidden root so the shared `groupPath` walk is wrong on every
+organization group there is.
+
+That is the fifth time a rule has been right on one family and inverted on its
+neighbour, and the first time the two were close enough that reuse looked like
+the obvious implementation rather than a shortcut.
+
+**A blocker that names more than it blocks gets read as permission to stub.**
+F120 said the group family was blocked. One operation inside it,
+`GET .../members/{member-id}/groups`, was answering an unconditional `[]` **on
+that entry's authority** - a shipped divergence rather than a gap, and nothing
+distinguished the two while the entry stood.
+
+**And this cut cost three sessions to server errors**, which is worth recording
+because of what it revealed rather than what it delayed: I carried it forward by
+hand and made the same mistake this project keeps folding. I decided a fixture's
+rename "added nothing", removed it, went green - and `groups-update-effect`'s
+golden moved, because it asserts that a child's `path` follows its parent's
+rename. The repository refuted me from one directory away, which is the fourth
+time recording has caught a claim that reasoning missed.
+
+**Earlier on 2026-09-02 (thirteenth fold).** `make conformance` reports **400 of
 541**. `admin/organizations` went 6 of 36 to 24 of 36 in one cut, the largest
 single move since P2, and F38 was built after being closed for four days.
 

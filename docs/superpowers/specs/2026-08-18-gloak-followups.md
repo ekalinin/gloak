@@ -3805,7 +3805,19 @@ The end state is identical; the redirect chain is shorter. Measured, and left as
 measured rather than padded to match, because inventing a redirect to make a
 count agree is the shape of divergence this project exists to avoid.
 
-## F120: the organization group family is blocked on a hidden root group (unblocked 2026-09-02)
+## F120: the organization group family is blocked on a hidden root group (closed 2026-09-03)
+
+**Closed.** All twenty-two operations are served and each carries a golden. The
+root group is created with the organization, its `name` is the organization's id,
+and `path` **drops it**: a group directly under it is `/gp-top`, not
+`/<organization id>/gp-top`.
+
+One thing this entry was hiding rather than blocking:
+`GET /organizations/{org}/members/{member-id}/groups` answered an unconditional
+`[]` **on this entry's authority**, which made it a shipped divergence rather
+than a gap. Fixed in the same cut. An entry that says a family is blocked will
+be read as permission to stub it, so a blocker should name the operations it
+blocks and nothing else.
 
 **The hidden root group is readable and this entry's blocker is gone.**
 `GET /organizations/{org}/groups/{parentId}` reads it: its `name` and its `path`
@@ -4343,6 +4355,27 @@ change is not a realm-values cut's to make. It is also why F142's site 17 is
 closed by a package test and carries no golden.
 
 ## F153: two organization member routes overlap on one path and `ServeMux` panics
+
+**Its objection to a wildcard dispatcher is false for the shape that matters, and
+that was measured on 2026-09-03.** The entry argues that a catch-all would
+swallow paths which "answer the unmatched-path 404 with none of the five security
+headers, which only `WithKeycloakFallbacks` can produce". A path under a
+**resolvable sub-resource locator** does not: `.../groups/{groupID}/<anything a
+route does not serve>` answers `404 {"error":"HTTP 404 Not Found"}` **with all
+five security headers**, because it reaches the filter chain through the group's
+own locator rather than falling off the route table.
+
+The same overlap shape recurred eight times in the group family and was resolved
+there with a catch-all that is a strict superset - so for these paths the
+wildcard is **more** faithful than the fallback, not less.
+
+What is still unmeasured, and is the request to send before this entry is
+reopened: whether the same holds for `/organizations/{a}/{b}/{c}`, where `{b}` is
+not a locator that resolves. The nineteenth member operation stays unbuilt until
+somebody sends it.
+
+What the finding said, kept for the record:
+
 
 `GET /organizations/members/{member-id}/organizations` and
 `GET /organizations/{orgID}/members/{memberID}` overlap on exactly one path, and
