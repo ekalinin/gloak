@@ -1044,3 +1044,42 @@ type IdentityProviderMapperConfigEntry struct {
 	Name  string
 	Value string
 }
+
+// LocalizationText is one key of one locale's message bundle.
+//
+// It is a slice element rather than a map entry because **the order is the
+// contract**. Measured 2026-09-03: the texts of a locale are one JSON document
+// whose key order the read serves back verbatim, and three of the four writes
+// preserve it exactly - `PUT .../{key}` appends a new key at the end and
+// replaces an existing one in place, and `DELETE .../{key}` removes one and
+// moves nothing. A Go map would sort them and lose all of that.
+type LocalizationText struct {
+	Key   string
+	Value string
+}
+
+// LocalizationTexts is one locale's whole bundle.
+//
+// **A nil Texts and an empty Texts are two different rows and Keycloak tells
+// them apart.** `POST /admin/realms/{realm}/localization/{locale}` with an
+// empty request body or a literal `null` answers 204 and leaves the locale
+// with no document at all: it is listed by `GET /localization` and every read
+// of it is a 500 for ever after. The same POST carrying `{}` answers 204 and
+// leaves a locale that reads back `{}`. Keycloak's own defect, reproduced, and
+// it is the reason this is a struct rather than a bare slice - a nil slice
+// arriving from a driver by accident would otherwise be indistinguishable from
+// the state that only that one body can reach.
+type LocalizationTexts struct {
+	Locale string
+	Texts  []LocalizationText
+}
+
+// Value returns the text under key and whether the locale has one.
+func (t *LocalizationTexts) Value(key string) (string, bool) {
+	for _, e := range t.Texts {
+		if e.Key == key {
+			return e.Value, true
+		}
+	}
+	return "", false
+}

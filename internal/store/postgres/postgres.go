@@ -160,6 +160,10 @@ func (s *Store) Components() store.ComponentRepo {
 	return &componentRepo{s.pool}
 }
 
+func (s *Store) Localizations() store.LocalizationRepo {
+	return &localizationRepo{s.pool}
+}
+
 // classify maps driver errors onto the store's sentinels so handlers never
 // inspect driver-specific error text.
 func classify(err error) error {
@@ -3325,4 +3329,53 @@ func scanIdentityProviderMapper(row scanner) (*model.IdentityProviderMapper, err
 		return nil, classify(err)
 	}
 	return m, nil
+}
+
+type localizationRepo struct{ pool *pgxpool.Pool }
+
+func (r *localizationRepo) Locales(ctx context.Context, realmID string) ([]string, error) {
+	// ORDER BY locale is the measurement, not tidiness: five locales inserted
+	// zz, aa, mm, ru, de-CH came back aa, de-CH, mm, ru, zz.
+	rows, err := r.pool.Query(ctx,
+		`SELECT locale FROM realm_localization WHERE realm_id = $1 ORDER BY locale`, realmID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var locale string
+		if err := rows.Scan(&locale); err != nil {
+			return nil, err
+		}
+		out = append(out, locale)
+	}
+	return out, classify(rows.Err())
+}
+
+func (r *localizationRepo) ByLocale(ctx context.Context, realmID, locale string) (*model.LocalizationTexts, error) {
+	var column *string
+	if err := r.pool.QueryRow(ctx,
+		`SELECT texts FROM realm_localization WHERE realm_id = $1 AND locale = $2`,
+		realmID, locale).Scan(&column); err != nil {
+		return nil, classify(err)
+	}
+	return store.DecodeLocalizationTexts(locale, column)
+}
+
+func (r *localizationRepo) Put(ctx context.Context, realmID string, t *model.LocalizationTexts) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO realm_localization (realm_id, locale, texts) VALUES ($1, $2, $3)
+		 ON CONFLICT (realm_id, locale) DO UPDATE SET texts = excluded.texts`,
+		realmID, t.Locale, store.EncodeLocalizationTexts(t))
+	return classify(err)
+}
+
+func (r *localizationRepo) DeleteLocale(ctx context.Context, realmID, locale string) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM realm_localization WHERE realm_id = $1 AND locale = $2`, realmID, locale)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(tag.RowsAffected())
 }

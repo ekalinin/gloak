@@ -172,6 +172,10 @@ func (s *Store) Components() store.ComponentRepo {
 	return &componentRepo{s.db}
 }
 
+func (s *Store) Localizations() store.LocalizationRepo {
+	return &localizationRepo{s.db}
+}
+
 // classify maps driver errors onto the store's sentinels so handlers never
 // inspect driver-specific error text.
 func classify(err error) error {
@@ -3378,4 +3382,60 @@ func scanIdentityProviderMapper(row scanner) (*model.IdentityProviderMapper, err
 		return nil, classify(err)
 	}
 	return m, nil
+}
+
+type localizationRepo struct{ db *sql.DB }
+
+func (r *localizationRepo) Locales(ctx context.Context, realmID string) ([]string, error) {
+	// ORDER BY locale is the measurement, not tidiness: five locales inserted
+	// zz, aa, mm, ru, de-CH came back aa, de-CH, mm, ru, zz.
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT locale FROM realm_localization WHERE realm_id = ? ORDER BY locale`, realmID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := []string{}
+	for rows.Next() {
+		var locale string
+		if err := rows.Scan(&locale); err != nil {
+			return nil, err
+		}
+		out = append(out, locale)
+	}
+	return out, classify(rows.Err())
+}
+
+func (r *localizationRepo) ByLocale(ctx context.Context, realmID, locale string) (*model.LocalizationTexts, error) {
+	var texts sql.NullString
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT texts FROM realm_localization WHERE realm_id = ? AND locale = ?`,
+		realmID, locale).Scan(&texts); err != nil {
+		return nil, classify(err)
+	}
+	var column *string
+	if texts.Valid {
+		column = &texts.String
+	}
+	return store.DecodeLocalizationTexts(locale, column)
+}
+
+func (r *localizationRepo) Put(ctx context.Context, realmID string, t *model.LocalizationTexts) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO realm_localization (realm_id, locale, texts) VALUES (?, ?, ?)
+		 ON CONFLICT (realm_id, locale) DO UPDATE SET texts = excluded.texts`,
+		realmID, t.Locale, store.EncodeLocalizationTexts(t))
+	return classify(err)
+}
+
+func (r *localizationRepo) DeleteLocale(ctx context.Context, realmID, locale string) error {
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM realm_localization WHERE realm_id = ? AND locale = ?`, realmID, locale)
+	if err != nil {
+		return classify(err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
 }
