@@ -825,6 +825,32 @@ type SessionRepo interface {
 	DeleteUserSessions(ctx context.Context, realmID, userID string) error
 	CreateClientSession(ctx context.Context, s *model.ClientSession) error
 	ClientSession(ctx context.Context, userSessionID, clientID string) (*model.ClientSession, error)
+
+	// The four listings below close the half of F130 this repository can
+	// close. `channelLogoutTargets` walks ListByRealm asking ClientSession per
+	// candidate because none of them existed; two cuts routed around the gap
+	// before this one, and the entry asked the third to add them.
+	//
+	// **All four sort by session id, byte-ascending.** That is measured rather
+	// than convenient: four sessions at one client and six at another came
+	// back sorted on 26.7.1, and `first`/`max` are taken from that order.
+	//
+	// They take no bounds. Two of the four listings that use them page and two
+	// ignore paging entirely - measured, and opposite answers to a malformed
+	// bound as well - so the bounds are applied by the handler that knows
+	// which rule it is under. A repository taking `first` and `max` would have
+	// to be told to ignore them, which puts that fact one layer away from the
+	// measurement.
+	ListUserSessionsByRealm(ctx context.Context, realmID string) ([]*model.UserSession, error)
+	ListUserSessionsByUser(ctx context.Context, realmID, userID string) ([]*model.UserSession, error)
+	// ListUserSessionsByClient is the sessions in which this client took part,
+	// which is the join through client_session rather than a column on the
+	// session: one session reaches however many clients.
+	ListUserSessionsByClient(ctx context.Context, realmID, clientID string) ([]*model.UserSession, error)
+	// ListClientSessions is one session's clients, which serves the `clients`
+	// map of a UserSessionRepresentation. It is the method
+	// `channelLogoutTargets` has been working around.
+	ListClientSessions(ctx context.Context, userSessionID string) ([]*model.ClientSession, error)
 }
 
 // KeyRepo stores a realm's signing material. There is no update method: a key
