@@ -142,13 +142,23 @@ func decodeJWTPayload(t *testing.T, token string) string {
 // TestInitialAccessListingIsInsertionOrder pins the order the golden asserts,
 // with three rows rather than the golden's two - which is what tells insertion
 // order from "the two happened to come back that way".
+//
+// **It asserts the ids as well as the counts, and that is the whole difference
+// between a guard and a coin.** With the counts alone, a driver ordering by the
+// random UUID passes whenever the three happen to come back the right way -
+// one run in six. The mutation pass caught this: swapping `ORDER BY ordinal`
+// for `ORDER BY id` in the sqlite driver survived once, and killing it ten
+// times over showed the test failing eight of ten. Asserting the ids makes the
+// comparison total, and the same mutation then dies every time.
 func TestInitialAccessListingIsInsertionOrder(t *testing.T) {
 	h, _, _ := newServer(t)
 	admin := adminToken(t, h)
 
 	want := []float64{7, 1, 4}
+	ids := make([]string, 0, len(want))
 	for _, n := range want {
-		createInitialAccess(t, h, admin, `{"count":`+itoa(int(n))+`}`)
+		ids = append(ids, createInitialAccess(t, h, admin,
+			`{"count":`+itoa(int(n))+`}`)["id"].(string))
 	}
 	w := get(t, h, initialAccessBase, admin)
 	var rows []map[string]any
@@ -159,9 +169,9 @@ func TestInitialAccessListingIsInsertionOrder(t *testing.T) {
 		t.Fatalf("%d rows, want %d", len(rows), len(want))
 	}
 	for i, n := range want {
-		if rows[i]["count"] != n {
-			t.Errorf("row %d has count %v, want %v - the listing is not in insertion order: %v",
-				i, rows[i]["count"], n, rows)
+		if rows[i]["count"] != n || rows[i]["id"] != ids[i] {
+			t.Errorf("row %d is %v, want count %v and id %s - the listing is not in "+
+				"insertion order: %v", i, rows[i], n, ids[i], rows)
 		}
 	}
 }
