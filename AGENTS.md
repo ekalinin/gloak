@@ -172,10 +172,14 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   successful `DELETE`'s 204 omits it", from four deletes that all happened to
   send no `Content-Type`. When a new 204 disagrees with a header rule, measure
   the request's headers before believing the method.
-- **`Cache-Control` on a 204 does not follow the method.** Four of the **six**
-  measured deletes carry `no-cache`; `DELETE .../client-secret/rotated` does not,
-  and neither does `DELETE /organizations/{id}` or its `PUT`. It is pinned per
-  endpoint, which is now the third time that is the only part to survive.
+- **`Cache-Control` is pinned per endpoint, and it is not about the 204.** Four
+  of the **six** measured deletes carry `no-cache`; `DELETE .../client-secret/rotated`
+  does not, and neither does `DELETE /organizations/{id}` or its `PUT`. The split
+  reaches **201s** as well: the two organization group creates are both 201s with
+  bodies, one path segment apart, and `POST .../groups` sends no `Cache-Control`
+  where `POST .../groups/{g}/children` sends `no-cache`. This bullet said "on a
+  204" until 2026-09-03; "pinned per endpoint" survived that and everything
+  else, which is now the third time it is the only part to survive.
   (This bullet ended "no `PUT` carries it" until 2026-08-29, when one cut added
   a `PUT` that does - `.../default-groups/{groupId}`, `no-cache`, and its
   `DELETE` sibling too - and two `PUT`s that do not, the client-policy pair, in
@@ -494,7 +498,7 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **Role listings have no stable order across container starts.** Every one of
   them is a bare array at the root of the body, which is why `Case.Unordered`
   learned the root path spelling `"."`.
-- **Twenty-four spellings of not-found in the admin API now**, including four for
+- **Twenty-five spellings of not-found in the admin API now**, including four for
   one resource, **four** for a missing group, and three *pairs* that differ only
   in a full stop. Counted from the list, not incremented: (1) `Could not find client`, (2) `Client not found`,
   (3) `User not found`, (4) `Realm not found.` with its full stop,
@@ -510,12 +514,17 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   its `DELETE` and the two priority posts, (17) `Could not find RequiredAction
   config`, (18) `Could not find configurable RequiredAction provider` and
   (19) `Could not find authenticator provider`, (20) `Group does not exist` from
-  all twenty-two operations under `/organizations/{org-id}/groups`,
+  **twenty-one** of the twenty-two operations under
+  `/organizations/{org-id}/groups` - the two creates' move path answers
+  `Could not find group by id` for an id that resolves to nothing -
   (21) `Organization not found.`, (22) `Could not find component` from
   `/components/{id}` - which the **realm's own id** answers too, because
   components are parented on the realm and the realm is not one - and
   (23) `Could not find parent component` from `/components/{id}/sub-component-types`,
-  and (24) `Model not found` from the identity provider mapper read and delete.
+  (24) `Model not found` from the identity provider mapper read and delete, and
+  (25) `User does not exist` as a **404** from the organization group member
+  writes - the invitation family answers the same words with a **400**, so the
+  spelling is shared and the status is not.
   An unknown identity provider alias adds nothing here: the read, the update and
   the delete all answer the generic `HTTP 404 Not Found`, so two neighbouring
   chapters measured in one cut contributed two spellings and none.
@@ -526,7 +535,9 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   by *verb* on one resource.
 
 - **The group tree disagrees with itself in six places, and with the user
-  routes in three more.** `POST /groups` answers 201 with an empty body and
+  routes in three more.** `POST /groups` answers 201 with an empty body - **the
+  realm family's rule alone**, since `POST /organizations/{org}/groups` answers
+  201 with the group in it, `application/json` with no charset - and
   `POST /groups/{id}/children` answers 201 with the group in it - and with
   `application/json` carrying **no charset**, where every group read carries
   `;charset=UTF-8`. `GET /groups/count` is an object, `{"count":2}`, where
@@ -604,10 +615,14 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `POST .../clients`, `.../users`, `.../groups` and
   `.../groups/{id}/children` end in a server-minted UUID; `POST .../roles` and
   `POST .../clients/{id}/roles` end in the **role's name**, and
-  `POST /admin/realms` in the **realm's name**. And the child create's
+  `POST /admin/realms` in the **realm's name**. And the **realm** child create's
   `Location` is `/groups/<child uuid>`, not
   `/groups/{parent}/children/<child uuid>` - the route that makes a child is not
-  the route that addresses it. All seven were measured in one session, because a
+  the route that addresses it. **The organization family inverts that**:
+  `POST /organizations/{org}/groups/{g}/children` answers
+  `.../organizations/{org}/groups/{parent}/children/<new id>`, echoing the
+  creating route. So the sentence is a fact about one family and not a rule, and
+  the two organization group creates are two more server-minted uuid tails. All seven were measured in one session, because a
   masking rule written from four of them would have been wrong on three.
   `Case.VolatileTailHeaders` masks the last segment for the four that need it
   and **refuses** the three that do not.
@@ -1124,11 +1139,16 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   the two gates could not share an implementation.
 - **`POST /organizations` reads the body's `id` and discards it**, inverting the
   rule the client and client-scope creates follow.
-- **Ten strict JSON decoders, and three families disagree about when the decode
-  runs.** Counted from the list: `POST`/`PUT /organizations`, two of the
+- **Fourteen strict JSON decoders, and three families disagree about when the
+  decode runs.** Counted from the list: `POST`/`PUT /organizations`, two of the
   required-action writes, client registration,
   `POST`/`PUT .../identity-provider/instances`, `POST /components`,
-  `POST .../instances/{alias}/mappers` and `PUT /components/{id}`. The last two
+  `POST .../instances/{alias}/mappers`, `PUT /components/{id}`,
+  `POST /organizations/{org}/groups`, `PUT .../groups/{group-id}`,
+  `POST .../groups/{group-id}/children` and - measured as a control in the same
+  sweep and absent from every earlier count - **the realm family's own
+  `POST /groups`**. The last four all report a line and a column, which answers
+  the question this bullet has been asking: a fourth family does. The last two
   decode **before** the path's resource is resolved - a `PUT` to a component id
   that does not exist carrying an unknown field answers the 400, not the 404 -
   so the split below gains two members on one side and none on the other. On the
@@ -1772,6 +1792,34 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `TestNoHTMLMaskVariesNothing` serves each case twice and **refuses a mask whose
   covered bytes do not move**, which is what stops the declaration becoming a
   place to hide a diff.
+
+- **The organization group family is not the realm group family with a prefix,
+  and only three of the eleven operations agree.** The two families' key sets are
+  **disjoint**: no organization group body carries `access` or `subGroupCount`,
+  and every one carries `parentId` - including a group at the top of the
+  organization, where a top-level realm group has none. The children listing
+  **ignores** `briefRepresentation` where the realm's honours it; the create
+  answers 201 with the group where the realm's answers an empty body; and the
+  member join is a **409 on the repeat** where `PUT /users/{id}/groups/{gid}` is
+  idempotent, measured 204 twice in one sweep. Pointing the realm family's
+  handlers at these rows gets eight of eleven wrong.
+- **`path` does not include the hidden root.** The root's own path is
+  `/<organization id>`, and a group directly under it is `/gp-top` rather than
+  `/<organization id>/gp-top`. The shared `groupPath` walk - which the realm
+  family uses - is wrong on **every organization group there is**, because the
+  ancestry's first element has to be dropped whenever anything sits below it.
+- **The organization group guard is the member family's rule inverted, and the
+  order is five deep.** `manage-organizations` alone was 403 on all nineteen
+  member routes and opens **nineteen of these twenty-two**; only the three naming
+  a user need a conjunction. The **group is resolved before the write role**, so
+  a guard shaped like the member family's answers 403 where Keycloak answers 404
+  on every write here.
+- **A path under a group that no route serves answers the generic 404 with all
+  five security headers**, because it reaches the filter chain through the
+  group's own sub-resource locator rather than falling off the route table. That
+  is the opposite of an unmatched path, which gets none of the five, and it is
+  what makes a catch-all under `group-by-path` more faithful than the fallback
+  rather than less.
 
 ## Boundaries
 
