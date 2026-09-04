@@ -174,6 +174,16 @@ func (h *handler) importLocalizationTexts(w http.ResponseWriter, r *http.Request
 
 	incoming, err := decodeLocalizationBody(body)
 	if err != nil {
+		// **Two 400s, and which one depends on where the body failed.**
+		// Measured: `{` is `invalid_request`, and `[]` and `{"n":{}}` - both
+		// well-formed JSON that is not an object of scalars - are
+		// `unknown_error`. So the code is not the first byte's, which is what
+		// writeCannotParseJSON reads, and a body that parses as JSON and fails
+		// on its shape takes the array branch whatever it starts with.
+		if errors.Is(err, errNotAStringMap) {
+			httpx.WriteOAuthError(w, http.StatusBadRequest, "unknown_error", "Cannot parse the JSON")
+			return
+		}
 		writeCannotParseJSON(w, body)
 		return
 	}
@@ -423,62 +433,75 @@ func orderLocalizationMerge(texts []model.LocalizationText) []model.Localization
 
 // decodeLocalizationBody reads the POST's object in the order it was written.
 //
-// **A JSON number is coerced to a string**, measured: `{"n":123}` stores
-// `"123"`, which is the coercion F97 records for `POST /users`. A value that is
-// not a scalar is a parse failure here, which is the same 400 a malformed body
-// gets.
+// **A number and a boolean are coerced to strings and a `null` is dropped
+// outright.** Measured: `{"n":123}` stores `"123"`, `{"n":1.5}` stores `"1.5"`,
+// `{"n":true}` stores `"true"`, and `{"n":null}` answers 204 and leaves the
+// locale holding nothing. The coercion is F97's, met a second time; the drop is
+// its own rule and a decoder into `map[string]string` gets it wrong by storing
+// the four characters `null`.
+//
+// A value that is an object or an array is errNotAStringMap, which the caller
+// answers with a different error code from the one a malformed body gets.
 func decodeLocalizationBody(body []byte) ([]model.LocalizationText, error) {
+	if !json.Valid(body) {
+		return nil, errMalformedJSON
+	}
 	dec := json.NewDecoder(bytes.NewReader(body))
 	tok, err := dec.Token()
 	if err != nil {
-		return nil, err
+		return nil, errMalformedJSON
 	}
 	if tok != json.Delim('{') {
-		return nil, errNotAnObject
+		return nil, errNotAStringMap
 	}
 	out := []model.LocalizationText{}
 	for dec.More() {
 		keyTok, err := dec.Token()
 		if err != nil {
-			return nil, err
+			return nil, errMalformedJSON
 		}
 		key, _ := keyTok.(string)
 		var raw json.RawMessage
 		if err := dec.Decode(&raw); err != nil {
-			return nil, err
+			return nil, errMalformedJSON
 		}
-		value, err := localizationScalar(raw)
+		value, ok, err := localizationScalar(raw)
 		if err != nil {
 			return nil, err
 		}
+		if !ok {
+			continue
+		}
 		out = append(out, model.LocalizationText{Key: key, Value: value})
-	}
-	if _, err := dec.Token(); err != nil {
-		return nil, err
 	}
 	return out, nil
 }
 
-var errNotAnObject = errors.New("admin: localization body is not a JSON object")
+var (
+	errMalformedJSON = errors.New("admin: localization body is not JSON")
+	errNotAStringMap = errors.New("admin: localization body is not an object of scalars")
+)
 
 // localizationScalar renders one value the way Jackson coerces it into a
-// String: a JSON string as itself, a number or a boolean as its own text.
-func localizationScalar(raw json.RawMessage) (string, error) {
+// String, and reports whether the pair survives at all: a JSON string as
+// itself, a number or a boolean as its own text, and a `null` dropped.
+func localizationScalar(raw json.RawMessage) (string, bool, error) {
 	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 {
-		return "", errNotAnObject
-	}
-	if trimmed[0] == '"' {
+	switch {
+	case len(trimmed) == 0:
+		return "", false, errMalformedJSON
+	case string(trimmed) == "null":
+		return "", false, nil
+	case trimmed[0] == '"':
 		var s string
 		if err := json.Unmarshal(trimmed, &s); err != nil {
-			return "", err
+			return "", false, errMalformedJSON
 		}
-		return s, nil
+		return s, true, nil
+	case trimmed[0] == '{' || trimmed[0] == '[':
+		return "", false, errNotAStringMap
 	}
-	if trimmed[0] == '{' || trimmed[0] == '[' {
-		return "", errNotAnObject
-	}
-	return string(trimmed), nil
+	return string(trimmed), true, nil
 }
 
 // isAbsentJSONBody reports whether a POST body is the one that leaves a locale

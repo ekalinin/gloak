@@ -289,16 +289,30 @@ func TestLocalizationRefusals(t *testing.T) {
 		}
 	}
 
-	// The two parse failures differ by the body's shape, not the endpoint.
+	// **Two 400s on one route, and it is not the first byte that picks.** A
+	// body that is not JSON is invalid_request; one that is JSON and is not an
+	// object of scalars is unknown_error, whether it starts with `[` or `{`.
 	for body, want := range map[string]string{
-		"{":  `{"error":"invalid_request","error_description":"Cannot parse the JSON"}`,
-		"[]": `{"error":"unknown_error","error_description":"Cannot parse the JSON"}`,
+		"{":          `{"error":"invalid_request","error_description":"Cannot parse the JSON"}`,
+		"[]":         `{"error":"unknown_error","error_description":"Cannot parse the JSON"}`,
+		`{"n":{}}`:   `{"error":"unknown_error","error_description":"Cannot parse the JSON"}`,
+		`{"n":[1]}`:  `{"error":"unknown_error","error_description":"Cannot parse the JSON"}`,
+		`{"n":"x",}`: `{"error":"invalid_request","error_description":"Cannot parse the JSON"}`,
 	} {
 		w := send(t, h, http.MethodPost, localizationBase+"/en", admin, body)
 		if w.Code != http.StatusBadRequest || w.Body.String() != want {
 			t.Errorf("import %q: %d %s", body, w.Code, w.Body)
 		}
 	}
+
+	// A number and a boolean are coerced into strings and a null is dropped -
+	// three answers to one question about a value's type.
+	if w := send(t, h, http.MethodPost, localizationBase+"/coerce", admin,
+		`{"num":123,"frac":1.5,"flag":true,"gone":null}`); w.Code != http.StatusNoContent {
+		t.Fatalf("coercing import: %d %s", w.Code, w.Body)
+	}
+	assertLocalizationBody(t, h, admin, "coerce",
+		`{"num":"123","frac":"1.5","flag":"true"}`)
 }
 
 // TestLocalizationPutConsumesPlainText pins the 415 over the nine spellings it
