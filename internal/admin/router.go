@@ -578,10 +578,7 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE "+idpPrefix+"/{alias}/mappers/{mapperID}",
 		h.guardIdentityProvider(identityProviderWriteRoles, h.deleteIdentityProviderMapper))
 
-	// Component, two of the six. The four left - the two writes,
-	// `sub-component-types` and the delete - each need the per-provider
-	// config-property catalogue or would offer a state Keycloak cannot reach;
-	// the plan says which is which.
+	// Component, all six.
 	//
 	// **The family is authorised out of the realm role set**, although its rows
 	// are key providers and client-registration policies:
@@ -589,10 +586,47 @@ func (h *handler) register(mux *http.ServeMux) {
 	// them. That is the third time the description's tag has failed to predict
 	// the guard, and the neighbouring family in this very commit takes the
 	// other pair.
+	//
+	// **The role is judged before the component is resolved, per verb.** A
+	// `view-realm` caller naming a component that does not exist gets 404 on the
+	// `GET` and 403 on the `PUT` and the `DELETE`, where a `manage-realm` caller
+	// gets 404 on all three - measured, and it is guardAny's own order rather
+	// than anything this family had to be given.
 	mux.HandleFunc("GET /admin/realms/{realm}/components",
 		h.guardAny(componentReadRoles, h.listComponents))
+	mux.HandleFunc("POST /admin/realms/{realm}/components",
+		h.guardAny(componentWriteRoles, h.createComponent))
 	mux.HandleFunc("GET /admin/realms/{realm}/components/{componentID}",
 		h.guardAny(componentReadRoles, h.readComponent))
+	mux.HandleFunc("PUT /admin/realms/{realm}/components/{componentID}",
+		h.guardAny(componentWriteRoles, h.updateComponent))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/components/{componentID}",
+		h.guardAny(componentWriteRoles, h.deleteComponent))
+	mux.HandleFunc("GET /admin/realms/{realm}/components/{componentID}/sub-component-types",
+		h.guardAny(componentReadRoles, h.listSubComponentTypes))
+
+	// Attack Detection, all three. **Authorised out of the users pair**, which
+	// nothing in the path or the tag says: the read takes `view-users` or
+	// `manage-users` and the two deletes take `manage-users` alone, which is the
+	// role-mapping family's shape exactly. `query-users`, which opens
+	// `GET /users`, is 403 on all three.
+	mux.HandleFunc("GET /admin/realms/{realm}/attack-detection/brute-force/users/{userID}",
+		h.guardAny(bruteForceReadRoles, h.readBruteForceStatus))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/attack-detection/brute-force/users/{userID}",
+		h.guardAny(bruteForceWriteRoles, h.clearBruteForceForUser))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/attack-detection/brute-force/users",
+		h.guardAny(bruteForceWriteRoles, h.clearBruteForceForRealm))
+
+	// Client Initial Access, all three. **Authorised out of the clients pair** -
+	// `view-realm` and `manage-realm` are 403 on all three - so this branch adds
+	// one family on each of the API's two commonest role pairs and the
+	// description's tags predict neither.
+	mux.HandleFunc("GET /admin/realms/{realm}/clients-initial-access",
+		h.guardAny(initialAccessReadRoles, h.listClientInitialAccess))
+	mux.HandleFunc("POST /admin/realms/{realm}/clients-initial-access",
+		h.guardAny(initialAccessWriteRoles, h.createClientInitialAccess))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/clients-initial-access/{initialAccessID}",
+		h.guardAny(initialAccessWriteRoles, h.deleteClientInitialAccess))
 
 	// Authentication Management, the eighteen operations of P8's first cut.
 	// The other twenty-one - the flows, the executions and the shared
@@ -2011,3 +2045,37 @@ var identityProviderWriteRoles = []string{"manage-identity-providers"}
 // 403, `manage-identity-providers` included. Two neighbouring chapters, two
 // disjoint role pairs, and nothing in the description says so.
 var componentReadRoles = []string{"view-realm", "manage-realm"}
+
+// componentWriteRoles is what the two writes, the delete and nothing else
+// accept. Measured on the same nine single-role callers as the reads: the three
+// answer 201, 204 and 204 for `manage-realm` and 403 for `view-realm`, so the
+// family's read/write split is inside one pair rather than across two.
+var componentWriteRoles = []string{"manage-realm"}
+
+// bruteForceReadRoles is GET .../attack-detection/brute-force/users/{userId}.
+//
+// **The Attack Detection tag is authorised out of the users pair**, which
+// nothing in its path or its tag says. Measured one role at a time over nine
+// callers: `view-users` and `manage-users` answer 200, `query-users` answers
+// 403 although it opens `GET /users`, and the realm and clients pairs answer
+// 403 too. That is the role-mapping family's shape - view or manage on the
+// read, manage alone on the writes - reached from a different chapter.
+//
+// It is a separate variable from userReadRoles for the reason the realm pairs
+// are separate from each other: the two were measured on different routes.
+var bruteForceReadRoles = []string{"view-users", "manage-users"}
+
+// bruteForceWriteRoles is both deletes.
+var bruteForceWriteRoles = []string{"manage-users"}
+
+// initialAccessReadRoles is GET .../clients-initial-access.
+//
+// **The Client Initial Access tag is authorised out of the clients pair**, and
+// `view-realm` and `manage-realm` are 403 on all three of its routes - measured
+// in the same sweep as the component family above, which takes exactly the
+// opposite pair. Two chapters landing in one branch, two disjoint role pairs,
+// and the description's tag predicts neither.
+var initialAccessReadRoles = []string{"view-clients", "manage-clients"}
+
+// initialAccessWriteRoles is the create and the delete.
+var initialAccessWriteRoles = []string{"manage-clients"}
