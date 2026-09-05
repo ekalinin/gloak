@@ -503,7 +503,7 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **Role listings have no stable order across container starts.** Every one of
   them is a bare array at the root of the body, which is why `Case.Unordered`
   learned the root path spelling `"."`.
-- **Twenty-eight spellings of not-found in the admin API now**, including four for
+- **Thirty-three spellings of not-found in the admin API now**, including four for
   one resource, **four** for a missing group, and three *pairs* that differ only
   in a full stop. Counted from the list, not incremented: (1) `Could not find client`, (2) `Client not found`,
   (3) `User not found`, (4) `Realm not found.` with its full stop,
@@ -537,7 +537,13 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   with three `s`s**, from `DELETE .../sessions/{session}` for an id that names
   nothing and for one that is not a UUID alike - **the first misspelled entry in
   this list**, and correcting it is the tidy-up that breaks the one thing this
-  project exists to do.
+  project exists to do. Authentication Management adds five more -
+  (29) `Could not find flow with id`, (30) `Flow not found`,
+  (31) **`flow not found`**, (32) `Illegal execution` and
+  (33) `Could not find authenticator config` - and **(30) and (31) are the same
+  path answered by two verbs**: `GET /flows/{alias}/executions` capitalises it
+  and the `PUT` on the identical path does not. One path, two verbs, one
+  letter.
   An unknown identity provider alias adds nothing here: the read, the update and
   the delete all answer the generic `HTTP 404 Not Found`, so two neighbouring
   chapters measured in one cut contributed two spellings and none.
@@ -605,8 +611,8 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   one family and inverted on its neighbour, and the second time the description's
   tag turned out to be the thing that predicts it.
 
-- **A create's `Location` ends in a server-minted UUID on eleven routes out of
-  fifteen; the other four end in a name the caller chose.** Counted from the
+- **A create's `Location` ends in a server-minted UUID on seventeen routes out
+  of twenty-one; the other four end in a name the caller chose.** Counted from the
   list below rather than incremented, which is the only way this number has ever
   been right. The uuid tails are `POST /clients`, `/users`, `/groups`,
   `/groups/{id}/children`, `/client-scopes`, `/client-templates`,
@@ -616,7 +622,11 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   server-minted when the body names no id and the **body's own** when it does,
   which is `POST /clients`' rule rather than a new one; the name tails are
   `POST /roles`, `POST /clients/{uuid}/roles`, `POST /admin/realms` and
-  `POST .../identity-provider/instances`, which ends in the **alias**. One more
+  `POST .../identity-provider/instances`, which ends in the **alias**.
+  Authentication Management adds **six** more uuid tails - its seven creates,
+  of which `POST /authentication/flows` was already on the list - and two of
+  them **echo the creating route** rather than the addressing one, the second
+  family to do that after the organization groups. One more create
   could not be reached on a default container and is not counted.
   (This said "four out of seven" and then "ten out of thirteen" until
   2026-09-01. The phrasing was half the problem: it used to read "ends in the new
@@ -1959,6 +1969,45 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   them exactly; the `clients` map inside a **session representation** is the same
   kind of map and `KeyOrder` gets it **wrong**, by one colliding pair chaining in
   insertion order.
+
+- **`autheticatorFlow` is spelled without its `n`, and it is not a typo to fix.**
+  It is the wire name in an execution's representation, and correcting it breaks
+  the one thing this project exists to do - the second misspelling in this file
+  after `Sesssion not found`.
+- **A flow's three serialisations disagree about where `flowId` goes**, and
+  `authenticatorConfig` is an **alias** in one serialisation of a row and an
+  **id** in another. The same object read two ways is two shapes, which is the
+  fifth family to do this after one scope's five serialisations.
+- **`builtIn` refuses four writes on a flow's executions with four distinct
+  sentences, and permits the fifth.** A `requirement` change on a built-in flow
+  is a **204** - which is what makes the realm's browser flow editable at all,
+  and it is the write the login's cookie binding reads. The built-in check runs
+  **before** the provider check. A built-in flow can be **renamed** and cannot
+  be deleted.
+- **`POST /flows` answers a missing `providerId` with `Duplicate resource
+  error`**, and this is the first route measured where **the same verb on the
+  same path** produces both security-header sets depending only on which refusal
+  fired. It adds a data point to that split and explains nothing; see F147.
+- **`requirementChoices` is a stored list per provider, not a sorted set.**
+  Fifty-three providers, and `http-basic-authenticator` alone puts `CONDITIONAL`
+  **third** - so sorting is wrong on exactly one of fifty-three, which is the
+  hardest kind of rule to catch by sampling. `configurable` beside it needed no
+  data at all: it is "the provider declares a property", with zero mismatches on
+  all fifty-three.
+- **`POST /executions/{id}/config` is an upsert**, and **two creates in this tag
+  make a resource the API cannot name afterwards.**
+- **The login's `execution` parameter is a real row id.** It is the
+  `auth-username-password-form` execution's id inside the realm's bound browser
+  flow, which is why it is stable across logins in one container and why it
+  **differs between realms** - measured on two realms whose values differed and
+  each matched its own realm's row.
+- **A realm's `auth-cookie` execution at `DISABLED` stops the SSO
+  short-circuit**: a request carrying a live `KEYCLOAK_IDENTITY` renders the
+  login page instead of redirecting with a code. Measured in three states on one
+  cookie jar - ALTERNATIVE 302, DISABLED 200, ALTERNATIVE 302 again.
+- **A created realm has three authentication flows and two executions master has
+  not got.** This file and the observed document recorded the executions,
+  because the executions listing is what the cut that measured it could see.
 
 ## Boundaries
 

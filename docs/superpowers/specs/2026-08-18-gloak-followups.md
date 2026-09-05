@@ -3530,7 +3530,41 @@ catch, so it is written down rather than tested - which is the point of filing
 it, since an untested property that nobody has named reads exactly like a tested
 one.
 
-## F103: twenty-one authentication operations move state nothing consumes
+## F103: twenty-one authentication operations move state nothing consumes (paid 2026-09-03)
+
+**Paid, and the entry's own argument is what decided the shape.** All twenty-one
+are served **and** `internal/oidc` reads the stored model in three places:
+
+```
+B1  the realm's browserFlow selects the top-level flow the login walks
+B2  that flow's auth-username-password-form execution id is the login's
+    `execution` parameter - Keycloak's value is a real row id, measured on two
+    realms whose values differed
+B3  that flow's auth-cookie requirement decides whether the cookie is consulted
+    at all - DISABLED renders the login page where ALTERNATIVE redirects
+```
+
+**Why not the admin surface alone**, which is what this entry warned against:
+it was already half-shipped. `realmrep.go` has served seven flow-binding names
+read by nothing since P4, so twenty-one operations over an unread model would
+not have *added* an instance of this entry's shape - it would have **completed**
+one.
+
+**Why not the engine first**: the seed is 55 rows naming **25 distinct
+authenticator ids** and `internal/oidc` implements two. An engine dispatching
+where 23 of 25 answer "not implemented" is a **louder** untruth than the one
+this entry describes.
+
+**What is still not claimed**, and it is written at the functions rather than
+only here: requirement semantics are stored and compared for equality, never
+interpreted; six of the seven realm flow bindings are still read by nothing; and
+13 of the browser flow's 15 rows are unread. `internal/admin/flows.go`'s file
+comment carries that list, which is the half of this entry's lesson that
+survives - **the divergence has to be where a reader meets it, not only in a
+document.**
+
+What the finding said, kept for the record:
+
 
 The `flows` 10, `executions` 7 and `config` 4 of the Authentication Management
 tag - the flow model. They are deferred rather than built, and the reason is

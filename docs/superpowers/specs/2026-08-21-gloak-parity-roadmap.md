@@ -237,11 +237,12 @@ operations is allocated below; none is left unassigned.
 | P14 first cut | The localization family and the converter, **done 2026-09-03** | P4 | `admin/realms-admin` 21->29. Counted from the description rather than from a hint: the chapter's 24 unserved fall into **eight** families, of which localization is **seven** operations and the client policies and `client-types` were already served. The events family is left alone - it needs an event store and is P14's own next cut | 8 ops |
 | Small chapters | attack-detection, client-initial-access and the component writes, **done 2026-09-03** | P9 second cut | Three chapters closed outright, +10. **`attack-detection` stores nothing**: its record is written by a failed authentication and nothing in this project counts one, so no table was added - F157. F145 was **disagreed with** and `DELETE /components/{id}` built. `client-attribute-certificate` is left: two of its seven answer a **binary keystore** and no golden here holds a non-text body - F161 | 10 ops |
 | Session family | The eleven session operations, **done 2026-09-03** | P13, P14 | `admin/clients` 18->23, `admin/users` 18->20, `admin/realms-admin` 29->33. **An offline session is a second session, not a flag on the first** - the two id spaces are disjoint and `client-session-stats` is the only read that sees both. F130 closed; the `k_push_not_before` poster was deliberately **not** built, because half of `internal/oidc` would have moved with it - see F122 | 11 ops |
+| F103 | The authentication flow model, **done 2026-09-03** | P8, P13 | `admin/authentication-management` 18->39, the whole tag. **Shape 3**: all twenty-one operations plus three bindings that make `internal/oidc` read the stored model. The seed is 55 rows over 25 authenticator ids, of which two are implemented - which is why the engine was not built and why the unread remainder is named in `flows.go` rather than only in a handover | 21 ops |
 
 Denominator today: **413 Admin API operations plus 122 protocol behaviours, 535
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **451 of 541**
-after the session family, and **P2, P4 and P5 are complete** -
+surface is not counted and which the report says so about. Served: **472 of 541**
+after the authentication flow model, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -272,7 +273,45 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-03 (seventeenth fold).** `make conformance` reports **451 of
+**Updated 2026-09-03 (eighteenth fold).** `make conformance` reports **472 of
+541**. `admin/authentication-management` went 18 to 39 - the whole tag - and
+**F103 is paid**, which was the oldest and largest debt on this list.
+
+**The round's lesson is that a follow-up arguing against its own obvious fix is
+worth more than one that only defers.** F103 did not say "build these
+twenty-one later". It said building them over a model nothing executes would let
+a caller edit a description of something the server does not read, and that "we
+store it and serve it back" has twice been read here as "we implement it". That
+argument is what produced the shape:
+
+- **the admin surface alone was already half-shipped** - `realmrep.go` has
+  served seven flow-binding names read by nothing since P4, so twenty-one
+  operations over an unread model would have *completed* an instance of F103's
+  shape rather than added one;
+- **the engine first would have asserted a dispatch that cannot happen** - the
+  seed is 55 rows naming 25 distinct authenticator ids and `internal/oidc`
+  implements two, so an engine answering "not implemented" for 23 of 25 is a
+  louder untruth than the one F103 objects to.
+
+So the cut took both: all twenty-one, plus three bindings that make the login
+read the stored model - the bound flow, the `execution` parameter (a real row id,
+measured on two realms whose values differed) and the `auth-cookie` requirement,
+which at `DISABLED` stops the SSO short-circuit.
+
+**And what is still not claimed is written at the functions rather than only in
+a document**, which is the half of F103's lesson that outlives it: requirement
+semantics are stored and never interpreted, six of seven bindings are unread, and
+13 of the browser flow's 15 rows are unread. That list lives in
+`internal/admin/flows.go`'s file comment, where a reader meets it.
+
+**A survivor turned up inside the cut that was paying off this exact shape.**
+Disabling the seed's not-in-master guard left three organization flows in master
+that nothing references, and the test saw nothing because it read only four rows
+of one flow. Six of six survivors in this project have been a test where one
+thing played two roles; this one was a test that read a fraction of what it
+named.
+
+**Earlier on 2026-09-03 (seventeenth fold).** `make conformance` reports **451 of
 541**. The session family landed all eleven of its operations across three tags -
 `admin/clients` 18 to 23, `admin/users` 18 to 20, `admin/realms-admin` 29 to 33 -
 and F130 closed.
