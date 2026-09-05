@@ -1,0 +1,234 @@
+{
+  "allow-access-authenticator": [
+    "REQUIRED",
+    "DISABLED"
+  ],
+  "auth-conditional-otp-form": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "auth-cookie": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "auth-otp-form": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "auth-password-form": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "auth-recovery-authn-code-form": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "auth-spnego": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "auth-username-form": [
+    "REQUIRED"
+  ],
+  "auth-username-password-form": [
+    "REQUIRED"
+  ],
+  "auth-x509-client-username-form": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "client-jwt": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "client-secret": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "client-secret-jwt": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "client-x509": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "conditional-client-scope": [
+    "REQUIRED",
+    "DISABLED"
+  ],
+  "conditional-credential": [
+    "REQUIRED",
+    "DISABLED"
+  ],
+  "conditional-level-of-authentication": [
+    "REQUIRED",
+    "DISABLED"
+  ],
+  "conditional-sub-flow-executed": [
+    "REQUIRED",
+    "DISABLED"
+  ],
+  "conditional-user-attribute": [
+    "REQUIRED",
+    "DISABLED"
+  ],
+  "conditional-user-configured": [
+    "REQUIRED",
+    "DISABLED"
+  ],
+  "conditional-user-role": [
+    "REQUIRED",
+    "DISABLED"
+  ],
+  "deny-access-authenticator": [
+    "REQUIRED",
+    "DISABLED"
+  ],
+  "direct-grant-auth-x509-username": [
+    "REQUIRED"
+  ],
+  "direct-grant-validate-otp": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "direct-grant-validate-password": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "direct-grant-validate-username": [
+    "REQUIRED"
+  ],
+  "docker-http-basic-authenticator": [
+    "REQUIRED"
+  ],
+  "federated-jwt": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "http-basic-authenticator": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "CONDITIONAL",
+    "DISABLED"
+  ],
+  "identity-provider-redirector": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "idp-add-organization-member": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "idp-auto-link": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "idp-confirm-link": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "idp-confirm-override-link": [
+    "REQUIRED",
+    "DISABLED"
+  ],
+  "idp-create-user-if-unique": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "idp-detect-existing-broker-user": [
+    "REQUIRED",
+    "DISABLED"
+  ],
+  "idp-email-verification": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "idp-review-profile": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "idp-username-password-form": [
+    "REQUIRED"
+  ],
+  "organization": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "registration-page-form": [
+    "REQUIRED",
+    "DISABLED"
+  ],
+  "registration-password-action": [
+    "REQUIRED",
+    "DISABLED"
+  ],
+  "registration-recaptcha-action": [
+    "REQUIRED",
+    "DISABLED"
+  ],
+  "registration-recaptcha-enterprise": [
+    "REQUIRED",
+    "DISABLED"
+  ],
+  "registration-terms-and-conditions": [
+    "REQUIRED",
+    "DISABLED"
+  ],
+  "registration-user-creation": [
+    "REQUIRED",
+    "DISABLED"
+  ],
+  "reset-credential-email": [
+    "REQUIRED"
+  ],
+  "reset-credentials-choose-user": [
+    "REQUIRED"
+  ],
+  "reset-otp": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "reset-password": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "user-session-limits": [
+    "REQUIRED",
+    "DISABLED"
+  ],
+  "webauthn-authenticator": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ],
+  "webauthn-authenticator-passwordless": [
+    "REQUIRED",
+    "ALTERNATIVE",
+    "DISABLED"
+  ]
+}

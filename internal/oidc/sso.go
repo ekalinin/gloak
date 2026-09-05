@@ -199,7 +199,15 @@ func (h *handler) resolveSSO(w http.ResponseWriter, r *http.Request, realm *mode
 	}
 	maxAge, hasMaxAge, _ := parseMaxAge(req.Params)
 	sess := h.resolveBrowserSession(w, r, realm, k)
-	fresh := sess != nil && (!hasMaxAge || maxAgeSatisfied(sess, maxAge, time.Now()))
+	// Binding B3. The realm's bound browser flow's `auth-cookie` execution
+	// decides whether the cookie is consulted at all: at DISABLED a request
+	// carrying a live KEYCLOAK_IDENTITY renders the login page instead of
+	// redirecting with a code. Measured in three states on one cookie jar. The
+	// conjunct is here rather than inside resolveBrowserSession because the
+	// cookie is still *read* - it is the short-circuit that stops, and the
+	// session the cookie names is what a later successful login joins.
+	fresh := sess != nil && h.ssoEnabled(r.Context(), realm) &&
+		(!hasMaxAge || maxAgeSatisfied(sess, maxAge, time.Now()))
 
 	// A pending required action is resolved once, before the branches, because
 	// two of them need it and it is a store read. It is only asked for when

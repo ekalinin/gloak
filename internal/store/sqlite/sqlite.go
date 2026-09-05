@@ -180,6 +180,10 @@ func (s *Store) ClientInitialAccess() store.ClientInitialAccessRepo {
 	return &clientInitialAccessRepo{s.db}
 }
 
+func (s *Store) AuthenticationFlows() store.AuthenticationFlowRepo {
+	return &authenticationFlowRepo{s.db}
+}
+
 // classify maps driver errors onto the store's sentinels so handlers never
 // inspect driver-specific error text.
 func classify(err error) error {
@@ -3637,4 +3641,299 @@ func scanClientInitialAccess(row scanner) (*model.ClientInitialAccess, error) {
 		return nil, classify(err)
 	}
 	return m, nil
+}
+
+type authenticationFlowRepo struct{ db *sql.DB }
+
+// The three SELECT lists are spelled once each, so a list method and a
+// single-row read cannot come to scan a different set of columns into the one
+// scan helper below them.
+const (
+	authenticationFlowColumns      = `id, realm_id, alias, description, provider_id, top_level, built_in, ordinal`
+	authenticationExecutionColumns = `id, realm_id, parent_flow_id, authenticator, flow_id, config_id, requirement, priority`
+	authenticationConfigColumns    = `id, realm_id, alias, config`
+)
+
+// ListFlows serves every flow of the realm, sub-flows included. Filtering the
+// top-level ones out is GET /flows' job and is done in internal/admin, because
+// the execution walk needs the rest.
+func (r *authenticationFlowRepo) ListFlows(ctx context.Context, realmID string) ([]*model.AuthenticationFlow, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+authenticationFlowColumns+` FROM authentication_flow
+		  WHERE realm_id = ? ORDER BY ordinal`, realmID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return collectAuthenticationFlows(rows)
+}
+
+func (r *authenticationFlowRepo) FlowByID(ctx context.Context, realmID, id string) (*model.AuthenticationFlow, error) {
+	return scanAuthenticationFlow(r.db.QueryRowContext(ctx,
+		`SELECT `+authenticationFlowColumns+` FROM authentication_flow
+		  WHERE realm_id = ? AND id = ?`, realmID, id))
+}
+
+// FlowByAlias cannot reach a flow whose alias is NULL, and that is the measured
+// consequence rather than a gap: `alias = ?` is never true of a NULL, so the
+// aliasless flow POST /flows/{alias}/copy creates stays addressable by id
+// alone.
+func (r *authenticationFlowRepo) FlowByAlias(ctx context.Context, realmID, alias string) (*model.AuthenticationFlow, error) {
+	return scanAuthenticationFlow(r.db.QueryRowContext(ctx,
+		`SELECT `+authenticationFlowColumns+` FROM authentication_flow
+		  WHERE realm_id = ? AND alias = ?`, realmID, alias))
+}
+
+// CreateFlow numbers the row itself - the component and client_initial_access
+// device - because GET /flows is insertion-ordered and the ids are random
+// UUIDs that do not sort that way. The caller's Ordinal is not read, so a seed
+// that inserts in order gets that order back whatever it left in the field.
+func (r *authenticationFlowRepo) CreateFlow(ctx context.Context, f *model.AuthenticationFlow) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var ordinal int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(ordinal), -1) + 1 FROM authentication_flow WHERE realm_id = ?`,
+		f.RealmID).Scan(&ordinal); err != nil {
+		return classify(err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO authentication_flow (`+authenticationFlowColumns+`)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		f.ID, f.RealmID, f.Alias, f.Description, f.ProviderID,
+		boolToInt(f.TopLevel), boolToInt(f.BuiltIn), ordinal); err != nil {
+		return classify(err)
+	}
+	return tx.Commit()
+}
+
+// UpdateFlow leaves `ordinal` alone, so a renamed flow keeps its place in the
+// listing. It does not consult built_in either: a built-in flow can be renamed
+// through PUT /flows/{id}, measured.
+func (r *authenticationFlowRepo) UpdateFlow(ctx context.Context, f *model.AuthenticationFlow) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE authentication_flow
+		    SET alias = ?, description = ?, provider_id = ?, top_level = ?, built_in = ?
+		  WHERE realm_id = ? AND id = ?`,
+		f.Alias, f.Description, f.ProviderID, boolToInt(f.TopLevel),
+		boolToInt(f.BuiltIn), f.RealmID, f.ID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
+}
+
+// DeleteFlow takes the flow's execution rows with it by cascade. Refusing a
+// built-in flow is a 400 with a body and belongs to internal/admin.
+func (r *authenticationFlowRepo) DeleteFlow(ctx context.Context, realmID, id string) error {
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM authentication_flow WHERE realm_id = ? AND id = ?`, realmID, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
+}
+
+// ListExecutions serves one parent's direct rows. The tie-break on id is there
+// so two rows sharing a priority - which nothing forbids - come back in the
+// same order from both drivers, since storetest is the only evidence they
+// agree.
+func (r *authenticationFlowRepo) ListExecutions(ctx context.Context, realmID, parentFlowID string) ([]*model.AuthenticationExecution, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+authenticationExecutionColumns+` FROM authentication_execution
+		  WHERE realm_id = ? AND parent_flow_id = ? ORDER BY priority, id`,
+		realmID, parentFlowID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return collectAuthenticationExecutions(rows)
+}
+
+func (r *authenticationFlowRepo) ExecutionByID(ctx context.Context, realmID, id string) (*model.AuthenticationExecution, error) {
+	return scanAuthenticationExecution(r.db.QueryRowContext(ctx,
+		`SELECT `+authenticationExecutionColumns+` FROM authentication_execution
+		  WHERE realm_id = ? AND id = ?`, realmID, id))
+}
+
+func (r *authenticationFlowRepo) CreateExecution(ctx context.Context, e *model.AuthenticationExecution) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO authentication_execution (`+authenticationExecutionColumns+`)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.RealmID, e.ParentFlowID, nullableString(e.Authenticator),
+		nullableString(e.FlowID), nullableString(e.ConfigID), e.Requirement, e.Priority)
+	return classify(err)
+}
+
+// UpdateExecution writes the three columns a route moves - the requirement, the
+// priority the two swaps exchange, and the config pointer POST
+// /executions/{id}/config repoints. The parent, the authenticator and the
+// sub-flow are not among them.
+func (r *authenticationFlowRepo) UpdateExecution(ctx context.Context, e *model.AuthenticationExecution) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE authentication_execution SET requirement = ?, priority = ?, config_id = ?
+		  WHERE realm_id = ? AND id = ?`,
+		e.Requirement, e.Priority, nullableString(e.ConfigID), e.RealmID, e.ID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
+}
+
+func (r *authenticationFlowRepo) DeleteExecution(ctx context.Context, realmID, id string) error {
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM authentication_execution WHERE realm_id = ? AND id = ?`, realmID, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
+}
+
+// ListConfigs orders by id, because authentication_config carries no ordinal:
+// no route lists these, so nothing measured constrains the order and a stable
+// one is all the two drivers need in order to agree.
+func (r *authenticationFlowRepo) ListConfigs(ctx context.Context, realmID string) ([]*model.AuthenticationConfig, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+authenticationConfigColumns+` FROM authentication_config
+		  WHERE realm_id = ? ORDER BY id`, realmID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return collectAuthenticationConfigs(rows)
+}
+
+func (r *authenticationFlowRepo) ConfigByID(ctx context.Context, realmID, id string) (*model.AuthenticationConfig, error) {
+	return scanAuthenticationConfig(r.db.QueryRowContext(ctx,
+		`SELECT `+authenticationConfigColumns+` FROM authentication_config
+		  WHERE realm_id = ? AND id = ?`, realmID, id))
+}
+
+func (r *authenticationFlowRepo) CreateConfig(ctx context.Context, c *model.AuthenticationConfig) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO authentication_config (`+authenticationConfigColumns+`)
+		 VALUES (?, ?, ?, ?)`,
+		c.ID, c.RealmID, c.Alias, encode(c.Config))
+	return classify(err)
+}
+
+func (r *authenticationFlowRepo) UpdateConfig(ctx context.Context, c *model.AuthenticationConfig) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE authentication_config SET alias = ?, config = ?
+		  WHERE realm_id = ? AND id = ?`,
+		c.Alias, encode(c.Config), c.RealmID, c.ID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
+}
+
+// DeleteConfig removes the config and clears every execution of the realm
+// pointing at it, in one transaction. config_id carries no foreign key on
+// purpose - the execution stays addressable - so the clearing is a statement
+// here rather than a cascade, and it is here rather than in internal/admin so
+// that both drivers do it.
+func (r *authenticationFlowRepo) DeleteConfig(ctx context.Context, realmID, id string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx,
+		`DELETE FROM authentication_config WHERE realm_id = ? AND id = ?`, realmID, id)
+	if err != nil {
+		return classify(err)
+	}
+	if err := affectedOne(res); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE authentication_execution SET config_id = NULL
+		  WHERE realm_id = ? AND config_id = ?`, realmID, id); err != nil {
+		return classify(err)
+	}
+	return tx.Commit()
+}
+
+func scanAuthenticationFlow(row scanner) (*model.AuthenticationFlow, error) {
+	m := &model.AuthenticationFlow{}
+	var alias sql.NullString
+	var topLevel, builtIn int
+	if err := row.Scan(&m.ID, &m.RealmID, &alias, &m.Description, &m.ProviderID,
+		&topLevel, &builtIn, &m.Ordinal); err != nil {
+		return nil, classify(err)
+	}
+	if alias.Valid {
+		m.Alias = &alias.String
+	}
+	m.TopLevel = topLevel != 0
+	m.BuiltIn = builtIn != 0
+	return m, nil
+}
+
+func collectAuthenticationFlows(rows *sql.Rows) ([]*model.AuthenticationFlow, error) {
+	defer func() { _ = rows.Close() }()
+	out := []*model.AuthenticationFlow{}
+	for rows.Next() {
+		m, err := scanAuthenticationFlow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+// scanAuthenticationExecution reads the three nullable text columns back as the
+// empty string, which is the same round trip nullableString writes: the wire
+// has no third state between "absent" and "empty" on any of them.
+func scanAuthenticationExecution(row scanner) (*model.AuthenticationExecution, error) {
+	m := &model.AuthenticationExecution{}
+	var authenticator, flowID, configID sql.NullString
+	if err := row.Scan(&m.ID, &m.RealmID, &m.ParentFlowID, &authenticator,
+		&flowID, &configID, &m.Requirement, &m.Priority); err != nil {
+		return nil, classify(err)
+	}
+	m.Authenticator = authenticator.String
+	m.FlowID = flowID.String
+	m.ConfigID = configID.String
+	return m, nil
+}
+
+func collectAuthenticationExecutions(rows *sql.Rows) ([]*model.AuthenticationExecution, error) {
+	defer func() { _ = rows.Close() }()
+	out := []*model.AuthenticationExecution{}
+	for rows.Next() {
+		m, err := scanAuthenticationExecution(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+func scanAuthenticationConfig(row scanner) (*model.AuthenticationConfig, error) {
+	m := &model.AuthenticationConfig{}
+	var config string
+	if err := row.Scan(&m.ID, &m.RealmID, &m.Alias, &config); err != nil {
+		return nil, classify(err)
+	}
+	if err := decode(config, &m.Config); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func collectAuthenticationConfigs(rows *sql.Rows) ([]*model.AuthenticationConfig, error) {
+	defer func() { _ = rows.Close() }()
+	out := []*model.AuthenticationConfig{}
+	for rows.Next() {
+		m, err := scanAuthenticationConfig(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
 }

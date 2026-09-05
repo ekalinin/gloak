@@ -702,6 +702,53 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/realms/{realm}/authentication/required-actions/{alias}/lower-priority",
 		h.guardAny(realmWriteRoles, h.lowerRequiredActionPriority))
 
+	// The flow model, twenty-one operations. GET /flows takes its own wider
+	// slice and every other read on the family takes realmConfigReadRoles -
+	// measured one role at a time, and view-clients is a 403 on
+	// GET /flows/{id} one segment away from the 200 it gets here.
+	mux.HandleFunc("GET /admin/realms/{realm}/authentication/flows",
+		h.guardAny(flowListReadRoles, h.listFlows))
+	mux.HandleFunc("POST /admin/realms/{realm}/authentication/flows",
+		h.guardAny(realmWriteRoles, h.createFlow))
+	mux.HandleFunc("POST /admin/realms/{realm}/authentication/flows/{flowAlias}/copy",
+		h.guardAny(realmWriteRoles, h.copyFlow))
+	mux.HandleFunc("GET /admin/realms/{realm}/authentication/flows/{flowAlias}/executions",
+		h.guardAny(realmConfigReadRoles, h.listFlowExecutions))
+	mux.HandleFunc("PUT /admin/realms/{realm}/authentication/flows/{flowAlias}/executions",
+		h.guardAny(realmWriteRoles, h.updateFlowExecution))
+	mux.HandleFunc("POST /admin/realms/{realm}/authentication/flows/{flowAlias}/executions/execution",
+		h.guardAny(realmWriteRoles, h.createFlowExecution))
+	mux.HandleFunc("POST /admin/realms/{realm}/authentication/flows/{flowAlias}/executions/flow",
+		h.guardAny(realmWriteRoles, h.createSubFlow))
+	mux.HandleFunc("GET /admin/realms/{realm}/authentication/flows/{id}",
+		h.guardAny(realmConfigReadRoles, h.readFlow))
+	mux.HandleFunc("PUT /admin/realms/{realm}/authentication/flows/{id}",
+		h.guardAny(realmWriteRoles, h.updateFlow))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/authentication/flows/{id}",
+		h.guardAny(realmWriteRoles, h.deleteFlow))
+	mux.HandleFunc("POST /admin/realms/{realm}/authentication/executions",
+		h.guardAny(realmWriteRoles, h.createExecution))
+	mux.HandleFunc("GET /admin/realms/{realm}/authentication/executions/{executionId}",
+		h.guardAny(realmConfigReadRoles, h.readExecution))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/authentication/executions/{executionId}",
+		h.guardAny(realmWriteRoles, h.deleteExecution))
+	mux.HandleFunc("POST /admin/realms/{realm}/authentication/executions/{executionId}/config",
+		h.guardAny(realmWriteRoles, h.createExecutionConfig))
+	mux.HandleFunc("GET /admin/realms/{realm}/authentication/executions/{executionId}/config/{id}",
+		h.guardAny(realmConfigReadRoles, h.readExecutionConfig))
+	mux.HandleFunc("POST /admin/realms/{realm}/authentication/executions/{executionId}/raise-priority",
+		h.guardAny(realmWriteRoles, h.raiseExecutionPriority))
+	mux.HandleFunc("POST /admin/realms/{realm}/authentication/executions/{executionId}/lower-priority",
+		h.guardAny(realmWriteRoles, h.lowerExecutionPriority))
+	mux.HandleFunc("POST /admin/realms/{realm}/authentication/config",
+		h.guardAny(realmWriteRoles, h.createConfig))
+	mux.HandleFunc("GET /admin/realms/{realm}/authentication/config/{id}",
+		h.guardAny(realmConfigReadRoles, h.readConfig))
+	mux.HandleFunc("PUT /admin/realms/{realm}/authentication/config/{id}",
+		h.guardAny(realmWriteRoles, h.updateConfig))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/authentication/config/{id}",
+		h.guardAny(realmWriteRoles, h.deleteConfig))
+
 	// Listing and counting accept query-users as well as view-users, measured:
 	// a caller holding only query-users gets 200 on both. Reading one user
 	// does not - it answers 403.
@@ -2012,6 +2059,25 @@ var clientRolesReadRoles = []string{"view-clients", "manage-clients"}
 // and sharing would make a later split look like a regression.
 var requiredActionsListReadRoles = []string{
 	"view-realm", "manage-realm", "view-users", "query-users",
+}
+
+// flowListReadRoles is GET .../authentication/flows, the tag's **second** wide
+// read - and it is wide in a different direction from the first.
+//
+// Measured 2026-09-03 across all 21 roles of the target realm's own container
+// plus a caller holding none: view-realm, manage-realm, **view-clients** and
+// **query-clients** answer 200. The required-action listing's two extra roles
+// are the *users* pair; this one's are the *clients* pair, and neither list
+// opens the other's route. Two wide reads on one tag, four extra roles, no
+// overlap - so a single tag-wide slice gets both wrong.
+//
+// It is wide on this operation **alone**: view-clients is 403 on
+// GET /flows/{id} and on GET /flows/{flowAlias}/executions, which are one path
+// segment away. And it is not the "200 with a shorter list to a weaker caller"
+// pattern - a query-clients caller's body is byte-identical to a manage-realm
+// caller's.
+var flowListReadRoles = []string{
+	"view-realm", "manage-realm", "view-clients", "query-clients",
 }
 
 // organizationReadRoles is what the single organization read accepts.

@@ -3903,4 +3903,434 @@ func runComponentWritesAndInitialAccess(t *testing.T, newStore func(t *testing.T
 			t.Errorf("after the realm went: %v, %v", rows, err)
 		}
 	})
+
+	runAuthenticationFlows(t, newStore)
+}
+
+// runAuthenticationFlows covers the whole of AuthenticationFlowRepo: the flows,
+// the execution rows inside them and the configs they point at.
+//
+// It is one function over three tables because the repository is, and the two
+// halves that cross a table - a flow delete taking its executions, a config
+// delete clearing the pointers - are the ones a driver can get wrong on its
+// own. This suite is the only evidence the two agree.
+func runAuthenticationFlows(t *testing.T, newStore func(t *testing.T) store.Store) {
+	t.Run("flows keep insertion order and an aliasless one is reachable by id alone", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		realm := newRealm(t, s)
+		other := &model.Realm{ID: model.NewID(), Name: "gloak-probe-flow-other", Enabled: true}
+		if err := s.Realms().Create(ctx, other); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+
+		if flows, err := s.AuthenticationFlows().ListFlows(ctx, realm.ID); err != nil || len(flows) != 0 {
+			t.Errorf("ListFlows on an empty realm: got %v, %v; want none", flows, err)
+		}
+		if _, err := s.AuthenticationFlows().FlowByID(ctx, realm.ID, "gloak-probe-no-such-flow"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("FlowByID of a flow that is not there: %v, want ErrNotFound", err)
+		}
+
+		// The aliases are deliberately in an order neither driver would
+		// produce by sorting, and the middle flow has none at all, which is
+		// what POST /flows/{alias}/copy with no newName creates.
+		want := []*model.AuthenticationFlow{
+			{ID: model.NewID(), RealmID: realm.ID, Alias: strPtr("gloak-probe-zz"),
+				Description: "the last one alphabetically, created first",
+				ProviderID:  "basic-flow", TopLevel: true, BuiltIn: true},
+			{ID: model.NewID(), RealmID: realm.ID,
+				ProviderID: "form-flow", TopLevel: false, BuiltIn: false},
+			{ID: model.NewID(), RealmID: realm.ID, Alias: strPtr("gloak-probe-aa"),
+				ProviderID: "client-flow", TopLevel: true, BuiltIn: false},
+		}
+		for _, f := range want {
+			if err := s.AuthenticationFlows().CreateFlow(ctx, f); err != nil {
+				t.Fatalf("CreateFlow: %v", err)
+			}
+		}
+		// One in the other realm, which neither the listing nor the two
+		// getters may see.
+		outsider := &model.AuthenticationFlow{ID: model.NewID(), RealmID: other.ID,
+			Alias: strPtr("gloak-probe-zz"), ProviderID: "basic-flow", TopLevel: true}
+		if err := s.AuthenticationFlows().CreateFlow(ctx, outsider); err != nil {
+			t.Fatalf("CreateFlow in the other realm: %v", err)
+		}
+
+		// ListFlows serves the sub-flow too: filtering to the top-level ones
+		// is GET /flows' job and is done a layer up.
+		flows, err := s.AuthenticationFlows().ListFlows(ctx, realm.ID)
+		if err != nil {
+			t.Fatalf("ListFlows: %v", err)
+		}
+		if len(flows) != len(want) {
+			t.Fatalf("ListFlows returned %d flows, want %d", len(flows), len(want))
+		}
+		for i, w := range want {
+			got := flows[i]
+			if got.ID != w.ID {
+				t.Errorf("flow %d is %s, want %s - the order is not insertion order", i, got.ID, w.ID)
+			}
+			if got.Ordinal != i {
+				t.Errorf("flow %d carries ordinal %d, want %d", i, got.Ordinal, i)
+			}
+			if got.ProviderID != w.ProviderID || got.TopLevel != w.TopLevel ||
+				got.BuiltIn != w.BuiltIn || got.Description != w.Description {
+				t.Errorf("flow %d did not round-trip: %+v", i, got)
+			}
+			if (got.Alias == nil) != (w.Alias == nil) ||
+				(w.Alias != nil && *got.Alias != *w.Alias) {
+				t.Errorf("flow %d alias is %v, want %v", i, got.Alias, w.Alias)
+			}
+		}
+
+		if got, err := s.AuthenticationFlows().FlowByID(ctx, realm.ID, want[1].ID); err != nil ||
+			got.Alias != nil || got.ProviderID != "form-flow" || got.TopLevel {
+			t.Errorf("FlowByID of the aliasless flow: %+v, %v", got, err)
+		}
+		if _, err := s.AuthenticationFlows().FlowByID(ctx, other.ID, want[0].ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("FlowByID through the wrong realm: %v, want ErrNotFound", err)
+		}
+		if got, err := s.AuthenticationFlows().FlowByAlias(ctx, realm.ID, "gloak-probe-zz"); err != nil ||
+			got.ID != want[0].ID {
+			t.Errorf("FlowByAlias: %+v, %v", got, err)
+		}
+		if got, err := s.AuthenticationFlows().FlowByAlias(ctx, other.ID, "gloak-probe-zz"); err != nil ||
+			got.ID != outsider.ID {
+			t.Errorf("FlowByAlias is not realm-scoped: %+v, %v", got, err)
+		}
+		// The aliasless flow is unreachable this way, which is the measured
+		// consequence rather than a gap: a NULL matches no alias, the empty
+		// string included.
+		if _, err := s.AuthenticationFlows().FlowByAlias(ctx, realm.ID, ""); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("FlowByAlias matched a NULL alias: %v, want ErrNotFound", err)
+		}
+
+		// A built-in flow can be renamed even though it cannot be deleted,
+		// measured on the `browser` flow of a created realm - so Update does
+		// not consult built_in.
+		renamed := *want[0]
+		renamed.Alias = strPtr("gloak-probe-renamed")
+		renamed.Description = "renamed in place"
+		renamed.ProviderID = "basic-flow"
+		renamed.BuiltIn = true
+		if err := s.AuthenticationFlows().UpdateFlow(ctx, &renamed); err != nil {
+			t.Fatalf("UpdateFlow: %v", err)
+		}
+		got, err := s.AuthenticationFlows().FlowByAlias(ctx, realm.ID, "gloak-probe-renamed")
+		if err != nil || got.ID != want[0].ID || got.Description != "renamed in place" {
+			t.Errorf("after UpdateFlow: %+v, %v", got, err)
+		}
+		// The rename does not move the flow in the listing: `ordinal` is left
+		// alone.
+		if flows, err := s.AuthenticationFlows().ListFlows(ctx, realm.ID); err != nil ||
+			len(flows) != 3 || flows[0].ID != want[0].ID {
+			t.Errorf("the rename moved the flow: %v, %v", flows, err)
+		}
+		// An alias may be cleared back to absent, which is the same NULL the
+		// copy writes.
+		renamed.Alias = nil
+		if err := s.AuthenticationFlows().UpdateFlow(ctx, &renamed); err != nil {
+			t.Fatalf("UpdateFlow clearing the alias: %v", err)
+		}
+		if got, err := s.AuthenticationFlows().FlowByID(ctx, realm.ID, want[0].ID); err != nil || got.Alias != nil {
+			t.Errorf("the cleared alias came back as %v, %v", got, err)
+		}
+
+		missing := *want[0]
+		missing.ID = model.NewID()
+		if err := s.AuthenticationFlows().UpdateFlow(ctx, &missing); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("UpdateFlow of a flow that is not there: %v, want ErrNotFound", err)
+		}
+		if err := s.AuthenticationFlows().DeleteFlow(ctx, other.ID, want[0].ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("DeleteFlow through the wrong realm: %v, want ErrNotFound", err)
+		}
+		if err := s.AuthenticationFlows().DeleteFlow(ctx, realm.ID, want[0].ID); err != nil {
+			t.Fatalf("DeleteFlow: %v", err)
+		}
+		// A second delete is ErrNotFound rather than a silent no-op, which is
+		// what the route's 404 rests on.
+		if err := s.AuthenticationFlows().DeleteFlow(ctx, realm.ID, want[0].ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("deleting twice: %v, want ErrNotFound", err)
+		}
+		if flows, err := s.AuthenticationFlows().ListFlows(ctx, realm.ID); err != nil ||
+			len(flows) != 2 || flows[0].ID != want[1].ID || flows[1].ID != want[2].ID {
+			t.Errorf("after DeleteFlow: %v, %v", flows, err)
+		}
+
+		// The flows go with the realm, which is the cascade rather than any
+		// clause in bootstrap.DeleteRealm.
+		if err := s.Realms().Delete(ctx, other.ID); err != nil {
+			t.Fatalf("Realms().Delete: %v", err)
+		}
+		if flows, err := s.AuthenticationFlows().ListFlows(ctx, other.ID); err != nil || len(flows) != 0 {
+			t.Errorf("after the realm went: %v, %v", flows, err)
+		}
+	})
+
+	t.Run("executions order by priority inside one parent and go with their flow", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		realm := newRealm(t, s)
+
+		parent := &model.AuthenticationFlow{ID: model.NewID(), RealmID: realm.ID,
+			Alias: strPtr("gloak-probe-parent"), ProviderID: "basic-flow", TopLevel: true}
+		sub := &model.AuthenticationFlow{ID: model.NewID(), RealmID: realm.ID,
+			Alias: strPtr("gloak-probe-sub"), ProviderID: "basic-flow"}
+		for _, f := range []*model.AuthenticationFlow{parent, sub} {
+			if err := s.AuthenticationFlows().CreateFlow(ctx, f); err != nil {
+				t.Fatalf("CreateFlow: %v", err)
+			}
+		}
+
+		if rows, err := s.AuthenticationFlows().ListExecutions(ctx, realm.ID, parent.ID); err != nil || len(rows) != 0 {
+			t.Errorf("ListExecutions on an empty flow: %v, %v; want none", rows, err)
+		}
+		if _, err := s.AuthenticationFlows().ExecutionByID(ctx, realm.ID, "gloak-probe-no-such-row"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("ExecutionByID of a row that is not there: %v, want ErrNotFound", err)
+		}
+
+		// The three measured shapes of a row - a leaf, a pure sub-flow row and
+		// the `registration` flow's row that carries both - written in an
+		// order the priorities do not agree with.
+		leaf := &model.AuthenticationExecution{ID: "gloak-probe-exec-leaf", RealmID: realm.ID,
+			ParentFlowID: parent.ID, Authenticator: "auth-cookie",
+			Requirement: "ALTERNATIVE", Priority: 30}
+		pure := &model.AuthenticationExecution{ID: "gloak-probe-exec-pure", RealmID: realm.ID,
+			ParentFlowID: parent.ID, FlowID: sub.ID, Requirement: "CONDITIONAL", Priority: 10}
+		both := &model.AuthenticationExecution{ID: "gloak-probe-exec-both", RealmID: realm.ID,
+			ParentFlowID: parent.ID, Authenticator: "registration-page-form",
+			FlowID: sub.ID, Requirement: "REQUIRED", Priority: 20}
+		// A fourth row shares the leaf's priority, so the tie-break on id is
+		// what makes the two drivers agree: `gloak-probe-exec-leaf` sorts
+		// before `gloak-probe-exec-tie`.
+		tie := &model.AuthenticationExecution{ID: "gloak-probe-exec-tie", RealmID: realm.ID,
+			ParentFlowID: parent.ID, Authenticator: "idp-review-profile",
+			Requirement: "DISABLED", Priority: 30}
+		// One inside the sub-flow, which the parent's listing must not see:
+		// ListExecutions serves direct children and the flat walk is assembled
+		// a layer up.
+		inner := &model.AuthenticationExecution{ID: "gloak-probe-exec-inner", RealmID: realm.ID,
+			ParentFlowID: sub.ID, Authenticator: "auth-otp-form",
+			Requirement: "REQUIRED", Priority: 0}
+		for _, e := range []*model.AuthenticationExecution{leaf, pure, both, tie, inner} {
+			if err := s.AuthenticationFlows().CreateExecution(ctx, e); err != nil {
+				t.Fatalf("CreateExecution %s: %v", e.ID, err)
+			}
+		}
+
+		rows, err := s.AuthenticationFlows().ListExecutions(ctx, realm.ID, parent.ID)
+		if err != nil {
+			t.Fatalf("ListExecutions: %v", err)
+		}
+		wantOrder := []string{pure.ID, both.ID, leaf.ID, tie.ID}
+		gotOrder := make([]string, 0, len(rows))
+		for _, e := range rows {
+			gotOrder = append(gotOrder, e.ID)
+		}
+		if !slices.Equal(gotOrder, wantOrder) {
+			t.Errorf("ListExecutions order: got %v, want %v", gotOrder, wantOrder)
+		}
+
+		// The three shapes survive: an absent authenticator and an absent flow
+		// both read back as the empty string, and neither excludes the other.
+		if rows[0].Authenticator != "" || rows[0].FlowID != sub.ID || rows[0].Requirement != "CONDITIONAL" {
+			t.Errorf("the pure sub-flow row did not round-trip: %+v", rows[0])
+		}
+		if rows[1].Authenticator != "registration-page-form" || rows[1].FlowID != sub.ID {
+			t.Errorf("the row carrying both did not round-trip: %+v", rows[1])
+		}
+		if rows[2].Authenticator != "auth-cookie" || rows[2].FlowID != "" || rows[2].ConfigID != "" {
+			t.Errorf("the leaf row did not round-trip: %+v", rows[2])
+		}
+		got, err := s.AuthenticationFlows().ExecutionByID(ctx, realm.ID, leaf.ID)
+		if err != nil || got.ParentFlowID != parent.ID || got.Priority != 30 {
+			t.Errorf("ExecutionByID: %+v, %v", got, err)
+		}
+
+		// Update moves the three columns a route moves and leaves the parent,
+		// the authenticator and the sub-flow where they are.
+		moved := *leaf
+		moved.Requirement = "DISABLED"
+		moved.Priority = 5
+		moved.Authenticator = "gloak-probe-ignored"
+		if err := s.AuthenticationFlows().UpdateExecution(ctx, &moved); err != nil {
+			t.Fatalf("UpdateExecution: %v", err)
+		}
+		got, err = s.AuthenticationFlows().ExecutionByID(ctx, realm.ID, leaf.ID)
+		if err != nil || got.Requirement != "DISABLED" || got.Priority != 5 {
+			t.Errorf("after UpdateExecution: %+v, %v", got, err)
+		}
+		if got.Authenticator != "auth-cookie" {
+			t.Errorf("UpdateExecution moved the authenticator to %q", got.Authenticator)
+		}
+		if rows, err := s.AuthenticationFlows().ListExecutions(ctx, realm.ID, parent.ID); err != nil ||
+			len(rows) != 4 || rows[0].ID != leaf.ID {
+			t.Errorf("the new priority did not reorder the listing: %v, %v", rows, err)
+		}
+
+		gone := *leaf
+		gone.ID = model.NewID()
+		if err := s.AuthenticationFlows().UpdateExecution(ctx, &gone); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("UpdateExecution of a row that is not there: %v, want ErrNotFound", err)
+		}
+		if err := s.AuthenticationFlows().DeleteExecution(ctx, realm.ID, gone.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("DeleteExecution of a row that is not there: %v, want ErrNotFound", err)
+		}
+		if err := s.AuthenticationFlows().DeleteExecution(ctx, realm.ID, tie.ID); err != nil {
+			t.Fatalf("DeleteExecution: %v", err)
+		}
+		if rows, err := s.AuthenticationFlows().ListExecutions(ctx, realm.ID, parent.ID); err != nil || len(rows) != 3 {
+			t.Errorf("after DeleteExecution: %v, %v", rows, err)
+		}
+
+		// A flow delete takes its rows with it, which is the cascade the
+		// repository leans on rather than a second statement.
+		if err := s.AuthenticationFlows().DeleteFlow(ctx, realm.ID, parent.ID); err != nil {
+			t.Fatalf("DeleteFlow: %v", err)
+		}
+		if rows, err := s.AuthenticationFlows().ListExecutions(ctx, realm.ID, parent.ID); err != nil || len(rows) != 0 {
+			t.Errorf("the executions outlived their flow: %v, %v", rows, err)
+		}
+		// The sub-flow's own row is untouched: the cascade follows
+		// parent_flow_id and nothing else.
+		if rows, err := s.AuthenticationFlows().ListExecutions(ctx, realm.ID, sub.ID); err != nil ||
+			len(rows) != 1 || rows[0].ID != inner.ID {
+			t.Errorf("the sub-flow's row went with the parent: %v, %v", rows, err)
+		}
+	})
+
+	t.Run("an authenticator config keeps its key order and its delete clears the pointers", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		realm := newRealm(t, s)
+		other := &model.Realm{ID: model.NewID(), Name: "gloak-probe-config-other", Enabled: true}
+		if err := s.Realms().Create(ctx, other); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+
+		if configs, err := s.AuthenticationFlows().ListConfigs(ctx, realm.ID); err != nil || len(configs) != 0 {
+			t.Errorf("ListConfigs on an empty realm: %v, %v; want none", configs, err)
+		}
+		if _, err := s.AuthenticationFlows().ConfigByID(ctx, realm.ID, "gloak-probe-no-such-config"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("ConfigByID of a config that is not there: %v, want ErrNotFound", err)
+		}
+
+		// Two keys in an order a Go map would sort the other way, which is the
+		// whole reason the column is JSON text and the field a StringMap.
+		c := &model.AuthenticationConfig{ID: model.NewID(), RealmID: realm.ID,
+			Alias:  "gloak-probe-review-profile-config",
+			Config: model.StringMap{{Key: "zzz", Value: "1"}, {Key: "aaa", Value: "2"}}}
+		if err := s.AuthenticationFlows().CreateConfig(ctx, c); err != nil {
+			t.Fatalf("CreateConfig: %v", err)
+		}
+		outsider := &model.AuthenticationConfig{ID: model.NewID(), RealmID: other.ID,
+			Alias: "gloak-probe-elsewhere"}
+		if err := s.AuthenticationFlows().CreateConfig(ctx, outsider); err != nil {
+			t.Fatalf("CreateConfig in the other realm: %v", err)
+		}
+
+		got, err := s.AuthenticationFlows().ConfigByID(ctx, realm.ID, c.ID)
+		if err != nil {
+			t.Fatalf("ConfigByID: %v", err)
+		}
+		if got.Alias != c.Alias || !slices.Equal(got.Config, c.Config) {
+			t.Errorf("the config did not round-trip in order: %+v", got)
+		}
+		if _, err := s.AuthenticationFlows().ConfigByID(ctx, other.ID, c.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("ConfigByID through the wrong realm: %v, want ErrNotFound", err)
+		}
+		// A config with no keys reads back as an empty map rather than nil, so
+		// the representation marshals {}.
+		if got, err := s.AuthenticationFlows().ConfigByID(ctx, other.ID, outsider.ID); err != nil ||
+			got.Config == nil || len(got.Config) != 0 {
+			t.Errorf("an empty config came back as %+v, %v", got, err)
+		}
+		if configs, err := s.AuthenticationFlows().ListConfigs(ctx, realm.ID); err != nil ||
+			len(configs) != 1 || configs[0].ID != c.ID {
+			t.Errorf("ListConfigs is not realm-scoped: %v, %v", configs, err)
+		}
+
+		c.Alias = "gloak-probe-renamed-config"
+		c.Config = model.StringMap{{Key: "defaultProvider", Value: "gloak-probe"}}
+		if err := s.AuthenticationFlows().UpdateConfig(ctx, c); err != nil {
+			t.Fatalf("UpdateConfig: %v", err)
+		}
+		got, err = s.AuthenticationFlows().ConfigByID(ctx, realm.ID, c.ID)
+		if err != nil || got.Alias != c.Alias || !slices.Equal(got.Config, c.Config) {
+			t.Errorf("after UpdateConfig: %+v, %v", got, err)
+		}
+		missing := *c
+		missing.ID = model.NewID()
+		if err := s.AuthenticationFlows().UpdateConfig(ctx, &missing); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("UpdateConfig of a config that is not there: %v, want ErrNotFound", err)
+		}
+
+		// Two rows of this realm point at the config and one of the other
+		// realm does - config_id carries no foreign key, so a pointer across
+		// the realm boundary is a row the table accepts and the delete must
+		// leave alone.
+		flow := &model.AuthenticationFlow{ID: model.NewID(), RealmID: realm.ID,
+			Alias: strPtr("gloak-probe-config-flow"), ProviderID: "basic-flow", TopLevel: true}
+		if err := s.AuthenticationFlows().CreateFlow(ctx, flow); err != nil {
+			t.Fatalf("CreateFlow: %v", err)
+		}
+		otherFlow := &model.AuthenticationFlow{ID: model.NewID(), RealmID: other.ID,
+			Alias: strPtr("gloak-probe-config-flow"), ProviderID: "basic-flow", TopLevel: true}
+		if err := s.AuthenticationFlows().CreateFlow(ctx, otherFlow); err != nil {
+			t.Fatalf("CreateFlow in the other realm: %v", err)
+		}
+		pointing := &model.AuthenticationExecution{ID: "gloak-probe-cfg-a", RealmID: realm.ID,
+			ParentFlowID: flow.ID, Authenticator: "idp-review-profile", ConfigID: c.ID,
+			Requirement: "REQUIRED", Priority: 10}
+		alsoPointing := &model.AuthenticationExecution{ID: "gloak-probe-cfg-b", RealmID: realm.ID,
+			ParentFlowID: flow.ID, Authenticator: "idp-create-user-if-unique", ConfigID: c.ID,
+			Requirement: "ALTERNATIVE", Priority: 20}
+		untouched := &model.AuthenticationExecution{ID: "gloak-probe-cfg-c", RealmID: other.ID,
+			ParentFlowID: otherFlow.ID, Authenticator: "idp-review-profile", ConfigID: c.ID,
+			Requirement: "REQUIRED", Priority: 10}
+		for _, e := range []*model.AuthenticationExecution{pointing, alsoPointing, untouched} {
+			if err := s.AuthenticationFlows().CreateExecution(ctx, e); err != nil {
+				t.Fatalf("CreateExecution %s: %v", e.ID, err)
+			}
+		}
+		if got, err := s.AuthenticationFlows().ExecutionByID(ctx, realm.ID, pointing.ID); err != nil ||
+			got.ConfigID != c.ID {
+			t.Fatalf("the config pointer did not round-trip: %+v, %v", got, err)
+		}
+
+		if err := s.AuthenticationFlows().DeleteConfig(ctx, other.ID, c.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("DeleteConfig through the wrong realm: %v, want ErrNotFound", err)
+		}
+		if err := s.AuthenticationFlows().DeleteConfig(ctx, realm.ID, c.ID); err != nil {
+			t.Fatalf("DeleteConfig: %v", err)
+		}
+		if _, err := s.AuthenticationFlows().ConfigByID(ctx, realm.ID, c.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("after DeleteConfig: %v, want ErrNotFound", err)
+		}
+		if err := s.AuthenticationFlows().DeleteConfig(ctx, realm.ID, c.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("deleting twice: %v, want ErrNotFound", err)
+		}
+		// The pointers of this realm are cleared in the same call, because an
+		// execution left pointing at a deleted config would serve an
+		// authenticationConfig id that resolves to a 404.
+		for _, e := range []*model.AuthenticationExecution{pointing, alsoPointing} {
+			got, err := s.AuthenticationFlows().ExecutionByID(ctx, realm.ID, e.ID)
+			if err != nil || got.ConfigID != "" {
+				t.Errorf("%s still points at the deleted config: %+v, %v", e.ID, got, err)
+			}
+		}
+		if got, err := s.AuthenticationFlows().ExecutionByID(ctx, other.ID, untouched.ID); err != nil ||
+			got.ConfigID != c.ID {
+			t.Errorf("the clearing crossed the realm boundary: %+v, %v", got, err)
+		}
+
+		// The configs go with the realm, which is the cascade rather than any
+		// clause in bootstrap.DeleteRealm.
+		if err := s.Realms().Delete(ctx, other.ID); err != nil {
+			t.Fatalf("Realms().Delete: %v", err)
+		}
+		if configs, err := s.AuthenticationFlows().ListConfigs(ctx, other.ID); err != nil || len(configs) != 0 {
+			t.Errorf("after the realm went: %v, %v", configs, err)
+		}
+	})
 }

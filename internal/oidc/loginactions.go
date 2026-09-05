@@ -106,7 +106,7 @@ func (h *handler) loginActions(w http.ResponseWriter, r *http.Request) {
 	// the login page. It is checked after the client so that a landing naming
 	// the wrong client is still the client page.
 	if q.Get("session_code") == "" {
-		h.serveLoginPage(w, realm, sess, tab, tab.Username, "")
+		h.serveLoginPage(r.Context(), w, realm, sess, tab, tab.Username, "")
 		return
 	}
 
@@ -114,8 +114,8 @@ func (h *handler) loginActions(w http.ResponseWriter, r *http.Request) {
 	// expired" - not a 400, and not the login page. Measured after the session
 	// code and before the credentials: a bad execution with a wrong password
 	// answers about the execution.
-	if q.Get("execution") != executionID(realm.ID) {
-		h.serveExpiredPage(w, realm, client, sess, tab)
+	if q.Get("execution") != h.loginExecutionID(r.Context(), realm) {
+		h.serveExpiredPage(r.Context(), w, realm, client, sess, tab)
 		return
 	}
 
@@ -310,7 +310,7 @@ func (h *handler) attemptLogin(w http.ResponseWriter, r *http.Request, realm *mo
 		// Measured: a failed credential re-serves the login page with a rotated
 		// session_code while execution, tab_id and client_data stay the same,
 		// and the retry with the rotated code succeeds.
-		h.serveLoginPage(w, realm, sess, tab, username, message)
+		h.serveLoginPage(r.Context(), w, realm, sess, tab, username, message)
 		return
 	}
 
@@ -514,14 +514,14 @@ func (h *handler) authorizationCodeLocation(realm string, tab *authTab, sessionS
 // rather than being a special case: the first render after /auth and the
 // re-render after a wrong password both get a new code, and the old one stops
 // working either way.
-func (h *handler) serveLoginPage(w http.ResponseWriter, realm *model.Realm, sess *authSession,
-	tab *authTab, username, message string) {
+func (h *handler) serveLoginPage(ctx context.Context, w http.ResponseWriter, realm *model.Realm,
+	sess *authSession, tab *authTab, username, message string) {
 	code, err := h.auth.rotateSessionCode(sess, tab, username)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	action, err := h.loginActionURL(realm, tab, code)
+	action, err := h.loginActionURL(ctx, realm, tab, code)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
@@ -531,14 +531,19 @@ func (h *handler) serveLoginPage(w http.ResponseWriter, realm *model.Realm, sess
 
 // loginActionURL is the form's action, and its five parameters are in the
 // measured order: session_code, execution, client_id, tab_id, client_data.
-func (h *handler) loginActionURL(realm *model.Realm, tab *authTab, sessionCode string) (string, error) {
+//
+// `execution` is binding B2: the id of the realm's bound browser flow's
+// `auth-username-password-form` row, read from the stored flow model. See
+// internal/oidc/flowbinding.go.
+func (h *handler) loginActionURL(ctx context.Context, realm *model.Realm, tab *authTab,
+	sessionCode string) (string, error) {
 	data, err := tab.clientData()
 	if err != nil {
 		return "", err
 	}
 	return h.realmBase(realm.Name) + "/login-actions/authenticate?" + strings.Join([]string{
 		"session_code=" + url.QueryEscape(sessionCode),
-		"execution=" + url.QueryEscape(executionID(realm.ID)),
+		"execution=" + url.QueryEscape(h.loginExecutionID(ctx, realm)),
 		"client_id=" + url.QueryEscape(tab.ClientID),
 		"tab_id=" + url.QueryEscape(tab.TabID),
 		"client_data=" + url.QueryEscape(data),
@@ -565,7 +570,7 @@ func (h *handler) loginActionURL(realm *model.Realm, tab *authTab, sessionCode s
 // branch Gloak answers with a restart 302 where Keycloak answers this page
 // without the block, which is a disagreement filed on 2026-09-02 and not
 // touched here.
-func (h *handler) serveExpiredPage(w http.ResponseWriter, realm *model.Realm,
+func (h *handler) serveExpiredPage(ctx context.Context, w http.ResponseWriter, realm *model.Realm,
 	client *model.Client, sess *authSession, tab *authTab) {
 	data, err := tab.clientData()
 	if err != nil {
@@ -579,7 +584,7 @@ func (h *handler) serveExpiredPage(w http.ResponseWriter, realm *model.Realm,
 		"skip_logout=false",
 	}, "&")
 	cont := h.realmBase(realm.Name) + "/login-actions/authenticate?" + strings.Join([]string{
-		"execution=" + url.QueryEscape(executionID(realm.ID)),
+		"execution=" + url.QueryEscape(h.loginExecutionID(ctx, realm)),
 		"client_id=" + url.QueryEscape(tab.ClientID),
 		"tab_id=" + url.QueryEscape(tab.TabID),
 		"client_data=" + url.QueryEscape(data),
