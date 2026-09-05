@@ -17212,4 +17212,330 @@ var adminCases = []Case{
 		AssertHeaders:       []string{"Cache-Control", "Location"},
 		VolatileTailHeaders: []string{"Location"},
 	},
+
+	// The scope evaluator: seven operations under Clients, five served.
+	//
+	// The two that are not are Pending at the end of this block, both for
+	// boundary reasons rather than for effort, and both reasons are measured.
+	{
+		// Every mapper of every client scope linked to the client. `account`
+		// has 23 across its six default scopes.
+		//
+		// The array's order is the client's own default-scope order, which is
+		// measured not to be reproducible across container starts - the
+		// client-scope chapter records two clients created minutes apart
+		// swapping two names - so it is compared unordered. That is a claim
+		// about Keycloak, not about this handler: within one container three
+		// consecutive requests came back byte-identical.
+		ID: "admin/clients/evaluate-protocol-mappers",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get the protocol mappers a client's scope evaluates to",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/evaluate-scopes/protocol-mappers",
+		Fixture:   "evaluate-scopes",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/evaluate-scopes/protocol-mappers",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		// Both ids are minted at bootstrap. mapperName, containerName,
+		// containerType and protocolMapper stay asserted, which is where every
+		// measured claim about this body lives - including that a client
+		// scope's containerName is its name.
+		Volatile:  []string{"*/mapperId", "*/containerId"},
+		Unordered: []string{"."},
+	},
+	{
+		// granted, asked about the client's **own** container.
+		//
+		// `account` has fullScopeAllowed off and has mapped nothing, and this
+		// answers all eight of its own roles - which is the measured rule that
+		// a client's own roles are in its own scope without ever being mapped,
+		// re-measured on this family rather than inherited from the scope
+		// mappings next door.
+		//
+		// The role container is the client's **UUID**. Its clientId is a 404,
+		// measured, although every other route in this API that names a client
+		// by anything but a UUID names it by clientId.
+		ID: "admin/clients/evaluate-scope-mappings-granted",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get the roles of a container that are granted to a client's scope",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/evaluate-scopes/scope-mappings/{roleContainerId}/granted",
+		Fixture:   "evaluate-scopes",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/evaluate-scopes/scope-mappings/{{client_uuid}}/granted",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		// Role ids are server-minted and a role create's Location ends in the
+		// role's name, so nothing lets a fixture choose one. containerId is
+		// the fixture's own captured client UUID and stays asserted.
+		Volatile: []string{"*/id"},
+		// Unordered here and not on the not-granted sibling for the same
+		// reason: `javamap.KeyOrder` answers a **different** order from
+		// Keycloak's on this eight-role set, where it places that case's
+		// five-role one exactly. So this order is not explained by anything in
+		// the repository, and the mask is what an unexplained order gets.
+		Unordered: []string{"."},
+	},
+	{
+		// not-granted, asked about the **realm** container - which is spelled
+		// with the realm's name. The realm's own id, which is what every realm
+		// role's containerId carries, is a 404.
+		//
+		// `account` has no realm role in scope, so this is the realm's whole
+		// role set and its granted sibling is `[]`. The two are exact
+		// complements over the container, measured on both containers.
+		ID: "admin/clients/evaluate-scope-mappings-not-granted",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get the roles of a container that are not granted to a client's scope",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/evaluate-scopes/scope-mappings/{roleContainerId}/not-granted",
+		Fixture:   "evaluate-scopes",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/evaluate-scopes/scope-mappings/master/not-granted",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"*/id", "*/containerId"},
+		// **This mask is a retreat, not a measurement of instability**, and
+		// saying so is the point: `javamap.KeyOrder` places this exact set -
+		// [create-realm default-roles-master offline_access admin
+		// uma_authorization], byte for byte what Keycloak answered and not
+		// sorted order. So the order is explained and reproducible, and what
+		// stops it being asserted is that writeMappingList serves the store's
+		// order and moving it would re-record every role listing in the API.
+		//
+		// It does **not** generalise to the granted sibling: the same function
+		// on that case's eight-role set answers a different order from
+		// Keycloak's. One hit and one miss out of two, which is why nothing was
+		// changed on the strength of the hit.
+		Unordered: []string{"."},
+	},
+	{
+		// The access token preview. Its claim set is internal/token's, built
+		// there rather than here - see internal/token/example.go for the
+		// boundary argument and what it settles for F148.
+		//
+		// Four values move between two identical requests and no more: exp,
+		// iat, jti and sid. `sid` names a session that does not exist - the
+		// endpoint mints a throwaway one per request.
+		//
+		// The body is the administrator's roles **filtered by `account`'s
+		// scope**, which is why it carries resource_access for account's three
+		// roles and no realm_access at all although the administrator holds
+		// five realm roles. That is the whole point of the endpoint and it is
+		// what a case pointed at a fullScopeAllowed client could not show.
+		ID: "admin/clients/evaluate-example-access-token",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: create JSON with payload of an example access token",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/evaluate-scopes/generate-example-access-token",
+		Fixture:   "evaluate-scopes",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/evaluate-scopes/generate-example-access-token",
+			Query:   map[string]string{"userId": "{{user_id}}"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"exp", "iat", "jti", "sid"},
+		// A Java set, as on every other body carrying this claim.
+		Unordered: []string{"resource_access/*/roles"},
+		// The scope words come out in the client's own default-scope list
+		// order, which is the order that is not reproducible across container
+		// starts. Same retreat, same reason, as
+		// oidc/introspection/active-refresh-token.
+		UnorderedWords: []string{"scope"},
+	},
+	{
+		// The ID token preview, and the one place the two previews disagree:
+		// it carries **no at_hash**, because this exchange mints no access
+		// token to hash. Every issued ID token carries one, which is why
+		// idClaims.AtHash gained omitempty rather than this getting a struct
+		// of its own.
+		//
+		// `aud` is the issuing client as a bare string here where the access
+		// token's is absent, which is the measured disagreement between the
+		// two claim sets showing up in the preview as well.
+		ID: "admin/clients/evaluate-example-id-token",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: create JSON with payload of an example id token",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/evaluate-scopes/generate-example-id-token",
+		Fixture:   "evaluate-scopes",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/evaluate-scopes/generate-example-id-token",
+			Query:   map[string]string{"userId": "{{user_id}}"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"exp", "iat", "jti", "sid"},
+	},
+	{
+		// The generators' 404 for a request that names no user, and it is the
+		// **first** thing checked after the client - ahead of the user-read
+		// role. Measured against a view-clients caller holding no user role:
+		// it gets this 404 for an absent userId and a 403 for a present one.
+		//
+		// The Operation is deliberately empty: a rejection proves the route
+		// exists and refuses correctly, not that the operation does its job,
+		// and the case above claims it.
+		ID: "admin/clients/evaluate-example-no-user-id",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: create JSON with payload of an example access token",
+			Retrieved: "2026-09-05",
+		},
+		Status:  Implemented,
+		Fixture: "evaluate-scopes",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/evaluate-scopes/generate-example-access-token",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The generators' 404 for a userId that names nothing. A different
+		// sentence from the one above, and a third from the 403 a caller with
+		// no user-read role gets - three answers about one parameter.
+		ID: "admin/clients/evaluate-example-unknown-user",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: create JSON with payload of an example access token",
+			Retrieved: "2026-09-05",
+		},
+		Status:  Implemented,
+		Fixture: "evaluate-scopes",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/evaluate-scopes/generate-example-access-token",
+			Query:   map[string]string{"userId": "00000000-0000-0000-0000-000000000000"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// `Role Container not found` - the twenty-ninth spelling of not-found
+		// in this API, with a capital C in the middle and no full stop.
+		//
+		// The id sent is the **realm's own id**, which is what every realm
+		// role's containerId carries and which this route measurably does not
+		// accept: only the realm's name and a client's UUID resolve. Sending a
+		// string that is obviously nothing would have missed that.
+		ID: "admin/clients/evaluate-scope-mappings-unknown-container",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get the roles of a container that are granted to a client's scope",
+			Retrieved: "2026-09-05",
+		},
+		Status:  Implemented,
+		Fixture: "evaluate-scopes",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/evaluate-scopes/scope-mappings/00000000-0000-0000-0000-000000000000/granted",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// Measured in full and deliberately not served: its body is the
+		// userinfo document, and the one truth for that shape is
+		// internal/oidc's userinfoDocument. Declaring it a second time in
+		// internal/admin is exactly the duplication F148 exists to prevent, so
+		// the operation waits for a branch allowed to move that struct rather
+		// than getting a second copy on this one.
+		//
+		// The measurement, 2026-09-05 on `account` and the bootstrapped
+		// administrator:
+		//
+		//	{"sub":"<uuid>","email_verified":false,"preferred_username":"admin"}
+		//
+		// It is the one body in this family carrying **no per-request value at
+		// all**, so it is also the only one whose golden could be unmasked.
+		ID: "admin/clients/evaluate-example-userinfo",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: create JSON with payload of an example userinfo",
+			Retrieved: "2026-09-05",
+		},
+		Status: Pending,
+		Reason: "the body is internal/oidc's userinfoDocument and this branch may not move it; " +
+			"declaring the shape a second time in internal/admin is the duplication F148 prevents",
+		Fixture: "evaluate-scopes",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/evaluate-scopes/generate-example-userinfo",
+			Query:   map[string]string{"userId": "{{user_id}}"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+	},
+	{
+		// **It is not gated by the client's protocol**, which is the first
+		// thing to know about it: an openid-connect client answers it with a
+		// real SAML assertion, and a saml client answers the three OIDC
+		// generators with token-shaped bodies. The protocol decides the
+		// content and never whether the route answers.
+		//
+		// Three reasons it is Pending, any one sufficient:
+		//
+		//  1. Gloak serves no SAML at all - no assertion builder, no
+		//     saml-protocol issuance path. Writing one inside internal/admin
+		//     is a whole protocol in the admin package.
+		//  2. No golden can hold it. The body is a JSON **string** holding
+		//     XML, and no mask in this harness reaches inside a JSON string;
+		//     masking the whole value asserts its type and nothing else, which
+		//     is the retreat AGENTS.md records under "a mask is a path". No
+		//     committed golden has a root-level JSON string body.
+		//  3. It cannot be Recorded either: two ID_<uuid> attributes, four
+		//     timestamps - two of them two milliseconds apart inside one
+		//     response - and a Java set's role order move between two
+		//     identical requests, and a response carrying a per-request value
+		//     cannot be Recorded whatever else is true of it.
+		//
+		// The same three sentences describe
+		// GET .../identity-provider/instances/{alias}/export's SAML branch,
+		// which this project already declines for reason 3 alone.
+		ID: "admin/clients/evaluate-example-saml-response",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: create JSON with payload of an example SAML response",
+			Retrieved: "2026-09-05",
+		},
+		Status: Pending,
+		Reason: "Gloak serves no SAML, and the body is a JSON string holding XML whose two " +
+			"ID_<uuid> attributes and four timestamps move per request - no mask reaches " +
+			"inside a JSON string, so it can be neither Implemented nor Recorded",
+		Fixture: "evaluate-scopes",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{client_uuid}}/evaluate-scopes/generate-example-saml-response",
+			Query:   map[string]string{"userId": "{{user_id}}"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+	},
 }

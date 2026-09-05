@@ -296,7 +296,16 @@ func RefreshScope(granted string, c *model.Client) string {
 
 // atHash is the base64url, unpadded encoding of the left half of the SHA-256
 // of the access token, per OpenID Connect Core 3.1.3.6.
+//
+// An empty access token yields an empty hash rather than the SHA-256 of the
+// empty string, because there is one caller with no access token to hash -
+// ExampleIDClaims - and the measured example ID token carries **no at_hash key
+// at all**. Hashing "" would put a plausible 22-character value there instead,
+// which is the shape of wrongness a golden cannot distinguish from a real hash.
 func atHash(accessToken string) string {
+	if accessToken == "" {
+		return ""
+	}
 	sum := sha256.Sum256([]byte(accessToken))
 	return base64.RawURLEncoding.EncodeToString(sum[:len(sum)/2])
 }

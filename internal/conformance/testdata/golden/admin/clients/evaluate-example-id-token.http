@@ -1,0 +1,12 @@
+# GET /admin/realms/master/clients/{{client_uuid}}/evaluate-scopes/generate-example-id-token
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"exp":"{{number}}","iat":"{{number}}","jti":"{{string}}","iss":"{{issuer}}/realms/master","aud":"account","sub":"{{user_id}}","typ":"ID","azp":"account","sid":"{{string}}","acr":"1","email_verified":false,"preferred_username":"admin"}

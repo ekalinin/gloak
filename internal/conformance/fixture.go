@@ -1400,6 +1400,12 @@ var Fixtures = map[string]Fixture{
 	"auth-flows-own-cfg":   authFlowOwnExecutionFixture(probeFlowOwnCfgRealm, "f103-vane", "identity-provider-redirector"),
 	"auth-flows-own-raise": authFlowOwnPairFixture(probeFlowOwnRaiseRealm, "f103-pair"),
 	"auth-flows-own-lower": authFlowOwnPairFixture(probeFlowOwnLowerRealm, "f103-duet"),
+
+	// The scope evaluator. It addresses the default install's own state -
+	// `account` and the bootstrapped administrator - rather than a purpose-made
+	// pair, because that is the state whose example token this project can
+	// check against a second install.
+	"evaluate-scopes": evaluateScopesFixture(),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -6973,4 +6979,48 @@ func authFlowDeleteFixture() Fixture {
 		}),
 	)
 	return f
+}
+
+// evaluateScopesFixture captures the two ids the scope evaluator's cases need
+// together: the `account` client's UUID and the bootstrapped administrator's
+// user id.
+//
+// It is a third fixture rather than a case naming two, because a case names
+// one. admin-token-account-client and admin-token-admin-user each capture half
+// of this and neither captures both - the generators take the client in the
+// path and the user in a query parameter, so both have to be in one session.
+//
+// Both ids are minted at bootstrap and can never be literals; both are looked
+// up through a filter that matches exactly one row, so the `0/` is not a bet on
+// list order.
+//
+// It creates nothing, and that matters here more than usual: the example
+// token's body is the administrator's own role set filtered by `account`'s
+// scope, so a fixture that assigned the administrator anything would be
+// writing the answer it then reads.
+func evaluateScopesFixture() Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients",
+					Query:   map[string]string{"clientId": "account"},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"client_uuid": "0/id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/users",
+					Query:   map[string]string{"username": "admin", "exact": "true"},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"user_id": "0/id"},
+			},
+		},
+	}
 }
