@@ -129,6 +129,16 @@ func TestRecordGoldens(t *testing.T) {
 				t.Fatalf("normalize: %v", err)
 			}
 
+			// Refused here as well as in CI, for the reason recordedHeaders
+			// gives for MaskURLTail: loud at the moment of recording rather
+			// than a surprise in a diff nobody can read. This is the one call
+			// site that stops a binary golden from reaching the tree at all.
+			if err := RefuseNonTextBody(body); err != nil {
+				t.Fatalf("%v\n"+
+					"%s answers a body no golden can hold. Leave it Pending with that as "+
+					"its reason - see F161.", err, c.ID)
+			}
+
 			headers, err := recordedHeaders(resp.Header, base, c, vars)
 			if err != nil {
 				t.Fatalf("headers: %v", err)

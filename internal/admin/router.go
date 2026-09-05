@@ -623,6 +623,16 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE "+idpPrefix+"/{alias}/mappers/{mapperID}",
 		h.guardIdentityProvider(identityProviderWriteRoles, h.deleteIdentityProviderMapper))
 
+	// The seventh operation of the Client Attribute Certificate tag, and it is
+	// not a client route. It sits beside idpPrefix rather than under it, like
+	// `providers/{providerID}` above, and its guard follows the path rather than
+	// the tag: measured, `manage-identity-providers` opens it and
+	// `manage-clients` - which opens every other operation in that tag - is 403.
+	// `view-identity-providers` is refused too, so it is the *write* set, which
+	// is `reload-keys`'s shape on an endpoint that stores nothing.
+	mux.HandleFunc("POST /admin/realms/{realm}/identity-provider/upload-certificate",
+		h.guardAny(identityProviderWriteRoles, h.uploadIdentityProviderCertificate))
+
 	// Component, all six.
 	//
 	// **The family is authorised out of the realm role set**, although its rows
@@ -959,6 +969,20 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /admin/realms/{realm}/clients/{clientUUID}/client-secret/rotated",
 		h.guardRejecting("manage-clients", deleteRotatedSecretRejection, h.deleteRotatedSecret))
 	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/service-account-user", h.guard("view-clients", h.readServiceAccountUser))
+
+	// The Client Attribute Certificate tag. Four of its seven operations; see
+	// F161 and internal/conformance's RefuseNonTextBody for why download and
+	// generate-and-download are not here, and the plan for why upload is not.
+	//
+	// The guards are measured one role at a time, with POST /clients alongside
+	// as a control known to differ: the read takes view-clients **or**
+	// manage-clients, and the two writes take manage-clients alone.
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/certificates/{attr}",
+		h.guardAny(clientRolesReadRoles, h.readClientCertificate))
+	mux.HandleFunc("POST /admin/realms/{realm}/clients/{clientUUID}/certificates/{attr}/generate",
+		h.guard("manage-clients", h.generateClientCertificate))
+	mux.HandleFunc("POST /admin/realms/{realm}/clients/{clientUUID}/certificates/{attr}/upload-certificate",
+		h.guard("manage-clients", h.uploadClientCertificate))
 
 	// The client half of the session family. The four reads take view-clients
 	// **or manage-clients** and push-revocation takes manage-clients alone -
