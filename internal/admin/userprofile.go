@@ -10,13 +10,33 @@ import (
 // The three reads this cut takes out of the user-profile neighbourhood, and one
 // measurement that governs all of them.
 //
-// **`GET /users/profile` is an echo, not a derivation.** Master's
-// `declarative-user-profile` component holds 988 bytes under
-// `kc.user.profile.config`, and `GET /admin/realms/master/users/profile`
-// answers the **same 988 bytes** - md5 7a2c214069eb9085ff019a8e75cbb6c7 on
-// both, measured 2026-09-05. So the handler serves a stored string rather than
-// re-serialising a decoded model, which is what makes it right for a config
-// nobody has measured as well as for the one that ships.
+// **`GET /users/profile` re-serialises the stored config; it does not echo
+// it** - and the first version of this file had it the other way round, because
+// master's component holds 988 bytes and the endpoint answers the same 988,
+// md5 7a2c214069eb9085ff019a8e75cbb6c7 on both. That agreement is a
+// coincidence of the shipped config already being canonical. A config stored
+// with odd spacing and `groups` before `attributes` was measured coming back
+// compacted, reordered, and with `"multivalued":false` **added** to every
+// attribute that lacked one.
+//
+// So the field order below is measured rather than transcribed, from a config
+// carrying every field at once in a deliberately wrong order:
+//
+//	UPConfig     attributes, groups, unmanagedAttributePolicy
+//	UPAttribute  name, displayName, validations, annotations, required,
+//	             permissions, selector, group, multivalued
+//	UPGroup      name, displayHeader, displayDescription, annotations
+//	required     roles, scopes
+//	permissions  view, edit           - sent edit-first, came back view-first
+//
+// **`validations` keeps the order it was stored in** and `annotations` does
+// not: `{"up-username-not-idn-homograph":{},"length":{...}}` came back
+// unchanged, where `{"z":"1","a":"2"}` came back `{"a":"2","z":"1"}`. So
+// validations passes through as raw bytes and annotations does too - one
+// measured pair cannot tell sorting from a Java map, and guessing which would
+// turn an open question into a contract. No config Gloak ships carries an
+// annotation, so the cell is unreachable here; it is recorded rather than
+// resolved.
 //
 // **A realm created through POST /admin/realms has no such component** - the
 // component listing filtered to `org.keycloak.userprofile.UserProfileProvider`
@@ -85,6 +105,62 @@ const defaultUserProfile = `{"attributes":[{"name":"username","displayName":"${u
 	`"groups":[{"name":"user-metadata","displayHeader":"User metadata",` +
 	`"displayDescription":"Attributes, which refer to user metadata"}]}`
 
+// upConfig is Keycloak's UPConfig on the wire.
+//
+// `groups` has **no** omitempty and `attributes` has: a `PUT /users/profile {}`
+// was measured leaving `{"groups":[]}`, one key, so the empty array is a
+// default the server fills in and the empty attribute list is not.
+type upConfig struct {
+	Attributes               []upAttribute `json:"attributes,omitempty"`
+	Groups                   []upGroup     `json:"groups"`
+	UnmanagedAttributePolicy string        `json:"unmanagedAttributePolicy,omitempty"`
+}
+
+// upAttribute is UPAttribute in the measured field order.
+//
+// `multivalued` alone carries no omitempty, because it is emitted as `false`
+// for an attribute that never mentioned it - measured on an attribute whose
+// whole stored form was `{"name":"email"}`, which came back
+// `{"name":"email","multivalued":false}`.
+//
+// Validations, Annotations and Selector are raw so that the order inside them
+// is the stored one. That is measured for validations and measured **wrong**
+// for annotations; see this file's header.
+type upAttribute struct {
+	Name        string          `json:"name"`
+	DisplayName string          `json:"displayName,omitempty"`
+	Validations json.RawMessage `json:"validations,omitempty"`
+	Annotations json.RawMessage `json:"annotations,omitempty"`
+	Required    *upRequired     `json:"required,omitempty"`
+	Permissions *upPermissions  `json:"permissions,omitempty"`
+	Selector    json.RawMessage `json:"selector,omitempty"`
+	Group       string          `json:"group,omitempty"`
+	Multivalued bool            `json:"multivalued"`
+}
+
+// upRequired is a class rather than a map: a stored `{"scopes":…,"roles":…}`
+// came back `{"roles":…,"scopes":…}`.
+type upRequired struct {
+	Roles  []string `json:"roles,omitempty"`
+	Scopes []string `json:"scopes,omitempty"`
+}
+
+// upPermissions is a class too, and the same probe says so: a stored
+// `{"edit":…,"view":…}` came back `{"view":…,"edit":…}`.
+type upPermissions struct {
+	View []string `json:"view,omitempty"`
+	Edit []string `json:"edit,omitempty"`
+}
+
+// upGroup is UPGroup, whose four fields were measured in this order by storing
+// them in the reverse.
+type upGroup struct {
+	Name               string          `json:"name"`
+	DisplayHeader      string          `json:"displayHeader,omitempty"`
+	DisplayDescription string          `json:"displayDescription,omitempty"`
+	Annotations        json.RawMessage `json:"annotations,omitempty"`
+}
+
 // readUserProfile serves GET /admin/realms/{realm}/users/profile.
 //
 // 200, `application/json;charset=UTF-8` and **no `Cache-Control`** - which is
@@ -92,13 +168,26 @@ const defaultUserProfile = `{"attributes":[{"name":"username","displayName":"${u
 // this cut uses. Measured: `no-cache` is on `unmanagedAttributes`,
 // `federated-identity`, `credential-registrators` and the node routes, and not
 // on this one.
+//
+// A stored config that does not parse is served as it stands rather than
+// refused. Nothing measured says what Keycloak does with one, and this package
+// cannot produce one: the only writer of that config in Gloak is
+// `PUT /components/{id}`, which stores a string.
 func (h *handler) readUserProfile(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 	raw, err := h.userProfileConfig(r, rc)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	httpx.WriteJSONCharset(w, http.StatusOK, json.RawMessage(raw))
+	var cfg upConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		httpx.WriteJSONCharset(w, http.StatusOK, json.RawMessage(raw))
+		return
+	}
+	if cfg.Groups == nil {
+		cfg.Groups = []upGroup{}
+	}
+	httpx.WriteJSONCharset(w, http.StatusOK, cfg)
 }
 
 // userProfileConfig returns the realm's stored profile document, or the
