@@ -4591,7 +4591,39 @@ together - the token is `internal/admin`'s and the registration endpoint is
 This is the second finding of that shape after F122's back-channel logout: a
 boundary decision wearing the clothes of a bug.
 
-## F161: `client-attribute-certificate` needs a harness decision before it needs handlers
+## F161: `client-attribute-certificate` needs a harness decision before it needs handlers (answered 2026-09-05)
+
+**The answer is that a golden over a binary body asserts nothing, and the
+harness now enforces it.** `RefuseNonTextBody` refuses one at the moment of
+recording and `TestEveryGoldenBodyIsText` sweeps the tree - a **ratchet rather
+than a mechanism**, because an answer nothing enforces is a paragraph the next
+cut re-decides.
+
+Four of the seven are served. The decoded-projection shape was declined on three
+grounds, the weightiest being that what it would assert is already asserted one
+encoding away by a read-after-upload case, and Go has no reader for two of the
+three formats - F38's "machinery with no consumer" wearing a consumer's coat.
+
+**This entry's own description was wrong twice.** Five of the seven answer
+`application/json`, not four: the three `multipart/form-data` operations answer
+JSON and needed **no harness change at all**, because `Request.Body` with a
+`Content-Type` header has expressed a multipart request since those fields
+existed. And "could assert nothing but a length" understates it -
+`generate-and-download` has no stable length either (4412 to 4415 over twelve
+requests). The three multipart operations turn out to be **byte-deterministic**
+given a constant file, which makes them the most assertable of the seven rather
+than the least.
+
+**Two of the ratchet's own mutations survived and were found on review**, after
+the branch was pushed and CI was green. Both keystore fixtures trip **both**
+halves of the rule - `fe ed fe ed 00 00 00 02` and `30 80 02 01 03 30 80 06` are
+each invalid UTF-8 *and* carry control bytes - so neither half was reachable
+alone, and the comment claiming each half had its own body was the sentence that
+read as coverage. The fix is a table where each row **declares** which half it
+trips and the test checks the declaration before asking the guard anything.
+
+What the finding said, kept for the record:
+
 
 All seven operations are unserved. Two answer a **binary JKS or PKCS12
 keystore** and three take **`multipart/form-data`**, and **no golden in this
@@ -4602,3 +4634,75 @@ length.
 So the chapter is a question about `internal/conformance` - what a golden over a
 binary body would assert - before it is seven handlers, and it should not be
 taken as a parity cut until that question has an answer.
+
+## F162: neither event listing records anything, and emitting is 152 measured quadruples
+
+`GET /events` and `GET /admin-events` are served and both answer the empty list,
+because nothing in this project writes an event. Unlike F157's brute-force
+record, that is **not** forced: an Admin API write Gloak already serves does
+produce an admin event on Keycloak, measured on four routes with a `GET` control
+that produced none.
+
+What refused the emitting shape is the content. Over twelve writes, none of
+`(operationType, resourceType, resourcePath, representation)` follows from the
+route:
+
+```
+resourceType   ten values over twelve writes, three naming a relation the URL
+               never mentions (GROUP_MEMBERSHIP, REALM_ROLE_MAPPING,
+               CLIENT_SCOPE_CLIENT_MAPPING)
+resourcePath   a child group create carries its PARENT's id, where the same
+               request's Location carries the child's
+               PUT /admin/realms/{realm} records no resourcePath key at all
+representation the bare body on one route, body-plus-minted-id on the next,
+               a JSON array on a third, absent on a fourth
+```
+
+`internal/admin` has **152 write routes**, so emitting them honestly is 152
+measured quadruples. A listing complete for one route out of 152 asserts
+something false about the other 151, which is why the middle shape was looked for
+and rejected in writing rather than taken.
+
+The user half is separate and belongs to `internal/oidc`: three admin writes that
+might plausibly write a user event wrote none, and two password grants wrote two.
+
+## F163: the "cannot parse the JSON" code may be per binding rather than per shape
+
+AGENTS.md records that the code is per body **shape**.
+`PUT .../events/config` with `{"eventsEnabled":"yes"}` refutes that as it stands:
+it is the **right** shape for an object endpoint and answers `unknown_error`.
+
+Syntax-against-binding fits that data point and three of the four the bullet
+already carries; the fourth stays unexplained either way. **Nothing shared was
+changed on one endpoint's evidence** - this is filed rather than folded, because
+a rule about a code that four families produce should not be rewritten from a
+fifth.
+
+The request that would settle it is a body of the right shape whose *values*
+cannot bind, sent to each of the four families the bullet names.
+
+## F164: four bound parsers are unmeasured on the cell the events listings had wrong
+
+Fixing the events listings' order - realm, authentication, bound, authorization -
+left four parsers untouched and surveyed:
+
+```
+authzIntBound          4 routes    realm, auth, role, bound
+identityProviderBound  1 route     realm, auth, role, bound
+sessionBound           2 routes    realm, auth, role, bound
+```
+
+All four run **inside handlers** rather than inside a guard, so they are the
+mirror image of the bug that was fixed: **right** on the cell that was wrong
+there - a bad bearer never reaches the handler, so they answer 401 - and
+**unmeasured** on the cell that was right there. An authenticated caller holding
+no role gets 403 from them where the events listings answer the bound's 404, and
+that request has not been sent on any of the seven routes.
+
+Importing the events family's answer would be seven guesses from one
+measurement, and this repository already records the same input answering 404 on
+five listings and being **ignored outright** on `/components`. One sweep settles
+it: a caller holding one unrelated admin role sending `?first=abc` to each route,
+with a well-formed control. It should also settle whether `guardAuthz`'s
+`authorizationServicesEnabled` gate sits before or after the bound - a third
+stage the other families do not have.
