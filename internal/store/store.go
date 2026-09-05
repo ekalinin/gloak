@@ -62,7 +62,76 @@ type Store interface {
 	Components() ComponentRepo
 	Localizations() LocalizationRepo
 	ClientInitialAccess() ClientInitialAccessRepo
+	AuthenticationFlows() AuthenticationFlowRepo
 	Close() error
+}
+
+// AuthenticationFlowRepo stores a realm's authentication flow model: the flows,
+// the execution rows inside them and the authenticator configs they point at.
+//
+// **It is one repository over three tables and not three repositories**,
+// because every operation on the tag crosses at least two of them: an
+// execution listing walks flows to find sub-flows, a flow delete takes its
+// executions with it, and deleting a config has to clear the pointer on the
+// execution that held it. Splitting them would put a join in internal/admin.
+//
+// Nothing here knows what a `requirement` means. Which of the fifty-five seeded
+// rows Gloak actually reads is internal/oidc's decision and is named in
+// internal/admin/flows.go's package comment; the store serves the model whole.
+type AuthenticationFlowRepo interface {
+	// ListFlows returns **every** flow of a realm, top-level and sub, in
+	// insertion order. GET /flows serves the top-level ones only and filters
+	// here rather than in SQL, because the execution listing needs the rest.
+	ListFlows(ctx context.Context, realmID string) ([]*model.AuthenticationFlow, error)
+	// FlowByID resolves one flow. An id that matches nothing is ErrNotFound,
+	// which the handlers turn into **three** different 404 bodies depending on
+	// the route and the verb - `Could not find flow with id`, `Flow not found`
+	// and the lower-case `flow not found`. See writeFlowNotFound.
+	FlowByID(ctx context.Context, realmID, id string) (*model.AuthenticationFlow, error)
+	// FlowByAlias resolves one flow by its alias. A flow with **no** alias -
+	// which POST /flows/{alias}/copy with no `newName` creates - is
+	// unreachable through it, and that is the measured consequence rather than
+	// a gap: such a flow is addressable by id alone.
+	FlowByAlias(ctx context.Context, realmID, alias string) (*model.AuthenticationFlow, error)
+	CreateFlow(ctx context.Context, f *model.AuthenticationFlow) error
+	// UpdateFlow writes alias, description, providerId, topLevel and builtIn.
+	// A built-in flow **can** be renamed through PUT /flows/{id} even though it
+	// cannot be deleted, measured on the `browser` flow of a created realm.
+	UpdateFlow(ctx context.Context, f *model.AuthenticationFlow) error
+	// DeleteFlow removes a flow and, by cascade, its execution rows. It does
+	// not check `builtIn`: refusing a built-in flow is a 400 with a body, which
+	// is internal/admin's to write.
+	DeleteFlow(ctx context.Context, realmID, id string) error
+
+	// ListExecutions returns one flow's **direct** rows, ordered by priority
+	// ascending. The flat listing GET /flows/{alias}/executions serves is a
+	// depth-first pre-order walk assembled from repeated calls, not a query:
+	// `level` and `index` are properties of the walk and have nowhere to live
+	// in a row.
+	ListExecutions(ctx context.Context, realmID, parentFlowID string) ([]*model.AuthenticationExecution, error)
+	// ExecutionByID resolves one row. Not found is ErrNotFound, which every
+	// route on the executions family answers `Illegal execution`.
+	ExecutionByID(ctx context.Context, realmID, id string) (*model.AuthenticationExecution, error)
+	CreateExecution(ctx context.Context, e *model.AuthenticationExecution) error
+	// UpdateExecution writes requirement, priority and configId. Those are the
+	// three columns a route moves: PUT /flows/{alias}/executions moves the
+	// first, the two priority posts swap the second, and POST
+	// /executions/{id}/config repoints the third.
+	UpdateExecution(ctx context.Context, e *model.AuthenticationExecution) error
+	DeleteExecution(ctx context.Context, realmID, id string) error
+
+	ListConfigs(ctx context.Context, realmID string) ([]*model.AuthenticationConfig, error)
+	// ConfigByID resolves one config. Not found is ErrNotFound, answered
+	// `Could not find authenticator config` by all four config routes and by
+	// GET /executions/{id}/config/{id}.
+	ConfigByID(ctx context.Context, realmID, id string) (*model.AuthenticationConfig, error)
+	CreateConfig(ctx context.Context, c *model.AuthenticationConfig) error
+	UpdateConfig(ctx context.Context, c *model.AuthenticationConfig) error
+	// DeleteConfig removes a config **and clears every execution pointing at
+	// it**, in one call, because an execution left pointing at a deleted config
+	// would serve an `authenticationConfig` id that resolves to a 404. The two
+	// halves are here rather than in internal/admin so both drivers do it.
+	DeleteConfig(ctx context.Context, realmID, id string) error
 }
 
 // ClientInitialAccessRepo stores a realm's initial access tokens.

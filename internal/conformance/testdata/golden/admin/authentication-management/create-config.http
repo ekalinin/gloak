@@ -1,0 +1,11 @@
+# POST /admin/realms/gloak-probe-flow-ncf/authentication/config
+HTTP/1.1 201 Created
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Location: {{issuer}}/admin/realms/gloak-probe-flow-ncf/authentication/config/{{uuid}}
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+

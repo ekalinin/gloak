@@ -1,0 +1,11 @@
+# DELETE /admin/realms/gloak-probe-flow-dex/authentication/executions/{{redirector_execution_id}}
+HTTP/1.1 400 Bad Request
+Content-Length: {{volatile}}
+Content-Type: application/json
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"error":"It is illegal to remove execution from a built in flow"}

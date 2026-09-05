@@ -1117,3 +1117,75 @@ type ClientInitialAccess struct {
 	// than being swept, measured.
 	RemainingCount int
 }
+
+// AuthenticationFlow is one flow of a realm's authentication flow model - the
+// object `/admin/realms/{realm}/authentication/flows` addresses, and, for the
+// realm's bound browser flow, the object `internal/oidc`'s login resolves.
+//
+// A realm created through POST /admin/realms has twenty of these: seven
+// top-level and thirteen sub-flows. Master has seventeen; the three it lacks
+// are the organization family. Measured 2026-09-03.
+type AuthenticationFlow struct {
+	ID      string
+	RealmID string
+	// Alias is a pointer because a flow with no alias at all is reachable.
+	// POST /flows/{alias}/copy with no `newName` answers 201 and creates a
+	// top-level flow whose representation has **no `alias` key**, and
+	// POST /flows/{alias}/executions/flow with no `alias` does the same for a
+	// sub-flow. Both are reproduced rather than refused.
+	Alias       *string
+	Description string
+	// ProviderID is `basic-flow` on eighteen of the twenty seeded flows,
+	// `client-flow` on `clients` and `form-flow` on `registration form`. Three
+	// values, so it cannot be defaulted.
+	ProviderID string
+	TopLevel   bool
+	BuiltIn    bool
+	// Ordinal is insertion order, which is what GET /flows serves. The seven
+	// built-in top-level flows came back in seed order on two container starts
+	// and their ids are random UUIDs that do not sort that way.
+	Ordinal int
+}
+
+// AuthenticationExecution is one row inside a flow.
+//
+// **Authenticator and FlowID are both optional and are not exclusive.** Three
+// shapes are measured: a leaf carries an authenticator and no flow; a pure
+// sub-flow row carries a flow and no authenticator; and the `registration`
+// flow's single row carries both - `registration-page-form` pointing at the
+// `registration form` sub-flow. A model that made them exclusive would refuse
+// the seed.
+type AuthenticationExecution struct {
+	ID            string
+	RealmID       string
+	ParentFlowID  string
+	Authenticator string
+	FlowID        string
+	ConfigID      string
+	// Requirement is one of REQUIRED, ALTERNATIVE, DISABLED, CONDITIONAL. It is
+	// stored as the caller sent it; the only row whose value Gloak *reads* is
+	// the bound browser flow's `auth-cookie`, and it reads it as DISABLED or
+	// not. See internal/admin/flows.go's package comment for the boundary.
+	Requirement string
+	// Priority is the order inside one parent, and it is the only order.
+	// raise-priority swaps two rows' priorities rather than renumbering, so a
+	// second ordering column would be a second truth.
+	Priority int
+}
+
+// AuthenticationConfig is one authenticator config: an alias and a Java map,
+// shared by `/authentication/config/{id}` and
+// `/authentication/executions/{id}/config/{id}`, which serve byte-identical
+// bodies.
+//
+// A realm seeds four of them, identical on master and on a created realm.
+type AuthenticationConfig struct {
+	ID      string
+	RealmID string
+	Alias   string
+	// Config is a StringMap rather than a Go map for the reason F95 gives:
+	// encoding/json sorts a map's keys and Keycloak's order is not sorted. No
+	// seeded config has more than one key, so no order is observable in them
+	// yet; a caller's POST /config may send several.
+	Config StringMap
+}
