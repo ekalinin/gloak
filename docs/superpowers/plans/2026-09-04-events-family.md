@@ -321,8 +321,10 @@ read either.
 valid                          204, no body
 empty body                     500 {"error":"unknown_error","error_description":"For more on this error consult the server log."}
 literal null                   500  same
-no Content-Type                415 {"error":"The content-type header value did not match the value in @Consumes"}
-Content-Type: text/plain       415  same
+absent Content-Type            204  accepted
+Content-Type: text/plain       415 {"error":"The content-type header value did not match the value in @Consumes"}
+Content-Type: application/xml  415  same
+Content-Type: x-www-form-urlencoded  415  same
 malformed  {                   400 {"error":"invalid_request","error_description":"Cannot parse the JSON"}
 an array   []                  400 {"error":"unknown_error","error_description":"Cannot parse the JSON"}
 unknown field                  400 {"error":"Invalid json representation for RealmEventsConfigRepresentation. Unrecognized field \"zz\" at line 1 column 8."}
@@ -374,9 +376,16 @@ DELETE /events, /admin-events                 204  -                            
 
 The 204 split is rule (3) exactly: the `PUT`'s request declares
 `application/json` so its 204 carries `X-Frame-Options`, and the deletes send no
-`Content-Type` so theirs do not. Sending the same `DELETE` **with** a JSON
-`Content-Type` puts the header back - measured on this family, so the rule is
-re-derived here rather than inherited.
+`Content-Type` so theirs do not. Measured on the same `DELETE` under three
+request `Content-Type`s - absent 0, `application/json` 1, `text/plain` 0 - so the
+rule is re-derived here rather than inherited.
+
+**One probe in this file was wrong the first time and is corrected here.** The
+"no `Content-Type`" row above was measured with `curl -d`, which sets
+`application/x-www-form-urlencoded` of its own accord, so it measured that value
+and reported it as absence. A genuinely absent `Content-Type` is **accepted**,
+204, which is what `requireJSONBody` already implements. Every `-d` in a
+`Content-Type` probe is measuring curl.
 
 `Cache-Control: no-cache` is on the three reads and on none of the three writes,
 which is "pinned per endpoint" again.

@@ -11,6 +11,7 @@ import (
 
 	"github.com/ekalinin/gloak/internal/bootstrap"
 	"github.com/ekalinin/gloak/internal/httpx"
+	"github.com/ekalinin/gloak/internal/javamap"
 	"github.com/ekalinin/gloak/internal/model"
 	"github.com/ekalinin/gloak/internal/store"
 )
@@ -482,6 +483,20 @@ func decodeRealmSettings(realm *model.Realm) (realmRepresentation, error) {
 	if err := json.Unmarshal(realm.Settings, &rep); err != nil {
 		return rep, err
 	}
+	// **The two event lists are Java sets and come back in hash order**, so
+	// their order is a function of their membership and not of the request that
+	// wrote them. Measured: every set was written in both of two insertion
+	// orders and read back identically - {LOGIN,LOGOUT} as `LOGOUT, LOGIN`,
+	// {LOGIN,LOGOUT,REGISTER} as `LOGOUT, REGISTER, LOGIN`. javamap.KeyOrder
+	// places all four measured sets and javamap.SizedKeyOrder gets two of the
+	// four wrong, so these are the constructor's, not the sized one's.
+	//
+	// It is applied here rather than at either write because there are two
+	// writers - this route's PUT and PUT .../events/config - and ordering on
+	// read is the one place that covers both. It is idempotent, and it is the
+	// identity on both values a default realm has.
+	rep.EventsListeners = javamap.KeyOrder(rep.EventsListeners)
+	rep.EnabledEventTypes = javamap.KeyOrder(rep.EnabledEventTypes)
 	return rep, nil
 }
 
