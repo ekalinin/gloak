@@ -7200,8 +7200,13 @@ func identityProviderStep(alias string) Step {
 				"Authorization": "Bearer {{access_token}}",
 				"Content-Type":  "application/json",
 			},
+			// The clientId here is the **remote** provider's, not a Keycloak
+			// client's, and it still carries the probe prefix:
+			// TestEveryCreatedObjectCarriesTheProbePrefix reads the key and
+			// cannot tell the two apart, and a convention that has to be
+			// reasoned about at every call site is one that will be broken.
 			Body: []byte(`{"alias":"` + alias + `","providerId":"oidc","enabled":true,` +
-				`"config":{"clientId":"c","clientSecret":"s",` +
+				`"config":{"clientId":"gloak-probe-idp-client","clientSecret":"s",` +
 				`"authorizationUrl":"https://idp.example.com/auth",` +
 				`"tokenUrl":"https://idp.example.com/token"}}`),
 		},

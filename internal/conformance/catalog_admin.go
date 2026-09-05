@@ -18173,18 +18173,22 @@ var adminCases = []Case{
 		// `firstName` and `lastName` each carry `"required":{"roles":["user"]}`
 		// here and none of the three does there.
 		//
-		// It is a SecondRealm case because it re-measures one operation against
-		// a realm the fixture creates; what it pins is not the realm's name but
-		// the fact that the answer is not the component's.
+		// It is **not** a SecondRealm case, although it addresses a realm its
+		// own fixture creates. SecondRealm exists to assert that a handler
+		// derives a realm-shaped value rather than spelling `master`, and
+		// TestSecondRealmGoldenPinsItsRealmName enforces that by requiring the
+		// realm's name in the response. Nothing in a user profile is derived
+		// from the realm's name. What this case pins is a different thing
+		// entirely - which of two bodies the realm's **state** selects - so it
+		// is an ordinary case addressing a second realm.
 		ID: "admin/users/profile-created-realm",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Users: get the configuration for the user profile, a created realm",
 			Retrieved: "2026-09-05",
 		},
-		Status:      Implemented,
-		SecondRealm: true,
-		Fixture:     "user-profile-created-realm",
+		Status:  Implemented,
+		Fixture: "user-profile-created-realm",
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/admin/realms/gloak-probe-userprofile/users/profile",
@@ -18328,12 +18332,17 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type"},
-		// The registration timestamp is the second the fixture ran in.
+		// The registration timestamp is the second the fixture ran in, and it
+		// is the **only** mask this case carries.
+		//
+		// The three every other client case declares - Unordered on the two
+		// scope lists and UnorderedKeys on `attributes` - are absent on
+		// purpose: this client names `defaultClientScopes` at create so it
+		// inherits neither list, and being public it has no secret and so a
+		// one-key `attributes`. All three masks would be inert here, which is
+		// what TestNoMaskIsInertOnItsGolden says about a mask that changes
+		// nothing.
 		Volatile: []string{"registeredNodes/gloak-node-1.example.com"},
-		// The two scope lists and the attributes map, for the reasons every
-		// other client case records.
-		Unordered:     []string{"defaultClientScopes", "optionalClientScopes"},
-		UnorderedKeys: []string{"attributes"},
 	},
 	{
 		// The delete's 204 **does** carry `Cache-Control: no-cache`, where the

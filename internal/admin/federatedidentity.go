@@ -135,6 +135,7 @@ func (h *handler) addFederatedIdentity(w http.ResponseWriter, r *http.Request, r
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
+	w.Header().Set("Cache-Control", "no-cache")
 	httpx.WriteNoContent(w, r)
 }
 
@@ -163,5 +164,6 @@ func (h *handler) removeFederatedIdentity(w http.ResponseWriter, r *http.Request
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
+	w.Header().Set("Cache-Control", "no-cache")
 	httpx.WriteNoContent(w, r)
 }

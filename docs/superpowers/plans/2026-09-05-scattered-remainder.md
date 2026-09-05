@@ -36,9 +36,12 @@ re-litigated here.
 | 16 | `partial-export`, `partialImport` | 2 | what the bodies actually carry | no |
 | 17 | `evaluate-scopes/generate-example-{userinfo,saml-response}` | 2 | settled before this cut | untouched |
 
-The rows sum to the twenty-seven; `TestScatteredRemainderIsTwentySeven` in
-`internal/conformance` computes that from the description rather than trusting
-this table.
+No total is written beside that table on purpose. The number is the set
+difference between the three tags' operations in
+`internal/conformance/testdata/openapi/keycloak-26.7.1.json` and the `Operation`
+fields of `catalog_admin.go`, and `internal/conformance`'s coverage meter prints
+it per chapter on every run - which is a computed number rather than one that
+drifts away from the rows it counts.
 
 ## 2. What was measured, and what each answer decided
 
@@ -410,9 +413,9 @@ The two left-behind families that are worth a `Pending` case with a reason -
 `impersonation` and `registration-access-token` - get one, so the reason lives
 where the next reader is looking.
 
-`TestScatteredRemainderIsTwentySeven` computes the twenty-seven from the
-description and asserts that this cut moved exactly eleven of them, so the
-number in section 1 cannot drift away from the thing it counts.
+No new file is added to `internal/conformance`'s harness. The count in section 1
+is checked by the coverage meter that already exists rather than by a test
+written to agree with a table.
 
 ## 5. Parity
 
