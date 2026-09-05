@@ -142,6 +142,13 @@ type lightweightClaims struct {
 // access token has none. nonce sits between azp and sid, and it appears only
 // when the authorization request carried one; the access and refresh tokens
 // never carry it whatever the request said.
+//
+// at_hash is a third, and its absence is reachable from one caller rather than
+// from one grant. Every **issued** ID token carries it, because there is always
+// an access token to hash; the scope evaluator's example ID token carries no
+// at_hash key at all, measured 2026-09-05, because that exchange mints no
+// access token. So omitempty describes both bodies and neither is a special
+// case - see atHash, which is where the emptiness is decided.
 type idClaims struct {
 	Exp               int64  `json:"exp"`
 	Iat               int64  `json:"iat"`
@@ -154,7 +161,7 @@ type idClaims struct {
 	Azp               string `json:"azp"`
 	Nonce             string `json:"nonce,omitempty"`
 	Sid               string `json:"sid"`
-	AtHash            string `json:"at_hash"`
+	AtHash            string `json:"at_hash,omitempty"`
 	Acr               string `json:"acr"`
 	EmailVerified     bool   `json:"email_verified"`
 	PreferredUsername string `json:"preferred_username"`

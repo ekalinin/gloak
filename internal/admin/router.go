@@ -1045,6 +1045,30 @@ func (h *handler) register(mux *http.ServeMux) {
 		"/admin/realms/{realm}/clients/{clientUUID}/scope-mappings",
 		h.guardClientScopeMappings)
 
+	// The scope evaluator. Five of the tag's seven; the two that mint a
+	// userinfo document and a SAML assertion are Pending, for the boundary
+	// reasons evaluatescopes.go records.
+	//
+	// **Two guards, not one**, and the split was measured rather than assumed.
+	// The three reads take the protocol mappers' pair - view-clients or
+	// manage-clients, with query-clients admitted by the coarse gate and
+	// refused by the fine check. The two generators refuse **every single
+	// role** and need a client-read role and a user-read role held together,
+	// which is /roles/{name}/users' conjunction shape met a second time.
+	{
+		prefix := "/admin/realms/{realm}/clients/{clientUUID}/evaluate-scopes"
+		mux.HandleFunc("GET "+prefix+"/protocol-mappers",
+			h.guardEvaluateScopes(h.listEvaluatedProtocolMappers))
+		mux.HandleFunc("GET "+prefix+"/scope-mappings/{roleContainerID}/granted",
+			h.guardEvaluateScopes(h.evaluatedScopeMappings(true)))
+		mux.HandleFunc("GET "+prefix+"/scope-mappings/{roleContainerID}/not-granted",
+			h.guardEvaluateScopes(h.evaluatedScopeMappings(false)))
+		mux.HandleFunc("GET "+prefix+"/generate-example-access-token",
+			h.guardExampleToken(h.generateExampleAccessToken))
+		mux.HandleFunc("GET "+prefix+"/generate-example-id-token",
+			h.guardExampleToken(h.generateExampleIDToken))
+	}
+
 	// The realm's own two default sets. Tagged `Realms Admin` and guarded like
 	// a client: manage-clients writes them and view-realm cannot read them.
 	//
