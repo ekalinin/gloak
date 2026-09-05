@@ -18272,7 +18272,7 @@ var adminCases = []Case{
 		Fixture:   "client-node-bare",
 		Request: Request{
 			Method: http.MethodPost,
-			Path:   "/admin/realms/master/clients/{{client_uuid}}/nodes",
+			Path:   "/admin/realms/master/clients/c10adf00-0000-4000-8000-000000000001/nodes",
 			Headers: map[string]string{
 				"Authorization": "Bearer {{access_token}}",
 				"Content-Type":  "application/json",
@@ -18295,7 +18295,7 @@ var adminCases = []Case{
 		Fixture: "client-node-bare",
 		Request: Request{
 			Method: http.MethodPost,
-			Path:   "/admin/realms/master/clients/{{client_uuid}}/nodes",
+			Path:   "/admin/realms/master/clients/c10adf00-0000-4000-8000-000000000001/nodes",
 			Headers: map[string]string{
 				"Authorization": "Bearer {{access_token}}",
 				"Content-Type":  "application/json",
@@ -18324,7 +18324,7 @@ var adminCases = []Case{
 		Fixture: "client-node-registered",
 		Request: Request{
 			Method:  http.MethodGet,
-			Path:    "/admin/realms/master/clients/{{client_uuid}}",
+			Path:    "/admin/realms/master/clients/c10adf00-0000-4000-8000-000000000002",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type"},
@@ -18350,7 +18350,7 @@ var adminCases = []Case{
 		Fixture:   "client-node-doomed",
 		Request: Request{
 			Method:  http.MethodDelete,
-			Path:    "/admin/realms/master/clients/{{client_uuid}}/nodes/gloak-node-2.example.com",
+			Path:    "/admin/realms/master/clients/c10adf00-0000-4000-8000-000000000003/nodes/gloak-node-2.example.com",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders:       []string{"Cache-Control"},
@@ -18371,7 +18371,7 @@ var adminCases = []Case{
 		Fixture: "client-node-bare",
 		Request: Request{
 			Method:  http.MethodDelete,
-			Path:    "/admin/realms/master/clients/{{client_uuid}}/nodes/gloak-node-never.example.com",
+			Path:    "/admin/realms/master/clients/c10adf00-0000-4000-8000-000000000001/nodes/gloak-node-never.example.com",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type"},
@@ -18526,7 +18526,7 @@ var adminCases = []Case{
 		Fixture: "client-node-bare",
 		Request: Request{
 			Method:  http.MethodPost,
-			Path:    "/admin/realms/master/clients/{{client_uuid}}/registration-access-token",
+			Path:    "/admin/realms/master/clients/c10adf00-0000-4000-8000-000000000001/registration-access-token",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 	},

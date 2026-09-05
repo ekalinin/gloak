@@ -1426,12 +1426,19 @@ var Fixtures = map[string]Fixture{
 	// not change what the listing above answers.
 	"federated-identity-spare": federatedIdentitySpareFixture(),
 
-	// The cluster nodes get a client of their own rather than using `account`:
+	// The cluster nodes get clients of their own rather than using `account`:
 	// a registered node shows up in the client representation, and the client
 	// goldens next door would see it.
-	"client-node-bare":       clientFixture("gloak-probe-node-bare"),
-	"client-node-registered": clientNodeFixture("gloak-probe-node-one", "gloak-node-1.example.com"),
-	"client-node-doomed":     clientNodeFixture("gloak-probe-node-del", "gloak-node-2.example.com"),
+	//
+	// **Each of the three creates names its own id**, which POST /clients
+	// honours, so a fixture named by more than one case does not have to
+	// capture a Location its second run will not send: the repeat is a 409
+	// carrying no Location at all, which is what the first recording of this
+	// family failed on. That is the client-scope fixtures' device for the same
+	// reason.
+	"client-node-bare":       clientNodeFixture(probeNodeBareID, "gloak-probe-node-bare", ""),
+	"client-node-registered": clientNodeFixture(probeNodeOneID, "gloak-probe-node-one", "gloak-node-1.example.com"),
+	"client-node-doomed":     clientNodeFixture(probeNodeDelID, "gloak-probe-node-del", "gloak-node-2.example.com"),
 
 	// A realm of its own for the user profile a created realm answers, which
 	// differs from master's by three `required` blocks.
@@ -7202,17 +7209,57 @@ func identityProviderStep(alias string) Step {
 	}
 }
 
-// clientNodeFixture creates a client and registers one cluster node on it.
+// The three client ids the cluster-node fixtures create their clients with.
+// They are literals rather than captures because three of the six cases in the
+// family share one fixture, and a create that has already run answers 409 with
+// no Location for the second case to read.
+const (
+	probeNodeBareID = "c10adf00-0000-4000-8000-000000000001"
+	probeNodeOneID  = "c10adf00-0000-4000-8000-000000000002"
+	probeNodeDelID  = "c10adf00-0000-4000-8000-000000000003"
+)
+
+// clientNodeFixture creates a client with a known id and, when node is
+// non-empty, registers one cluster node on it.
 //
-// The node's name is a parameter because the two cases that use this both read
-// their client back, and a shared name would make the golden of one depend on
-// whether the other had run.
-func clientNodeFixture(clientID, node string) Fixture {
-	f := clientFixture(clientID)
+// The node's name is a parameter because the two cases that read their client
+// back would otherwise have goldens that depend on whether the other had run.
+//
+// **The creation body is chosen so the representation is reproducible**, which
+// is what makes admin/clients/nodes-registered the first golden in this tree to
+// hold a *created* client's representation rather than a bootstrapped one:
+//
+//   - `publicClient` true, so there is no `secret` and no
+//     `client.secret.creation.time` - both of which are per-recording values
+//     the first recording of this family put into the golden unmasked;
+//   - `defaultClientScopes` named, even though it is empty, because a client
+//     inherits the realm's two sets only when it names **neither** - and the
+//     realm's sets are written by the client-scope fixtures, so an inheriting
+//     client's lists depend on catalogue order.
+func clientNodeFixture(uuid, clientID, node string) Fixture {
+	f := Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"id":"` + uuid + `","clientId":"` + clientID + `",` +
+						`"enabled":true,"publicClient":true,"defaultClientScopes":[]}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+		},
+	}
+	if node == "" {
+		return f
+	}
 	f.Steps = append(f.Steps, Step{
 		Request: Request{
 			Method: http.MethodPost,
-			Path:   "/admin/realms/master/clients/{{client_uuid}}/nodes",
+			Path:   "/admin/realms/master/clients/" + uuid + "/nodes",
 			Headers: map[string]string{
 				"Authorization": "Bearer {{access_token}}",
 				"Content-Type":  "application/json",
