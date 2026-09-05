@@ -604,6 +604,12 @@ because it belongs to the scope evaluator's chapter.
 | `admin/realms-admin` | 39 / 45 | 42 / 45 |
 | total | 483 / 541 | 494 / 541 |
 
+That is measured against `d7d5592`, which is where this branch was cut. `main`
+moved to `cac6e43` while it was open and brought the client-attribute-certificate
+chapter's first four with it, so the merged branch reads **487 → 498**. The
+per-chapter rows are unaffected: the certificate chapter is
+`admin/client-attribute-certificate` and no operation is claimed by both cuts.
+
 Eleven operations of the twenty-seven. The sixteen left are the four in §1.8, the
 two in §1.9 and §1.11's neighbour, the two in §1.10, `PUT /users/profile`,
 `GET /users/profile/metadata`, the consents pair, `test-nodes-available`,

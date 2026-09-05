@@ -17979,6 +17979,356 @@ var adminCases = []Case{
 		AssertHeaders:       []string{"Content-Type"},
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
+	// ---------------------------------------------------------------------
+	// The Client Attribute Certificate tag: seven operations, four of them
+	// served here. F161 files the chapter as a harness question before it is
+	// seven handlers, and the answer is in
+	// docs/superpowers/plans/2026-09-04-f161-binary-goldens.md and in
+	// RefuseNonTextBody.
+	//
+	// The short version, because the entry's own summary is wrong twice.
+	// **Five of the seven answer application/json**, not four: the three
+	// operations that *take* multipart/form-data answer JSON, and a golden
+	// records a response. And **the two that answer a keystore cannot hold a
+	// length either** - generate-and-download came back 4412, 4413, 4414 and
+	// 4415 bytes over twelve requests, and download's length is stable only
+	// until the key is regenerated, which is what a fixture does every time.
+	{
+		// The empty object is the first thing to know about this chapter: a
+		// client that has never generated a key answers **200 {}**, not 404,
+		// and so does an {attr} that names nothing.
+		ID: "admin/client-attribute-certificate/read-empty",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: get key info",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/certificates/{attr}",
+		Fixture:   "admin-token-certificate-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/" + probeCertificateClientID +
+				"/certificates/jwt.credential",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "X-Frame-Options"},
+	},
+	{
+		// **{attr} is a free-form prefix, not an enum.** `my.prefix` was
+		// measured working and storing `my.prefix.private.key`, so an
+		// unrecognised one is not an error - this asks for a prefix nothing
+		// has ever written and gets the same 200 {} as a client with no key
+		// at all. It shares the fixture with the case above deliberately: what
+		// separates them is the {attr} and nothing else.
+		ID: "admin/client-attribute-certificate/read-unknown-attr",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: get key info",
+			Retrieved: "2026-09-05",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-certificate-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/" + probeCertificateClientID +
+				"/certificates/nothing.has.ever.written.this",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **The weakest golden in this cut, and it is named rather than left
+		// to be found.** Both values are minted per request, so both are
+		// masked, and what is left asserted is the 200, every header, the two
+		// key names and their order. That is the whole-Location retreat at
+		// body scale.
+		//
+		// It is taken anyway because the alternative is an operation nothing
+		// compares at all, and because what the mask gives up is asserted
+		// elsewhere: internal/admin's own tests pin the key at RSA 4096 in
+		// PKCS#1 and the certificate at X.509 **v1** with issuer equal to
+		// subject, a serial that is the request's millisecond epoch and a
+		// notBefore 100 seconds before it - every one of those read off a
+		// certificate 26.7.1 produced rather than written from memory.
+		ID: "admin/client-attribute-certificate/generate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: generate a new keypair and certificate",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/clients/{client-uuid}/certificates/{attr}/generate",
+		Fixture:   "admin-token-certificate-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/clients/" + probeCertificateClientID +
+				"/certificates/jwt.credential/generate",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "X-Frame-Options"},
+		Volatile:      []string{"privateKey", "certificate"},
+	},
+	{
+		// **A multipart request needed no harness mechanism**, which is a
+		// third of what F161 asks about. Request.Body carries the encoded body
+		// and Request.Headers carries the boundary; both fields predate this
+		// cut.
+		//
+		// The golden carries **no mask**, because the response is the
+		// certificate that went in. Two identical uploads were measured
+		// answering byte-identical bodies.
+		//
+		// It sends no Cache-Control, where the GET and the generate beside it
+		// send no-cache. That is a four-to-three split inside one resource
+		// family and it is asserted here.
+		ID: "admin/client-attribute-certificate/upload-certificate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: upload only certificate, not private key",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/clients/{client-uuid}/certificates/{attr}/upload-certificate",
+		Fixture:   "admin-token-certificate-client",
+		Request: certificateUploadRequest(
+			"/admin/realms/master/clients/"+probeCertificateClientID+
+				"/certificates/jwt.credential/upload-certificate",
+			"Certificate PEM", probeCertificatePEM),
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The read after an upload, and it is not decoration. **The upload
+		// deletes the private key**: a client carrying both came back with
+		// `{certificate}` alone and its representation held only
+		// `jwt.credential.certificate`. An implementation treating the upload
+		// as a partial update of the pair would answer two keys here and pass
+		// every other case in this chapter.
+		//
+		// It is also the one place a real certificate's bytes are asserted,
+		// since the generate case's are masked.
+		ID: "admin/client-attribute-certificate/read-after-upload",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: get key info",
+			Retrieved: "2026-09-05",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-certificate-uploaded",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/" + probeCertificateUploadedClientID +
+				"/certificates/jwt.credential",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The seventh operation of this tag, and it is not a client route at
+		// all. Its guard follows the path rather than the tag:
+		// manage-identity-providers opens it and manage-clients - which opens
+		// every other operation here - is refused, which is the fourth time
+		// the description's tag has failed to predict the guard.
+		//
+		// It stores nothing. The 200 is the uploaded certificate's public key
+		// and the certificate, and it is deterministic for the same reason the
+		// upload above is.
+		ID: "admin/client-attribute-certificate/identity-provider-upload-certificate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: upload certificate",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/identity-provider/upload-certificate",
+		Fixture:   "admin-token",
+		Request: certificateUploadRequest(
+			"/admin/realms/master/identity-provider/upload-certificate",
+			"Certificate PEM", probeCertificatePEM),
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The guard finding, pinned.** `manage-clients` opens every other
+		// operation in this tag and is 403 here; `manage-identity-providers`,
+		// which opens none of the others, is what this one takes. Swept one
+		// role at a time over seven, with POST /clients alongside as a control
+		// known to differ.
+		//
+		// It costs no new fixture - narrow-caller-manage-clients already
+		// exists - and without it the guard is a sentence in a comment. The
+		// case beside it sends the administrator's token and would pass
+		// whatever role list the route carried.
+		ID: "admin/client-attribute-certificate/identity-provider-upload-certificate-forbidden",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: upload certificate",
+			Retrieved: "2026-09-05",
+		},
+		Status:  Implemented,
+		Fixture: "narrow-caller-manage-clients",
+		Request: func() Request {
+			r := certificateUploadRequest(
+				"/admin/realms/master/identity-provider/upload-certificate",
+				"Certificate PEM", probeCertificatePEM)
+			r.Headers["Authorization"] = "Bearer {{caller_token}}"
+			return r
+		}(),
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The two 400s, and their order is the measurement. A request with
+		// **no body at all** answers about the format; one naming a format and
+		// carrying no file answers about the file. Checking the file first
+		// would answer "file cannot be empty" to a request that sent neither.
+		//
+		// `file cannot be empty` is a spelling this API had not used before.
+		ID: "admin/client-attribute-certificate/upload-no-format",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: upload only certificate, not private key",
+			Retrieved: "2026-09-05",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-certificate-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/clients/" + probeCertificateClientID +
+				"/certificates/jwt.credential/upload-certificate",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// An unknown client is 404 before anything else, with the family's
+		// usual spelling.
+		ID: "admin/client-attribute-certificate/read-unknown-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: get key info",
+			Retrieved: "2026-09-05",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/00000000-0000-0000-0000-000000000000" +
+				"/certificates/jwt.credential",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **This is F161's answer where the catalogue can see it.** The body is
+		// a JKS, PKCS12 or BCFKS keystore, and RefuseNonTextBody says why no
+		// golden can hold one. It is Pending rather than Recorded for the same
+		// reason: Recorded requires a golden, and this response has no bytes a
+		// golden can keep.
+		//
+		// Measured 2026-09-05, twelve requests per format: twelve distinct
+		// bodies every time, because the store is re-encrypted under a fresh
+		// salt even when the key inside has not moved. The length looked stable
+		// at 4413 (JKS), 4869 (PKCS12) and 4948 (BCFKS) and is not: regenerate
+		// the key first, which is what a fixture does on every recording, and
+		// JKS came back 4412, 4413, 4414 and 4415.
+		//
+		// Reopening this means the decoded projection F161 calls shape 2, and
+		// the argument against it is in the plan: it costs a JKS reader Go does
+		// not have, to assert a key `read-after-upload` already pins byte for
+		// byte.
+		//
+		// Measured and not reproduced, so the next cut does not re-measure it:
+		// the 200 is `application/octet-stream` with `Cache-Control: no-cache`,
+		// **no `Content-Disposition` at all**, and **four** of the five
+		// security headers - `X-Frame-Options` is missing. The accepted format
+		// set is the server's own: `[BCFKS, PKCS12, JKS]`, case-sensitive, with
+		// anything else a 406. And the guard is `view-clients` **or**
+		// `manage-clients`, which makes it the first POST in this API opened by
+		// a view role.
+		ID: "admin/client-attribute-certificate/download",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: get a keystore file for the client",
+			Retrieved: "2026-09-05",
+		},
+		Status: Pending,
+		Reason: "the body is a binary keystore whose bytes differ on every request and " +
+			"whose length differs once the key is regenerated, so no golden can hold it " +
+			"and no golden could assert anything about it - see RefuseNonTextBody and F161",
+		Fixture: "admin-token-certificate-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/clients/" + probeCertificateClientID +
+				"/certificates/jwt.credential/download",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"format":"JKS","keyAlias":"gloak-probe","keyPassword":"probe","storePassword":"probe"}`),
+		},
+	},
+	{
+		// The sibling, and the one whose length moves as well. Same reason,
+		// and one difference worth recording: this needs `manage-clients`
+		// where `download` takes `view-clients`, so the verb does not decide
+		// the guard on these two - whether the operation writes does.
+		ID: "admin/client-attribute-certificate/generate-and-download",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: generate a new keypair and certificate, and get the private key file",
+			Retrieved: "2026-09-05",
+		},
+		Status: Pending,
+		Reason: "the body is a binary keystore whose bytes and length both differ on every " +
+			"request - twelve requests gave twelve bodies and four lengths - so no golden " +
+			"can hold it and none could assert a length either; see RefuseNonTextBody and F161",
+		Fixture: "admin-token-certificate-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/clients/" + probeCertificateClientID +
+				"/certificates/jwt.credential/generate-and-download",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"format":"JKS","keyAlias":"gloak-probe","keyPassword":"probe","storePassword":"probe"}`),
+		},
+	},
+	{
+		// The one multipart operation not taken, and the reason is production
+		// code rather than the harness. Serving it means reading a JKS or a
+		// PKCS12 in Go: x/crypto/pkcs12 decodes only the legacy PBE algorithms
+		// and there is no JKS reader in the standard library or in x/. That is
+		// the same missing parser the decoded-projection shape was declined
+		// for, which is why the two decisions are recorded together.
+		//
+		// Measured so the next cut does not have to: it accepts a real JKS
+		// **and** a real PKCS12, answers `{privateKey,certificate}` read out of
+		// the store with no Cache-Control, and answers 500 for
+		// `Certificate PEM` and `Public Key PEM` and
+		// `400 {"error":"error loading keystore"}` for a file that does not
+		// match the format it was given.
+		ID: "admin/client-attribute-certificate/upload",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: upload certificate and eventually private key",
+			Retrieved: "2026-09-05",
+		},
+		Status: Pending,
+		Reason: "serving it means reading a JKS or PKCS12 keystore in Go, which needs a " +
+			"parser the standard library and x/crypto do not have; the response is " +
+			"ordinary JSON and would carry a byte-exact golden once it can be served",
+		Fixture: "admin-token-certificate-client",
+		// The request is written out although nothing runs it, because the
+		// keystore it would carry is the thing this case is waiting on: there
+		// is no constant to send until something can read one back.
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/clients/" + probeCertificateClientID +
+				"/certificates/jwt.credential/upload",
+		},
+	},
 
 	// The scattered remainder: eleven operations from three tags that share no
 	// resource. See docs/superpowers/handover/scattered-remainder.md for what

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // goldenDir is where recorded responses live, relative to the package.
@@ -183,6 +184,72 @@ func recordedHeaders(h http.Header, base string, c Case, vars map[string]string)
 		}
 	}
 	return out, nil
+}
+
+// RefuseNonTextBody reports why body may not be written to a golden, and nil
+// when it may.
+//
+// **This is F161's answer, stated where it can fail.** The question that entry
+// asks is what a golden over a binary body would assert, and the measured answer
+// is nothing. `POST .../certificates/{attr}/download` and its
+// `generate-and-download` sibling answer a JKS, PKCS12 or BCFKS keystore, and on
+// 2026-09-05 twelve requests for each of the six combinations produced twelve
+// distinct bodies every time: the store is re-encrypted under a fresh salt even
+// when the key inside it has not moved. The length does not survive either -
+// generate-and-download's JKS came back 4412, 4413, 4414 and 4415 bytes, and
+// download's is stable only until the key is regenerated, which is what a
+// fixture does on every recording. So a golden holding those bytes fails on the
+// next run of the recorder that wrote it.
+//
+// F113's rule already covers the case and was written for a different one: a
+// response carrying a per-request value cannot be Recorded, whatever else is
+// true of it, because Recorded is a promise the recorder has to be able to keep.
+// This is that rule made checkable one layer down, over the bytes rather than
+// over the status.
+//
+// The second reason needs no measurement. A golden is read in a diff before a
+// `make record` is committed - that reading is the last thing standing between
+// a wrong contract and the repository - and a keystore is not something anybody
+// reads. One cut has already had a re-record move five files in chapters it
+// never touched, and it was caught by reading them.
+//
+// It is deliberately **not** a mask and not an escape hatch. A case whose
+// response is binary carries no golden and is therefore not Implemented, which
+// is the honest state: the operation is counted as unserved rather than served
+// behind an assertion about a length. Reopening this means building the decoded
+// projection F161 calls shape 2, and the argument against that is in
+// docs/superpowers/plans/2026-09-04-f161-binary-goldens.md section 2 - it costs a
+// JKS reader Go does not have, to assert a key that GET .../certificates/{attr}
+// already pins byte for byte.
+//
+// "Text" is valid UTF-8 with no control byte other than tab, newline and
+// carriage return. Every golden body committed on 2026-09-05 passes, so the
+// rule was measured against the tree before it was written rather than after.
+//
+// **It is two rules and the first one returns**, so a body tripping both proves
+// only that something refused it. refusedBodies in catalog_test.go is the table
+// that keeps them apart, and it exists because the first version of that test
+// used two real keystore magics and nothing else - both invalid UTF-8 **and**
+// carrying control bytes - so either half could be deleted with the package
+// still green. Both were, measured. A fixture added here has to say which half
+// it exercises, and that table checks the claim.
+func RefuseNonTextBody(body []byte) error {
+	if !utf8.Valid(body) {
+		return fmt.Errorf("conformance: body is not valid UTF-8, so it is a binary body; " +
+			"a golden holding one asserts nothing - see RefuseNonTextBody")
+	}
+	for i, b := range body {
+		if b >= 0x20 && b != 0x7f {
+			continue
+		}
+		if b == '\t' || b == '\n' || b == '\r' {
+			continue
+		}
+		return fmt.Errorf("conformance: body carries control byte %#02x at offset %d, "+
+			"so it is a binary body; a golden holding one asserts nothing - "+
+			"see RefuseNonTextBody", b, i)
+	}
+	return nil
 }
 
 // GoldenPath turns a case ID into a file path under dir. IDs are validated as

@@ -123,6 +123,16 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   application/json  556 carry them, 13 do not
   ```
 
+  and a fourth media type is measured but **not** in that table because no
+  golden can hold it: **`application/octet-stream` carries four of the five,
+  omitting `X-Frame-Options`** - measured on the certificate family's two binary
+  operations against five `application/json` 200s on the same resource that
+  carry all five. It is the **first response measured to carry some of the five
+  rather than all or none**, and the first non-`OPTIONS` one to omit exactly
+  that header, which is the shape (4) describes. Whether the two are one rule is
+  unmeasured: an `OPTIONS` 200 has no media type of its own. Two responses in
+  one family, not a rule.
+
   and **twelve of those thirteen are the `Duplicate resource error` family**
   below, with the thirteenth being the unmatched path of (1). Nothing else
   disagrees.
@@ -1177,7 +1187,7 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   the two gates could not share an implementation.
 - **`POST /organizations` reads the body's `id` and discards it**, inverting the
   rule the client and client-scope creates follow.
-- **Fourteen strict JSON decoders, and three families disagree about when the
+- **Fifteen strict JSON decoders, and three families disagree about when the
   decode runs.** Counted from the list: `POST`/`PUT /organizations`, two of the
   required-action writes, client registration,
   `POST`/`PUT .../identity-provider/instances`, `POST /components`,
@@ -2066,6 +2076,63 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   means neither a fix nor a mask is warranted: both stay declared with the
   reason in the case, because a mask whose reason is "this varies" would say
   something the measurement does not.
+
+- **`events/config` and the realm representation are one state with two views,
+  and they disagree in exactly one cell.** With `enabledEventTypes` stored empty
+  - which is the state **every default realm is in** - the realm read answers
+  `[]` and `events/config` answers the **103 defaults**. Both are committed
+  goldens and they have contradicted each other since either was first recorded.
+  A reader who takes one for the other is wrong about the only realm anybody
+  starts from.
+- **`PUT .../events/config` replaces two of its six fields and merges four**,
+  while `PUT /admin/realms/{realm}` writes the **same storage** and merges all
+  six. Two routes, one state, two update rules.
+- **The two `events/config` flags are read at opposite ends of one request.**
+  `adminEventsEnabled` is the union of the before and after values, so a switch
+  on and a switch off are both recorded and a `PUT` that leaves it off is not;
+  `adminEventsDetailsEnabled` is read at the **new** value.
+- **On the two event listings the order is realm, authentication, bound,
+  authorization.** A caller who does not authenticate gets **401** whatever the
+  bound is; a caller who authenticates and holds no events role gets the
+  malformed bound's **404**. Gloak parsed the bound first and answered 404 where
+  Keycloak answers 401 until 2026-09-04 - a divergence found by a mutation that
+  survived because its cell had never been measured. **The four other bound
+  parsers in `internal/admin` run inside handlers rather than guards**, so they
+  are the mirror image: right on the cell this one had wrong, and unmeasured on
+  the cell it had right.
+- **The events family is authorised out of `view-events` and `manage-events`**,
+  and `view-realm`/`manage-realm` are 403 on all six despite the `Realms Admin`
+  tag. First use this project has had for either role.
+- **An admin event's four fields are per route and none follows from the route.**
+  Over twelve writes `resourceType` took ten values, three naming a relation the
+  URL never mentions; a child group create's `resourcePath` carries its
+  **parent's** id where the same request's `Location` carries the child's;
+  `PUT /admin/realms/{realm}` records **no `resourcePath` key at all**; and
+  `representation` is the bare body on one route, body-plus-minted-id on the
+  next, a JSON array on a third and absent on a fourth. `internal/admin` has 152
+  write routes, so emitting them is 152 measured quadruples and not a rule.
+- **A user event is written by the login path and never by the Admin API** -
+  three admin writes that might plausibly write one wrote none, and two password
+  grants wrote two.
+- **A golden cannot hold a body that is not text, and the harness now refuses
+  one.** `RefuseNonTextBody` runs at the moment of recording, and
+  `TestEveryGoldenBodyIsText` sweeps the tree. The answer F161 asked for is that
+  such a golden asserts **nothing** - a generated keystore is different bytes
+  every request and `generate-and-download`'s length is not even stable - and an
+  answer nothing enforces is a paragraph the next cut re-decides. **Its
+  fixtures declare which half of the rule they trip and the test checks the
+  declaration**, because the two real keystore magics trip both halves and
+  therefore cannot separate them: `fe ed fe ed 00 00 00 02` and
+  `30 80 02 01 03 30 80 06` are each invalid UTF-8 **and** carry control bytes.
+- **`POST .../certificates/{attr}/download` is opened by `view-clients`** - the
+  first POST in this API measured taking a read role - where its sibling
+  `generate-and-download` needs `manage-clients`. The split inside the pair is
+  **whether the operation writes**, not the verb. And a third read refuses the
+  view role: `POST .../identity-provider/upload-certificate` needs
+  `manage-identity-providers`, is tagged `Client Attribute Certificate`, and is
+  the only operation in that tag not under `/clients/{uuid}/certificates/` -
+  a fourth instance of the description's tag failing to predict the guard, and
+  the first where the route is not even in the tag's path family.
 
 ## Boundaries
 

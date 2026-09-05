@@ -239,11 +239,13 @@ operations is allocated below; none is left unassigned.
 | Session family | The eleven session operations, **done 2026-09-03** | P13, P14 | `admin/clients` 18->23, `admin/users` 18->20, `admin/realms-admin` 29->33. **An offline session is a second session, not a flag on the first** - the two id spaces are disjoint and `client-session-stats` is the only read that sees both. F130 closed; the `k_push_not_before` poster was deliberately **not** built, because half of `internal/oidc` would have moved with it - see F122 | 11 ops |
 | F103 | The authentication flow model, **done 2026-09-03** | P8, P13 | `admin/authentication-management` 18->39, the whole tag. **Shape 3**: all twenty-one operations plus three bindings that make `internal/oidc` read the stored model. The seed is 55 rows over 25 authenticator ids, of which two are implemented - which is why the engine was not built and why the unread remainder is named in `flows.go` rather than only in a handover | 21 ops |
 | Scope evaluator | `evaluate-scopes`, **done 2026-09-03** | P5, F103 | `admin/clients` 23->28. Five of seven, and **the two refusals are boundary refusals**: `generate-example-userinfo` rests on `internal/oidc` and the SAML generator on a SAML path Gloak has not got. **F148 settled**: the example claim sets are built in `internal/token`, beside `Introspect`. The generators refuse **every single admin role there is** and need a conjunction | 5 ops |
+| Events family | `events`, `admin-events` and their config, **done 2026-09-04** | P14 | `admin/realms-admin` 33->39. **Not a second F157**: an Admin API write Gloak already serves does produce an admin event, measured. What refused emitting is the content - none of an event's four fields follows from its route, and `internal/admin` has 152 write routes. F162 carries the sweep | 6 ops |
+| F161 | What a golden can assert about a binary body, **done 2026-09-05** | P5 | `admin/client-attribute-certificate` 0->4. The answer is **nothing**, enforced by a ratchet rather than left as a paragraph. The entry's own description was wrong twice: five of seven answer JSON, and the three multipart operations are the **most** assertable of the seven | 4 ops |
 
 Denominator today: **413 Admin API operations plus 122 protocol behaviours, 535
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **477 of 541**
-after the scope evaluator, and **P2, P4 and P5 are complete** -
+surface is not counted and which the report says so about. Served: **487 of 541**
+after the events family and F161's ratchet, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -274,7 +276,38 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-03 (nineteenth fold).** `make conformance` reports **477 of
+**Updated 2026-09-05 (twentieth fold).** `make conformance` reports **487 of
+541**. The events family landed six (`admin/realms-admin` 33 to 39) and F161's
+answer landed four (`admin/client-attribute-certificate` 0 to 4).
+
+**The round's lesson is that a mutation surviving because its cell is unmeasured
+is not a weak test but an unasked question, and killing it with a plausible value
+converts an open question into a false contract.**
+
+That is not an aphorism, it is what happened. A mutation of mine survived the
+events cut; the cut refused to kill it, because killing it meant asserting a
+value nobody had seen. One request then showed that **Gloak was diverging** -
+a caller who does not authenticate gets 401 from Keycloak and was getting the
+malformed bound's 404 from Gloak - so the surviving mutation was the fix wearing
+a mutation's clothes. Had it been killed with the obvious assertion, the
+divergence would have become the pinned contract and the test would have
+defended it.
+
+**Two more survivors were found on review, both in F161's ratchet, and both of
+the shape this project has now met ten times**: a test whose input satisfies more
+conditions than the claim needs. Both keystore fixtures are invalid UTF-8 *and*
+carry control bytes, so neither half of the rule was reachable alone, and the
+comment claiming each half had its own body was the sentence that read as
+coverage. **I repeated that comment's claim in the message criticising it**,
+without checking eight bytes.
+
+**And a seventh shape of a tool answering for itself**, this one in a mutation
+harness: it reported `KILLED` on a run whose `go test` exited **zero**, because a
+test name was interpolated into a grep unparenthesised and the alternation
+escaped. A harness that can report a kill on a passing run is the tool version of
+the bug it was built to find. It now reads the exit code first.
+
+**Earlier on 2026-09-03 (nineteenth fold).** `make conformance` reports **477 of
 541**. The scope evaluator landed five of its seven operations and **F148's
 boundary question is settled**.
 
