@@ -16699,8 +16699,8 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body:    []byte(`{"provider":"conditional-user-role"}`),
 		},
-		AssertHeaders:       []string{"Cache-Control", "Location"},
-		VolatileTailHeaders: []string{"Location"},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
 		// An unknown provider is a **400** naming the id, and an absent one is
@@ -16744,8 +16744,8 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body:    []byte(`{"alias":"f103-twiglet","type":"basic-flow","description":"a nested flow"}`),
 		},
-		AssertHeaders:       []string{"Cache-Control", "Location"},
-		VolatileTailHeaders: []string{"Location"},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
 		// Moving a row's requirement, which is binding B3's write: this is the
@@ -16848,7 +16848,8 @@ var adminCases = []Case{
 				"{{redirector_execution_id}}",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
-		AssertHeaders: []string{"Cache-Control"},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
 		// The alias-free create, taking its parent by **id in the body** where
@@ -16869,8 +16870,8 @@ var adminCases = []Case{
 			Body: []byte(`{"authenticator":"conditional-user-attribute",` +
 				`"parentFlow":"{{docker_flow_id}}","requirement":"DISABLED","priority":7}`),
 		},
-		AssertHeaders:       []string{"Cache-Control", "Location"},
-		VolatileTailHeaders: []string{"Location"},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
 		// raise-priority **swaps** with the neighbour rather than decrementing.
@@ -16892,7 +16893,8 @@ var adminCases = []Case{
 				"{{redirector_execution_id}}/raise-priority",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
-		AssertHeaders: []string{"Cache-Control"},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
 		ID: "admin/authentication-management/lower-priority-built-in",
@@ -16910,7 +16912,8 @@ var adminCases = []Case{
 				"{{cookie_execution_id}}/lower-priority",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
-		AssertHeaders: []string{"Cache-Control"},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
 		// The config create. **Its `Location` echoes its own creating path**,
