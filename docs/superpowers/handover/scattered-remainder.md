@@ -529,7 +529,73 @@ names `GET`/`DELETE /users/{id}/consents` as the endpoints that expose them. An
 as a contract while the package next door is recording that they have. Both
 packages have to move in one cut.
 
-## 5. Parity, before and after
+## 5. The mutation pass, and the one survivor
+
+Fifteen mutations, one per claim, each reverted and each revert checked. The
+harness refuses to run on a dirty tree, refuses a mutation that changes no byte,
+refuses one that does not compile, and **reads `go test`'s exit code before it
+looks at the log** - which is the failure mode this project has met three times
+inside its own tooling. It was given a control known **not** to differ, a
+comment-only edit, before anything else: that one survived, so the harness was
+not reporting KILLED for everything.
+
+| # | mutation | test | result |
+|---|---|---|---|
+| 0 | a comment only | the node tests | SURVIVED, as required |
+| 1 | the listing stops filtering to registered aliases | `TestAFederatedLinkToAnUnregisteredAliasIsStoredAndInvisible` | killed |
+| 2 | the body's `identityProvider` wins over the path's | `TestAFederatedLinkTakesItsAliasFromThePathAndNotTheBody` | killed |
+| 3 | the listing orders by alias | `TestTheFederatedIdentityListingIsInsertionOrdered` | killed |
+| 4 | `registeredNodes` loses its `omitempty` | `TestRegisteredNodesIsAbsentUntilThereIsOne` | killed |
+| 5 | `KeyOrder` instead of `SizedKeyOrder` | `TestRegisteredNodesKeyOrderIsTheSizedJavaMap` | killed |
+| 6 | the role check precedes the client lookup | `TestTheNodeWritesResolveTheClientBeforeTheirRole` | killed |
+| 7 | the profile is echoed rather than canonicalised | `TestTheUserProfileIsCanonicalisedAndNotEchoed` | killed |
+| 8 | the profile read reuses `usersReadRoles` | `TestTheUserProfileReadTakesFiveRoles` | killed |
+| 9 | `unmanagedAttributes` is the constant `{}` | `TestUnmanagedAttributesFollowsTheProfilesPolicy` | killed |
+| 10 | the built-in default loses a `required` block | `TestARealmWithNoUserProfileComponentAnswersTheBuiltInDefault` | **survived**, then killed |
+| 11 | `UnregisterNode` swallows a missing row | the sqlite `TestConformance` | killed |
+| 12 | the node 404 interpolates the node's name | golden `admin/clients/nodes-remove-missing` | killed |
+| 13 | the 501 follows authorization | golden `.../users-management-permissions-no-role` | killed |
+| 14 | `credential-registrators` is sorted | golden `admin/realms-admin/credential-registrators` | killed |
+| 15 | the credential types answer `{}` | golden `admin/users/configured-user-storage-credential-types` | killed |
+
+**Mutation 10 survived because the test was a tautology**, not because the cell
+was unmeasured: it compared the response against `defaultUserProfile`, the
+constant the handler serves, so an edit to the constant moved both sides. The
+test now asserts the measured *difference* between the two realms' profiles -
+three `required` blocks on a created realm's and none on master's, over the same
+four attribute names - which no single-sided edit satisfies. It was re-run
+afterwards and killed. That is the shape AGENTS.md warns about under "a test
+pins a two-condition rule only if its state or its request supplies both
+conditions", reached from the other side: an assertion whose two sides come from
+one place pins nothing.
+
+Two cells were **left unmeasured on purpose** and no mutation was written to
+close either, because killing one would have converted a question into a
+contract:
+
+- the key order of an attribute's `annotations`, where one measured pair cannot
+  tell sorting from a Java map, and which no config Gloak ships reaches;
+- `unmanagedAttributePolicy` values `ADMIN_VIEW` and `ADMIN_EDIT`, which are
+  treated as `ENABLED` on a reading rather than a measurement, said so in
+  `internal/admin/userprofile.go`.
+
+## 6. One recorder artefact, not committed
+
+`make record` on this branch produced a diff to
+`admin/clients/evaluate-scope-mappings-not-granted.http` that has nothing to do
+with this cut: the golden gained sixteen `gloak-probe-*` realm roles the other
+fixtures create. That case reads a realm-wide listing and is not
+`PristineRealm`, so what it holds depends on how much state the shared container
+has when it runs.
+
+**It was reverted rather than committed**, and the verifier then passed against
+the committed bytes - so the committed golden is still what Gloak serves and the
+re-record would have pinned pollution as the contract. Nothing in this cut
+creates a realm role, so the shift is in the recorder rather than in the
+catalogue. Worth a `PristineRealm` on that case, filed here rather than changed,
+because it belongs to the scope evaluator's chapter.
+
+## 7. Parity, before and after
 
 | chapter | before | after |
 |---|---|---|
