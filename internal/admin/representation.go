@@ -73,6 +73,13 @@ type clientRepresentation struct {
 	AuthenticationFlowBindingOverrides map[string]string `json:"authenticationFlowBindingOverrides"`
 	FullScopeAllowed                   bool              `json:"fullScopeAllowed"`
 	NodeReRegistrationTimeout          int               `json:"nodeReRegistrationTimeout"`
+	// RegisteredNodes is **absent** when the client has none rather than `{}` -
+	// measured with `has("registeredNodes")` false on a bootstrapped client and
+	// true one `POST .../nodes` later. It sits between
+	// nodeReRegistrationTimeout and protocolMappers, measured on a client
+	// carrying both, in the single read and in the listing alike. Its key order
+	// is a Java map's; see registeredNodes in clientnodes.go.
+	RegisteredNodes registeredNodes `json:"registeredNodes,omitempty"`
 	// ProtocolMappers is the client's own mappers, and it is **absent** when
 	// there are none rather than `[]` - the same rule a client scope's follows,
 	// measured on the same day: four of the six bootstrapped clients have no
@@ -171,6 +178,7 @@ func clientRepresentationOf(m *model.Client, c *caller, realmName string) client
 		AuthenticationFlowBindingOverrides: map[string]string{},
 		FullScopeAllowed:                   m.FullScopeAllowed,
 		NodeReRegistrationTimeout:          m.NodeReRegistrationTimeout,
+		RegisteredNodes:                    registeredNodes(m.RegisteredNodes),
 		ProtocolMappers:                    protocolMapperListOf(m.ProtocolMappers),
 		DefaultClientScopes:                nonNil(m.DefaultClientScopes),
 		OptionalClientScopes:               nonNil(m.OptionalClientScopes),
