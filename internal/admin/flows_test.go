@@ -102,9 +102,19 @@ func TestListFlowsIsTopLevelOnly(t *testing.T) {
 // client-scope precedent - identical in every realm - does not hold here, and
 // a seed that ignored the distinction would be right on one realm and wrong on
 // every other.
+// It asserts master's **totals** as well as its browser rows, and that is a
+// mutation's doing rather than thoroughness. The first version checked only
+// that master's browser flow had four rows and did not name `Organization`. A
+// mutation disabling the seed's not-in-master guard on the *flow* loop alone
+// left that true - the three organization flows were created in master and the
+// execution rows pointing at them were still skipped - so master gained three
+// flows nothing referenced and the test passed. Three orphan flows nothing
+// reads is precisely the shape F103 exists to complain about, so the counts are
+// asserted here rather than inferred from one flow's shape.
 func TestMasterOmitsTheOrganizationFlows(t *testing.T) {
-	h, _, _ := newServer(t)
+	h, s, realm := newServer(t)
 	token := adminToken(t, h)
+	ctx := context.Background()
 
 	rows := listFlows(t, h, "master", token)
 	browser := flowByAlias(t, rows, "browser")
@@ -122,6 +132,46 @@ func TestMasterOmitsTheOrganizationFlows(t *testing.T) {
 	fbl := flowByAlias(t, rows, "first broker login")
 	if len(fbl.Executions) != 2 {
 		t.Errorf("master's first broker login has %d rows, want 2", len(fbl.Executions))
+	}
+
+	stored, err := s.AuthenticationFlows().ListFlows(ctx, realm.ID)
+	if err != nil {
+		t.Fatalf("ListFlows: %v", err)
+	}
+	if len(stored) != 17 {
+		t.Errorf("master holds %d flows, want 17 (7 top-level, 10 sub) - "+
+			"a created realm holds 20 and the three it adds are the "+
+			"organization family", len(stored))
+	}
+	for _, f := range stored {
+		if f.Alias == nil {
+			continue
+		}
+		switch *f.Alias {
+		case "Organization", "Browser - Conditional Organization",
+			"First Broker Login - Conditional Organization":
+			t.Errorf("master holds the flow %q, which only a created realm has", *f.Alias)
+		}
+	}
+	total := 0
+	for _, f := range stored {
+		rows, err := s.AuthenticationFlows().ListExecutions(ctx, realm.ID, f.ID)
+		if err != nil {
+			t.Fatalf("ListExecutions: %v", err)
+		}
+		total += len(rows)
+	}
+	if total != 48 {
+		t.Errorf("master holds %d execution rows, want 48", total)
+	}
+	configs, err := s.AuthenticationFlows().ListConfigs(ctx, realm.ID)
+	if err != nil {
+		t.Fatalf("ListConfigs: %v", err)
+	}
+	if len(configs) != 4 {
+		t.Errorf("master holds %d authenticator configs, want 4 - the four are "+
+			"identical in master and in a created realm, which is the one part "+
+			"of this seed that does not vary", len(configs))
 	}
 }
 
