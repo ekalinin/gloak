@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"slices"
@@ -1666,5 +1667,87 @@ func TestHTMLMaskVariesGuardCanFail(t *testing.T) {
 	partAgain := map[string][][]byte{"tab_id": {[]byte("A"), []byte("8HmA_o2hC5Y")}}
 	if got := htmlMasksThatDidNotMove(part, partAgain); len(got) != 0 {
 		t.Errorf("a mask with one moving occurrence was reported: %v", got)
+	}
+}
+
+// TestEveryGoldenBodyIsText sweeps the committed tree, not the diff.
+//
+// It walks testdata/golden rather than the catalogue on purpose: a golden file
+// the catalogue no longer names is still a file somebody will read as a
+// contract, and the binary one F161 was about to add would have arrived under a
+// case that was never committed. Every other ratchet in this file iterates
+// Catalog, and each of them would have missed that.
+//
+// See RefuseNonTextBody for why the answer to "what can a golden assert about a
+// body that is not text" is "nothing".
+func TestEveryGoldenBodyIsText(t *testing.T) {
+	seen := 0
+	err := filepath.WalkDir(goldenDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || filepath.Ext(path) != ".http" {
+			return nil
+		}
+		seen++
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		g, err := ParseGolden(raw)
+		if err != nil {
+			t.Errorf("%s: parse golden: %v", path, err)
+			return nil
+		}
+		if err := RefuseNonTextBody(g.Body); err != nil {
+			t.Errorf("%s: %v", path, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", goldenDir, err)
+	}
+	// A sweep that walked nothing passes silently, which is the shape a `-run`
+	// selector naming the wrong package has already produced in this project.
+	if seen == 0 {
+		t.Fatal("walked no goldens at all, so this test asserted nothing")
+	}
+	t.Logf("checked %d golden bodies", seen)
+}
+
+// TestGoldenTextGuardCanFail is the control the sweep above cannot be without.
+//
+// The sweep passes on a tree in which every body is already text, so on its own
+// it is indistinguishable from a guard that returns nil for every input - the
+// failure mode this project has met six times in a fortnight. These are the
+// inputs known to differ.
+func TestGoldenTextGuardCanFail(t *testing.T) {
+	// The first eight bytes of a real JKS and a real PKCS12, taken from
+	// POST .../certificates/jwt.credential/download on a live 26.7.1 on
+	// 2026-09-05. The JKS magic is not valid UTF-8; the PKCS12 header is valid
+	// UTF-8 and carries NUL, so the two halves of the rule are each exercised by
+	// a body this repository actually declined to record.
+	jks := []byte{0xfe, 0xed, 0xfe, 0xed, 0x00, 0x00, 0x00, 0x02}
+	if err := RefuseNonTextBody(jks); err == nil {
+		t.Error("a JKS keystore was accepted as a golden body")
+	}
+	pkcs12 := []byte{0x30, 0x80, 0x02, 0x01, 0x03, 0x30, 0x80, 0x06}
+	if err := RefuseNonTextBody(pkcs12); err == nil {
+		t.Error("a PKCS12 keystore was accepted as a golden body")
+	}
+
+	// And the other direction, so the guard is not simply refusing everything.
+	// The fourth is a theme page's shape, which is where a control byte would
+	// most plausibly turn up by accident.
+	for _, ok := range [][]byte{
+		nil,
+		[]byte(""),
+		[]byte(`{"error":"Could not find client"}`),
+		[]byte("<html>\n\t<body>\r\n  éü中\n</body>\n</html>"),
+		[]byte("1"),
+	} {
+		if err := RefuseNonTextBody(ok); err != nil {
+			t.Errorf("a text body was refused: %q: %v", ok, err)
+		}
 	}
 }
