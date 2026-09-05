@@ -4356,7 +4356,32 @@ Keycloak exception each of the goldens' responses throws and which of them
 reaches the filter that adds the headers. Until somebody does that, **"not
 explained" is the entry**, and it is cheaper than the sixth wrong explanation.
 
-## F148: the two `evaluate` operations need an RPT, which lives in `internal/token`
+## F148: the two `evaluate` operations need an RPT, which lives in `internal/token` (decided 2026-09-03)
+
+**The boundary question is settled and the answer is `internal/token`.** The
+`evaluate-scopes` cut faced the identical decision for four example-token
+bodies and took shape 2: `internal/token` grows an exported way to render a
+claim set and `internal/admin` calls it.
+
+The argument is not preference. `internal/token` already held the precedent in
+the same package with its reason written above it - `Introspection` is "the same
+claim set, one key order, changed in one place", an exported struct with an
+exported builder whose caller resolves the inputs - and `token.Request` already
+takes roles as arguments because the package "signs claim sets and does not
+reach a store". So the interface was not invented for the occasion.
+`ExampleAccessClaims` and `ExampleIDClaims` sit beside `Introspect`, and **an
+RPT is an access token's claim set**, so this entry inherits a worked example
+rather than an argument.
+
+**What the cut also found, and this entry did not anticipate: shape 2 says
+*where* a claim set is built, not that it can be built anywhere.** Two of that
+family's seven were refused on the boundary rather than served -
+`generate-example-userinfo` rests on `userinfoDocument` in `internal/oidc`, and
+serving it from `internal/admin` would have been shape 1 wearing shape 2's
+clothes. Expect the same test here: if the RPT needs something only
+`internal/oidc` has, the honest answer is a `Recorded` case and not a second
+copy.
+
 
 `POST .../policy/evaluate` and `POST .../permission/evaluate` are the last two
 of `admin/authz-resource-server`'s 31. Their 200 runs the authorization engine

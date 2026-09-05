@@ -238,11 +238,12 @@ operations is allocated below; none is left unassigned.
 | Small chapters | attack-detection, client-initial-access and the component writes, **done 2026-09-03** | P9 second cut | Three chapters closed outright, +10. **`attack-detection` stores nothing**: its record is written by a failed authentication and nothing in this project counts one, so no table was added - F157. F145 was **disagreed with** and `DELETE /components/{id}` built. `client-attribute-certificate` is left: two of its seven answer a **binary keystore** and no golden here holds a non-text body - F161 | 10 ops |
 | Session family | The eleven session operations, **done 2026-09-03** | P13, P14 | `admin/clients` 18->23, `admin/users` 18->20, `admin/realms-admin` 29->33. **An offline session is a second session, not a flag on the first** - the two id spaces are disjoint and `client-session-stats` is the only read that sees both. F130 closed; the `k_push_not_before` poster was deliberately **not** built, because half of `internal/oidc` would have moved with it - see F122 | 11 ops |
 | F103 | The authentication flow model, **done 2026-09-03** | P8, P13 | `admin/authentication-management` 18->39, the whole tag. **Shape 3**: all twenty-one operations plus three bindings that make `internal/oidc` read the stored model. The seed is 55 rows over 25 authenticator ids, of which two are implemented - which is why the engine was not built and why the unread remainder is named in `flows.go` rather than only in a handover | 21 ops |
+| Scope evaluator | `evaluate-scopes`, **done 2026-09-03** | P5, F103 | `admin/clients` 23->28. Five of seven, and **the two refusals are boundary refusals**: `generate-example-userinfo` rests on `internal/oidc` and the SAML generator on a SAML path Gloak has not got. **F148 settled**: the example claim sets are built in `internal/token`, beside `Introspect`. The generators refuse **every single admin role there is** and need a conjunction | 5 ops |
 
 Denominator today: **413 Admin API operations plus 122 protocol behaviours, 535
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **472 of 541**
-after the authentication flow model, and **P2, P4 and P5 are complete** -
+surface is not counted and which the report says so about. Served: **477 of 541**
+after the scope evaluator, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -273,7 +274,43 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-03 (eighteenth fold).** `make conformance` reports **472 of
+**Updated 2026-09-03 (nineteenth fold).** `make conformance` reports **477 of
+541**. The scope evaluator landed five of its seven operations and **F148's
+boundary question is settled**.
+
+**The round's lesson is the sixth shape of a probe measuring itself, and it is
+the quietest one yet: a mutation that does not compile looks killed.** One
+mutation was reported killed for an edit the compiler had rejected. Without the
+check the cut then added - telling a build failure from a failing assertion -
+the pass would have reported eleven of eleven while one mutation had never run.
+That is the same family as the `-run` selector naming nothing, and it lives
+inside the discipline this project relies on most.
+
+The six shapes met in a fortnight:
+
+```
+urllib adding a Content-Type       measured the 415 of a header it set
+go test piped into tail            reported tail's exit status
+awk with IGNORECASE on BSD awk     matched nothing, counted 0 everywhere
+a -run selector naming nothing     identical answer for every mutation
+a role sweep answering NO TOKEN    22 times, from a declarative profile
+a mutation that does not compile   reported killed, never run
+```
+
+**And a boundary was closed with an argument rather than deferred.** F148, F122
+and this family are one decision three times: where a thing that looks like a
+token is built. `internal/token` already carried the precedent - `Introspection`
+is "the same claim set, one key order, changed in one place" - so shape 2 was
+not invented for the occasion, and F148 inherits a worked example.
+
+What the cut added to that entry is the part it did not anticipate: **shape 2
+says where a claim set is built, not that it can be built anywhere.** Two of the
+seven were refused *on the boundary* rather than served, because they rest on
+`internal/oidc`. A refusal on those grounds is a better outcome than a second
+copy, and it is the second time this month that fewer operations with a settled
+boundary beat more with a duplicated one.
+
+**Earlier on 2026-09-03 (eighteenth fold).** `make conformance` reports **472 of
 541**. `admin/authentication-management` went 18 to 39 - the whole tag - and
 **F103 is paid**, which was the oldest and largest debt on this list.
 

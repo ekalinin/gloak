@@ -432,8 +432,16 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **`/roles/{name}/users` needs a conjunction**: a role-management role
   **and** a user-read role (`view-users`/`manage-users`/`query-users`) held
   together. Neither family alone opens it, and two roles from the same family
-  do not either. It is the only endpoint in the group that works this way -
-  the three siblings that look identical do not.
+  do not either. It is the only endpoint **in that group** that works this way -
+  the three siblings that look identical do not - and the qualifier is
+  load-bearing rather than cautious. The four
+  `evaluate-scopes/generate-example-*` operations are a second family with the
+  same shape on a **different** pair of role families: a client-read role and a
+  user-read role held together, with `query-clients` and `query-users` opening
+  neither half, and every single admin role there is refused alone. The
+  organization chapter records nineteen more. So a conjunction is not this
+  endpoint's oddity; it is a shape that recurs, and the endpoints that need one
+  are not predictable from their neighbours.
 - **A composite write needs the manage role of every child's own container,
   and only on the add path.** Attaching a client-role child to a realm-role
   parent needs `manage-realm` and `manage-clients` together; removing the
@@ -503,7 +511,7 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **Role listings have no stable order across container starts.** Every one of
   them is a bare array at the root of the body, which is why `Case.Unordered`
   learned the root path spelling `"."`.
-- **Thirty-three spellings of not-found in the admin API now**, including four for
+- **Thirty-five spellings of not-found in the admin API now**, including four for
   one resource, **four** for a missing group, and three *pairs* that differ only
   in a full stop. Counted from the list, not incremented: (1) `Could not find client`, (2) `Client not found`,
   (3) `User not found`, (4) `Realm not found.` with its full stop,
@@ -543,7 +551,14 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   (33) `Could not find authenticator config` - and **(30) and (31) are the same
   path answered by two verbs**: `GET /flows/{alias}/executions` capitalises it
   and the `PUT` on the identical path does not. One path, two verbs, one
-  letter.
+  letter. The scope evaluator adds (34) **`Role Container not found`**, with a
+  capital C in the middle and no full stop, and (35) `No user found`.
+  **`Requested audience not available: <name>` is deliberately not on this
+  list**: it interpolates the request's own value, which nothing else here does,
+  so it is a sentence template rather than a spelling. The same family also
+  answers a missing request **parameter** with a 404 - `No userId provided` -
+  which is a status about the request rather than about a resource, and the
+  first of its kind here.
   An unknown identity provider alias adds nothing here: the read, the update and
   the delete all answer the generic `HTTP 404 Not Found`, so two neighbouring
   chapters measured in one cut contributed two spellings and none.
@@ -2008,6 +2023,49 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **A created realm has three authentication flows and two executions master has
   not got.** This file and the observed document recorded the executions,
   because the executions listing is what the cut that measured it could see.
+
+- **The scope evaluator answers for a client of either protocol, and only the
+  body changes.** `generate-example-saml-response` on an `openid-connect`
+  client returns a real SAML assertion, and the three OIDC generators on a
+  `saml` client return token-shaped bodies - a SAML client's example access
+  token is eight claims with no `sub`, no `acr`, no `resource_access` and no
+  `preferred_username`, because it carries none of the scopes whose mappers
+  write them. **Refusing the mismatched protocol is the obvious implementation
+  and it is wrong on four routes at once.**
+- **An `audience` naming a client that does not exist is ignored, and one
+  naming a client that does is a 404.** An audience already in the token's own
+  `aud` is 200; the asking client itself is a 404; a resolvable client out of
+  scope is the same 404; and `audience=nosuchclient` is a **200** whose body is
+  unchanged. Refusing what cannot be resolved is the defensive implementation
+  and it is wrong on the only one of the four that succeeds.
+- **`roleContainerId` is the realm's name or a client's UUID, and the two
+  spellings a reader reaches for first are both 404s.** The realm's own **id**
+  does not resolve, although it is exactly what every realm role's
+  `containerId` carries, and a client's **clientId** does not either.
+- **The scope evaluator's scope-mapping reads are not the scope-mapping
+  family's with a prefix.** `evaluate-scopes/.../granted` reads the **linked
+  client scopes' own scope mappings** and honours a `scope` parameter naming an
+  optional one; `.../scope-mappings/realm/composite` reads neither. Measured on
+  a client whose scope holds one role each way: the evaluator answered three
+  roles where the neighbour answered two, and four with the parameter. Reusing
+  the neighbour's predicate loses both inputs.
+- **An example token is minted for a session that does not exist.** `sid` is a
+  fresh 24-character value on every request, `jti` carries the `onrtna:` grant
+  prefix on the access token and **none at all** on the ID token, and the ID
+  token carries **no `at_hash`** because there is no access token to hash -
+  where every issued ID token carries one. `exp - iat` is the realm's lifespan
+  rather than a constant. Four values move and nothing else does.
+- **A client's own protocol mapper names an empty container.**
+  `evaluate-scopes/protocol-mappers` gives a mapper attached to the client
+  `containerType:"client"` and `containerName:""`, measured on a client
+  carrying a `name`, so falling back to the name or the clientId is wrong. A
+  client scope's mapper names the scope, and the client's own come last.
+- **`javamap.KeyOrder` places one body of a route family byte for byte and gets
+  its sibling wrong.** `not-granted`'s five-role realm set is exact and
+  `granted`'s eight-role set is not, on one route family. One hit and one miss
+  means neither a fix nor a mask is warranted: both stay declared with the
+  reason in the case, because a mask whose reason is "this varies" would say
+  something the measurement does not.
 
 ## Boundaries
 
