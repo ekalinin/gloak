@@ -223,8 +223,16 @@ func recordedHeaders(h http.Header, base string, c Case, vars map[string]string)
 // already pins byte for byte.
 //
 // "Text" is valid UTF-8 with no control byte other than tab, newline and
-// carriage return. All 872 golden bodies committed on 2026-09-05 pass, so the
+// carriage return. Every golden body committed on 2026-09-05 passes, so the
 // rule was measured against the tree before it was written rather than after.
+//
+// **It is two rules and the first one returns**, so a body tripping both proves
+// only that something refused it. refusedBodies in catalog_test.go is the table
+// that keeps them apart, and it exists because the first version of that test
+// used two real keystore magics and nothing else - both invalid UTF-8 **and**
+// carrying control bytes - so either half could be deleted with the package
+// still green. Both were, measured. A fixture added here has to say which half
+// it exercises, and that table checks the claim.
 func RefuseNonTextBody(body []byte) error {
 	if !utf8.Valid(body) {
 		return fmt.Errorf("conformance: body is not valid UTF-8, so it is a binary body; " +

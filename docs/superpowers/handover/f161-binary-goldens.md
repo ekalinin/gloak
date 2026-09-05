@@ -209,7 +209,10 @@ edit it.
 
 > **A golden's body must be text, and the harness refuses one that is not.**
 > `RefuseNonTextBody` is called by the recorder before it writes and by
-> `TestEveryGoldenBodyIsText` over all 881 committed goldens. The question it
+> `TestEveryGoldenBodyIsText` over every committed golden - 900 after the events
+> family landed, and the test **prints the number rather than asserting one**,
+> because a count in prose beside the thing counted is a count that will drift.
+> The question it
 > answers is F161's: two operations answer a JKS, PKCS12 or BCFKS keystore, and
 > twelve requests for each of six combinations produced twelve distinct bodies
 > every time. The length does not survive either - `generate-and-download` came
@@ -288,7 +291,8 @@ consumers being real - reads directly onto shape 2: a decoder for JKS and BCFKS
 would have had exactly two consumers, and both of them assert a key that
 `read-after-upload` and `generate` already reach by a shorter route.
 
-What was built instead has **881 consumers on the day it lands**, costs one file
+What was built instead has **every committed golden as a consumer on the day it
+lands** - 900 of them after the rebase onto the events family - costs one file
 read per golden inside a test that already reads them all, and refuses the file
 F161 was about to add. F38's three surviving grounds are each answered where
 they can fail: the guard's own inertness is `TestGoldenTextGuardCanFail`, the
@@ -356,11 +360,20 @@ bootstraps a saml client.
 
 ```
 before  admin/client-attribute-certificate    0 of 7
-        total                               477 of 541
+        total                               483 of 541
 
 after   admin/client-attribute-certificate    4 of 7
-        total                               481 of 541
+        total                               487 of 541
 ```
+
+**The base moved under this branch**, so the totals above are not the ones first
+reported. This cut was written against 477 and rebased onto the events family
+(#87), which had already taken the total to 483. This branch's own contribution
+is unchanged and is the number to read: **+4 operations, all of them in the
+certificate chapter**, 0 of 7 to 4 of 7. The rebase was verified line by line -
+this branch's exclusive files are byte-identical across it, and the two shared
+files (`catalog_admin.go`, `fixture.go`) gained main's lines with **zero
+deletions**, so no line of either stream was merged into a union.
 
 Four operations, nine cases, nine goldens, six of them carrying **no mask at
 all**:
@@ -400,16 +413,98 @@ M6  the notBefore backdate removed         killed  TestGeneratedCertificateMatch
 M7  idp upload guarded by manage-clients   killed  TestConformance/.../idp-upload-certificate-forbidden
 M8  the multipart closing boundary dropped killed  TestCertificateBoundaryIsNotInTheBody
 M9  the sweep walks nothing                killed  TestGoldenSweepCanFail
+M10 the UTF-8 half made unreachable        killed  TestGoldenTextGuardCanFail  (was SURVIVED)
+M11 the control-byte half unreachable      killed  TestGoldenTextGuardCanFail  (was SURVIVED)
+M12 the UTF-8-only fixtures removed        killed  TestGoldenTextGuardCanFail
 ```
 
-**M1 is the ratchet ground.** With the guard inert, `TestEveryGoldenBodyIsText`
-still **passed** - because every committed body is already text - and only the
-control caught it. A sweep over a clean tree cannot tell itself apart from a
-predicate that returns nil, which is why both controls exist.
+### M1 was the ratchet ground and it was only half-covered
 
-### Two of this cut's own tests were survivors before they were fixed
+**The nine-of-nine above was wrong, and it was wrong about the one mutation this
+cut called its headline.** M1 replaced the whole of `RefuseNonTextBody` with a
+check that cannot vary, and `TestGoldenTextGuardCanFail` caught it. That was
+read as "the guard is pinned". It is two rules - not valid UTF-8, **or** a
+control byte - and M1 disabled both at once, so killing it says only that
+*something* refuses a keystore.
 
-Both found by asking what mutation would kill them, and both are the shape the
+Disable either half on its own and the branch as first pushed stayed green:
+
+```
+M10  if !utf8.Valid(body) && false          SURVIVED, ./internal/conformance/ ok
+M11  the control-byte loop short-circuited  SURVIVED, ./internal/conformance/ ok
+```
+
+M10 is the coordinator's, on review of #88. **M11 is the mirror and it was not
+in the report** - so the branch had two survivors of this shape, not one, and
+both were in the ratchet's own ground.
+
+The cause is the fixtures, and the comment above them claimed the opposite:
+
+> The JKS magic is not valid UTF-8; the PKCS12 header is valid UTF-8 and carries
+> NUL, so the two halves of the rule are each exercised by a body this
+> repository actually declined to record.
+
+Measured, byte by byte:
+
+```
+                                       validUTF8   hasControlByte
+JKS     fe ed fe ed 00 00 00 02          false         true
+PKCS12  30 80 02 01 03 30 80 06          false         true
+```
+
+**Both halves of that sentence about PKCS12 are false.** `0x80` is a
+continuation byte with no lead byte in front of it, so the header is *not* valid
+UTF-8; and there is no `0x00` anywhere in those eight bytes - the control bytes
+are `0x02`, `0x01`, `0x03` and `0x06`. Both fixtures trip both halves, and since
+the UTF-8 check runs first and returns, neither half could be reached alone.
+
+This is **the tenth survivor of one shape in this project and the second this
+round**: a test whose input supplies both conditions a two-part rule needs, so
+it cannot say which part did the work. The rule the events cut wrote down about
+a handler's state applies to a test's fixtures unchanged.
+
+**The fix is not a third fixture, it is a checked claim.** `refusedBodies` is
+now a table where every row *declares* which half its bytes trip; the test
+verifies the declaration against `utf8.Valid` and against the byte range before
+it asks the guard anything, and then asserts that **at least one row trips each
+half alone**. The real keystore magics stay - they are what this repository
+actually declined to record - labelled as tripping both and therefore as unable
+to separate them. Two synthetic rows carry each half:
+
+```
+0xff, and 0xc3 0x28   invalid UTF-8, every byte >= 0x20 and not 0x7f
+"a\x00b", "a\x7fb"    plain ASCII, so valid UTF-8, one control byte each
+```
+
+M10 and M11 are now killed by exactly the rows that trip their half - and the
+keystore rows fail in neither, which is the point. M12 removes the two
+UTF-8-only rows and confirms the coverage assertion itself fires, with the
+message "no refused body is invalid UTF-8 *and nothing else*".
+
+**The mutation harness had the same disease and was fixed with it.** Its first
+run of M10 printed `KILLED (go test exit 0)` - a contradiction it could not
+notice, because `<named>` was interpolated into the grep unparenthesised, so
+`Guard|Sweep|Text` became `^ *--- FAIL: .*Guard` OR `Sweep` OR `Text` and
+matched any line holding the word "Text". It now checks the exit code **first**,
+so a zero exit can never be reported as a kill, and wraps the alternation. A
+harness that can report a kill on a passing run is the tool version of the bug
+it was built to find.
+
+### What M1 does still establish
+
+With the guard inert, `TestEveryGoldenBodyIsText` **passed** - because every
+committed body is already text - and only the control caught it. That part of
+the original report holds: a sweep over a clean tree cannot tell itself apart
+from a predicate that returns nil, which is why the controls exist. What it does
+not establish is that either half of the predicate is reachable, and saying so
+was the error.
+
+### Four of this cut's own tests were survivors before they were fixed
+
+Two were found here by asking what mutation would kill them; **two were found on
+review, after this branch was pushed and CI was green**, and those two are the
+ones worth reading - they were in the ratchet's own ground and are written up in
+full under M10 and M11 above. All four are the shape the
 brief warns about - one thing playing two roles, and a test that reads a
 fraction of what it names.
 
@@ -421,6 +516,20 @@ fraction of what it names.
   checked the result was PKCS#1. That asserts something about the standard
   library and nothing about this package. It now goes through `storedKeyPair`,
   which is the code path the handler uses.
+- `TestGoldenTextGuardCanFail` used two keystore magics that each trip **both**
+  halves of a two-part rule, so neither half was reachable alone and both could
+  be deleted with the package still `ok`. Found on review. See M10 and M11.
+- The mutation harness itself reported `KILLED (go test exit 0)`. Found while
+  reproducing M10. See M10.
+
+**The lesson is not "add a fixture".** Three of the four are a test whose input
+satisfies more conditions than the claim needs, and the only reliable way to
+catch that is to make the test **declare what each input exercises** and check
+the declaration - which is what `refusedBodies` now does, and what a prose
+comment above two byte slices could never do. The comment there was not merely
+unchecked; it was **false in both of its factual claims**, and it read as
+coverage for a fortnight of nobody noticing because there was nothing for it to
+disagree with.
 
 ### What is not covered
 
