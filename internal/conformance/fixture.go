@@ -1368,6 +1368,16 @@ var Fixtures = map[string]Fixture{
 	"session-family-empty":  sessionEmptyFixture("gloak-probe-sess-none", probeSessionEmptyClientID, "gloak-probe-sess-none-user"),
 	"session-family-spent":  sessionFixture("gloak-probe-sess-del", probeSessionSpentClientID, "gloak-probe-sess-del-user"),
 	"session-family-logout": sessionFixture("gloak-probe-sess-out", probeSessionLogoutClientID, "gloak-probe-sess-out-user"),
+
+	// The authentication flow model. Six realms, because four operations
+	// destroy what the reads measure and because the seed is itself a
+	// measurement - the realm the listings read is one nothing writes to.
+	"auth-flows":       authFlowsFixture(),
+	"auth-flows-make":  authFlowMakeFixture(),
+	"auth-flows-edit":  authFlowEditFixture(),
+	"auth-flows-exec":  authFlowExecFixture(),
+	"auth-flows-cfg":   authFlowCfgFixture(),
+	"auth-flows-order": authFlowOrderFixture(),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -6736,5 +6746,170 @@ func sessionGrantStep(realm, username string) Step {
 func sessionEmptyFixture(realm, clientUUID, username string) Fixture {
 	f := realmFixture(realm)
 	f.Steps = append(f.Steps, sessionSetupSteps(realm, clientUUID, username)...)
+	return f
+}
+
+// The authentication flow model's fixtures. Six realms rather than one, because
+// four of the twenty-one operations destroy what the reads measure - a flow
+// delete, an execution delete, a config delete and a priority swap - and
+// because the seed itself is one of the things being measured, so the realm the
+// listings read has to be one nothing has written to.
+//
+// **Every id, alias and name below differs from every other**, deliberately.
+// Six of six survivors in this repository have been a test where one thing
+// played two roles, and this family has three separate name spaces that could
+// collide: a flow alias, an execution's provider id and an authenticator
+// config's alias. `f103-alpha`, `f103-beta`, `f103-branch`, `f103-twig`,
+// `f103-fork` and `f103-cfg-alias` are six different strings on purpose.
+const (
+	probeFlowsRealm     = "gloak-probe-flows"
+	probeFlowMakeRealm  = "gloak-probe-flowmk"
+	probeFlowEditRealm  = "gloak-probe-flowed"
+	probeFlowExecRealm  = "gloak-probe-flowex"
+	probeFlowCfgRealm   = "gloak-probe-flowcf"
+	probeFlowOrderRealm = "gloak-probe-flowor"
+)
+
+// authFlowJSONHeaders is the header pair every write on this family sends.
+func authFlowJSONHeaders() map[string]string {
+	return map[string]string{
+		"Authorization": "Bearer {{access_token}}",
+		"Content-Type":  "application/json",
+	}
+}
+
+// createFlowStep posts a top-level flow and captures the id out of Location.
+//
+// It does **not** carry idempotentCreate: it captures from Location, and a 409
+// would leave the variable unset and the case measuring a path with an empty
+// segment. That is not hypothetical - a hand probe against the reference did
+// exactly that and answered `{"error":"HTTP 404 Not Found"}` for five different
+// requests, which is the "a probe that reports the same answer for every input"
+// shape. Loud is better here.
+func createFlowStep(realm, alias, description, variable string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/" + realm + "/authentication/flows",
+			Headers: authFlowJSONHeaders(),
+			Body: []byte(`{"alias":"` + alias + `","description":"` + description +
+				`","providerId":"basic-flow","topLevel":true,"builtIn":false}`),
+		},
+		CaptureHeader: map[string]string{variable: "Location"},
+	}
+}
+
+// addExecutionStep adds one authenticator to a flow and captures the new
+// execution's id. The provider is named by the caller so no two fixtures use
+// the same one, which is what keeps a case that asserts a displayName honest.
+func addExecutionStep(realm, flowAlias, provider, variable string) Step {
+	return Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/" + realm + "/authentication/flows/" +
+				flowAlias + "/executions/execution",
+			Headers: authFlowJSONHeaders(),
+			Body:    []byte(`{"provider":"` + provider + `"}`),
+		},
+		CaptureHeader: map[string]string{variable: "Location"},
+	}
+}
+
+// authFlowsFixture is the realm the seed is read off: created and then left
+// alone. Nothing writes to it, so `GET /flows` and the execution listings
+// measure the twenty flows, fifty-five rows and four configs a created realm
+// seeds, and nothing else.
+func authFlowsFixture() Fixture {
+	return realmFixture(probeFlowsRealm)
+}
+
+// authFlowMakeFixture holds one created flow, for the reads that need an id the
+// caller minted rather than a seeded one, plus the id of a **built-in** flow so
+// the delete's 400 can be measured.
+//
+// The built-in id is captured out of the listing by index rather than by alias,
+// because Capture descends a path and cannot search. Index 6 is `docker auth`,
+// the last of the seven and the only one holding a single execution - and the
+// order it relies on is the order admin/authentication-flows/list asserts, so a
+// seed serving them in another order fails that case before it reaches this
+// one.
+func authFlowMakeFixture() Fixture {
+	f := realmFixture(probeFlowMakeRealm)
+	f.Steps = append(f.Steps,
+		createFlowStep(probeFlowMakeRealm, "f103-alpha", "the created flow", "flow_id"),
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/" + probeFlowMakeRealm + "/authentication/flows",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"docker_flow_id": "6/id"},
+		},
+	)
+	return f
+}
+
+// authFlowEditFixture is a second created flow in a realm of its own, because
+// the delete case destroys it and the update case must not race it.
+func authFlowEditFixture() Fixture {
+	f := realmFixture(probeFlowEditRealm)
+	f.Steps = append(f.Steps,
+		createFlowStep(probeFlowEditRealm, "f103-beta", "the edited flow", "edit_flow_id"))
+	return f
+}
+
+// authFlowExecFixture is a created flow holding one execution, for the
+// executions family's reads and its delete.
+//
+// The provider is `deny-access-authenticator`, which appears in no seeded flow.
+// A provider the seed already uses would let a case pass by finding the wrong
+// row.
+func authFlowExecFixture() Fixture {
+	f := realmFixture(probeFlowExecRealm)
+	f.Steps = append(f.Steps,
+		createFlowStep(probeFlowExecRealm, "f103-branch", "the execution host", "exec_flow_id"),
+		addExecutionStep(probeFlowExecRealm, "f103-branch", "deny-access-authenticator", "execution_id"),
+	)
+	return f
+}
+
+// authFlowCfgFixture is a created flow holding one execution and one
+// authenticator config, for the config family.
+//
+// `allow-access-authenticator` is again a provider no seeded flow uses, and the
+// config's alias `f103-cfg-alias` matches no flow alias in any fixture.
+func authFlowCfgFixture() Fixture {
+	f := realmFixture(probeFlowCfgRealm)
+	f.Steps = append(f.Steps,
+		createFlowStep(probeFlowCfgRealm, "f103-twig", "the config host", "cfg_flow_id"),
+		addExecutionStep(probeFlowCfgRealm, "f103-twig", "allow-access-authenticator", "cfg_execution_id"),
+		Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path: "/admin/realms/" + probeFlowCfgRealm +
+					"/authentication/executions/{{cfg_execution_id}}/config",
+				Headers: authFlowJSONHeaders(),
+				Body:    []byte(`{"alias":"f103-cfg-alias","config":{"defaultProvider":"f103-zeta"}}`),
+			},
+			CaptureHeader: map[string]string{"config_id": "Location"},
+		},
+	)
+	return f
+}
+
+// authFlowOrderFixture is a created flow holding two executions, which is the
+// least a priority swap can be measured on.
+//
+// Two rows and not three: raise-priority **swaps with the neighbour**, so two
+// rows are enough to show the swap and a third would only add a row the
+// assertion does not need. The two providers differ so the listing after the
+// swap says which row moved rather than only that a number changed.
+func authFlowOrderFixture() Fixture {
+	f := realmFixture(probeFlowOrderRealm)
+	f.Steps = append(f.Steps,
+		createFlowStep(probeFlowOrderRealm, "f103-fork", "the ordering host", "order_flow_id"),
+		addExecutionStep(probeFlowOrderRealm, "f103-fork", "auth-otp-form", "first_execution_id"),
+		addExecutionStep(probeFlowOrderRealm, "f103-fork", "auth-spnego", "second_execution_id"),
+	)
 	return f
 }
