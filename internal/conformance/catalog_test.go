@@ -1720,8 +1720,31 @@ func tailOf(b []byte) string {
 // See RefuseNonTextBody for why the answer to "what can a golden assert about a
 // body that is not text" is "nothing".
 func TestEveryGoldenBodyIsText(t *testing.T) {
+	seen, findings, err := nonTextGoldensUnder(goldenDir)
+	if err != nil {
+		t.Fatalf("walk %s: %v", goldenDir, err)
+	}
+	for _, f := range findings {
+		t.Error(f)
+	}
+	// A sweep that walked nothing passes silently, which is the shape a `-run`
+	// selector naming the wrong package has already produced in this project.
+	if seen == 0 {
+		t.Fatal("walked no goldens at all, so this test asserted nothing")
+	}
+	t.Logf("checked %d golden bodies", seen)
+}
+
+// nonTextGoldensUnder is the sweep, taking a directory so the guard below can
+// point it at a tree that really does hold a binary golden.
+//
+// It returns the number of files it looked at as well as what it found, because
+// a sweep that walked nothing and a sweep that found nothing are the same
+// answer otherwise.
+func nonTextGoldensUnder(dir string) (int, []string, error) {
 	seen := 0
-	err := filepath.WalkDir(goldenDir, func(path string, d fs.DirEntry, err error) error {
+	var findings []string
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -1735,23 +1758,74 @@ func TestEveryGoldenBodyIsText(t *testing.T) {
 		}
 		g, err := ParseGolden(raw)
 		if err != nil {
-			t.Errorf("%s: parse golden: %v", path, err)
+			findings = append(findings, fmt.Sprintf("%s: parse golden: %v", path, err))
 			return nil
 		}
 		if err := RefuseNonTextBody(g.Body); err != nil {
-			t.Errorf("%s: %v", path, err)
+			findings = append(findings, fmt.Sprintf("%s: %v", path, err))
 		}
 		return nil
 	})
+	return seen, findings, err
+}
+
+// TestGoldenSweepCanFail plants the golden F161 was about to record and checks
+// the sweep reports it.
+//
+// TestGoldenTextGuardCanFail proves the *predicate* can say no; this proves the
+// **walk** reaches a file and asks it. Those are different claims and the tree
+// as it stands cannot separate them: every committed body is already text, so
+// the sweep passes whether or not it is looking at anything.
+//
+// The body is a real JKS header, and the file is written the way the recorder
+// writes one - through FormatGolden - so the plant is not a hand-made shape the
+// parser might reject for some other reason.
+func TestGoldenSweepCanFail(t *testing.T) {
+	dir := t.TempDir()
+	textPath := filepath.Join(dir, "text.http")
+	binaryPath := filepath.Join(dir, "keystore.http")
+
+	write := func(path string, body []byte) {
+		t.Helper()
+		g := Golden{
+			RequestLine: "POST /admin/realms/master/clients/x/certificates/jwt.credential/download",
+			Status:      200,
+			Headers:     []Header{{Name: "Content-Type", Value: "application/octet-stream"}},
+			Body:        body,
+		}
+		if err := os.WriteFile(path, FormatGolden(g), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	write(textPath, []byte(`{"error":"Could not find client"}`))
+
+	// A tree of text alone: the sweep must walk it and find nothing.
+	seen, findings, err := nonTextGoldensUnder(dir)
 	if err != nil {
-		t.Fatalf("walk %s: %v", goldenDir, err)
+		t.Fatalf("walk: %v", err)
 	}
-	// A sweep that walked nothing passes silently, which is the shape a `-run`
-	// selector naming the wrong package has already produced in this project.
-	if seen == 0 {
-		t.Fatal("walked no goldens at all, so this test asserted nothing")
+	if seen != 1 {
+		t.Fatalf("walked %d goldens, want 1 - the sweep is not reading the directory", seen)
 	}
-	t.Logf("checked %d golden bodies", seen)
+	if len(findings) != 0 {
+		t.Fatalf("a text golden was reported: %v", findings)
+	}
+
+	// Now the one F161 asked about.
+	write(binaryPath, []byte{0xfe, 0xed, 0xfe, 0xed, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01})
+	seen, findings, err = nonTextGoldensUnder(dir)
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if seen != 2 {
+		t.Fatalf("walked %d goldens, want 2", seen)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("want exactly the keystore reported, got %v", findings)
+	}
+	if !strings.Contains(findings[0], "keystore.http") {
+		t.Errorf("the finding names the wrong file: %s", findings[0])
+	}
 }
 
 // TestGoldenTextGuardCanFail is the control the sweep above cannot be without.
