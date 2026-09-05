@@ -1,0 +1,12 @@
+# GET /admin/realms/gloak-probe-flows/authentication/flows/registration/executions
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"id":"{{string}}","requirement":"REQUIRED","displayName":"registration form","description":"Registration form","requirementChoices":["REQUIRED","DISABLED"],"configurable":false,"authenticationFlow":true,"providerId":"registration-page-form","flowId":"{{string}}","level":0,"index":0,"priority":10},{"id":"{{string}}","requirement":"REQUIRED","displayName":"Registration User Profile Creation","requirementChoices":["REQUIRED","DISABLED"],"configurable":false,"providerId":"registration-user-creation","level":1,"index":0,"priority":20},{"id":"{{string}}","requirement":"REQUIRED","displayName":"Password Validation","requirementChoices":["REQUIRED","DISABLED"],"configurable":true,"providerId":"registration-password-action","level":1,"index":1,"priority":50},{"id":"{{string}}","requirement":"DISABLED","displayName":"reCAPTCHA","requirementChoices":["REQUIRED","DISABLED"],"configurable":true,"providerId":"registration-recaptcha-action","level":1,"index":2,"priority":60},{"id":"{{string}}","requirement":"DISABLED","displayName":"Terms and conditions","requirementChoices":["REQUIRED","DISABLED"],"configurable":false,"providerId":"registration-terms-and-conditions","level":1,"index":3,"priority":70}]

@@ -50,6 +50,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"sort"
 
 	"github.com/ekalinin/gloak/internal/httpx"
@@ -109,6 +110,15 @@ const (
 	// illegalExecution is every /executions/{id} route's not-found, including
 	// POST /executions/{id}/config. It is a 404 despite reading as a 400.
 	illegalExecution = "Illegal execution"
+	// flowNotFoundOnExecutionsRead is what **GET** /flows/{alias}/executions
+	// answers, and it is the capitalised spelling where the **PUT** on the
+	// identical path answers flowNotFoundLower. One path, two verbs, and the
+	// only difference is the case of a letter.
+	//
+	// This one was got wrong from a hand probe: only the PUT was measured, the
+	// lower-case answer was assumed to belong to the path, and the golden
+	// recorded from the reference is what refuted it.
+	flowNotFoundOnExecutionsRead = flowNotFound
 	// authenticatorConfigNotFound is all four config routes' not-found, and
 	// GET /executions/{id}/config/{id}'s.
 	authenticatorConfigNotFound = "Could not find authenticator config"
@@ -123,6 +133,28 @@ const (
 	cannotDeleteBuiltIn      = "Can't delete built in flow"
 	parentFlowMissing        = "Parent flow doesn't exist"
 	noAuthenticationProvider = "No authentication provider found for id: "
+)
+
+// The built-in flow's four refusals, in the `error` shape and all four **400**.
+//
+// **`builtIn` guards far more than the flow delete**, and this whole block
+// arrived from a golden rather than from a hand probe: every probe issued
+// against the reference used a flow the probe had just created, so none of them
+// ever met the refusal. The conformance cases pointed at seeded flows - to keep
+// the fixtures idempotent - and eleven of them failed at once.
+//
+// The one write on a flow's executions that is **not** refused is
+// `PUT /flows/{alias}/executions`: changing a row's `requirement` on a built-in
+// flow answers 204. So a caller may disable the built-in browser flow's
+// `auth-cookie` - which is what keeps binding B3 reachable without copying a
+// flow first - and may not reorder, add to or remove from the same flow. Four
+// refusals and one permission on one object, and "builtIn means read-only" is
+// wrong by exactly that one.
+const (
+	illegalAddExecution    = "It is illegal to add execution to a built in flow"
+	illegalAddSubFlow      = "It is illegal to add sub-flow to a built in flow"
+	illegalRemoveExecution = "It is illegal to remove execution from a built in flow"
+	illegalModifyExecution = "It is illegal to modify execution in a built in flow"
 )
 
 // authenticationFlowRepresentation is the nested body GET /flows and
@@ -197,6 +229,11 @@ type executionInfoRepresentation struct {
 // and `level` in the flat listing, and the nested shape does not carry it at
 // all - it carries `flowAlias`. Three orders for one field, so one shared
 // serialiser is wrong on two of them.
+//
+// **And `authenticatorConfig` is the config's id here where the nested shape
+// carries its alias**, which is the same field name meaning two different
+// things one route apart. That was got wrong from a hand probe - the id was
+// read as though it were an alias - and the golden is what caught it.
 type executionRepresentation struct {
 	AuthenticatorConfig string `json:"authenticatorConfig,omitempty"`
 	Authenticator       string `json:"authenticator,omitempty"`
@@ -665,8 +702,12 @@ func (h *handler) copyFlow(w http.ResponseWriter, r *http.Request, rc *reqContex
 		return
 	}
 	w.Header().Set("Cache-Control", "no-cache")
+	// The alias is re-escaped rather than echoed raw: `docker auth`'s Location
+	// carries `docker%20auth`, measured. r.PathValue has already decoded the
+	// segment, so building the header from it directly emits a space into a
+	// header value.
 	w.Header().Set("Location", h.issuerBase+"/admin/realms/"+rc.realm.Name+
-		"/authentication/flows/"+r.PathValue("flowAlias")+"/copy/"+newID)
+		"/authentication/flows/"+url.PathEscape(r.PathValue("flowAlias"))+"/copy/"+newID)
 	w.WriteHeader(http.StatusCreated)
 }
 
@@ -811,7 +852,7 @@ func (h *handler) listFlowExecutions(w http.ResponseWriter, r *http.Request, rc 
 	}
 	f := idx.byAlias[r.PathValue("flowAlias")]
 	if f == nil {
-		httpx.WriteMessageError(w, http.StatusNotFound, flowNotFoundLower)
+		httpx.WriteMessageError(w, http.StatusNotFound, flowNotFoundOnExecutionsRead)
 		return
 	}
 	aliases, err := h.configAliasIndex(r, rc)
@@ -905,14 +946,6 @@ func (h *handler) createFlowExecution(w http.ResponseWriter, r *http.Request, rc
 	if !decodeStrict(w, r, "Map", &body) {
 		return
 	}
-	if !knownAuthenticationProvider(body.Provider) {
-		name := body.Provider
-		if name == "" {
-			name = "null"
-		}
-		httpx.WriteMessageError(w, http.StatusBadRequest, noAuthenticationProvider+name)
-		return
-	}
 	idx, ok := h.loadFlows(w, r, rc)
 	if !ok {
 		return
@@ -920,6 +953,22 @@ func (h *handler) createFlowExecution(w http.ResponseWriter, r *http.Request, rc
 	f := idx.byAlias[r.PathValue("flowAlias")]
 	if f == nil {
 		httpx.WriteMessageError(w, http.StatusBadRequest, parentFlowMissing)
+		return
+	}
+	// The built-in check runs **before** the provider check: an unknown
+	// provider offered to a built-in flow answers about the flow, not about the
+	// provider. Measured by the golden, which is the only reason it is in this
+	// order - the hand probes all used a created flow and never reached it.
+	if f.BuiltIn {
+		httpx.WriteMessageError(w, http.StatusBadRequest, illegalAddExecution)
+		return
+	}
+	if !knownAuthenticationProvider(body.Provider) {
+		name := body.Provider
+		if name == "" {
+			name = "null"
+		}
+		httpx.WriteMessageError(w, http.StatusBadRequest, noAuthenticationProvider+name)
 		return
 	}
 	priority, err := h.nextPriority(r, rc, f.ID)
@@ -986,6 +1035,10 @@ func (h *handler) createSubFlow(w http.ResponseWriter, r *http.Request, rc *reqC
 		httpx.WriteMessageError(w, http.StatusBadRequest, parentFlowMissing)
 		return
 	}
+	if parent.BuiltIn {
+		httpx.WriteMessageError(w, http.StatusBadRequest, illegalAddSubFlow)
+		return
+	}
 	if body.Alias != "" && idx.byAlias[body.Alias] != nil {
 		httpx.WriteAdminError(w, http.StatusConflict, copyAliasExists)
 		return
@@ -1049,20 +1102,41 @@ func (h *handler) executionFromPath(w http.ResponseWriter, r *http.Request,
 	return e, true
 }
 
+// executionIsEditable refuses a write against a row whose **parent flow** is
+// built in, with the sentence the route spells.
+//
+// It resolves the parent rather than trusting the row, because the row itself
+// carries no `builtIn` - only its flow does. That is also why the check cannot
+// live in the store: which sentence to write is a property of the route.
+func (h *handler) executionIsEditable(w http.ResponseWriter, r *http.Request, rc *reqContext,
+	e *model.AuthenticationExecution, message string) bool {
+	parent, err := h.store.AuthenticationFlows().FlowByID(r.Context(), rc.realm.ID, e.ParentFlowID)
+	if errors.Is(err, store.ErrNotFound) {
+		// An execution whose parent is gone is not a state the API can reach;
+		// letting the write through is the same answer as before this check.
+		return true
+	}
+	if err != nil {
+		h.flowInternalError(w)
+		return false
+	}
+	if parent.BuiltIn {
+		httpx.WriteMessageError(w, http.StatusBadRequest, message)
+		return false
+	}
+	return true
+}
+
 // readExecution serves GET .../authentication/executions/{executionId}.
 func (h *handler) readExecution(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 	e, ok := h.executionFromPath(w, r, rc)
 	if !ok {
 		return
 	}
-	aliases, err := h.configAliasIndex(r, rc)
-	if err != nil {
-		h.flowInternalError(w)
-		return
-	}
 	isFlow := e.FlowID != ""
 	writeAdminJSON(w, executionRepresentation{
-		AuthenticatorConfig: aliases[e.ConfigID],
+		// The **id**, not the alias. See this type's doc comment.
+		AuthenticatorConfig: e.ConfigID,
 		Authenticator:       e.Authenticator,
 		AuthenticatorFlow:   isFlow,
 		Requirement:         e.Requirement,
@@ -1078,6 +1152,9 @@ func (h *handler) readExecution(w http.ResponseWriter, r *http.Request, rc *reqC
 func (h *handler) deleteExecution(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 	e, ok := h.executionFromPath(w, r, rc)
 	if !ok {
+		return
+	}
+	if !h.executionIsEditable(w, r, rc, e, illegalRemoveExecution) {
 		return
 	}
 	if err := h.store.AuthenticationFlows().DeleteExecution(r.Context(), rc.realm.ID, e.ID); err != nil {
@@ -1109,6 +1186,10 @@ func (h *handler) createExecution(w http.ResponseWriter, r *http.Request, rc *re
 	parent := idx.byID[body.ParentFlow]
 	if parent == nil {
 		httpx.WriteMessageError(w, http.StatusBadRequest, parentFlowMissing)
+		return
+	}
+	if parent.BuiltIn {
+		httpx.WriteMessageError(w, http.StatusBadRequest, illegalAddExecution)
 		return
 	}
 	if !knownAuthenticationProvider(body.Authenticator) {
@@ -1154,6 +1235,12 @@ func (h *handler) createExecution(w http.ResponseWriter, r *http.Request, rc *re
 func (h *handler) movePriority(w http.ResponseWriter, r *http.Request, rc *reqContext, up bool) {
 	e, ok := h.executionFromPath(w, r, rc)
 	if !ok {
+		return
+	}
+	// A priority swap is refused on a built-in flow where a **requirement**
+	// change on the same row is a 204. Four refusals and one permission on one
+	// object; see the illegal* block.
+	if !h.executionIsEditable(w, r, rc, e, illegalModifyExecution) {
 		return
 	}
 	repo := h.store.AuthenticationFlows()

@@ -1,0 +1,12 @@
+# GET /admin/realms/gloak-probe-flows/authentication/executions/{{review_execution_id}}/config/{{review_config_id}}
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"id":"{{review_config_id}}","alias":"review profile config","config":{"update.profile.on.first.login":"missing"}}

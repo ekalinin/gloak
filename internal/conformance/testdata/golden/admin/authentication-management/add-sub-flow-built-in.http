@@ -1,0 +1,11 @@
+# POST /admin/realms/gloak-probe-flow-sub/authentication/flows/docker%20auth/executions/flow
+HTTP/1.1 400 Bad Request
+Content-Length: {{volatile}}
+Content-Type: application/json
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"error":"It is illegal to add sub-flow to a built in flow"}

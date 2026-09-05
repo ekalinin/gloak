@@ -1,0 +1,12 @@
+# GET /admin/realms/gloak-probe-flows/authentication/flows/{{docker_flow_id}}
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"id":"{{docker_flow_id}}","alias":"docker auth","description":"Used by Docker clients to authenticate against the IDP","providerId":"basic-flow","topLevel":true,"builtIn":true,"authenticationExecutions":[{"authenticator":"docker-http-basic-authenticator","authenticatorFlow":false,"requirement":"REQUIRED","priority":10,"autheticatorFlow":false,"userSetupAllowed":false}]}
