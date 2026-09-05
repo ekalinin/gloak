@@ -107,15 +107,50 @@ func TestRegisteredNodesSitsBeforeProtocolMappers(t *testing.T) {
 func TestRegisteredNodesKeyOrderIsTheSizedJavaMap(t *testing.T) {
 	h, _, _ := newServer(t)
 	admin := adminToken(t, h)
-	uuid := nodeClient(t, h, admin, "node-order")
-	path := "/admin/realms/master/clients/" + uuid
 
-	for _, node := range []string{"kn1", "kn2", "zzz", "aaa"} {
-		if w := send(t, h, http.MethodPost, path+"/nodes", admin, `{"node":"`+node+`"}`); w.Code != http.StatusNoContent {
-			t.Fatalf("register %s: %d %s", node, w.Code, w.Body)
+	for _, tc := range []struct {
+		clientID string
+		insert   []string
+		want     []string
+		why      string
+	}{
+		{
+			clientID: "node-order-four",
+			insert:   []string{"kn1", "kn2", "zzz", "aaa"},
+			want:     []string{"aaa", "zzz", "kn2", "kn1"},
+			why:      "sorted would be [aaa kn1 kn2 zzz] and insertion order [kn1 kn2 zzz aaa]",
+		},
+		{
+			// **The discriminating pair.** SizedKeyOrder places it this way and
+			// KeyOrder places it the other, and the two keys do not collide at
+			// either capacity - so this is the cell that says which of Java's
+			// two HashMap constructors the map came out of. Without it the case
+			// above passes under both.
+			clientID: "node-order-pair",
+			insert:   []string{"127.0.0.1", "ct3"},
+			want:     []string{"127.0.0.1", "ct3"},
+			why:      "javamap.KeyOrder answers [ct3 127.0.0.1] for this pair",
+		},
+	} {
+		uuid := nodeClient(t, h, admin, tc.clientID)
+		path := "/admin/realms/master/clients/" + uuid
+		for _, node := range tc.insert {
+			if w := send(t, h, http.MethodPost, path+"/nodes", admin, `{"node":"`+node+`"}`); w.Code != http.StatusNoContent {
+				t.Fatalf("register %s: %d %s", node, w.Code, w.Body)
+			}
+		}
+		got := registeredNodeOrder(t, get(t, h, path, admin).Body.String())
+		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+			t.Errorf("%s: key order %v, want %v - %s", tc.clientID, got, tc.want, tc.why)
 		}
 	}
-	body := get(t, h, path, admin).Body.String()
+}
+
+// registeredNodeOrder pulls the node names out of a client representation in
+// the order they appear. It reads the bytes rather than decoding, because
+// decoding into a Go map is exactly what loses the thing under test.
+func registeredNodeOrder(t *testing.T, body string) []string {
+	t.Helper()
 	start := strings.Index(body, `"registeredNodes":{`)
 	if start < 0 {
 		t.Fatalf("no registeredNodes: %s", body)
@@ -124,20 +159,12 @@ func TestRegisteredNodesKeyOrderIsTheSizedJavaMap(t *testing.T) {
 	if end < 0 {
 		t.Fatalf("registeredNodes is not closed: %s", body[start:])
 	}
-	block := body[start : start+end+1]
-
-	// The names in the order they appear, timestamps stripped. Asserting the
-	// sequence rather than the pairs is what makes the comparison independent
-	// of the second the test ran in.
-	var got []string
-	for _, part := range strings.Split(strings.TrimSuffix(strings.TrimPrefix(block, `"registeredNodes":{`), "}"), ",") {
-		got = append(got, strings.Trim(strings.SplitN(part, ":", 2)[0], `"`))
+	inner := strings.TrimSuffix(strings.TrimPrefix(body[start:start+end+1], `"registeredNodes":{`), "}")
+	var out []string
+	for _, part := range strings.Split(inner, ",") {
+		out = append(out, strings.Trim(strings.SplitN(part, ":", 2)[0], `"`))
 	}
-	want := []string{"aaa", "zzz", "kn2", "kn1"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("key order %v, want %v - sorted would be [aaa kn1 kn2 zzz] and insertion order [kn1 kn2 zzz aaa]",
-			got, want)
-	}
+	return out
 }
 
 // TestTheNodeWritesResolveTheClientBeforeTheirRole is guardClientSubject's five
