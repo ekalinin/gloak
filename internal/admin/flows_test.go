@@ -21,12 +21,13 @@ type flowRow struct {
 	TopLevel    bool   `json:"topLevel"`
 	BuiltIn     bool   `json:"builtIn"`
 	Executions  []struct {
-		Authenticator     string `json:"authenticator"`
-		AuthenticatorFlow bool   `json:"authenticatorFlow"`
-		AutheticatorFlow  bool   `json:"autheticatorFlow"`
-		Requirement       string `json:"requirement"`
-		Priority          int    `json:"priority"`
-		FlowAlias         string `json:"flowAlias"`
+		AuthenticatorConfig string `json:"authenticatorConfig"`
+		Authenticator       string `json:"authenticator"`
+		AuthenticatorFlow   bool   `json:"authenticatorFlow"`
+		AutheticatorFlow    bool   `json:"autheticatorFlow"`
+		Requirement         string `json:"requirement"`
+		Priority            int    `json:"priority"`
+		FlowAlias           string `json:"flowAlias"`
 	} `json:"authenticationExecutions"`
 }
 
@@ -765,6 +766,244 @@ func jsonKeys(t *testing.T, raw []byte) []string {
 		}
 	}
 	return keys
+}
+
+// TestBuiltInGuardsFourWritesAndPermitsTheFifth is the finding the goldens
+// produced and every hand probe missed.
+//
+// Every probe issued against the reference used a flow the probe had just
+// created, so none of them ever met `builtIn` on anything but the flow delete.
+// The conformance cases pointed at seeded flows - to keep the fixtures
+// idempotent - and eleven of them failed at once against the recorded
+// reference.
+//
+// The fifth row is the point of the test: **a requirement change on a built-in
+// flow is a 204**. "builtIn means read-only" is wrong by exactly that one, and
+// it is the one binding B3 needs, since disabling the seeded browser flow's
+// auth-cookie is how a caller turns SSO off without copying a flow first.
+func TestBuiltInGuardsFourWritesAndPermitsTheFifth(t *testing.T) {
+	h, _, _ := newServer(t)
+	token := adminToken(t, h)
+	rows := listFlows(t, h, "master", token)
+	browserID := flowByAlias(t, rows, "browser").ID
+	execs := executionOrder(t, h, token, "browser")
+	if len(execs) < 3 {
+		t.Fatalf("the browser flow has %d rows, want at least 3", len(execs))
+	}
+	cookie := execs[0]
+	if cookie.providerID != "auth-cookie" {
+		t.Fatalf("row 0 is %q, want auth-cookie", cookie.providerID)
+	}
+
+	refusals := []struct {
+		name, method, path, body, want string
+	}{
+		{"add an execution", http.MethodPost,
+			authBase + "/flows/browser/executions/execution",
+			`{"provider":"conditional-user-role"}`,
+			"It is illegal to add execution to a built in flow"},
+		{"add a sub-flow", http.MethodPost,
+			authBase + "/flows/browser/executions/flow",
+			`{"alias":"gloak-test-nested","type":"basic-flow"}`,
+			"It is illegal to add sub-flow to a built in flow"},
+		{"remove an execution", http.MethodDelete,
+			authBase + "/executions/" + cookie.id, "",
+			"It is illegal to remove execution from a built in flow"},
+		{"raise a priority", http.MethodPost,
+			authBase + "/executions/" + execs[2].id + "/raise-priority", "",
+			"It is illegal to modify execution in a built in flow"},
+		{"lower a priority", http.MethodPost,
+			authBase + "/executions/" + cookie.id + "/lower-priority", "",
+			"It is illegal to modify execution in a built in flow"},
+		{"create an execution under it", http.MethodPost,
+			authBase + "/executions",
+			`{"authenticator":"conditional-user-attribute","parentFlow":"` + browserID + `"}`,
+			"It is illegal to add execution to a built in flow"},
+	}
+	seen := map[string]bool{}
+	for _, c := range refusals {
+		w := send(t, h, c.method, c.path, token, c.body)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400: %s", c.name, w.Code, w.Body)
+			continue
+		}
+		var body struct {
+			Error string `json:"error"`
+		}
+		if err := decodeJSON(w.Body.Bytes(), &body); err != nil {
+			t.Errorf("%s: parse: %v", c.name, err)
+			continue
+		}
+		if body.Error != c.want {
+			t.Errorf("%s: error is %q, want %q", c.name, body.Error, c.want)
+		}
+		seen[body.Error] = true
+	}
+	if len(seen) != 4 {
+		t.Errorf("the guard spelled %d distinct sentences, want 4: %v", len(seen), seen)
+	}
+
+	// The permission. This is the row the test exists for.
+	w := send(t, h, http.MethodPut, authBase+"/flows/browser/executions", token,
+		`{"id":"`+cookie.id+`","requirement":"DISABLED"}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("a requirement change on a built-in flow is %d, want 204 - "+
+			"the guard covers four writes and not this one: %s", w.Code, w.Body)
+	}
+	after := executionOrder(t, h, token, "browser")
+	if after[0].id != cookie.id {
+		t.Fatalf("the rows moved, which a requirement change must not do")
+	}
+	w = get(t, h, authBase+"/executions/"+cookie.id, token)
+	var read struct {
+		Requirement string `json:"requirement"`
+	}
+	if err := decodeJSON(w.Body.Bytes(), &read); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if read.Requirement != "DISABLED" {
+		t.Errorf("the requirement is %q after the PUT, want DISABLED", read.Requirement)
+	}
+}
+
+// TestTheConfigPointerIsAnAliasNestedAndAnIdSingly pins the same field name
+// meaning two things one route apart.
+//
+// `GET /flows/{id}` carries the config's **alias** in `authenticatorConfig`;
+// `GET /executions/{id}` carries its **id**. A hand probe read the id as though
+// it were an alias and the golden refuted it.
+func TestTheConfigPointerIsAnAliasNestedAndAnIdSingly(t *testing.T) {
+	h, _, _ := newServer(t)
+	token := adminToken(t, h)
+
+	// The seeded row that carries a config: first broker login's first row.
+	w := get(t, h, authBase+"/flows/first%20broker%20login/executions", token)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list executions: %d %s", w.Code, w.Body)
+	}
+	var flat []struct {
+		ID                   string `json:"id"`
+		ProviderID           string `json:"providerId"`
+		Alias                string `json:"alias"`
+		AuthenticationConfig string `json:"authenticationConfig"`
+	}
+	if err := decodeJSON(w.Body.Bytes(), &flat); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if flat[0].ProviderID != "idp-review-profile" {
+		t.Fatalf("row 0 is %q, want idp-review-profile", flat[0].ProviderID)
+	}
+	configID := flat[0].AuthenticationConfig
+	if configID == "" {
+		t.Fatal("the seeded idp-review-profile row carries no authenticationConfig")
+	}
+	// The flat listing carries the **id** and the alias in a separate key, so
+	// the two are already distinguishable here.
+	if flat[0].Alias != "review profile config" {
+		t.Errorf("the flat row's alias is %q, want \"review profile config\"", flat[0].Alias)
+	}
+	if configID == flat[0].Alias {
+		t.Fatal("the id and the alias are equal, so this test proves nothing")
+	}
+
+	// The single read carries the id.
+	w = get(t, h, authBase+"/executions/"+flat[0].ID, token)
+	var single struct {
+		AuthenticatorConfig string `json:"authenticatorConfig"`
+	}
+	if err := decodeJSON(w.Body.Bytes(), &single); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if single.AuthenticatorConfig != configID {
+		t.Errorf("GET /executions/{id} carries %q, want the config id %q",
+			single.AuthenticatorConfig, configID)
+	}
+
+	// The nested read carries the alias.
+	rows := listFlows(t, h, "master", token)
+	fbl := flowByAlias(t, rows, "first broker login")
+	if fbl.Executions[0].AuthenticatorConfig != "review profile config" {
+		t.Errorf("GET /flows carries %q, want the alias \"review profile config\"",
+			fbl.Executions[0].AuthenticatorConfig)
+	}
+}
+
+// TestTheExecutionsPathSpellsNotFoundTwoWaysByVerb is the second half of the
+// capitalisation pair, and it was also got wrong by a hand probe.
+//
+// Only the PUT was measured, `flow not found` was assumed to belong to the
+// path, and the golden recorded from the reference showed the GET answers
+// `Flow not found`. One path, two verbs, one letter.
+func TestTheExecutionsPathSpellsNotFoundTwoWaysByVerb(t *testing.T) {
+	h, _, _ := newServer(t)
+	token := adminToken(t, h)
+	const path = authBase + "/flows/gloak-test-absent-flow/executions"
+
+	w := get(t, h, path, token)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("GET: status %d, want 404: %s", w.Code, w.Body)
+	}
+	var read struct {
+		Error string `json:"error"`
+	}
+	if err := decodeJSON(w.Body.Bytes(), &read); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	w = send(t, h, http.MethodPut, path, token, `{"id":"x","requirement":"REQUIRED"}`)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("PUT: status %d, want 404: %s", w.Code, w.Body)
+	}
+	var write struct {
+		Error string `json:"error"`
+	}
+	if err := decodeJSON(w.Body.Bytes(), &write); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	if read.Error != "Flow not found" {
+		t.Errorf("GET answers %q, want \"Flow not found\"", read.Error)
+	}
+	if write.Error != "flow not found" {
+		t.Errorf("PUT answers %q, want the lower-case \"flow not found\"", write.Error)
+	}
+	if read.Error == write.Error {
+		t.Error("the two verbs answer the same sentence; they are measured to " +
+			"differ by the case of the first letter alone")
+	}
+	if !strings.EqualFold(read.Error, write.Error) {
+		t.Errorf("the two differ by more than case: %q and %q - the whole point "+
+			"is that capitalisation is the only difference", read.Error, write.Error)
+	}
+}
+
+// TestTheCopyLocationKeepsTheAliasEscaped pins the header a decoded path value
+// would break.
+//
+// `POST /flows/docker%20auth/copy` answers a `Location` carrying
+// `docker%20auth`. r.PathValue has already decoded the segment, so building the
+// header from it emits a raw space into a header value.
+func TestTheCopyLocationKeepsTheAliasEscaped(t *testing.T) {
+	h, _, _ := newServer(t)
+	token := adminToken(t, h)
+
+	w := send(t, h, http.MethodPost, authBase+"/flows/docker%20auth/copy", token,
+		`{"newName":"gloak-test-docker-copy"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("copy: %d %s", w.Code, w.Body)
+	}
+	loc := w.Header().Get("Location")
+	if !strings.Contains(loc, "/flows/docker%20auth/copy/") {
+		t.Errorf("Location is %q, want the alias escaped as docker%%20auth", loc)
+	}
+	if strings.Contains(loc, "docker auth") {
+		t.Errorf("Location is %q and carries a raw space", loc)
+	}
+	// And it echoes its own creating path rather than pointing at /flows/{id}.
+	if strings.Contains(loc, "/authentication/flows/"+lastSegment(loc)) &&
+		!strings.Contains(loc, "/copy/") {
+		t.Errorf("Location is %q; the copy echoes its own path", loc)
+	}
 }
 
 // TestTheExecutionReadPutsIdAndParentFlowLast pins the third serialisation of
