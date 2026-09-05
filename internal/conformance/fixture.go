@@ -1369,15 +1369,26 @@ var Fixtures = map[string]Fixture{
 	"session-family-spent":  sessionFixture("gloak-probe-sess-del", probeSessionSpentClientID, "gloak-probe-sess-del-user"),
 	"session-family-logout": sessionFixture("gloak-probe-sess-out", probeSessionLogoutClientID, "gloak-probe-sess-out-user"),
 
-	// The authentication flow model. Six realms, because four operations
-	// destroy what the reads measure and because the seed is itself a
-	// measurement - the realm the listings read is one nothing writes to.
-	"auth-flows":       authFlowsFixture(),
-	"auth-flows-make":  authFlowMakeFixture(),
-	"auth-flows-edit":  authFlowEditFixture(),
-	"auth-flows-exec":  authFlowExecFixture(),
-	"auth-flows-cfg":   authFlowCfgFixture(),
-	"auth-flows-order": authFlowOrderFixture(),
+	// The authentication flow model. One read-only realm carrying every read
+	// and every rejection, and **one realm per mutating case** - because the
+	// recorder shares a container, so a realm two writing cases share is a
+	// realm whose state depends on the order they ran in.
+	"auth-flows":             authFlowFixture(probeFlowsRealm),
+	"auth-flows-create":      authFlowFixture(probeFlowCreateRealm),
+	"auth-flows-copy":        authFlowFixture(probeFlowCopyRealm),
+	"auth-flows-update":      authFlowFixture(probeFlowUpdateRealm),
+	"auth-flows-delete":      authFlowDeleteFixture(),
+	"auth-flows-add-exec":    authFlowFixture(probeFlowAddExecRealm),
+	"auth-flows-add-sub":     authFlowFixture(probeFlowAddSubRealm),
+	"auth-flows-set-req":     authFlowFixture(probeFlowSetReqRealm),
+	"auth-flows-del-exec":    authFlowFixture(probeFlowDelExecRealm),
+	"auth-flows-new-exec":    authFlowFixture(probeFlowNewExecRealm),
+	"auth-flows-raise":       authFlowFixture(probeFlowRaiseRealm),
+	"auth-flows-lower":       authFlowFixture(probeFlowLowerRealm),
+	"auth-flows-exec-config": authFlowFixture(probeFlowExecCfgRealm),
+	"auth-flows-new-config":  authFlowFixture(probeFlowNewCfgRealm),
+	"auth-flows-upd-config":  authFlowFixture(probeFlowUpdCfgRealm),
+	"auth-flows-del-config":  authFlowFixture(probeFlowDelCfgRealm),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -6749,25 +6760,46 @@ func sessionEmptyFixture(realm, clientUUID, username string) Fixture {
 	return f
 }
 
-// The authentication flow model's fixtures. Six realms rather than one, because
-// four of the twenty-one operations destroy what the reads measure - a flow
-// delete, an execution delete, a config delete and a priority swap - and
-// because the seed itself is one of the things being measured, so the realm the
-// listings read has to be one nothing has written to.
+// The authentication flow model's fixtures.
 //
-// **Every id, alias and name below differs from every other**, deliberately.
-// Six of six survivors in this repository have been a test where one thing
-// played two roles, and this family has three separate name spaces that could
-// collide: a flow alias, an execution's provider id and an authenticator
-// config's alias. `f103-alpha`, `f103-beta`, `f103-branch`, `f103-twig`,
-// `f103-fork` and `f103-cfg-alias` are six different strings on purpose.
+// **Every step below is idempotent, and that is not a style choice.** The
+// recorder shares one container across the whole catalogue, so a fixture named
+// by more than one case runs its steps once per case. The first shape of this
+// family created a flow and read its id out of `Location`; the second case to
+// name that fixture got `409 Flow f103-alpha already exists`, and twenty-one
+// subtests failed at once. The harness documents that regime on
+// `idempotentCreate` and this family had to learn it.
+//
+// So there are no creates in the fixtures except one, and ids are captured by
+// **looking them up** rather than by reading a create's `Location`. That is
+// also why every mutating case gets a realm of its own: a shared realm plus a
+// write is a fixture whose meaning depends on how many cases ran before it.
+//
+// **Every alias, provider id and config alias differs from every other.** Six
+// of six survivors in this repository have been a test where one thing played
+// two roles, and this family has three name spaces that could collide.
 const (
-	probeFlowsRealm     = "gloak-probe-flows"
-	probeFlowMakeRealm  = "gloak-probe-flowmk"
-	probeFlowEditRealm  = "gloak-probe-flowed"
-	probeFlowExecRealm  = "gloak-probe-flowex"
-	probeFlowCfgRealm   = "gloak-probe-flowcf"
-	probeFlowOrderRealm = "gloak-probe-flowor"
+	// The read-only realm. Nothing writes to it, so the seed is what the
+	// listings measure. The rejections point at it too: a 409 or a 404 changes
+	// nothing, so they cost the realm nothing.
+	probeFlowsRealm = "gloak-probe-flows"
+
+	// One realm per mutating case.
+	probeFlowCreateRealm  = "gloak-probe-flow-new"
+	probeFlowCopyRealm    = "gloak-probe-flow-cpy"
+	probeFlowUpdateRealm  = "gloak-probe-flow-upd"
+	probeFlowDeleteRealm  = "gloak-probe-flow-del"
+	probeFlowAddExecRealm = "gloak-probe-flow-adx"
+	probeFlowAddSubRealm  = "gloak-probe-flow-sub"
+	probeFlowSetReqRealm  = "gloak-probe-flow-req"
+	probeFlowDelExecRealm = "gloak-probe-flow-dex"
+	probeFlowNewExecRealm = "gloak-probe-flow-nex"
+	probeFlowRaiseRealm   = "gloak-probe-flow-rse"
+	probeFlowLowerRealm   = "gloak-probe-flow-lwr"
+	probeFlowExecCfgRealm = "gloak-probe-flow-xcf"
+	probeFlowNewCfgRealm  = "gloak-probe-flow-ncf"
+	probeFlowUpdCfgRealm  = "gloak-probe-flow-ucf"
+	probeFlowDelCfgRealm  = "gloak-probe-flow-dcf"
 )
 
 // authFlowJSONHeaders is the header pair every write on this family sends.
@@ -6778,138 +6810,78 @@ func authFlowJSONHeaders() map[string]string {
 	}
 }
 
-// createFlowStep posts a top-level flow and captures the id out of Location.
-//
-// It does **not** carry idempotentCreate: it captures from Location, and a 409
-// would leave the variable unset and the case measuring a path with an empty
-// segment. That is not hypothetical - a hand probe against the reference did
-// exactly that and answered `{"error":"HTTP 404 Not Found"}` for five different
-// requests, which is the "a probe that reports the same answer for every input"
-// shape. Loud is better here.
-func createFlowStep(realm, alias, description, variable string) Step {
+func authFlowGet(realm, path string, capture map[string]string) Step {
 	return Step{
 		Request: Request{
-			Method:  http.MethodPost,
-			Path:    "/admin/realms/" + realm + "/authentication/flows",
-			Headers: authFlowJSONHeaders(),
-			Body: []byte(`{"alias":"` + alias + `","description":"` + description +
-				`","providerId":"basic-flow","topLevel":true,"builtIn":false}`),
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/" + realm + "/authentication/" + path,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
-		CaptureHeader: map[string]string{variable: "Location"},
+		Capture: capture,
 	}
 }
 
-// addExecutionStep adds one authenticator to a flow and captures the new
-// execution's id. The provider is named by the caller so no two fixtures use
-// the same one, which is what keeps a case that asserts a displayName honest.
-func addExecutionStep(realm, flowAlias, provider, variable string) Step {
-	return Step{
-		Request: Request{
-			Method: http.MethodPost,
-			Path: "/admin/realms/" + realm + "/authentication/flows/" +
-				flowAlias + "/executions/execution",
-			Headers: authFlowJSONHeaders(),
-			Body:    []byte(`{"provider":"` + provider + `"}`),
-		},
-		CaptureHeader: map[string]string{variable: "Location"},
-	}
-}
-
-// authFlowsFixture is the realm the seed is read off: created and then left
-// alone. Nothing writes to it, so `GET /flows` and the execution listings
-// measure the twenty flows, fifty-five rows and four configs a created realm
-// seeds, and nothing else.
-func authFlowsFixture() Fixture {
-	return realmFixture(probeFlowsRealm)
-}
-
-// authFlowMakeFixture holds one created flow, for the reads that need an id the
-// caller minted rather than a seeded one, plus the id of a **built-in** flow so
-// the delete's 400 can be measured.
+// authFlowFixture is a created realm plus the five ids every case on this
+// family needs, all of them **seeded** and all of them looked up by index.
 //
-// The built-in id is captured out of the listing by index rather than by alias,
-// because Capture descends a path and cannot search. Index 6 is `docker auth`,
-// the last of the seven and the only one holding a single execution - and the
-// order it relies on is the order admin/authentication-flows/list asserts, so a
-// seed serving them in another order fails that case before it reaches this
-// one.
-func authFlowMakeFixture() Fixture {
-	f := realmFixture(probeFlowMakeRealm)
+// The indices are the seed's own order, which admin/authentication-flows/list
+// and .../browser-executions assert byte for byte - so a seed serving them in
+// another order fails those two cases before it reaches any of these.
+//
+//	GET /flows                       0  browser        6  docker auth
+//	GET /flows/browser/executions    0  auth-cookie    2  identity-provider-redirector
+//	GET /flows/first broker login/executions
+//	                                 0  idp-review-profile, the one seeded row at
+//	                                    index 0 of any flow that carries an
+//	                                    authenticationConfig
+//
+// That last one is why the config cases read a **seeded** config rather than
+// one they created: `review profile config` and its single key
+// `update.profile.on.first.login: missing` are part of the measurement, and a
+// config the fixture wrote would assert only that the fixture wrote it.
+func authFlowFixture(realm string) Fixture {
+	f := realmFixture(realm)
 	f.Steps = append(f.Steps,
-		createFlowStep(probeFlowMakeRealm, "f103-alpha", "the created flow", "flow_id"),
-		Step{
-			Request: Request{
-				Method:  http.MethodGet,
-				Path:    "/admin/realms/" + probeFlowMakeRealm + "/authentication/flows",
-				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
-			},
-			Capture: map[string]string{"docker_flow_id": "6/id"},
-		},
+		authFlowGet(realm, "flows", map[string]string{
+			"browser_flow_id": "0/id",
+			"docker_flow_id":  "6/id",
+		}),
+		authFlowGet(realm, "flows/browser/executions", map[string]string{
+			"cookie_execution_id":     "0/id",
+			"redirector_execution_id": "2/id",
+		}),
+		authFlowGet(realm, "flows/first%20broker%20login/executions", map[string]string{
+			"review_execution_id": "0/id",
+			"review_config_id":    "0/authenticationConfig",
+		}),
 	)
 	return f
 }
 
-// authFlowEditFixture is a second created flow in a realm of its own, because
-// the delete case destroys it and the update case must not race it.
-func authFlowEditFixture() Fixture {
-	f := realmFixture(probeFlowEditRealm)
-	f.Steps = append(f.Steps,
-		createFlowStep(probeFlowEditRealm, "f103-beta", "the edited flow", "edit_flow_id"))
-	return f
-}
-
-// authFlowExecFixture is a created flow holding one execution, for the
-// executions family's reads and its delete.
+// authFlowDeleteFixture is the one fixture that creates anything, because every
+// seeded flow is `builtIn` and a built-in flow cannot be deleted - that refusal
+// is its own case.
 //
-// The provider is `deny-access-authenticator`, which appears in no seeded flow.
-// A provider the seed already uses would let a case pass by finding the wrong
-// row.
-func authFlowExecFixture() Fixture {
-	f := realmFixture(probeFlowExecRealm)
+// The create carries idempotentCreate and the id is looked up afterwards rather
+// than read out of `Location`, so a second run over one container finds the
+// flow already there and captures the same id. Index 7 is the first flow after
+// the seeded seven.
+func authFlowDeleteFixture() Fixture {
+	f := realmFixture(probeFlowDeleteRealm)
 	f.Steps = append(f.Steps,
-		createFlowStep(probeFlowExecRealm, "f103-branch", "the execution host", "exec_flow_id"),
-		addExecutionStep(probeFlowExecRealm, "f103-branch", "deny-access-authenticator", "execution_id"),
-	)
-	return f
-}
-
-// authFlowCfgFixture is a created flow holding one execution and one
-// authenticator config, for the config family.
-//
-// `allow-access-authenticator` is again a provider no seeded flow uses, and the
-// config's alias `f103-cfg-alias` matches no flow alias in any fixture.
-func authFlowCfgFixture() Fixture {
-	f := realmFixture(probeFlowCfgRealm)
-	f.Steps = append(f.Steps,
-		createFlowStep(probeFlowCfgRealm, "f103-twig", "the config host", "cfg_flow_id"),
-		addExecutionStep(probeFlowCfgRealm, "f103-twig", "allow-access-authenticator", "cfg_execution_id"),
 		Step{
 			Request: Request{
-				Method: http.MethodPost,
-				Path: "/admin/realms/" + probeFlowCfgRealm +
-					"/authentication/executions/{{cfg_execution_id}}/config",
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/" + probeFlowDeleteRealm + "/authentication/flows",
 				Headers: authFlowJSONHeaders(),
-				Body:    []byte(`{"alias":"f103-cfg-alias","config":{"defaultProvider":"f103-zeta"}}`),
+				Body: []byte(`{"alias":"f103-doomed","description":"a flow made to be deleted",` +
+					`"providerId":"basic-flow","topLevel":true,"builtIn":false}`),
 			},
-			CaptureHeader: map[string]string{"config_id": "Location"},
+			ExpectStatus: idempotentCreate,
 		},
-	)
-	return f
-}
-
-// authFlowOrderFixture is a created flow holding two executions, which is the
-// least a priority swap can be measured on.
-//
-// Two rows and not three: raise-priority **swaps with the neighbour**, so two
-// rows are enough to show the swap and a third would only add a row the
-// assertion does not need. The two providers differ so the listing after the
-// swap says which row moved rather than only that a number changed.
-func authFlowOrderFixture() Fixture {
-	f := realmFixture(probeFlowOrderRealm)
-	f.Steps = append(f.Steps,
-		createFlowStep(probeFlowOrderRealm, "f103-fork", "the ordering host", "order_flow_id"),
-		addExecutionStep(probeFlowOrderRealm, "f103-fork", "auth-otp-form", "first_execution_id"),
-		addExecutionStep(probeFlowOrderRealm, "f103-fork", "auth-spnego", "second_execution_id"),
+		authFlowGet(probeFlowDeleteRealm, "flows", map[string]string{
+			"doomed_flow_id": "7/id",
+		}),
 	)
 	return f
 }

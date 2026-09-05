@@ -16263,10 +16263,12 @@ var adminCases = []Case{
 
 	// The authentication flow model, F103's twenty-one.
 	//
-	// The first case below is the largest single assertion in this chapter and
-	// the one the rest rests on: the seven top-level flows a created realm
-	// seeds, with their nested execution rows, byte for byte. If the seed is
-	// wrong, that case says so before any handler is blamed.
+	// The first two cases are the largest single assertions in this chapter and
+	// the ones the rest rests on: the seven top-level flows a created realm
+	// seeds with their nested rows, and the browser flow's fifteen-row
+	// depth-first walk. If the seed is wrong they say so before any handler is
+	// blamed - and the fixtures' index-based captures depend on the order they
+	// pin, so a seed serving the flows in another order fails here first.
 	{
 		// The seed. Top-level flows **only** - seven of the realm's twenty -
 		// with each flow's direct children nested inside it. The thirteen
@@ -16283,7 +16285,7 @@ var adminCases = []Case{
 		// requirement, priority and flowAlias is asserted, and so is
 		// `autheticatorFlow` - Keycloak's own misspelled duplicate of
 		// `authenticatorFlow`, which is contract rather than a defect.
-		ID: "admin/authentication-flows/list",
+		ID: "admin/authentication-management/list",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: list a realm's top-level flows",
@@ -16305,11 +16307,11 @@ var adminCases = []Case{
 		// fifteen rows across three levels on a created realm.
 		//
 		// It is the case that pins `level` and `index`, which are properties of
-		// the walk rather than of any row, and the five key orders the flat
+		// the walk rather than of any row, and the key orders the flat
 		// serialisation has. It is also where binding B2's row lives - the
 		// `auth-username-password-form` execution whose id is the login form's
 		// `execution` parameter.
-		ID: "admin/authentication-flows/browser-executions",
+		ID: "admin/authentication-management/browser-executions",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: a flow's executions",
@@ -16324,18 +16326,18 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
-		Volatile:      []string{"*/id", "*/flowId", "*/authenticationConfig"},
+		Volatile:      []string{"*/flowId", "*/authenticationConfig"},
 	},
 	{
 		// The `registration` flow, for the one row in the whole seed that
 		// carries **both** an authenticator and a sub-flow:
-		// `registration-page-form` pointing at `registration form`. It is the
-		// fifth key order, and it is what says the provider decides
-		// `requirementChoices` while the sub-flow decides `displayName`.
+		// `registration-page-form` pointing at `registration form`. It is what
+		// says the provider decides `requirementChoices` while the sub-flow
+		// decides `displayName`.
 		//
 		// `registration form` is also the only seeded flow whose providerId is
 		// `form-flow` rather than `basic-flow`.
-		ID: "admin/authentication-flows/registration-executions",
+		ID: "admin/authentication-management/registration-executions",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: a flow's executions",
@@ -16358,7 +16360,7 @@ var adminCases = []Case{
 		// `Flow not found` and `Could not find flow with id`, so one missing
 		// flow has three spellings on one family and this is the pair separated
 		// by capitalisation alone.
-		ID: "admin/authentication-flows/executions-unknown-flow",
+		ID: "admin/authentication-management/executions-unknown-flow",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: a flow's executions",
@@ -16376,10 +16378,10 @@ var adminCases = []Case{
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
-		// A created flow read back by id. `authenticationExecutions` is `[]`
-		// rather than absent on a flow with no rows, which is the opposite of
-		// what a client scope's `protocolMappers` does.
-		ID: "admin/authentication-flows/read",
+		// One seeded flow read back by id, which is a richer body than a
+		// created one: `docker auth` is the smallest of the seven and its
+		// single row is a plain leaf.
+		ID: "admin/authentication-management/read",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: read one flow",
@@ -16387,10 +16389,10 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "GET /admin/realms/{realm}/authentication/flows/{id}",
-		Fixture:   "auth-flows-make",
+		Fixture:   "auth-flows",
 		Request: Request{
 			Method:  http.MethodGet,
-			Path:    "/admin/realms/gloak-probe-flowmk/authentication/flows/{{flow_id}}",
+			Path:    "/admin/realms/gloak-probe-flows/authentication/flows/{{docker_flow_id}}",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
@@ -16399,7 +16401,7 @@ var adminCases = []Case{
 		// **The segment is an id, never an alias.** `browser` is a real flow in
 		// this realm and it answers 404 here, which is the opposite of the
 		// /flows/{flowAlias}/... routes one segment away.
-		ID: "admin/authentication-flows/read-by-alias-is-404",
+		ID: "admin/authentication-management/read-by-alias-is-404",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: read one flow",
@@ -16419,7 +16421,8 @@ var adminCases = []Case{
 	{
 		// The create. 201, empty body, `Location` ending in a server-minted
 		// UUID under `/authentication/flows/`, and `Cache-Control: no-cache`.
-		ID: "admin/authentication-flows/create",
+		// Its own realm, because it is a write.
+		ID: "admin/authentication-management/create",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: create a flow",
@@ -16427,12 +16430,12 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "POST /admin/realms/{realm}/authentication/flows",
-		Fixture:   "auth-flows-make",
+		Fixture:   "auth-flows-create",
 		Request: Request{
 			Method:  http.MethodPost,
-			Path:    "/admin/realms/gloak-probe-flowmk/authentication/flows",
+			Path:    "/admin/realms/gloak-probe-flow-new/authentication/flows",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
-			Body: []byte(`{"alias":"f103-gamma","description":"a second created flow",` +
+			Body: []byte(`{"alias":"f103-gamma","description":"a created flow",` +
 				`"providerId":"basic-flow","topLevel":true,"builtIn":false}`),
 		},
 		AssertHeaders:       []string{"Cache-Control", "Location"},
@@ -16440,7 +16443,8 @@ var adminCases = []Case{
 	},
 	{
 		// An absent alias is a **409**, not a 400, in the `errorMessage` shape.
-		ID: "admin/authentication-flows/create-empty-alias",
+		// A refusal changes nothing, so it lives in the read-only realm.
+		ID: "admin/authentication-management/create-empty-alias",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: create a flow",
@@ -16448,10 +16452,10 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "POST /admin/realms/{realm}/authentication/flows",
-		Fixture:   "auth-flows-make",
+		Fixture:   "auth-flows",
 		Request: Request{
 			Method:  http.MethodPost,
-			Path:    "/admin/realms/gloak-probe-flowmk/authentication/flows",
+			Path:    "/admin/realms/gloak-probe-flows/authentication/flows",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body:    []byte(`{}`),
 		},
@@ -16465,7 +16469,7 @@ var adminCases = []Case{
 		// headers where the empty-alias 409 one case above carries all five.
 		// Same route, same verb, two 409s, two header sets: another instance of
 		// the split AGENTS.md records as unexplained.
-		ID: "admin/authentication-flows/create-no-provider",
+		ID: "admin/authentication-management/create-no-provider",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: create a flow",
@@ -16473,10 +16477,10 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "POST /admin/realms/{realm}/authentication/flows",
-		Fixture:   "auth-flows-make",
+		Fixture:   "auth-flows",
 		Request: Request{
 			Method:  http.MethodPost,
-			Path:    "/admin/realms/gloak-probe-flowmk/authentication/flows",
+			Path:    "/admin/realms/gloak-probe-flows/authentication/flows",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body:    []byte(`{"alias":"f103-no-provider"}`),
 		},
@@ -16484,8 +16488,9 @@ var adminCases = []Case{
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
-		// A taken alias, naming it in the message.
-		ID: "admin/authentication-flows/create-duplicate-alias",
+		// A taken alias, naming it in the message. It names a **seeded** alias,
+		// so the case needs nothing created for it.
+		ID: "admin/authentication-management/create-duplicate-alias",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: create a flow",
@@ -16493,12 +16498,12 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "POST /admin/realms/{realm}/authentication/flows",
-		Fixture:   "auth-flows-make",
+		Fixture:   "auth-flows",
 		Request: Request{
 			Method:  http.MethodPost,
-			Path:    "/admin/realms/gloak-probe-flowmk/authentication/flows",
+			Path:    "/admin/realms/gloak-probe-flows/authentication/flows",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
-			Body: []byte(`{"alias":"f103-alpha","description":"again",` +
+			Body: []byte(`{"alias":"browser","description":"a second browser",` +
 				`"providerId":"basic-flow","topLevel":true,"builtIn":false}`),
 		},
 		AssertHeaders:       []string{"Content-Type"},
@@ -16508,7 +16513,7 @@ var adminCases = []Case{
 		// The strict decoder, naming the class, the line and the **column** -
 		// which is a byte offset into the body, so the body's length is part of
 		// the contract this case pins.
-		ID: "admin/authentication-flows/create-unrecognised-field",
+		ID: "admin/authentication-management/create-unrecognised-field",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: create a flow",
@@ -16516,10 +16521,10 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "POST /admin/realms/{realm}/authentication/flows",
-		Fixture:   "auth-flows-make",
+		Fixture:   "auth-flows",
 		Request: Request{
 			Method:  http.MethodPost,
-			Path:    "/admin/realms/gloak-probe-flowmk/authentication/flows",
+			Path:    "/admin/realms/gloak-probe-flows/authentication/flows",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body:    []byte(`{"alias":"f103-bad","providerId":"basic-flow","topLevel":true,"zzz":1}`),
 		},
@@ -16527,10 +16532,10 @@ var adminCases = []Case{
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
-		// The update. A rename through PUT is 204 - and it works on a
-		// **built-in** flow too, which is what makes binding B1 observable: a
+		// The update, and it renames a **built-in** flow: 204. That asymmetry
+		// with the delete below is what makes binding B1 observable, since a
 		// caller who renames `browser` detaches the login from it.
-		ID: "admin/authentication-flows/update",
+		ID: "admin/authentication-management/update",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: update a flow",
@@ -16538,20 +16543,20 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "PUT /admin/realms/{realm}/authentication/flows/{id}",
-		Fixture:   "auth-flows-edit",
+		Fixture:   "auth-flows-update",
 		Request: Request{
 			Method:  http.MethodPut,
-			Path:    "/admin/realms/gloak-probe-flowed/authentication/flows/{{edit_flow_id}}",
+			Path:    "/admin/realms/gloak-probe-flow-upd/authentication/flows/{{docker_flow_id}}",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
-			Body: []byte(`{"alias":"f103-beta-renamed","description":"the edited flow",` +
-				`"providerId":"basic-flow","topLevel":true,"builtIn":false}`),
+			Body: []byte(`{"alias":"f103-docker-renamed","description":"Used by Docker clients",` +
+				`"providerId":"basic-flow","topLevel":true,"builtIn":true}`),
 		},
 		AssertHeaders: []string{"Cache-Control"},
 	},
 	{
 		// A body with no alias is the update's own 409, a different sentence
 		// from the create's.
-		ID: "admin/authentication-flows/update-empty-alias",
+		ID: "admin/authentication-management/update-empty-alias",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: update a flow",
@@ -16559,10 +16564,10 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "PUT /admin/realms/{realm}/authentication/flows/{id}",
-		Fixture:   "auth-flows-make",
+		Fixture:   "auth-flows",
 		Request: Request{
 			Method:  http.MethodPut,
-			Path:    "/admin/realms/gloak-probe-flowmk/authentication/flows/{{flow_id}}",
+			Path:    "/admin/realms/gloak-probe-flows/authentication/flows/{{docker_flow_id}}",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body:    []byte(`{"description":"only a description"}`),
 		},
@@ -16572,7 +16577,7 @@ var adminCases = []Case{
 	{
 		// An unknown id on the update spells `Could not find flow with id`,
 		// where the delete beside it spells `Flow not found`.
-		ID: "admin/authentication-flows/update-missing",
+		ID: "admin/authentication-management/update-missing",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: update a flow",
@@ -16591,8 +16596,9 @@ var adminCases = []Case{
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
-		// The delete of a flow the caller created.
-		ID: "admin/authentication-flows/delete",
+		// The delete, on the one fixture that creates anything - because every
+		// seeded flow is builtIn and a built-in flow cannot be deleted.
+		ID: "admin/authentication-management/delete",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: delete a flow",
@@ -16600,10 +16606,10 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "DELETE /admin/realms/{realm}/authentication/flows/{id}",
-		Fixture:   "auth-flows-edit",
+		Fixture:   "auth-flows-delete",
 		Request: Request{
 			Method:  http.MethodDelete,
-			Path:    "/admin/realms/gloak-probe-flowed/authentication/flows/{{edit_flow_id}}",
+			Path:    "/admin/realms/gloak-probe-flow-del/authentication/flows/{{doomed_flow_id}}",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Cache-Control"},
@@ -16611,7 +16617,7 @@ var adminCases = []Case{
 	{
 		// **A built-in flow is a 400 with a body**, not a 403 and not a 409 -
 		// and the apostrophe in `Can't` is part of it.
-		ID: "admin/authentication-flows/delete-built-in",
+		ID: "admin/authentication-management/delete-built-in",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: delete a flow",
@@ -16619,10 +16625,10 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "DELETE /admin/realms/{realm}/authentication/flows/{id}",
-		Fixture:   "auth-flows-make",
+		Fixture:   "auth-flows",
 		Request: Request{
 			Method:  http.MethodDelete,
-			Path:    "/admin/realms/gloak-probe-flowmk/authentication/flows/{{docker_flow_id}}",
+			Path:    "/admin/realms/gloak-probe-flows/authentication/flows/{{docker_flow_id}}",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders:       []string{"Content-Type"},
@@ -16630,9 +16636,10 @@ var adminCases = []Case{
 	},
 	{
 		// The copy. **Its `Location` echoes its own creating path** -
-		// `.../flows/{alias}/copy/{new id}` - where POST /flows one case above
-		// answers `.../flows/{new id}`. Two creates on one family, two shapes.
-		ID: "admin/authentication-flows/copy",
+		// `.../flows/{alias}/copy/{new id}` - where POST /flows three cases
+		// above answers `.../flows/{new id}`. Two creates on one family, two
+		// shapes.
+		ID: "admin/authentication-management/copy",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: copy a flow",
@@ -16640,10 +16647,10 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "POST /admin/realms/{realm}/authentication/flows/{flowAlias}/copy",
-		Fixture:   "auth-flows-make",
+		Fixture:   "auth-flows-copy",
 		Request: Request{
 			Method:  http.MethodPost,
-			Path:    "/admin/realms/gloak-probe-flowmk/authentication/flows/docker%20auth/copy",
+			Path:    "/admin/realms/gloak-probe-flow-cpy/authentication/flows/docker%20auth/copy",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body:    []byte(`{"newName":"f103-copied"}`),
 		},
@@ -16653,7 +16660,7 @@ var adminCases = []Case{
 	{
 		// A copy of a flow that is not there is `Flow not found`, the delete's
 		// spelling rather than the read's.
-		ID: "admin/authentication-flows/copy-missing",
+		ID: "admin/authentication-management/copy-missing",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: copy a flow",
@@ -16661,10 +16668,10 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "POST /admin/realms/{realm}/authentication/flows/{flowAlias}/copy",
-		Fixture:   "auth-flows-make",
+		Fixture:   "auth-flows",
 		Request: Request{
 			Method:  http.MethodPost,
-			Path:    "/admin/realms/gloak-probe-flowmk/authentication/flows/f103-absent/copy",
+			Path:    "/admin/realms/gloak-probe-flows/authentication/flows/f103-absent/copy",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body:    []byte(`{"newName":"f103-never"}`),
 		},
@@ -16676,7 +16683,7 @@ var adminCases = []Case{
 		// different route family than the one that created it** -
 		// `.../authentication/executions/{id}` - which is the third Location
 		// shape on this tag.
-		ID: "admin/authentication-flows/add-execution",
+		ID: "admin/authentication-management/add-execution",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: add an execution to a flow",
@@ -16684,11 +16691,11 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "POST /admin/realms/{realm}/authentication/flows/{flowAlias}/executions/execution",
-		Fixture:   "auth-flows-exec",
+		Fixture:   "auth-flows-add-exec",
 		Request: Request{
 			Method: http.MethodPost,
-			Path: "/admin/realms/gloak-probe-flowex/authentication/flows/" +
-				"f103-branch/executions/execution",
+			Path: "/admin/realms/gloak-probe-flow-adx/authentication/flows/" +
+				"docker%20auth/executions/execution",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body:    []byte(`{"provider":"conditional-user-role"}`),
 		},
@@ -16698,7 +16705,7 @@ var adminCases = []Case{
 	{
 		// An unknown provider is a **400** naming the id, and an absent one is
 		// the literal `null`. The provider is checked before the flow.
-		ID: "admin/authentication-flows/add-execution-unknown-provider",
+		ID: "admin/authentication-management/add-execution-unknown-provider",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: add an execution to a flow",
@@ -16706,11 +16713,11 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "POST /admin/realms/{realm}/authentication/flows/{flowAlias}/executions/execution",
-		Fixture:   "auth-flows-exec",
+		Fixture:   "auth-flows",
 		Request: Request{
 			Method: http.MethodPost,
-			Path: "/admin/realms/gloak-probe-flowex/authentication/flows/" +
-				"f103-branch/executions/execution",
+			Path: "/admin/realms/gloak-probe-flows/authentication/flows/" +
+				"docker%20auth/executions/execution",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body:    []byte(`{"provider":"f103-not-a-provider"}`),
 		},
@@ -16719,9 +16726,9 @@ var adminCases = []Case{
 	},
 	{
 		// Adding a sub-flow. `Location` is under `.../authentication/flows/`,
-		// which is the sibling create's shape and not this route's own path -
-		// so two creates one segment apart disagree.
-		ID: "admin/authentication-flows/add-sub-flow",
+		// which is the flow create's shape and not this route's own path - so
+		// two creates one segment apart disagree.
+		ID: "admin/authentication-management/add-sub-flow",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: add a sub-flow to a flow",
@@ -16729,11 +16736,11 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "POST /admin/realms/{realm}/authentication/flows/{flowAlias}/executions/flow",
-		Fixture:   "auth-flows-exec",
+		Fixture:   "auth-flows-add-sub",
 		Request: Request{
 			Method: http.MethodPost,
-			Path: "/admin/realms/gloak-probe-flowex/authentication/flows/" +
-				"f103-branch/executions/flow",
+			Path: "/admin/realms/gloak-probe-flow-sub/authentication/flows/" +
+				"docker%20auth/executions/flow",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body:    []byte(`{"alias":"f103-twiglet","type":"basic-flow","description":"a nested flow"}`),
 		},
@@ -16741,10 +16748,10 @@ var adminCases = []Case{
 		VolatileTailHeaders: []string{"Location"},
 	},
 	{
-		// Moving a row's requirement, which is binding B3's write: setting the
-		// bound browser flow's `auth-cookie` to DISABLED here is what stops the
-		// SSO short-circuit at `GET /auth`.
-		ID: "admin/authentication-flows/update-execution",
+		// Moving a row's requirement, which is binding B3's write: this is the
+		// request that sets the bound browser flow's `auth-cookie` to DISABLED
+		// and stops the SSO short-circuit at `GET /auth`.
+		ID: "admin/authentication-management/update-execution",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: update a flow's execution",
@@ -16752,20 +16759,19 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "PUT /admin/realms/{realm}/authentication/flows/{flowAlias}/executions",
-		Fixture:   "auth-flows-exec",
+		Fixture:   "auth-flows-set-req",
 		Request: Request{
-			Method: http.MethodPut,
-			Path: "/admin/realms/gloak-probe-flowex/authentication/flows/" +
-				"f103-branch/executions",
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/gloak-probe-flow-req/authentication/flows/browser/executions",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
-			Body:    []byte(`{"id":"{{execution_id}}","requirement":"REQUIRED"}`),
+			Body:    []byte(`{"id":"{{cookie_execution_id}}","requirement":"DISABLED"}`),
 		},
 		AssertHeaders: []string{"Cache-Control"},
 	},
 	{
 		// An unknown execution id under a known flow is `Illegal execution`,
 		// which is a 404 that reads like a 400.
-		ID: "admin/authentication-flows/update-execution-unknown",
+		ID: "admin/authentication-management/update-execution-unknown",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: update a flow's execution",
@@ -16773,11 +16779,10 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "PUT /admin/realms/{realm}/authentication/flows/{flowAlias}/executions",
-		Fixture:   "auth-flows-exec",
+		Fixture:   "auth-flows",
 		Request: Request{
-			Method: http.MethodPut,
-			Path: "/admin/realms/gloak-probe-flowex/authentication/flows/" +
-				"f103-branch/executions",
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/gloak-probe-flows/authentication/flows/browser/executions",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body:    []byte(`{"id":"f103-no-such-execution","requirement":"REQUIRED"}`),
 		},
@@ -16786,9 +16791,13 @@ var adminCases = []Case{
 	},
 	{
 		// One execution read on its own: the **third** serialisation of a row,
-		// the nested shape with `id` and `parentFlow` appended after the
-		// misspelled `autheticatorFlow`.
-		ID: "admin/authentication-flows/read-execution",
+		// the nested shape with `id`, then `flowId`, then `parentFlow` appended
+		// after the misspelled `autheticatorFlow`.
+		//
+		// The row is `idp-review-profile`, the one seeded row at index 0 of any
+		// flow that carries an `authenticationConfig` - so this body exercises
+		// the config pointer as well as the key order.
+		ID: "admin/authentication-management/read-execution",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: read one execution",
@@ -16796,16 +16805,17 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "GET /admin/realms/{realm}/authentication/executions/{executionId}",
-		Fixture:   "auth-flows-exec",
+		Fixture:   "auth-flows",
 		Request: Request{
 			Method:  http.MethodGet,
-			Path:    "/admin/realms/gloak-probe-flowex/authentication/executions/{{execution_id}}",
+			Path:    "/admin/realms/gloak-probe-flows/authentication/executions/{{review_execution_id}}",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+		Volatile:      []string{"parentFlow"},
 	},
 	{
-		ID: "admin/authentication-flows/read-execution-missing",
+		ID: "admin/authentication-management/read-execution-missing",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: read one execution",
@@ -16813,17 +16823,17 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "GET /admin/realms/{realm}/authentication/executions/{executionId}",
-		Fixture:   "auth-flows-exec",
+		Fixture:   "auth-flows",
 		Request: Request{
 			Method:  http.MethodGet,
-			Path:    "/admin/realms/gloak-probe-flowex/authentication/executions/f103-no-such-execution",
+			Path:    "/admin/realms/gloak-probe-flows/authentication/executions/f103-no-such-execution",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders:       []string{"Content-Type"},
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
-		ID: "admin/authentication-flows/delete-execution",
+		ID: "admin/authentication-management/delete-execution",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: delete one execution",
@@ -16831,11 +16841,11 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "DELETE /admin/realms/{realm}/authentication/executions/{executionId}",
-		Fixture:   "auth-flows-order",
+		Fixture:   "auth-flows-del-exec",
 		Request: Request{
 			Method: http.MethodDelete,
-			Path: "/admin/realms/gloak-probe-flowor/authentication/executions/" +
-				"{{second_execution_id}}",
+			Path: "/admin/realms/gloak-probe-flow-dex/authentication/executions/" +
+				"{{redirector_execution_id}}",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Cache-Control"},
@@ -16843,7 +16853,7 @@ var adminCases = []Case{
 	{
 		// The alias-free create, taking its parent by **id in the body** where
 		// its sibling takes it by alias in the path.
-		ID: "admin/authentication-flows/create-execution",
+		ID: "admin/authentication-management/create-execution",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: create an execution",
@@ -16851,23 +16861,23 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "POST /admin/realms/{realm}/authentication/executions",
-		Fixture:   "auth-flows-cfg",
+		Fixture:   "auth-flows-new-exec",
 		Request: Request{
 			Method:  http.MethodPost,
-			Path:    "/admin/realms/gloak-probe-flowcf/authentication/executions",
+			Path:    "/admin/realms/gloak-probe-flow-nex/authentication/executions",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body: []byte(`{"authenticator":"conditional-user-attribute",` +
-				`"parentFlow":"{{cfg_flow_id}}","requirement":"DISABLED","priority":7}`),
+				`"parentFlow":"{{docker_flow_id}}","requirement":"DISABLED","priority":7}`),
 		},
 		AssertHeaders:       []string{"Cache-Control", "Location"},
 		VolatileTailHeaders: []string{"Location"},
 	},
 	{
-		// raise-priority **swaps** with the neighbour. The listing after it is
-		// what says so, and it is the assertion rather than the 204: a
-		// decrement and a swap both answer 204 and only one of them leaves this
-		// order behind.
-		ID: "admin/authentication-flows/raise-priority",
+		// raise-priority **swaps** with the neighbour rather than decrementing.
+		// The 204 is not the assertion - both would answer 204 - which is why
+		// internal/admins TestRaisePrioritySwapsWithTheNeighbour reads the
+		// listing back and this case pins only the response.
+		ID: "admin/authentication-management/execution-raise-priority",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: raise an execution's priority",
@@ -16875,17 +16885,17 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "POST /admin/realms/{realm}/authentication/executions/{executionId}/raise-priority",
-		Fixture:   "auth-flows-order",
+		Fixture:   "auth-flows-raise",
 		Request: Request{
 			Method: http.MethodPost,
-			Path: "/admin/realms/gloak-probe-flowor/authentication/executions/" +
-				"{{second_execution_id}}/raise-priority",
+			Path: "/admin/realms/gloak-probe-flow-rse/authentication/executions/" +
+				"{{redirector_execution_id}}/raise-priority",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Cache-Control"},
 	},
 	{
-		ID: "admin/authentication-flows/lower-priority",
+		ID: "admin/authentication-management/execution-lower-priority",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: lower an execution's priority",
@@ -16893,11 +16903,11 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "POST /admin/realms/{realm}/authentication/executions/{executionId}/lower-priority",
-		Fixture:   "auth-flows-order",
+		Fixture:   "auth-flows-lower",
 		Request: Request{
 			Method: http.MethodPost,
-			Path: "/admin/realms/gloak-probe-flowor/authentication/executions/" +
-				"{{first_execution_id}}/lower-priority",
+			Path: "/admin/realms/gloak-probe-flow-lwr/authentication/executions/" +
+				"{{cookie_execution_id}}/lower-priority",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Cache-Control"},
@@ -16906,7 +16916,7 @@ var adminCases = []Case{
 		// The config create. **Its `Location` echoes its own creating path**,
 		// `.../executions/{execId}/config/{cfgId}` - the second route on this
 		// tag to do so and the fifth create with a shape of its own.
-		ID: "admin/authentication-flows/create-execution-config",
+		ID: "admin/authentication-management/create-execution-config",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: configure an execution",
@@ -16914,23 +16924,28 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "POST /admin/realms/{realm}/authentication/executions/{executionId}/config",
-		Fixture:   "auth-flows-exec",
+		Fixture:   "auth-flows-exec-config",
 		Request: Request{
 			Method: http.MethodPost,
-			Path: "/admin/realms/gloak-probe-flowex/authentication/executions/" +
-				"{{execution_id}}/config",
+			Path: "/admin/realms/gloak-probe-flow-xcf/authentication/executions/" +
+				"{{redirector_execution_id}}/config",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
-			Body:    []byte(`{"alias":"f103-deny-config","config":{"code":"403"}}`),
+			Body:    []byte(`{"alias":"f103-redirect-config","config":{"defaultProvider":"f103-zeta"}}`),
 		},
 		AssertHeaders:       []string{"Cache-Control", "Location"},
 		VolatileTailHeaders: []string{"Location"},
 	},
 	{
-		// Read through the execution-scoped path. It is **byte-identical** to
-		// GET /config/{id} below, measured on this same config, which is why
-		// the two share one serialiser where three other pairs on this tag do
-		// not.
-		ID: "admin/authentication-flows/read-execution-config",
+		// A **seeded** config read through the execution-scoped path:
+		// `review profile config` and its single key
+		// `update.profile.on.first.login: missing`, which is part of the seed
+		// measurement rather than something the fixture wrote.
+		//
+		// It is **byte-identical** to GET /config/{id} below, measured on this
+		// same config, which is why the two share one serialiser where three
+		// other pairs on this tag do not - the two goldens beside each other
+		// are the assertion that they agree.
+		ID: "admin/authentication-management/read-execution-config",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: read an execution's config",
@@ -16938,19 +16953,18 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "GET /admin/realms/{realm}/authentication/executions/{executionId}/config/{id}",
-		Fixture:   "auth-flows-cfg",
+		Fixture:   "auth-flows",
 		Request: Request{
 			Method: http.MethodGet,
-			Path: "/admin/realms/gloak-probe-flowcf/authentication/executions/" +
-				"{{cfg_execution_id}}/config/{{config_id}}",
+			Path: "/admin/realms/gloak-probe-flows/authentication/executions/" +
+				"{{review_execution_id}}/config/{{review_config_id}}",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 	},
 	{
-		// The same config through the flat path. The two goldens beside each
-		// other are the assertion that the bodies agree.
-		ID: "admin/authentication-flows/read-config",
+		// The same config through the flat path.
+		ID: "admin/authentication-management/read-config",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: read an authenticator config",
@@ -16958,16 +16972,16 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "GET /admin/realms/{realm}/authentication/config/{id}",
-		Fixture:   "auth-flows-cfg",
+		Fixture:   "auth-flows",
 		Request: Request{
 			Method:  http.MethodGet,
-			Path:    "/admin/realms/gloak-probe-flowcf/authentication/config/{{config_id}}",
+			Path:    "/admin/realms/gloak-probe-flows/authentication/config/{{review_config_id}}",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type", "Cache-Control"},
 	},
 	{
-		ID: "admin/authentication-flows/read-config-missing",
+		ID: "admin/authentication-management/read-config-missing",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: read an authenticator config",
@@ -16975,10 +16989,10 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "GET /admin/realms/{realm}/authentication/config/{id}",
-		Fixture:   "auth-flows-cfg",
+		Fixture:   "auth-flows",
 		Request: Request{
 			Method:  http.MethodGet,
-			Path:    "/admin/realms/gloak-probe-flowcf/authentication/config/f103-no-such-config",
+			Path:    "/admin/realms/gloak-probe-flows/authentication/config/f103-no-such-config",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders:       []string{"Content-Type"},
@@ -16987,7 +17001,7 @@ var adminCases = []Case{
 	{
 		// The deprecated create: a config attached to **no execution**, which
 		// is a row nothing can reach except by id.
-		ID: "admin/authentication-flows/create-config",
+		ID: "admin/authentication-management/create-config",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: create an authenticator config",
@@ -16995,10 +17009,10 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "POST /admin/realms/{realm}/authentication/config",
-		Fixture:   "auth-flows-cfg",
+		Fixture:   "auth-flows-new-config",
 		Request: Request{
 			Method:  http.MethodPost,
-			Path:    "/admin/realms/gloak-probe-flowcf/authentication/config",
+			Path:    "/admin/realms/gloak-probe-flow-ncf/authentication/config",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body:    []byte(`{"alias":"f103-orphan-config","config":{"f103key":"f103value"}}`),
 		},
@@ -17008,7 +17022,7 @@ var adminCases = []Case{
 	{
 		// The update replaces both the alias and the map rather than merging
 		// into either.
-		ID: "admin/authentication-flows/update-config",
+		ID: "admin/authentication-management/update-config",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: update an authenticator config",
@@ -17016,17 +17030,17 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "PUT /admin/realms/{realm}/authentication/config/{id}",
-		Fixture:   "auth-flows-cfg",
+		Fixture:   "auth-flows-upd-config",
 		Request: Request{
 			Method:  http.MethodPut,
-			Path:    "/admin/realms/gloak-probe-flowcf/authentication/config/{{config_id}}",
+			Path:    "/admin/realms/gloak-probe-flow-ucf/authentication/config/{{review_config_id}}",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body:    []byte(`{"alias":"f103-cfg-renamed","config":{"defaultProvider":"f103-omega"}}`),
 		},
 		AssertHeaders: []string{"Cache-Control"},
 	},
 	{
-		ID: "admin/authentication-flows/delete-config",
+		ID: "admin/authentication-management/delete-config",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Authentication Management: delete an authenticator config",
@@ -17034,10 +17048,10 @@ var adminCases = []Case{
 		},
 		Status:    Implemented,
 		Operation: "DELETE /admin/realms/{realm}/authentication/config/{id}",
-		Fixture:   "auth-flows-cfg",
+		Fixture:   "auth-flows-del-config",
 		Request: Request{
 			Method:  http.MethodDelete,
-			Path:    "/admin/realms/gloak-probe-flowcf/authentication/config/{{config_id}}",
+			Path:    "/admin/realms/gloak-probe-flow-dcf/authentication/config/{{review_config_id}}",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Cache-Control"},
