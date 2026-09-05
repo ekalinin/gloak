@@ -839,6 +839,125 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) store.Store) {
 		}
 	})
 
+	t.Run("the four session listings sort by id and stay inside their realm", func(t *testing.T) {
+		// F130's listings. Every id below is chosen so that byte-ascending
+		// order is neither insertion order nor its reverse, because a
+		// repository that returned rows in whatever order the driver felt like
+		// would pass a fixture whose ids happened to be inserted sorted - and
+		// the sort is measured on 26.7.1, not chosen here.
+		s := newStore(t)
+		ctx := context.Background()
+		realm := &model.Realm{ID: model.NewID(), Name: "master", Enabled: true}
+		other := &model.Realm{ID: model.NewID(), Name: "other", Enabled: true}
+		for _, r := range []*model.Realm{realm, other} {
+			if err := s.Realms().Create(ctx, r); err != nil {
+				t.Fatalf("Realms().Create: %v", err)
+			}
+		}
+		mkUser := func(realmID, name string) *model.User {
+			u := &model.User{ID: model.NewID(), RealmID: realmID, Username: name, Enabled: true}
+			if err := s.Users().Create(ctx, u); err != nil {
+				t.Fatalf("Users().Create(%s): %v", name, err)
+			}
+			return u
+		}
+		mkClient := func(realmID, name string) *model.Client {
+			c := &model.Client{ID: model.NewID(), RealmID: realmID, ClientID: name,
+				Enabled: true, Protocol: "openid-connect"}
+			if err := s.Clients().Create(ctx, c); err != nil {
+				t.Fatalf("Clients().Create(%s): %v", name, err)
+			}
+			return c
+		}
+		here, there := mkUser(realm.ID, "here"), mkUser(other.ID, "there")
+		app, idle := mkClient(realm.ID, "app"), mkClient(realm.ID, "idle")
+		elsewhere := mkClient(other.ID, "elsewhere")
+
+		mkSession := func(id string, r *model.Realm, u *model.User, clients ...*model.Client) {
+			if err := s.Sessions().CreateUserSession(ctx, &model.UserSession{
+				ID: id, RealmID: r.ID, UserID: u.ID, Username: u.Username,
+				StartedAt: 1, LastRefresh: 1, ExpiresAt: 2,
+			}); err != nil {
+				t.Fatalf("CreateUserSession(%s): %v", id, err)
+			}
+			for _, c := range clients {
+				if err := s.Sessions().CreateClientSession(ctx, &model.ClientSession{
+					ID: model.NewID(), UserSessionID: id, ClientID: c.ID,
+					Scope: "openid", StartedAt: 1,
+				}); err != nil {
+					t.Fatalf("CreateClientSession(%s/%s): %v", id, c.ClientID, err)
+				}
+			}
+		}
+		// Inserted m, a, z; sorted a, m, z. Session "a" reaches two clients.
+		mkSession("m-second-inserted", realm, here, app)
+		mkSession("a-third-by-name", realm, here, app, idle)
+		mkSession("z-last", realm, here)
+		mkSession("b-other-realm", other, there, elsewhere)
+
+		ids := func(rows []*model.UserSession) []string {
+			out := make([]string, len(rows))
+			for i, r := range rows {
+				out[i] = r.ID
+			}
+			return out
+		}
+		byRealm, err := s.Sessions().ListUserSessionsByRealm(ctx, realm.ID)
+		if err != nil {
+			t.Fatalf("ListUserSessionsByRealm: %v", err)
+		}
+		if got := ids(byRealm); !slices.Equal(got, []string{"a-third-by-name", "m-second-inserted", "z-last"}) {
+			t.Fatalf("ListUserSessionsByRealm: %v", got)
+		}
+		byUser, err := s.Sessions().ListUserSessionsByUser(ctx, realm.ID, here.ID)
+		if err != nil {
+			t.Fatalf("ListUserSessionsByUser: %v", err)
+		}
+		if got := ids(byUser); !slices.Equal(got, []string{"a-third-by-name", "m-second-inserted", "z-last"}) {
+			t.Fatalf("ListUserSessionsByUser: %v", got)
+		}
+		// The client listing is the join: "z-last" reaches no client and must
+		// not appear, and the other realm's session must not either.
+		byClient, err := s.Sessions().ListUserSessionsByClient(ctx, realm.ID, app.ID)
+		if err != nil {
+			t.Fatalf("ListUserSessionsByClient: %v", err)
+		}
+		if got := ids(byClient); !slices.Equal(got, []string{"a-third-by-name", "m-second-inserted"}) {
+			t.Fatalf("ListUserSessionsByClient(app): %v", got)
+		}
+		if got, err := s.Sessions().ListUserSessionsByClient(ctx, realm.ID, idle.ID); err != nil ||
+			!slices.Equal(ids(got), []string{"a-third-by-name"}) {
+			t.Fatalf("ListUserSessionsByClient(idle): %v %v", ids(got), err)
+		}
+		// The realm argument is a filter and not decoration: the other realm's
+		// client resolves to nothing when asked for through this realm.
+		if got, err := s.Sessions().ListUserSessionsByClient(ctx, realm.ID, elsewhere.ID); err != nil || len(got) != 0 {
+			t.Fatalf("a client session leaked across realms: %v %v", ids(got), err)
+		}
+		if got, err := s.Sessions().ListUserSessionsByUser(ctx, realm.ID, there.ID); err != nil || len(got) != 0 {
+			t.Fatalf("a user session leaked across realms: %v %v", ids(got), err)
+		}
+
+		clientSessions, err := s.Sessions().ListClientSessions(ctx, "a-third-by-name")
+		if err != nil {
+			t.Fatalf("ListClientSessions: %v", err)
+		}
+		seen := map[string]bool{}
+		for _, cs := range clientSessions {
+			seen[cs.ClientID] = true
+		}
+		if len(clientSessions) != 2 || !seen[app.ID] || !seen[idle.ID] {
+			t.Fatalf("ListClientSessions: %d rows, %v", len(clientSessions), seen)
+		}
+		// An empty listing is an empty slice rather than nil, because the
+		// handlers above marshal it straight into `[]` and a nil marshals to
+		// `null`.
+		empty, err := s.Sessions().ListClientSessions(ctx, "z-last")
+		if err != nil || empty == nil || len(empty) != 0 {
+			t.Fatalf("ListClientSessions(no clients): %#v %v", empty, err)
+		}
+	})
+
 	t.Run("realm keys round-trip and are listed per realm", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

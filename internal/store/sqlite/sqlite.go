@@ -1157,6 +1157,75 @@ func (r *sessionRepo) ClientSession(ctx context.Context, userSessionID, clientID
 	return scanClientSession(row)
 }
 
+const userSessionColumns = `id, realm_id, user_id, username, started_at, last_refresh, expires_at`
+
+func (r *sessionRepo) ListUserSessionsByRealm(ctx context.Context, realmID string) ([]*model.UserSession, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+userSessionColumns+` FROM user_session WHERE realm_id = ? ORDER BY id`, realmID)
+	return collectUserSessions(rows, err)
+}
+
+func (r *sessionRepo) ListUserSessionsByUser(ctx context.Context, realmID, userID string) ([]*model.UserSession, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+userSessionColumns+` FROM user_session
+		 WHERE realm_id = ? AND user_id = ? ORDER BY id`, realmID, userID)
+	return collectUserSessions(rows, err)
+}
+
+func (r *sessionRepo) ListUserSessionsByClient(ctx context.Context, realmID, clientID string) ([]*model.UserSession, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+prefixed(userSessionColumns, "s")+` FROM user_session s
+		 JOIN client_session cs ON cs.user_session_id = s.id
+		 WHERE s.realm_id = ? AND cs.client_id = ? ORDER BY s.id`, realmID, clientID)
+	return collectUserSessions(rows, err)
+}
+
+func (r *sessionRepo) ListClientSessions(ctx context.Context, userSessionID string) ([]*model.ClientSession, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, user_session_id, client_id, scope, started_at
+		 FROM client_session WHERE user_session_id = ? ORDER BY id`, userSessionID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	defer rows.Close()
+	out := []*model.ClientSession{}
+	for rows.Next() {
+		m, err := scanClientSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+func collectUserSessions(rows *sql.Rows, err error) ([]*model.UserSession, error) {
+	if err != nil {
+		return nil, classify(err)
+	}
+	defer rows.Close()
+	out := []*model.UserSession{}
+	for rows.Next() {
+		m, err := scanUserSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+// prefixed qualifies a comma-separated column list with a table alias, so the
+// one join in this repository does not restate the column order that
+// scanUserSession reads.
+func prefixed(columns, alias string) string {
+	parts := strings.Split(columns, ", ")
+	for i, p := range parts {
+		parts[i] = alias + "." + p
+	}
+	return strings.Join(parts, ", ")
+}
+
 // affectedOne turns "this statement changed nothing" into ErrNotFound.
 func affectedOne(res sql.Result) error {
 	n, err := res.RowsAffected()
