@@ -236,11 +236,12 @@ operations is allocated below; none is left unassigned.
 | **P14** | Operational parity | P4 | events and audit, SMTP, health and metrics, clustering | not in OpenAPI |
 | P14 first cut | The localization family and the converter, **done 2026-09-03** | P4 | `admin/realms-admin` 21->29. Counted from the description rather than from a hint: the chapter's 24 unserved fall into **eight** families, of which localization is **seven** operations and the client policies and `client-types` were already served. The events family is left alone - it needs an event store and is P14's own next cut | 8 ops |
 | Small chapters | attack-detection, client-initial-access and the component writes, **done 2026-09-03** | P9 second cut | Three chapters closed outright, +10. **`attack-detection` stores nothing**: its record is written by a failed authentication and nothing in this project counts one, so no table was added - F157. F145 was **disagreed with** and `DELETE /components/{id}` built. `client-attribute-certificate` is left: two of its seven answer a **binary keystore** and no golden here holds a non-text body - F161 | 10 ops |
+| Session family | The eleven session operations, **done 2026-09-03** | P13, P14 | `admin/clients` 18->23, `admin/users` 18->20, `admin/realms-admin` 29->33. **An offline session is a second session, not a flag on the first** - the two id spaces are disjoint and `client-session-stats` is the only read that sees both. F130 closed; the `k_push_not_before` poster was deliberately **not** built, because half of `internal/oidc` would have moved with it - see F122 | 11 ops |
 
 Denominator today: **413 Admin API operations plus 122 protocol behaviours, 535
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **440 of 541**
-after three small chapters closed outright, and **P2, P4 and P5 are complete** -
+surface is not counted and which the report says so about. Served: **451 of 541**
+after the session family, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -271,7 +272,41 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-03 (sixteenth fold).** `make conformance` reports **440 of
+**Updated 2026-09-03 (seventeenth fold).** `make conformance` reports **451 of
+541**. The session family landed all eleven of its operations across three tags -
+`admin/clients` 18 to 23, `admin/users` 18 to 20, `admin/realms-admin` 29 to 33 -
+and F130 closed.
+
+**The round's lesson is the fourth shape of a probe measuring itself, and this
+one lives inside the mutation discipline.** A mutation's first run reported
+`[no tests to run]`, because its `-run` selector named a test in the wrong
+package. **A selector that matches nothing reports the same answer for every
+mutation**, so a whole pass can come back clean without executing anything. The
+four shapes met in a fortnight:
+
+```
+urllib adding a Content-Type       measured the 415 of a header it set
+go test piped into tail            reported tail's exit status
+awk with IGNORECASE on BSD awk     matched nothing, so counted 0 everywhere
+a -run selector naming nothing     "no tests to run", identical for every input
+```
+
+All four are caught by the same cheap thing: **a control known to differ.**
+
+**A survivor was a finding for the sixth time, and every one has had the same
+shape** - a test where one thing played two roles. Here a client-scoped read and
+a realm-scoped one agreed on every fixture, because each fixture had exactly one
+client with sessions; the distinguishing input is a second client nobody has
+logged into, and master has five.
+
+**And a contradiction that was not one.** This document and AGENTS.md both say
+`logout-all` "made zero calls". It fires no `logout_token` and it does fire a
+`k_logout` to a client's `adminUrl` - two different outbound mechanisms, and the
+sweep behind that sentence was not looking for the second. Both are true of what
+they measured, and the cut put them side by side rather than correcting either.
+**Not every disagreement with a written line is a refutation of it.**
+
+**Earlier on 2026-09-03 (sixteenth fold).** `make conformance` reports **440 of
 541**. Three chapters closed outright - `admin/attack-detection` 3 of 3,
 `admin/client-initial-access` 3 of 3 and `admin/component` 6 of 6.
 

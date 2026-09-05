@@ -503,7 +503,7 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **Role listings have no stable order across container starts.** Every one of
   them is a bare array at the root of the body, which is why `Case.Unordered`
   learned the root path spelling `"."`.
-- **Twenty-seven spellings of not-found in the admin API now**, including four for
+- **Twenty-eight spellings of not-found in the admin API now**, including four for
   one resource, **four** for a missing group, and three *pairs* that differ only
   in a full stop. Counted from the list, not incremented: (1) `Could not find client`, (2) `Client not found`,
   (3) `User not found`, (4) `Realm not found.` with its full stop,
@@ -533,7 +533,11 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   locale <l> found.` from `DELETE .../localization/{locale}`, where the **`GET`
   on the same missing locale is `200 {}`**, and (27) `Localization text not
   found`, which has **no** full stop and does not name the key: the fourth pair
-  in this list separated by punctuation alone.
+  in this list separated by punctuation alone. And (28) **`Sesssion not found`,
+  with three `s`s**, from `DELETE .../sessions/{session}` for an id that names
+  nothing and for one that is not a UUID alike - **the first misspelled entry in
+  this list**, and correcting it is the tidy-up that breaks the one thing this
+  project exists to do.
   An unknown identity provider alias adds nothing here: the read, the update and
   the delete all answer the generic `HTTP 404 Not Found`, so two neighbouring
   chapters measured in one cut contributed two spellings and none.
@@ -1901,6 +1905,60 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   matching neither name, assignment, reverse-assignment nor id order. Five cases
   carry `Unordered` for it now. A cut that records those goldens without the mask
   will see five files move and read it as its own doing.
+
+- **An offline session is a second session and not a flag on the first.** An
+  offline grant leaves **no online session at all** - `session-count` 0,
+  `offline-session-count` 1 - the two sets never share an id, and
+  `GET /users/{id}/sessions` never shows an offline one.
+  `client-session-stats` is the only read that sees both, and **its row survives
+  an active count of zero**. `?isOffline` is not a filter over one namespace: it
+  **selects which of two disjoint id spaces** the path segment is looked up in,
+  so an online id with `isOffline=true` is a 404 and an offline id without it is
+  a 404 too.
+- **A malformed boolean is not a malformed integer, and one family holds both.**
+  `?isOffline=bogus` deletes an **online** session - it parses leniently and
+  falls back to false - where `?first=abc` on the listing one path segment away
+  is the generic `{"error":"HTTP 404 Not Found"}`.
+- **Two session listings in one family, two paging rules.**
+  `GET /clients/{uuid}/user-sessions` and `.../offline-sessions` page on either
+  bound alone, treat a negative bound as no bound, answer `max=0` with zero rows
+  and answer `first=abc` with the generic 404. `GET /users/{id}/sessions` and
+  `GET /client-session-stats` **read no bounds at all** and answer 200 with
+  everything, malformed ones included. Both listings sort by session id,
+  byte-ascending. That is the identity-provider/component split reproduced
+  inside one chapter, and the first reading of it was a `?max=1` against a user
+  holding one session - **a probe whose input could not change its output**.
+- **`logout-all` ends the offline sessions and `POST /users/{id}/logout` does
+  not**, measured on one realm with the state rebuilt in between. `logout-all`
+  stamps the **realm's** `notBefore` where the user logout stamps the user's,
+  and **neither push-revocation stamps anything** - a push sends the policy the
+  logout sets, and reading the pair the other way round is wrong on both.
+  `logout-all` also ends the **caller's own** session, so a conformance case for
+  it cannot address master.
+- **`logout-all`'s `GlobalRequestResult` reports an unreachable client a success
+  and `push-revocation`'s reports it a failure.** Measured against an unroutable
+  `adminUrl`, with a session at that client and without one. So `logout-all`'s
+  body is a pure function of the realm's clients and needs no outbound call,
+  while `push-revocation`'s does not exist without one. An empty
+  `GlobalRequestResult` is `{}` - both arrays omitted rather than emitted empty.
+  Note that `logout-all` firing **no `logout_token`** and firing a `k_logout` to
+  a client's `adminUrl` are both true: they are two different outbound
+  mechanisms, with different paths, claim sets and content types, and the sweep
+  that measured the first was not looking for the second.
+- **A password grant in a realm created through `POST /admin/realms` needs an
+  email, a firstName and a lastName, and the same user in `master` needs none of
+  them.** Measured as a 2x6 matrix with master as the control. The refusal is
+  `invalid_grant` / `Account is not fully set up`, which names **neither the
+  realm nor the profile** - so a fixture that drops one of the three fails with
+  a message about the account.
+- **`client-session-stats` is a `Map<String,String>` twice over.** Its four keys
+  come back `offline, clientId, active, id`, which is `javamap.KeyOrder`'s order
+  over those names, and **both counts are quoted** - the description's schema
+  says `additionalProperties: {"type":"string"}`, so two independent sources
+  agree. Its array is a map keyed on the client UUID and `KeyOrder` places six of
+  them exactly; the `clients` map inside a **session representation** is the same
+  kind of map and `KeyOrder` gets it **wrong**, by one colliding pair chaining in
+  insertion order.
 
 ## Boundaries
 

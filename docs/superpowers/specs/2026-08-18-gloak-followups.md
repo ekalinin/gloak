@@ -3848,6 +3848,26 @@ decision about that package before it is nine handlers.
 
 ## F122: the two admin logout triggers notify nobody
 
+**2026-09-03: measured from the other side, and the boundary held.**
+`POST .../push-revocation` - in both its realm and client forms - is the same
+shape of decision. Keycloak POSTs a signed JWT to `{adminUrl}/k_push_not_before`
+and reports the outcome per URL; that is a **second** outbound mechanism beside
+this entry's back-channel one, with its own path, claim set and `text/plain`
+content type. Gloak makes no such call and reports no outcome, and **the poster
+was deliberately not built in `internal/admin`**, because half of
+`internal/oidc`'s machinery would have moved with it.
+
+Two measurements that sharpen this entry:
+
+- `logout-all` reports an unreachable client a **success** and `push-revocation`
+  reports the same client at the same address a **failure**. So `logout-all`'s
+  body is a pure function of the realm's clients and needs no call at all, while
+  `push-revocation`'s body does not exist without one - they are not one
+  mechanism seen twice.
+- `logout-all` stamps the **realm's** `notBefore` and `POST /users/{id}/logout`
+  stamps the **user's**, and **neither push stamps anything**: a push sends the
+  policy a logout set. Reading that pair the other way round is wrong on both.
+
 `POST /users/{id}/logout` and `DELETE /sessions/{sid}` fire the back-channel
 notification on Keycloak. Gloak serves the two protocol paths and not these two,
 because `internal/admin` was not the channel-logout cut's to change.
@@ -3963,7 +3983,20 @@ first cut. The scope family was swept in full anyway and its measurements are in
 `docs/superpowers/handover/p10-authz-services.md` §1.9, so the second cut starts
 from measurements rather than from the tag.
 
-## F130: `internal/store`'s `SessionRepo` cannot list a realm's sessions
+## F130: `internal/store`'s `SessionRepo` cannot list a realm's sessions (closed 2026-09-03)
+
+**Closed.** `ListUserSessionsByRealm` and `ListUserSessionsByClient` exist and
+both drivers implement them, which is what the eleven session operations needed.
+
+One thing the closing cut found is worth carrying: **a client-scoped read and a
+realm-scoped one agree on every fixture that has one client**, so the mutation
+swapping them survived the whole tree. The distinguishing input is a second
+client in the same realm that nobody has logged into - master has five - and no
+case had asked. That is the sixth survivor of this shape in this project, and
+every one of them was a test where one thing played two roles.
+
+What the finding said, kept for the record:
+
 
 `channelLogoutTargets` enumerates clients through `ListByRealm` plus
 `ClientSession` because `SessionRepo` has no listing method. It works and it is
