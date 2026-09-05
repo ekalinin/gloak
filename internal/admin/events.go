@@ -333,7 +333,9 @@ func writeEventsConfigNoBody(w http.ResponseWriter) {
 // before this cut, because in each of those the shape and the failure kind
 // coincided; `{"eventsEnabled":"yes"}` is the first measured body where they do
 // not. Nothing shared is changed on the strength of one endpoint - whether the
-// other fourteen decoders answer the same way is unmeasured, and that is F163.
+// other fourteen decoders answer the same way is unmeasured, and that is F163,
+// whose text is in docs/superpowers/handover/events-family.md until somebody
+// folds it into the follow-ups list.
 func writeEventsConfigParseError(w http.ResponseWriter, err error) {
 	var typeErr *json.UnmarshalTypeError
 	if errors.As(err, &typeErr) {
