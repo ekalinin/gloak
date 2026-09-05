@@ -18150,6 +18150,34 @@ var adminCases = []Case{
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
+		// **The guard finding, pinned.** `manage-clients` opens every other
+		// operation in this tag and is 403 here; `manage-identity-providers`,
+		// which opens none of the others, is what this one takes. Swept one
+		// role at a time over seven, with POST /clients alongside as a control
+		// known to differ.
+		//
+		// It costs no new fixture - narrow-caller-manage-clients already
+		// exists - and without it the guard is a sentence in a comment. The
+		// case beside it sends the administrator's token and would pass
+		// whatever role list the route carried.
+		ID: "admin/client-attribute-certificate/identity-provider-upload-certificate-forbidden",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: upload certificate",
+			Retrieved: "2026-09-05",
+		},
+		Status:  Implemented,
+		Fixture: "narrow-caller-manage-clients",
+		Request: func() Request {
+			r := certificateUploadRequest(
+				"/admin/realms/master/identity-provider/upload-certificate",
+				"Certificate PEM", probeCertificatePEM)
+			r.Headers["Authorization"] = "Bearer {{caller_token}}"
+			return r
+		}(),
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
 		// The two 400s, and their order is the measurement. A request with
 		// **no body at all** answers about the format; one naming a format and
 		// carrying no file answers about the file. Checking the file first

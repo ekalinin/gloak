@@ -89,6 +89,25 @@ func (h *handler) readClientCertificate(w http.ResponseWriter, r *http.Request, 
 	writeAdminJSON(w, certificateOf(client, r.PathValue("attr")))
 }
 
+// storedKeyPair encodes a generated pair the way the two client attributes hold
+// it, and therefore the way the endpoints answer it.
+//
+// **PKCS#1, not PKCS#8**, measured by parsing what Keycloak answered: its
+// privateKey decodes to a DER SEQUENCE whose first INTEGER is an
+// RSAPrivateKey's version 0 rather than a PrivateKeyInfo's algorithm
+// identifier, and x509.ParsePKCS8PrivateKey refuses it. Base64 is standard with
+// padding, and there is no PEM armour on either value.
+//
+// It is a named function rather than four lines inside the handler so that the
+// encoding is reachable from a test. The conformance golden for generate masks
+// both of these values, so this is the only thing that can assert them.
+func storedKeyPair(key *rsa.PrivateKey, certDER []byte) certificateRepresentation {
+	return certificateRepresentation{
+		PrivateKey:  base64.StdEncoding.EncodeToString(x509.MarshalPKCS1PrivateKey(key)),
+		Certificate: base64.StdEncoding.EncodeToString(certDER),
+	}
+}
+
 // certificateOf reads the two attributes {attr} names off a client.
 func certificateOf(client *model.Client, attr string) certificateRepresentation {
 	return certificateRepresentation{
@@ -122,12 +141,9 @@ func (h *handler) generateClientCertificate(w http.ResponseWriter, r *http.Reque
 	if client.Attributes == nil {
 		client.Attributes = map[string]string{}
 	}
-	// PKCS#1, not PKCS#8: measured by parsing what Keycloak answered, whose
-	// first INTEGER is the version 0 of an RSAPrivateKey rather than a
-	// PrivateKeyInfo's algorithm identifier.
-	client.Attributes[attr+certPrivateKeySuffix] =
-		base64.StdEncoding.EncodeToString(x509.MarshalPKCS1PrivateKey(key))
-	client.Attributes[attr+certCertificateSuffix] = base64.StdEncoding.EncodeToString(certDER)
+	stored := storedKeyPair(key, certDER)
+	client.Attributes[attr+certPrivateKeySuffix] = stored.PrivateKey
+	client.Attributes[attr+certCertificateSuffix] = stored.Certificate
 	if err := h.store.Clients().Update(r.Context(), client); err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return

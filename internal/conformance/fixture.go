@@ -7067,16 +7067,32 @@ func certificateClientFixture(clientUUID, clientID string) Fixture {
 	}
 }
 
-// certificateUploadedClientFixture is the same client with probeCertificatePEM
-// already uploaded, which is what lets the read beside it assert real bytes.
+// certificateUploadedClientFixture is the same client with a key pair generated
+// and probeCertificatePEM then uploaded over it.
+//
+// **The generate step is what makes the read after it worth reading.** Uploading
+// a certificate deletes the private key, measured, and a fixture that uploaded
+// onto a client which never had one could not tell a handler that deletes it
+// from one that does not: both answer `{certificate}`. With the generate in
+// front, an implementation treating the upload as a partial update answers two
+// keys and the golden catches it.
 func certificateUploadedClientFixture(clientUUID, clientID string) Fixture {
 	f := certificateClientFixture(clientUUID, clientID)
-	f.Steps = append(f.Steps, Step{
-		Request: certificateUploadRequest(
-			"/admin/realms/master/clients/"+clientUUID+
-				"/certificates/jwt.credential/upload-certificate",
-			"Certificate PEM", probeCertificatePEM),
-	})
+	f.Steps = append(f.Steps,
+		Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path: "/admin/realms/master/clients/" + clientUUID +
+					"/certificates/jwt.credential/generate",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+		},
+		Step{
+			Request: certificateUploadRequest(
+				"/admin/realms/master/clients/"+clientUUID+
+					"/certificates/jwt.credential/upload-certificate",
+				"Certificate PEM", probeCertificatePEM),
+		})
 	return f
 }
 

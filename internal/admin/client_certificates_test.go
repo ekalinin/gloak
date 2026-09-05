@@ -189,18 +189,38 @@ func TestGeneratedCertificateMatchesKeycloaksShape(t *testing.T) {
 //
 // PKCS#1 and not PKCS#8, measured: Keycloak's privateKey decodes to a DER
 // SEQUENCE whose first INTEGER is an RSAPrivateKey's version 0, and
-// x509.ParsePKCS8PrivateKey refuses it.
+// x509.ParsePKCS8PrivateKey refuses it. There is no PEM armour on it either -
+// that is asserted too, because armour is the obvious thing to add to something
+// called a private key.
+//
+// It goes through storedKeyPair rather than marshalling the key itself. The
+// first version of this test called x509.MarshalPKCS1PrivateKey and then
+// checked the result was PKCS#1, which asserts something about the standard
+// library and nothing at all about this package.
 func TestGeneratedPrivateKeyIsPKCS1(t *testing.T) {
-	key, _, err := generateClientKeyPair("c", time.Now())
+	key, certDER, err := generateClientKeyPair("c", time.Now())
 	if err != nil {
 		t.Fatalf("generateClientKeyPair: %v", err)
 	}
-	der := x509.MarshalPKCS1PrivateKey(key)
+	stored := storedKeyPair(key, certDER)
+
+	if strings.Contains(stored.PrivateKey, "BEGIN") || strings.Contains(stored.Certificate, "BEGIN") {
+		t.Error("a stored value carries PEM armour; Keycloak stores bare base64")
+	}
+	der, err := base64.StdEncoding.DecodeString(stored.PrivateKey)
+	if err != nil {
+		t.Fatalf("the stored private key is not standard base64: %v", err)
+	}
 	if _, err := x509.ParsePKCS1PrivateKey(der); err != nil {
-		t.Fatalf("the private key does not parse as PKCS#1: %v", err)
+		t.Fatalf("the stored private key does not parse as PKCS#1: %v", err)
 	}
 	if _, err := x509.ParsePKCS8PrivateKey(der); err == nil {
-		t.Error("the private key parses as PKCS#8, so it is not the encoding Keycloak sends")
+		t.Error("the stored private key parses as PKCS#8, so it is not the encoding Keycloak sends")
+	}
+	if certBytes, err := base64.StdEncoding.DecodeString(stored.Certificate); err != nil {
+		t.Errorf("the stored certificate is not standard base64: %v", err)
+	} else if string(certBytes) != string(certDER) {
+		t.Error("the stored certificate is not the DER that was generated")
 	}
 }
 
