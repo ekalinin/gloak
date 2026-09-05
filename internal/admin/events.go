@@ -476,13 +476,15 @@ func validEventDirection(w http.ResponseWriter, q url.Values) bool {
 
 // eventsBound parses `first` or `max`, and where it runs is the finding.
 //
-// **A malformed bound is checked before the caller's role**: a caller holding no
-// admin role at all gets `404 {"error":"HTTP 404 Not Found"}` for `?first=abc`
-// where the same caller gets 403 for the same request without it. Every other
-// parameter on these routes is checked *after* the role - an unknown `type`, a
-// bad `dateFrom` and a bad `direction` are all 403 to that caller - so one
-// parameter binds ahead of authorization and the other seven do not. That is
-// why guardEventsListing exists instead of guardAny.
+// **A malformed bound is checked after authentication and before the caller's
+// role.** A caller that authenticated and holds no admin role at all gets
+// `404 {"error":"HTTP 404 Not Found"}` for `?first=abc` where the same caller
+// gets 403 for the same request without it, and a caller whose bearer does not
+// verify gets 401 for both. Every other parameter on these routes is checked
+// *after* the role - an unknown `type`, a bad `dateFrom` and a bad `direction`
+// are all 403 to the authenticated no-role caller - so one parameter binds
+// between the two halves of the caller check and the other seven sit after both.
+// That is why guardEventsListing exists instead of guardAny.
 //
 // The 404 body is the generic one, which AGENTS.md already attributes to a
 // malformed integer bound on five listings across four families; these two make
@@ -507,29 +509,40 @@ func eventsBound(w http.ResponseWriter, q url.Values, name string) bool {
 // above, and the realm still comes first - an unknown realm answers
 // `Realm not found.` to every caller, with or without a malformed bound.
 //
-// **One adjacency in here is a guess and is marked as one.** What is measured is
-// that the bound is answered before the caller's *role*: a caller that
-// authenticated and holds no admin role gets the 404 for `?first=abc` and a 403
-// without it. Whether it is answered before the caller is *authenticated* is
-// not - the request that would say so is a garbage bearer sent with a malformed
-// bound, 401 against 404, and nothing in this repository has sent it on this
-// family or on the seven others that answer the same 404. Moving resolveCaller
-// above the bound changes that one cell and nothing else, which is why a
-// mutation doing exactly that survives on purpose rather than being killed by a
-// test that would be pinning a value nobody has seen. See the ninth survivor in
-// docs/superpowers/handover/events-family.md.
+// **The bound sits between the two halves of the caller check, and both
+// adjacencies are measured.** The order is realm, authentication, the bounds,
+// authorization:
+//
+//	no bearer or a garbage one + first=abc   401 {"error":"HTTP 401 Unauthorized"}
+//	garbage bearer + a well-formed request   401                       control
+//	authenticated, no events role + first=abc  404 {"error":"HTTP 404 Not Found"}
+//	authenticated admin + first=abc          404                       control
+//
+// So a caller who does not authenticate never sees the bound's 404, and a caller
+// who authenticates sees it before the role check rather than the 403. Splitting
+// resolveCaller from hasAny is the only shape that satisfies both rows, which is
+// why this guard exists instead of guardAny.
+//
+// **Gloak shipped the wrong order for one release of this branch**, parsing the
+// bounds ahead of authentication and answering 404 where Keycloak answers 401.
+// It was found by a mutation that moved resolveCaller up and **survived**,
+// because at the time nothing in this repository had sent a bearer that does not
+// verify together with a malformed bound - not here and not on any of the other
+// families answering this 404. The mutation was left alive rather than killed
+// with a guessed assertion, and that is what kept it visible long enough for the
+// cell to be measured. See docs/superpowers/handover/events-family.md.
 func (h *handler) guardEventsListing(next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		realm := h.resolveRealm(w, r)
 		if realm == nil {
 			return
 		}
-		q := r.URL.Query()
-		if !eventsBound(w, q, "first") || !eventsBound(w, q, "max") {
-			return
-		}
 		c := h.resolveCaller(w, r, realm)
 		if c == nil {
+			return
+		}
+		q := r.URL.Query()
+		if !eventsBound(w, q, "first") || !eventsBound(w, q, "max") {
 			return
 		}
 		if !c.hasAny(eventsReadRoles) {

@@ -268,28 +268,37 @@ Both listings, and the order is **three stages with the caller in the middle**:
 
 ```
 1  the realm            404 {"error":"Realm not found."}                 to every caller
-2  first / max          404 {"error":"HTTP 404 Not Found"}               to every caller that authenticated
-3  the caller's role    403 {"error":"HTTP 403 Forbidden"}
-4  type / operationTypes / resourceTypes   500 unknown_error
-5  dateFrom then dateTo 400 Invalid value for 'dateFrom', expected format is yyyy-MM-dd or an Epoch timestamp
-6  direction            400 Invalid value for sortDirection, expected value is asc or desc
+2  authentication       401 {"error":"HTTP 401 Unauthorized"}            to a bearer that does not verify
+3  first / max          404 {"error":"HTTP 404 Not Found"}               to every caller that authenticated
+4  the caller's role    403 {"error":"HTTP 403 Forbidden"}
+5  type / operationTypes / resourceTypes   500 unknown_error
+6  dateFrom then dateTo 400 Invalid value for 'dateFrom', expected format is yyyy-MM-dd or an Epoch timestamp
+7  direction            400 Invalid value for sortDirection, expected value is asc or desc
 ```
 
 Every adjacency was measured with both faults sent together.
 
-**Row 2's qualifier is a correction, and it was earned by a mutation.** This table
-said "to every caller" for row 2 as well, from a sweep whose weakest caller was
-`probe-none` - a user who held no admin role and whose **bearer verified**. The
-adjacency between the bound and *authentication* was never measured: the request
-that would settle it is a garbage or absent bearer sent with `?first=abc`, whose
-answer is 401 if the caller is resolved first and this 404 if the bound is bound
-first. Nothing in this repository has sent it - not on these two listings and not
-on any of the seven other families that answer the same 404, every one of which
-was measured with a good admin token. Gloak binds the bound first, which is a
-guess, and it is flagged as one at `guardEventsListing` and in
-`TestMalformedBoundBeatsTheRoleCheck`. **"To every caller" written from a sweep
-of authenticated callers is a claim about the sample**, which is the failure mode
-this file records four other bullets for. `first=-1&max=-1`
+**Rows 2 and 3 are a correction, and Gloak shipped the wrong order between them.**
+This table read "first / max ... to every caller" until 2026-09-05, from a sweep
+whose weakest caller was `probe-none` - a user holding no admin role whose
+**bearer verified**. The adjacency between the bound and *authentication* had
+never been sent, here or on any other family answering this 404. Measured, with
+both controls:
+
+```
+garbage bearer + first=abc    401 {"error":"HTTP 401 Unauthorized"}
+no bearer      + first=abc    401 {"error":"HTTP 401 Unauthorized"}
+garbage bearer + well-formed  401                                    control
+good bearer    + first=abc    404 {"error":"HTTP 404 Not Found"}      control
+```
+
+So the bound sits **between the two halves of the caller check**, and
+`guardEventsListing` now splits `resolveCaller` from `hasAny` to say so. **The
+first version of this branch parsed the bound first and answered 404 where
+Keycloak answers 401** - a divergence this project shipped, not a Keycloak
+oddity. "To every caller", written from a sweep of authenticated callers, is a
+claim about the sample; it is the failure mode this file records four other
+bullets for, and this time it reached the code rather than only the prose. `first=-1&max=-1`
 is a 200, an empty value on any parameter is ignored, an unknown query key is
 ignored, and `type` may repeat.
 
@@ -399,14 +408,16 @@ Written in that file's voice, for folding in. This branch may not edit that file
   for `?first=abc` and a 403 for the same request without it, while `?type=NOPE`,
   `?dateFrom=x` and `?direction=y` all answer that caller 403. One parameter
   binds ahead of authorization and seven do not, which is why these routes cannot
-  use the ordinary guard. The full order is realm, the bounds, the role, the
-  enumerations, `dateFrom` then `dateTo`, `direction` - measured with both faults
-  sent together at every adjacency.
-  **Where the bound sits against *authentication* is not measured** - here or on
-  any of the seven other families answering this 404, all of which were measured
-  with a bearer that verifies. The one request that settles it is a garbage
-  bearer with `?first=abc`: 401 if the caller is resolved first, this 404 if the
-  bound is. Do not write that cell down until somebody sends it.
+  use the ordinary guard. The full order is realm, **authentication**, the
+  bounds, the role, the enumerations, `dateFrom` then `dateTo`, `direction` -
+  measured with both faults sent together at every adjacency.
+  **The bound sits between the two halves of the caller check**, which is the
+  part that is easy to get wrong and that this project did get wrong: a bearer
+  that does not verify, and none at all, both answer
+  `401 {"error":"HTTP 401 Unauthorized"}` with a malformed bound and without one,
+  while a caller who authenticates and holds nothing gets the bound's 404. A
+  guard that parses the bound before resolving the caller passes every test built
+  from authenticated callers and answers 404 where Keycloak answers 401.
 
 - **An unknown enumeration member on either listing is a 500.** `?type=NOPE`,
   `?operationTypes=NOPE` and `?resourceTypes=NOPE` answer
@@ -635,35 +646,103 @@ free is the one the test is not testing.**
   diagnosis of *why* A survived does not hold; what holds is that A is a
   different claim.
   A changes exactly one cell: a **garbage or absent bearer** sent with a
-  malformed bound, 401 against 404. **That cell has never been measured**, here or
-  in any of the seven other families answering this 404. A is therefore left
-  alive deliberately: killing it means asserting a value nobody has seen, which
-  is the one thing this repository forbids outright. What was done instead is to
-  widen the measured half - the test now runs both a caller holding one unrelated
-  role and a caller holding **none at all**, because one caller cannot separate
-  "before this role" from "before authorization" - and to correct the handover's
-  "to every caller", which was written from a sweep of authenticated callers and
-  was over-broad in exactly the direction the mutation found.
+  malformed bound, 401 against 404. That cell had never been measured, here or in
+  any other family answering this 404, so A was left alive rather than killed
+  with an assertion nobody had seen - killing it would have pinned a guess, which
+  is the one thing this repository forbids outright.
 
-  **This is a survivor that is a finding about the documentation rather than
-  about the code**, and it stays open until somebody sends
-  `curl -H 'Authorization: Bearer xyz' '.../events?first=abc'`.
+  **Refusing to kill it is what got it measured, and the measurement says A was
+  the fix.** The request went out on 2026-09-05 with both controls:
+
+  ```
+  garbage bearer + first=abc    401 {"error":"HTTP 401 Unauthorized"}
+  no bearer      + first=abc    401
+  garbage bearer + well-formed  401                   control
+  good bearer    + first=abc    404                   control
+  ```
+
+  So the order is authentication, the bounds, authorization, and
+  `guardEventsListing` now splits `resolveCaller` from `hasAny` to sit between
+  them. **A was not a mutation of correct code; it was the correction wearing a
+  mutation's clothes, and the code it mutated was a divergence this branch
+  shipped.** Had it been killed with the obvious 404 assertion, the divergence
+  would have been pinned as the contract and the test would have defended it.
+
+  Both directions are pinned now, by different tests, each failing on the status
+  line:
+
+  ```
+  resolveCaller back below the bounds   KILLED  TestAuthenticationBeatsTheMalformedBound
+                                                got 404, want 401
+  caller and role both above the bounds KILLED  TestMalformedBoundBeatsTheRoleCheck
+                                                got 403, want 404
+  ```
+
+  The first fails **only** the authentication test, which is what says the two
+  cells are separated rather than one assertion covering both.
+
+  **The rule this adds to the one above:** a mutation that survives because its
+  cell is unmeasured is not a weak test, it is an unasked question, and killing it
+  with a plausible value converts an open question into a false contract. The
+  four outcomes the harness reports should arguably be five.
+
+### The other four bound parsers, surveyed and deliberately not changed
+
+The measured order raises the same question for every other family answering this
+404. Computed from the tree rather than from memory - every call site of every
+integer-bound parser in `internal/admin`, with the guard each route is registered
+behind:
+
+```
+parser                 runs inside            routes                                        order today
+eventsBound            guardEventsListing     GET .../events                                realm, auth, BOUND, role
+                                              GET .../admin-events
+authzIntBound          listAuthzScopes        GET .../authz/resource-server/scope           realm, auth, role, bound
+                       listAuthzResources     GET .../authz/resource-server/resource
+                       listAuthzPolicies      GET .../authz/resource-server/policy
+                                              GET .../authz/resource-server/permission
+identityProviderBound  listIdentityProviders  GET .../identity-provider/instances           realm, auth, role, bound
+sessionBound           clientUserSessions     GET /clients/{uuid}/user-sessions             realm, auth, role, bound
+                       clientOfflineSessions  GET /clients/{uuid}/offline-sessions
+```
+
+**`eventsBound` is the only one that runs inside a guard; the other four run
+inside handlers, and every one of those handlers is reached through a guard that
+has already resolved the caller *and* checked the role.** So the four are the
+mirror image of the bug just fixed:
+
+- They are **right** on the cell that was wrong here. A bearer that does not
+  verify never reaches the handler, so they answer 401 - which is what the events
+  listings now answer too.
+- They are **unmeasured** on the cell that was right here. An authenticated
+  caller holding no role gets a 403 from them where the events listings answer
+  the bound's 404, and **whether Keycloak agrees has not been sent on any of the
+  seven routes**.
+
+Nothing was changed in those four, on purpose: importing the events family's
+answer would be seven guesses from one measurement, and this API has punished
+that four times in this document alone - the malformed bound itself is already
+recorded answering 404 on five listings and being **ignored outright** on
+`/components`, so there is no single rule to carry over. The request that settles
+each is one line per route, a caller holding one unrelated admin role sending
+`?first=abc`, with the same well-formed control beside it. That is one cut with
+one sweep behind it, and it should also settle whether `guardAuthz`'s
+`authorizationServicesEnabled` gate sits before or after the bound, which is a
+third stage the other three families do not have.
 
 ### What is left undone
 
 - Neither listing records anything. F162.
-- **One measurement is owed and is one request**: a garbage bearer with
-  `?first=abc` on either listing, which decides whether the malformed bound is
-  bound before or after authentication. Gloak guesses "before" and the ninth
-  survivor above is that guess left visible rather than papered over. The answer
-  probably generalises to the seven other families that answer this 404, none of
-  which measured it either.
-- **The two new assertions are package tests and both would be better as
+- **The three new assertions are package tests and all would be better as
   goldens.** Each is expressible in this harness - the replace needs a fixture
-  with two `PUT` steps and a `GET` case, and the guard order needs the
-  `caller_token` convention the catalogue already has - but a new `Implemented`
-  case needs a recorded golden, and recording needs the reference container. They
-  should be promoted on the next pass that starts one.
+  with two `PUT` steps and a `GET` case, and the two guard-order tests need the
+  `caller_token` convention the catalogue already has plus a case sending a
+  bearer that does not verify - but a new `Implemented` case needs a recorded
+  golden, and recording needs the reference container. They should be promoted on
+  the next pass that starts one, and the 401 cell is the one most worth a golden
+  because it is the one this branch got wrong.
+- **The other four bound parsers are surveyed above and untouched.** One sweep,
+  seven routes, one cut.
 - The two `javamap` vectors this cut measured -
   `{LOGIN,LOGOUT,REGISTER}` and `{jboss-logging,email}`, which discriminate
   `KeyOrder` from `SizedKeyOrder` - are recorded here rather than added to

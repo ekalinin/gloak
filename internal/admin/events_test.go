@@ -454,14 +454,11 @@ func TestEventsConfigRejectionOrder(t *testing.T) {
 // tell "the bound is checked before this role" from "the bound is checked before
 // authorization".
 //
-// **What this does not reach is the bound against *authentication*.** Moving
-// `resolveCaller` alone above the bounds - leaving the role check where it is -
-// changes exactly one cell, a garbage or absent bearer sent with a malformed
-// bound, and that cell has never been measured: not on these two listings and
-// not on any of the seven other families that answer the same 404. Every
-// measurement in this repository sends a bearer that verifies. So the mutation
-// that moves it survives on purpose, and the request that would settle it is in
-// the handover. Asserting a value here would be pinning a guess.
+// The cell above this one - the bound against *authentication* - is
+// TestAuthenticationBeatsTheMalformedBound, and the two together are the whole
+// order. Neither test can state it alone: this one holds the caller constant at
+// "authenticated" and varies the bound, that one holds the bound constant at
+// "malformed" and varies whether the caller authenticated.
 func TestMalformedBoundBeatsTheRoleCheck(t *testing.T) {
 	h, s, realm := newServer(t)
 	callers := map[string]string{
@@ -508,6 +505,74 @@ func TestMalformedBoundBeatsTheRoleCheck(t *testing.T) {
 		if w.Code != http.StatusNotFound ||
 			strings.TrimSpace(w.Body.String()) != `{"error":"Realm not found."}` {
 			t.Errorf("%s: got %d %s, want the realm's own 404", path, w.Code, w.Body)
+		}
+	}
+}
+
+// TestAuthenticationBeatsTheMalformedBound is the cell that a surviving mutation
+// kept open until it could be measured, and it is the one Gloak got wrong.
+//
+// Measured on a fresh 26.7.1 on `/admin/realms/master/events`, with the two
+// controls that stop it being a test of nothing:
+//
+//	garbage bearer + first=abc     401 {"error":"HTTP 401 Unauthorized"}
+//	no bearer      + first=abc     401
+//	garbage bearer + well-formed   401    control: the 401 is not the bound's
+//	good bearer    + first=abc     404    control: the bound still answers 404
+//
+// So the order is authentication, then the bounds, then authorization. A test
+// that sent only the first two rows would pass a handler answering 401 to
+// everything, and one that sent only the last row is
+// TestMalformedBoundBeatsTheRoleCheck, which cannot see this at all.
+//
+// **Gloak parsed the bounds first and answered 404 to an unauthenticated caller
+// until this landed.** It is a divergence this branch shipped, not a Keycloak
+// oddity, and the thing that found it was a mutation that survived because the
+// value behind it had never been measured.
+func TestAuthenticationBeatsTheMalformedBound(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := adminToken(t, h)
+	authenticated := tokenForRoles(t, h, s, realm)
+
+	const unauthorized = `{"error":"HTTP 401 Unauthorized"}`
+	const notFound = `{"error":"HTTP 404 Not Found"}`
+
+	for _, path := range []string{
+		"/admin/realms/master/events",
+		"/admin/realms/master/admin-events",
+	} {
+		// A bearer that does not verify, and none at all, with and without the
+		// malformed bound. All four are 401, so the bound never speaks first.
+		for _, token := range []string{"gloak-probe-not-a-token", ""} {
+			for _, query := range []string{"?first=abc", "?max=abc", "", "?direction=asc"} {
+				w := get(t, h, path+query, token)
+				if w.Code != http.StatusUnauthorized {
+					t.Errorf("token %q, %s%s: got %d %s, want 401 - authentication runs before the bound",
+						token, path, query, w.Code, w.Body)
+					continue
+				}
+				if got := strings.TrimSpace(w.Body.String()); got != unauthorized {
+					t.Errorf("token %q, %s%s: body %s, want %s", token, path, query, got, unauthorized)
+				}
+			}
+		}
+		// The controls. A caller who authenticates and holds nothing still gets
+		// the bound's 404, and an administrator gets it too - so the 401 above is
+		// about the bearer and this route is not answering one status to
+		// everything.
+		for _, token := range []string{authenticated, admin} {
+			w := get(t, h, path+"?first=abc", token)
+			if w.Code != http.StatusNotFound {
+				t.Errorf("%s?first=abc with a bearer that verifies: got %d %s, want 404",
+					path, w.Code, w.Body)
+			}
+			if got := strings.TrimSpace(w.Body.String()); got != notFound {
+				t.Errorf("%s?first=abc: body %s, want %s", path, got, notFound)
+			}
+		}
+		if w := get(t, h, path, admin); w.Code != http.StatusOK {
+			t.Errorf("%s with a good bearer and no bound: got %d %s, want 200 - the last control",
+				path, w.Code, w.Body)
 		}
 	}
 }
