@@ -176,6 +176,93 @@ func TestEventsConfigPutReplacesTwoAndMergesFour(t *testing.T) {
 	}
 }
 
+// TestEventsConfigPutReplacesAPopulatedList is the half of "replaces two, merges
+// four" that the test above cannot reach, and it went unpinned in the first cut.
+//
+// TestEventsConfigPutReplacesTwoAndMergesFour writes each list **once, onto the
+// empty default**, and a merge and a replace agree on that write - so it pins the
+// merge half (an omitted value is left alone) and says nothing about what a
+// *present* value does to a populated field. The conformance fixture has the same
+// blind spot for the same reason. The distinguishing input is a **second** PUT
+// carrying a list that is not a superset of the one already stored, and a
+// mutation turning this write into `append` survived the whole first pass.
+//
+// Both vectors are measured on a live 26.7.1 rather than chosen here:
+//
+//   - a realm holding {LOGIN, LOGOUT, REGISTER} sent the disjoint five-name set
+//     below came back holding **five**, where a merge gives eight;
+//   - a realm holding {jboss-logging} sent {email} came back holding **email
+//     alone**, where a merge gives two.
+//
+// The read-back order is javamap.KeyOrder's over the stored set, so each
+// assertion pins the replace and the order in one request.
+func TestEventsConfigPutReplacesAPopulatedList(t *testing.T) {
+	h, _, _ := newServer(t)
+	admin := adminToken(t, h)
+
+	put := func(body string) {
+		t.Helper()
+		if w := send(t, h, http.MethodPut, eventsConfigPath, admin, body); w.Code != http.StatusNoContent {
+			t.Fatalf("PUT %s: %d %s", body, w.Code, w.Body)
+		}
+	}
+	list := func(key string) []string {
+		t.Helper()
+		raw, _ := eventsConfigOfRealm(t, h, admin)[key].([]any)
+		out := make([]string, 0, len(raw))
+		for _, v := range raw {
+			s, _ := v.(string)
+			out = append(out, s)
+		}
+		return out
+	}
+	same := func(got, want []string) bool {
+		if len(got) != len(want) {
+			return false
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				return false
+			}
+		}
+		return true
+	}
+
+	// enabledEventTypes. The first write is the control: it has to land, or the
+	// second one is not writing onto a populated field and proves nothing.
+	put(`{"enabledEventTypes":["LOGIN","LOGOUT","REGISTER"]}`)
+	if got := list("enabledEventTypes"); len(got) != 3 {
+		t.Fatalf("the first write left %v, want three names - the second write needs a populated field", got)
+	}
+	put(`{"enabledEventTypes":["CODE_TO_TOKEN","CLIENT_LOGIN","IMPERSONATE","REVOKE_GRANT","UPDATE_PASSWORD"]}`)
+	wantTypes := []string{"REVOKE_GRANT", "CLIENT_LOGIN", "IMPERSONATE", "CODE_TO_TOKEN", "UPDATE_PASSWORD"}
+	if got := list("enabledEventTypes"); !same(got, wantTypes) {
+		t.Errorf("got %v, want %v - a merge would leave eight names", got, wantTypes)
+	}
+
+	// eventsListeners, the same rule on the field beside it. A merge here leaves
+	// two, and the measured answer is one.
+	put(`{"eventsListeners":["jboss-logging"]}`)
+	if got := list("eventsListeners"); !same(got, []string{"jboss-logging"}) {
+		t.Fatalf("the first write left %v, want [jboss-logging]", got)
+	}
+	put(`{"eventsListeners":["email"]}`)
+	if got := list("eventsListeners"); !same(got, []string{"email"}) {
+		t.Errorf("got %v, want [email] - a merge would leave both", got)
+	}
+
+	// And the empty list is a replace too, which is the sharpest form of it:
+	// measured answering [] on a realm holding two listeners.
+	put(`{"eventsListeners":["jboss-logging","email"]}`)
+	if got := list("eventsListeners"); len(got) != 2 {
+		t.Fatalf("the repopulating write left %v, want two", got)
+	}
+	put(`{"eventsListeners":[]}`)
+	if got := list("eventsListeners"); len(got) != 0 {
+		t.Errorf("got %v, want [] - an empty list replaces a populated one", got)
+	}
+}
+
 // TestEventsExpirationIsAbsentOnlyAtZero pins the rule that makes the field a
 // pointer: 0 disappears and -5 does not.
 func TestEventsExpirationIsAbsentOnlyAtZero(t *testing.T) {
@@ -361,36 +448,57 @@ func TestEventsConfigRejectionOrder(t *testing.T) {
 // for the same request without it, while every other bad parameter on the same
 // route answers that caller 403. One parameter binds ahead of authorization and
 // the rest do not.
+//
+// Two callers, because the measured sweep used both: one holding a single
+// unrelated admin role and one holding **none at all**. A single caller cannot
+// tell "the bound is checked before this role" from "the bound is checked before
+// authorization".
+//
+// **What this does not reach is the bound against *authentication*.** Moving
+// `resolveCaller` alone above the bounds - leaving the role check where it is -
+// changes exactly one cell, a garbage or absent bearer sent with a malformed
+// bound, and that cell has never been measured: not on these two listings and
+// not on any of the seven other families that answer the same 404. Every
+// measurement in this repository sends a bearer that verifies. So the mutation
+// that moves it survives on purpose, and the request that would settle it is in
+// the handover. Asserting a value here would be pinning a guess.
 func TestMalformedBoundBeatsTheRoleCheck(t *testing.T) {
 	h, s, realm := newServer(t)
-	none := tokenForRole(t, h, s, realm, "view-clients")
+	callers := map[string]string{
+		"one unrelated role": tokenForRole(t, h, s, realm, "view-clients"),
+		"no role at all":     tokenForRoles(t, h, s, realm),
+	}
 
-	for _, path := range []string{
-		"/admin/realms/master/events?first=abc",
-		"/admin/realms/master/events?max=abc",
-		"/admin/realms/master/admin-events?first=abc",
-	} {
-		w := get(t, h, path, none)
-		if w.Code != http.StatusNotFound {
-			t.Errorf("%s: got %d %s, want 404 before the role check", path, w.Code, w.Body)
+	for who, none := range callers {
+		for _, path := range []string{
+			"/admin/realms/master/events?first=abc",
+			"/admin/realms/master/events?max=abc",
+			"/admin/realms/master/admin-events?first=abc",
+		} {
+			w := get(t, h, path, none)
+			if w.Code != http.StatusNotFound {
+				t.Errorf("%s, %s: got %d %s, want 404 before the role check", who, path, w.Code, w.Body)
+			}
+			if got := strings.TrimSpace(w.Body.String()); got != `{"error":"HTTP 404 Not Found"}` {
+				t.Errorf("%s, %s: body %s", who, path, got)
+			}
 		}
-		if got := strings.TrimSpace(w.Body.String()); got != `{"error":"HTTP 404 Not Found"}` {
-			t.Errorf("%s: body %s", path, got)
+		// The controls: the same caller, and the same parameters that are
+		// checked after the role.
+		for _, path := range []string{
+			"/admin/realms/master/events",
+			"/admin/realms/master/events?type=NOPE",
+			"/admin/realms/master/events?dateFrom=x",
+			"/admin/realms/master/events?direction=y",
+			"/admin/realms/master/events?first=-1&max=-1",
+		} {
+			if w := get(t, h, path, none); w.Code != http.StatusForbidden {
+				t.Errorf("%s, %s: got %d %s, want 403 - this parameter is checked after the role",
+					who, path, w.Code, w.Body)
+			}
 		}
 	}
-	// The controls: the same caller, and the same parameters that are checked
-	// after the role.
-	for _, path := range []string{
-		"/admin/realms/master/events",
-		"/admin/realms/master/events?type=NOPE",
-		"/admin/realms/master/events?dateFrom=x",
-		"/admin/realms/master/events?direction=y",
-		"/admin/realms/master/events?first=-1&max=-1",
-	} {
-		if w := get(t, h, path, none); w.Code != http.StatusForbidden {
-			t.Errorf("%s: got %d %s, want 403 - this parameter is checked after the role", path, w.Code, w.Body)
-		}
-	}
+	none := callers["no role at all"]
 	// And an unknown realm still comes first, malformed bound or not.
 	for _, path := range []string{
 		"/admin/realms/gloak-no-such-realm/events",

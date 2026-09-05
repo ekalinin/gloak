@@ -506,6 +506,18 @@ func eventsBound(w http.ResponseWriter, q url.Values, name string) bool {
 // It is a guard of its own rather than guardAny because of the order measured
 // above, and the realm still comes first - an unknown realm answers
 // `Realm not found.` to every caller, with or without a malformed bound.
+//
+// **One adjacency in here is a guess and is marked as one.** What is measured is
+// that the bound is answered before the caller's *role*: a caller that
+// authenticated and holds no admin role gets the 404 for `?first=abc` and a 403
+// without it. Whether it is answered before the caller is *authenticated* is
+// not - the request that would say so is a garbage bearer sent with a malformed
+// bound, 401 against 404, and nothing in this repository has sent it on this
+// family or on the seven others that answer the same 404. Moving resolveCaller
+// above the bound changes that one cell and nothing else, which is why a
+// mutation doing exactly that survives on purpose rather than being killed by a
+// test that would be pinning a value nobody has seen. See the ninth survivor in
+// docs/superpowers/handover/events-family.md.
 func (h *handler) guardEventsListing(next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		realm := h.resolveRealm(w, r)
