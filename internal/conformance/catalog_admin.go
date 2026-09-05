@@ -18329,4 +18329,564 @@ var adminCases = []Case{
 				"/certificates/jwt.credential/upload",
 		},
 	},
+
+	// The scattered remainder: eleven operations from three tags that share no
+	// resource. See docs/superpowers/handover/scattered-remainder.md for what
+	// was measured and for the sixteen this cut leaves.
+	{
+		// A user nothing has linked. `[]`, and `Cache-Control: no-cache` -
+		// which `GET /users/profile` two cases below does **not** carry, on the
+		// same tag in the same cut.
+		ID: "admin/users/federated-identity-empty",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get social logins associated with the user",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/users/{user-id}/federated-identity",
+		Fixture:   "federated-identity-empty",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/federated-identity",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **The invisible link, pinned.** The fixture makes two links on one
+		// user - `gloak-probe-unknown`, which no identity provider is
+		// registered for, and `gloak-probe-idp`, which one is - and this golden
+		// holds **one** entry. The other row is in the store: its repeat POST
+		// answers 409 and its DELETE answers 204, both measured.
+		//
+		// So this case asserts an absence that is not an emptiness, and a
+		// handler that validated the alias on the write instead would produce
+		// the identical body here while answering 404 where Keycloak answers
+		// 204. That second half is what admin/users/federated-identity-add
+		// below is for.
+		ID: "admin/users/federated-identity-list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get social logins associated with the user",
+			Retrieved: "2026-09-05",
+		},
+		Status:  Implemented,
+		Fixture: "federated-identity-linked",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/federated-identity",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The write to an alias the realm has no provider for: **204**, not
+		// 404. The 204 carries `X-Frame-Options`, because the request declared
+		// an `application/*` Content-Type - AGENTS.md's rule (3).
+		ID: "admin/users/federated-identity-add",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: add a social login provider to the user",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/users/{user-id}/federated-identity/{provider}",
+		Fixture:   "federated-identity-empty",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users/{{user_id}}/federated-identity/gloak-probe-never-registered",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"userId":"ext-1","userName":"name-1"}`),
+		},
+		AssertHeaders:       []string{"Cache-Control", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Content-Type"},
+	},
+	{
+		// The repeat. `{"errorMessage":"User is already linked with provider"}`
+		// - the admin error shape, not the `Duplicate resource error` the rest
+		// of this API's conflicts answer, and it names no provider.
+		//
+		// The fixture's own link to gloak-probe-idp is what this repeats, so
+		// the case depends on the fixture having made it and on nothing else.
+		ID: "admin/users/federated-identity-add-duplicate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: add a social login provider to the user, duplicate",
+			Retrieved: "2026-09-05",
+		},
+		Status:  Implemented,
+		Fixture: "federated-identity-linked",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users/{{user_id}}/federated-identity/gloak-probe-idp",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"userId":"ext-known","userName":"name-known"}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **The fifth strict endpoint.** strictjson.go's doc comment says four,
+		// and this is a sixth measurement of the same decoder on a fifth route:
+		// the class is named, the field is quoted, and the column is the
+		// arithmetic that comment says generalised.
+		ID: "admin/users/federated-identity-add-unknown-field",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: add a social login provider to the user, unknown field",
+			Retrieved: "2026-09-05",
+		},
+		Status:  Implemented,
+		Fixture: "federated-identity-empty",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users/{{user_id}}/federated-identity/gloak-probe-strict",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"userId":"u","bogus":1}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The delete's 204 carries `Cache-Control: no-cache` and **no**
+		// `X-Frame-Options`: the request declares no Content-Type, which is the
+		// other half of the same rule the add above exercises.
+		ID: "admin/users/federated-identity-remove",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: remove a social login provider from the user",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/users/{user-id}/federated-identity/{provider}",
+		Fixture:   "federated-identity-spare",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/users/{{user_id}}/federated-identity/gloak-probe-idp-spare",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// `Link not found` - the thirty-sixth spelling of not-found in this
+		// API, and a real 404 where the client-scope detaches next door answer
+		// a silent 204 for the same shape of request.
+		ID: "admin/users/federated-identity-remove-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: remove a social login provider from the user, no such link",
+			Retrieved: "2026-09-05",
+		},
+		Status:  Implemented,
+		Fixture: "federated-identity-empty",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/users/{{user_id}}/federated-identity/gloak-probe-no-such-link",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// Master's user profile: the 988 bytes its `declarative-user-profile`
+		// component stores, echoed. `application/json;charset=UTF-8` and **no
+		// `Cache-Control`** - asserted absent, because every other read in this
+		// cut carries `no-cache` and a shared writer would put one here.
+		ID: "admin/users/profile",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get the configuration for the user profile",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/users/profile",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/profile",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The same endpoint on a realm that has **no** such component, which is
+		// every realm but master. The body is not master's: `email`,
+		// `firstName` and `lastName` each carry `"required":{"roles":["user"]}`
+		// here and none of the three does there.
+		//
+		// It is **not** a SecondRealm case, although it addresses a realm its
+		// own fixture creates. SecondRealm exists to assert that a handler
+		// derives a realm-shaped value rather than spelling `master`, and
+		// TestSecondRealmGoldenPinsItsRealmName enforces that by requiring the
+		// realm's name in the response. Nothing in a user profile is derived
+		// from the realm's name. What this case pins is a different thing
+		// entirely - which of two bodies the realm's **state** selects - so it
+		// is an ordinary case addressing a second realm.
+		ID: "admin/users/profile-created-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get the configuration for the user profile, a created realm",
+			Retrieved: "2026-09-05",
+		},
+		Status:  Implemented,
+		Fixture: "user-profile-created-realm",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-userprofile/users/profile",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// `{}` on a realm whose profile declares no `unmanagedAttributePolicy`,
+		// which is every default realm. The user this reads has attributes on
+		// the Gloak side and none on the reference side - master's profile
+		// drops them on write, measured - and the endpoint answers `{}` either
+		// way, which is what makes the case comparable.
+		ID: "admin/users/unmanaged-attributes",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get the unmanaged attributes of the user",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/users/{user-id}/unmanagedAttributes",
+		Fixture:   "federated-identity-empty",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/unmanagedAttributes",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// `[]`, and it is the whole reachable answer rather than a stub - see
+		// internal/admin/userprofile.go for why a server with no user storage
+		// federation has nothing else to say.
+		ID: "admin/users/configured-user-storage-credential-types",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: return credential types the user storage provider configured",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/users/{user-id}/configured-user-storage-credential-types",
+		Fixture:   "federated-identity-empty",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/configured-user-storage-credential-types",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// A user id that resolves to nothing, on the route this cut added
+		// furthest from the rest of the family. It is here to pin that the
+		// coarse gate and the subject lookup run in guardUserSubject's order on
+		// the new routes too, not only on the eighteen that were swept in
+		// August.
+		ID: "admin/users/unmanaged-attributes-unknown-user",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get the unmanaged attributes of the user, unknown user",
+			Retrieved: "2026-09-05",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/00000000-0000-0000-0000-000000000000/unmanagedAttributes",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The node write's 204: **no `Cache-Control`**, which is asserted absent
+		// because its DELETE sibling one segment away carries `no-cache`. The
+		// pair is the cheapest counterexample in this repository to any rule
+		// about Cache-Control stated over the verb or the status.
+		ID: "admin/clients/nodes-add",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: register a cluster node with the client",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/clients/{client-uuid}/nodes",
+		Fixture:   "client-node-bare",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/c10adf00-0000-4000-8000-000000000001/nodes",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"node":"gloak-node-0.example.com"}`),
+		},
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+	},
+	{
+		// A body naming no node. `{"error":"Node not found in params"}`, a 400,
+		// and the same answer for `{}` and for a body carrying some other key.
+		ID: "admin/clients/nodes-add-no-node",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: register a cluster node with the client, no node in the body",
+			Retrieved: "2026-09-05",
+		},
+		Status:  Implemented,
+		Fixture: "client-node-bare",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/c10adf00-0000-4000-8000-000000000001/nodes",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The client representation with a node on it. `registeredNodes` sits
+		// between `nodeReRegistrationTimeout` and `protocolMappers`, measured
+		// on a client carrying both, and it is **absent** from every other
+		// client golden in this tree - which is the assertion the other
+		// direction.
+		//
+		// One node, so the map's key order is the identity. The order of a
+		// two-key one is a Java map's and is recorded in clientnodes.go rather
+		// than asserted here.
+		ID: "admin/clients/nodes-registered",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: get representation of the client, with a registered node",
+			Retrieved: "2026-09-05",
+		},
+		Status:  Implemented,
+		Fixture: "client-node-registered",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/c10adf00-0000-4000-8000-000000000002",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+		// The registration timestamp is the second the fixture ran in, and it
+		// is the **only** mask this case carries.
+		//
+		// The three every other client case declares - Unordered on the two
+		// scope lists and UnorderedKeys on `attributes` - are absent on
+		// purpose: this client names `defaultClientScopes` at create so it
+		// inherits neither list, and being public it has no secret and so a
+		// one-key `attributes`. All three masks would be inert here, which is
+		// what TestNoMaskIsInertOnItsGolden says about a mask that changes
+		// nothing.
+		Volatile: []string{"registeredNodes/gloak-node-1.example.com"},
+	},
+	{
+		// The delete's 204 **does** carry `Cache-Control: no-cache`, where the
+		// add's does not, and carries no `X-Frame-Options` because the request
+		// declares no Content-Type.
+		ID: "admin/clients/nodes-remove",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: unregister a cluster node from the client",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/clients/{client-uuid}/nodes/{node}",
+		Fixture:   "client-node-doomed",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/clients/c10adf00-0000-4000-8000-000000000003/nodes/gloak-node-2.example.com",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Cache-Control"},
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// `{"error":"Client does not have node "}` - **with a trailing space
+		// and no node name**, confirmed by hexdump. Keycloak builds the message
+		// by concatenation and hands it nothing to concatenate. This golden is
+		// the thing that stops the next reader tidying it up.
+		ID: "admin/clients/nodes-remove-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: unregister a cluster node from the client, no such node",
+			Retrieved: "2026-09-05",
+		},
+		Status:  Implemented,
+		Fixture: "client-node-bare",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/clients/c10adf00-0000-4000-8000-000000000001/nodes/gloak-node-never.example.com",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// Four names, and the same four on a created realm - so the list does
+		// not follow the realm's required actions or its OTP policy.
+		ID: "admin/realms-admin/credential-registrators",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get the credential registrators",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/credential-registrators",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/credential-registrators",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The fine-grained-permissions surface, and it is client-types' 501
+		// byte for byte. `ADMIN_FINE_GRAINED_AUTHZ` is a deprecated, disabled
+		// feature; `ADMIN_FINE_GRAINED_AUTHZ_V2` is enabled and does **not**
+		// open it, which is the trap managementpermissions.go records.
+		ID: "admin/realms-admin/users-management-permissions",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get the users management permissions reference",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/users-management-permissions",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users-management-permissions",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The same 501 on the write, sent a body the handler never looks at.
+		ID: "admin/realms-admin/users-management-permissions-update",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: update the users management permissions reference",
+			Retrieved: "2026-09-05",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/users-management-permissions",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/users-management-permissions",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"enabled":true}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The refusal precedes authorization: a caller holding **no** admin
+		// role gets the 501 rather than a 403, measured, which is what says the
+		// feature check runs before the role check.
+		//
+		// This is the case that distinguishes guardRealmFeature from every
+		// other guard in the file. A `guardAny` with an empty role list answers
+		// 403 here, and so does one carrying every admin role there is.
+		ID: "admin/realms-admin/users-management-permissions-no-role",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get the users management permissions reference, no admin role",
+			Retrieved: "2026-09-05",
+		},
+		Status:  Implemented,
+		Fixture: "no-role-caller",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users-management-permissions",
+			Headers: map[string]string{"Authorization": "Bearer {{caller_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// It mints a session for another user, and the two cookies it sets are
+		// `internal/oidc`'s: `KEYCLOAK_IDENTITY` carries a Serialized-ID token
+		// signed by internal/token and `KEYCLOAK_SESSION` is written by
+		// setLoginCookies, which is unexported and in a package this branch may
+		// not touch. Producing the pair from internal/admin is the second copy
+		// F148 exists to prevent, and F148's answer is already settled.
+		//
+		// Measured 2026-09-05 so the next cut does not have to: 200,
+		// `Cache-Control: no-cache`,
+		// `{"redirect":"<base>/realms/master/account","sameRealm":true}`, and
+		// **it ends the calling administrator's own session** - the access
+		// token that made the call answered 401 on the very next request, where
+		// an ordinary write with a sibling token left it at 200. An unknown
+		// user is `404 {"error":"User not found"}` and leaves the caller's
+		// session alone.
+		ID: "admin/users/impersonation",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: impersonate the user",
+			Retrieved: "2026-09-05",
+		},
+		Status: Pending,
+		Reason: "it mints a browser SSO session: the KEYCLOAK_IDENTITY/KEYCLOAK_SESSION pair is " +
+			"written by setLoginCookies in internal/oidc, which this branch may not touch, and " +
+			"reproducing it in internal/admin is the second copy F148 settled against",
+		Fixture: "federated-identity-empty",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/users/{{user_id}}/impersonation",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+		},
+	},
+	{
+		// 200 with the whole client representation and a freshly minted
+		// `registrationAccessToken` - `typ: RegistrationAccessToken`, `exp: 0`,
+		// HS512 - which `GET /clients/{uuid}` never carries.
+		//
+		// `internal/token.IssueRegistration` already mints exactly that token.
+		// What internal/admin cannot do is make it work: which jti is current
+		// for a client lives in internal/oidc's in-memory registrationStore,
+		// whose own doc comment says the honest place is a column on
+		// model.Client and that internal/model and internal/store were owned
+		// elsewhere when it was written. They are owned by this cut and
+		// internal/oidc is not, so a token minted here is a token the package
+		// that checks it would refuse.
+		ID: "admin/clients/registration-access-token",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: regenerate the client registration access token",
+			Retrieved: "2026-09-05",
+		},
+		Status: Pending,
+		Reason: "the minted token is only usable if internal/oidc's registrationStore recognises " +
+			"its jti, and that store is in a package this branch may not touch; moving it to a " +
+			"column on model.Client needs internal/oidc and internal/store in one cut",
+		Fixture: "client-node-bare",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/clients/c10adf00-0000-4000-8000-000000000001/registration-access-token",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+	},
 }

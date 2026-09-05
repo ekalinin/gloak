@@ -417,6 +417,9 @@ func (r *clientRepo) ListByRealm(ctx context.Context, realmID string) ([]*model.
 		if err := r.loadClientScopeNames(ctx, m); err != nil {
 			return nil, err
 		}
+		if err := r.loadNodes(ctx, m); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }
@@ -503,7 +506,53 @@ func (r *clientRepo) scanWithScopes(ctx context.Context, row scanner) (*model.Cl
 	if err := r.loadClientScopeNames(ctx, m); err != nil {
 		return nil, err
 	}
-	return m, nil
+	return m, r.loadNodes(ctx, m)
+}
+
+// loadNodes fills RegisteredNodes, and leaves it **nil** when the client has
+// none rather than setting an empty map. The distinction is the wire's: a
+// client with no node omits `registeredNodes` entirely, measured, and
+// `omitempty` on the representation cannot tell an empty map from a nil one.
+func (r *clientRepo) loadNodes(ctx context.Context, m *model.Client) error {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT node, registered_at FROM client_node WHERE client_id = ?`, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	defer rows.Close()
+
+	m.RegisteredNodes = nil
+	for rows.Next() {
+		var node string
+		var at int64
+		if err := rows.Scan(&node, &at); err != nil {
+			return classify(err)
+		}
+		if m.RegisteredNodes == nil {
+			m.RegisteredNodes = map[string]int64{}
+		}
+		m.RegisteredNodes[node] = at
+	}
+	return classify(rows.Err())
+}
+
+// RegisterNode upserts, which is measured: the same node name posted twice
+// answers 204 both times and leaves one entry.
+func (r *clientRepo) RegisterNode(ctx context.Context, clientID, node string, at int64) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO client_node (client_id, node, registered_at) VALUES (?, ?, ?)
+		 ON CONFLICT (client_id, node) DO UPDATE SET registered_at = excluded.registered_at`,
+		clientID, node, at)
+	return classify(err)
+}
+
+func (r *clientRepo) UnregisterNode(ctx context.Context, clientID, node string) error {
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM client_node WHERE client_id = ? AND node = ?`, clientID, node)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
 }
 
 func (r *clientRepo) loadClientScopeNames(ctx context.Context, m *model.Client) error {
@@ -729,6 +778,63 @@ func (r *userRepo) UpdateCredential(ctx context.Context, m *model.Credential) er
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE credential SET user_label = ?, priority = ? WHERE user_id = ? AND id = ?`,
 		m.Label, m.Priority, m.UserID, m.ID)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
+}
+
+func (r *userRepo) ListFederatedIdentities(ctx context.Context, realmID, userID string) ([]model.FederatedIdentity, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT identity_provider, external_user_id, external_username
+		   FROM federated_identity WHERE realm_id = ? AND user_id = ? ORDER BY seq`,
+		realmID, userID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	defer rows.Close()
+
+	out := []model.FederatedIdentity{}
+	for rows.Next() {
+		var fi model.FederatedIdentity
+		if err := rows.Scan(&fi.IdentityProvider, &fi.UserID, &fi.Username); err != nil {
+			return nil, classify(err)
+		}
+		out = append(out, fi)
+	}
+	return out, classify(rows.Err())
+}
+
+// LinkFederatedIdentity numbers the new row inside the same transaction that
+// inserts it, which is what makes ListFederatedIdentities' insertion order hold
+// under two callers at once.
+func (r *userRepo) LinkFederatedIdentity(ctx context.Context, realmID, userID string, fi model.FederatedIdentity) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var seq int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(seq), -1) + 1 FROM federated_identity WHERE realm_id = ? AND user_id = ?`,
+		realmID, userID).Scan(&seq); err != nil {
+		return classify(err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO federated_identity
+		   (realm_id, user_id, identity_provider, external_user_id, external_username, seq)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		realmID, userID, fi.IdentityProvider, fi.UserID, fi.Username, seq); err != nil {
+		return classify(err)
+	}
+	return tx.Commit()
+}
+
+func (r *userRepo) UnlinkFederatedIdentity(ctx context.Context, realmID, userID, provider string) error {
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM federated_identity
+		   WHERE realm_id = ? AND user_id = ? AND identity_provider = ?`,
+		realmID, userID, provider)
 	if err != nil {
 		return classify(err)
 	}

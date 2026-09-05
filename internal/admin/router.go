@@ -191,6 +191,25 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/realms/{realm}/client-types", h.guardRealmFeature(writeFeatureNotEnabled))
 	mux.HandleFunc("PUT /admin/realms/{realm}/client-types", h.guardRealmFeature(writeFeatureNotEnabled))
 
+	// `users-management-permissions` is client-types' gate exactly, and that is
+	// measured rather than read off the tag: both verbs answer the byte-
+	// identical 501, a caller holding **no** admin role gets it rather than a
+	// 403, and a realm that does not exist gets `Realm not found.` first. It is
+	// the fine-grained-permissions surface, so it follows the deprecated
+	// ADMIN_FINE_GRAINED_AUTHZ feature the twelve `management/permissions`
+	// routes follow - see managementpermissions.go, which records why
+	// ADMIN_FINE_GRAINED_AUTHZ_V2 being enabled does not open them.
+	mux.HandleFunc("GET /admin/realms/{realm}/users-management-permissions",
+		h.guardRealmFeature(writeFeatureNotEnabled))
+	mux.HandleFunc("PUT /admin/realms/{realm}/users-management-permissions",
+		h.guardRealmFeature(writeFeatureNotEnabled))
+
+	// The realm's credential registrators: a four-name constant, the same four
+	// on master and on a created realm. realmConfigReadRoles is measured - the
+	// realm pair opens it and thirteen other admin roles were swept and refused.
+	mux.HandleFunc("GET /admin/realms/{realm}/credential-registrators",
+		h.guardAny(realmConfigReadRoles, h.listCredentialRegistrators))
+
 	// Organizations: the six operations that treat one as a resource.
 	//
 	// **Every one of them sits behind the realm's own organizationsEnabled
@@ -811,6 +830,38 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/offline-sessions/{clientUUID}",
 		h.guardUserSubject(userReadRoles, h.userOfflineSessions))
 
+	// The user profile pair, and they do **not** share a guard with each other
+	// or with anything else in this file.
+	//
+	// `GET /users/profile` is opened by five roles - view-users, manage-users,
+	// **query-users**, view-realm and manage-realm - and refused to the nine
+	// others swept, view-clients and manage-clients among them. That is the
+	// whole users read set including query-users, which opens no other route in
+	// the family, plus the realm pair. `PUT` on the same path is manage-realm
+	// alone and is not served; see internal/admin/userprofile.go for what a
+	// PUT does to the realm and why.
+	//
+	// The three per-user reads take userReadRoles behind the family's coarse
+	// gate, measured: query-users gets `User not found` for a user that does
+	// not exist and 403 for one that does.
+	mux.HandleFunc("GET /admin/realms/{realm}/users/profile",
+		h.guardAny(userProfileReadRoles, h.readUserProfile))
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/unmanagedAttributes",
+		h.guardUserSubject(userReadRoles, h.readUnmanagedAttributes))
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/configured-user-storage-credential-types",
+		h.guardUserSubject(userReadRoles, h.readConfiguredUserStorageCredentialTypes))
+
+	// A user's identity provider links. The listing filters to the realm's
+	// registered aliases and the two writes do not check the alias at all, so a
+	// link can exist and be invisible - measured, and the reason the write path
+	// stores whatever the path segment carried. See federatedidentity.go.
+	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/federated-identity",
+		h.guardUserSubject(userReadRoles, h.listFederatedIdentities))
+	mux.HandleFunc("POST /admin/realms/{realm}/users/{userID}/federated-identity/{provider}",
+		h.guardUserSubject(userWriteRoles, h.addFederatedIdentity))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/users/{userID}/federated-identity/{provider}",
+		h.guardUserSubject(userWriteRoles, h.removeFederatedIdentity))
+
 	// A user's group membership. Same combinator and same role sets as the
 	// rest of the user family, which is what the sweep says: the coarse gate
 	// is usersReadRoles - query-users opens none of these four and still gets
@@ -983,6 +1034,19 @@ func (h *handler) register(mux *http.ServeMux) {
 		h.guard("manage-clients", h.generateClientCertificate))
 	mux.HandleFunc("POST /admin/realms/{realm}/clients/{clientUUID}/certificates/{attr}/upload-certificate",
 		h.guard("manage-clients", h.uploadClientCertificate))
+
+	// The cluster-node writes. Both take manage-clients, and both resolve the
+	// client **before** checking it - which is why they are not h.guard, the
+	// form the certificate writes immediately above use. See guardClientSubject
+	// for the five-cell measurement that separates the two.
+	//
+	// `GET .../test-nodes-available` is deliberately absent; clientnodes.go
+	// says what it does and why the `{}` a default container answers is not a
+	// contract worth pinning.
+	mux.HandleFunc("POST /admin/realms/{realm}/clients/{clientUUID}/nodes",
+		h.guardClientSubject(clientNodeWriteRoles, h.registerClientNode))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/clients/{clientUUID}/nodes/{node}",
+		h.guardClientSubject(clientNodeWriteRoles, h.unregisterClientNode))
 
 	// The client half of the session family. The four reads take view-clients
 	// **or manage-clients** and push-revocation takes manage-clients alone -
@@ -1992,6 +2056,31 @@ var usersReadRoles = []string{"view-users", "query-users", "manage-users"}
 // does not do that, measured on the whole family in one pass; F36 filed the
 // suspicion and the sweep confirmed it.
 var userReadRoles = []string{"view-users", "manage-users"}
+
+// userProfileReadRoles is what `GET /users/profile` accepts, and it is the
+// union of two families that no other route in this file joins.
+//
+// Measured 2026-09-05, one role at a time, a fresh token per call: view-users,
+// manage-users, **query-users**, view-realm and manage-realm answer 200;
+// view-clients, manage-clients, query-clients, view-identity-providers,
+// manage-identity-providers, view-authorization, manage-authorization,
+// view-events and manage-events answer 403.
+//
+// Three things it is not. It is not usersReadRoles - view-realm and
+// manage-realm are on it. It is not realmConfigReadRoles - the three user roles
+// are. And it is **not** the guard of the `PUT` on the identical path, which is
+// manage-realm alone: a manage-users caller may read this profile and may not
+// write it, so the write guard is not a slice of the read guard.
+var userProfileReadRoles = []string{
+	"view-users", "query-users", "manage-users", "view-realm", "manage-realm",
+}
+
+// clientNodeWriteRoles is what `POST .../nodes` and `DELETE .../nodes/{node}`
+// accept after guardClientSubject has resolved the client. Measured one role at
+// a time: manage-clients answers 204 and view-clients, query-clients,
+// view-users, manage-users, query-users, view-realm and manage-realm all answer
+// 403.
+var clientNodeWriteRoles = []string{"manage-clients"}
 
 // userWriteRoles is what everything that changes a user takes: the update, the
 // delete, the whole credential family and the logout. manage-users alone,

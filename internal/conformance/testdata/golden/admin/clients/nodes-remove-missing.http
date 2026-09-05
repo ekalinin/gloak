@@ -1,0 +1,11 @@
+# DELETE /admin/realms/master/clients/c10adf00-0000-4000-8000-000000000001/nodes/gloak-node-never.example.com
+HTTP/1.1 404 Not Found
+Content-Length: {{volatile}}
+Content-Type: application/json
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"error":"Client does not have node "}

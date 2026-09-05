@@ -1422,6 +1422,44 @@ var Fixtures = map[string]Fixture{
 	// The events family. Its own realm, because the config read has to assert
 	// values no default realm carries and master's realm goldens would see them.
 	"events-config": eventsConfigFixture(),
+
+	// The scattered remainder. Six fixtures for three families that share
+	// nothing but the cut they arrived in.
+	//
+	// federated-identity-empty is a user nothing has linked, so its listing is
+	// the `[]` a fresh user answers.
+	"federated-identity-empty": userFixture("gloak-probe-fi-empty"),
+	// federated-identity-linked is the finding, built as a fixture so a golden
+	// holds it: the user carries **two** links and only one of them is
+	// visible, because only one names an identity provider the realm has.
+	"federated-identity-linked": federatedIdentityFixture(),
+	// federated-identity-spare is a user with one link to a registered
+	// provider, for the DELETE's 204 - a separate user so that deleting it does
+	// not change what the listing above answers.
+	"federated-identity-spare": federatedIdentitySpareFixture(),
+
+	// The cluster nodes get clients of their own rather than using `account`:
+	// a registered node shows up in the client representation, and the client
+	// goldens next door would see it.
+	//
+	// **Each of the three creates names its own id**, which POST /clients
+	// honours, so a fixture named by more than one case does not have to
+	// capture a Location its second run will not send: the repeat is a 409
+	// carrying no Location at all, which is what the first recording of this
+	// family failed on. That is the client-scope fixtures' device for the same
+	// reason.
+	"client-node-bare":       clientNodeFixture(probeNodeBareID, "gloak-probe-node-bare", ""),
+	"client-node-registered": clientNodeFixture(probeNodeOneID, "gloak-probe-node-one", "gloak-node-1.example.com"),
+	"client-node-doomed":     clientNodeFixture(probeNodeDelID, "gloak-probe-node-del", "gloak-node-2.example.com"),
+
+	// A realm of its own for the user profile a created realm answers, which
+	// differs from master's by three `required` blocks.
+	"user-profile-created-realm": realmFixture(userProfileRealm),
+
+	// A caller holding no admin role at all. callerFixture with no roles is
+	// exactly that, and it is what separates a refusal that precedes
+	// authorization from one that follows it.
+	"no-role-caller": callerFixture("gloak-probe-caller-none"),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -7231,6 +7269,163 @@ func eventsConfigFixture() Fixture {
 				`"eventsListeners":["email","jboss-logging"],` +
 				`"enabledEventTypes":["LOGIN","LOGOUT","REGISTER"],` +
 				`"adminEventsEnabled":true,"adminEventsDetailsEnabled":true}`),
+		},
+	})
+	return f
+}
+
+// userProfileRealm is a realm created for one case: the user profile a realm
+// with **no** `declarative-user-profile` component answers. Master has that
+// component and a created realm does not, so the two bodies differ and only a
+// created realm can show the second one.
+const userProfileRealm = "gloak-probe-userprofile"
+
+// federatedIdentityFixture builds the invisible-link measurement.
+//
+// The order of the steps is the measurement. The link to `gloak-probe-unknown`
+// is made **before** any identity provider exists and answers 204; the link to
+// `gloak-probe-idp` is made after that provider is registered. Both rows are in
+// the store afterwards and the listing shows one.
+//
+// The identity provider's URLs are `https` because the create refuses `http`
+// with `The url [authorization_url] requires secure connections`, measured on
+// the first attempt at this fixture.
+func federatedIdentityFixture() Fixture {
+	f := userFixture("gloak-probe-fi-linked")
+	f.Steps = append(f.Steps,
+		Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "/admin/realms/master/users/{{user_id}}/federated-identity/gloak-probe-unknown",
+				Headers: map[string]string{
+					"Authorization": "Bearer {{access_token}}",
+					"Content-Type":  "application/json",
+				},
+				Body: []byte(`{"userId":"ext-unknown","userName":"name-unknown"}`),
+			},
+			ExpectStatus: []int{http.StatusNoContent, http.StatusConflict},
+		},
+		identityProviderStep("gloak-probe-idp"),
+		Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "/admin/realms/master/users/{{user_id}}/federated-identity/gloak-probe-idp",
+				Headers: map[string]string{
+					"Authorization": "Bearer {{access_token}}",
+					"Content-Type":  "application/json",
+				},
+				Body: []byte(`{"userId":"ext-known","userName":"name-known"}`),
+			},
+			ExpectStatus: []int{http.StatusNoContent, http.StatusConflict},
+		},
+	)
+	return f
+}
+
+// federatedIdentitySpareFixture is one user with one visible link, for the
+// delete. It registers its own provider alias so that it does not depend on
+// whether federatedIdentityFixture has run.
+func federatedIdentitySpareFixture() Fixture {
+	f := userFixture("gloak-probe-fi-spare")
+	f.Steps = append(f.Steps,
+		identityProviderStep("gloak-probe-idp-spare"),
+		Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "/admin/realms/master/users/{{user_id}}/federated-identity/gloak-probe-idp-spare",
+				Headers: map[string]string{
+					"Authorization": "Bearer {{access_token}}",
+					"Content-Type":  "application/json",
+				},
+				Body: []byte(`{"userId":"ext-spare","userName":"name-spare"}`),
+			},
+			ExpectStatus: []int{http.StatusNoContent, http.StatusConflict},
+		},
+	)
+	return f
+}
+
+// identityProviderStep registers one oidc identity provider in master under the
+// given alias, idempotently.
+func identityProviderStep(alias string) Step {
+	return Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/identity-provider/instances",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			// The clientId here is the **remote** provider's, not a Keycloak
+			// client's, and it still carries the probe prefix:
+			// TestEveryCreatedObjectCarriesTheProbePrefix reads the key and
+			// cannot tell the two apart, and a convention that has to be
+			// reasoned about at every call site is one that will be broken.
+			Body: []byte(`{"alias":"` + alias + `","providerId":"oidc","enabled":true,` +
+				`"config":{"clientId":"gloak-probe-idp-client","clientSecret":"s",` +
+				`"authorizationUrl":"https://idp.example.com/auth",` +
+				`"tokenUrl":"https://idp.example.com/token"}}`),
+		},
+		ExpectStatus: idempotentCreate,
+	}
+}
+
+// The three client ids the cluster-node fixtures create their clients with.
+// They are literals rather than captures because three of the six cases in the
+// family share one fixture, and a create that has already run answers 409 with
+// no Location for the second case to read.
+const (
+	probeNodeBareID = "c10adf00-0000-4000-8000-000000000001"
+	probeNodeOneID  = "c10adf00-0000-4000-8000-000000000002"
+	probeNodeDelID  = "c10adf00-0000-4000-8000-000000000003"
+)
+
+// clientNodeFixture creates a client with a known id and, when node is
+// non-empty, registers one cluster node on it.
+//
+// The node's name is a parameter because the two cases that read their client
+// back would otherwise have goldens that depend on whether the other had run.
+//
+// **The creation body is chosen so the representation is reproducible**, which
+// is what makes admin/clients/nodes-registered the first golden in this tree to
+// hold a *created* client's representation rather than a bootstrapped one:
+//
+//   - `publicClient` true, so there is no `secret` and no
+//     `client.secret.creation.time` - both of which are per-recording values
+//     the first recording of this family put into the golden unmasked;
+//   - `defaultClientScopes` named, even though it is empty, because a client
+//     inherits the realm's two sets only when it names **neither** - and the
+//     realm's sets are written by the client-scope fixtures, so an inheriting
+//     client's lists depend on catalogue order.
+func clientNodeFixture(uuid, clientID, node string) Fixture {
+	f := Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"id":"` + uuid + `","clientId":"` + clientID + `",` +
+						`"enabled":true,"publicClient":true,"defaultClientScopes":[]}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+		},
+	}
+	if node == "" {
+		return f
+	}
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/" + uuid + "/nodes",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"node":"` + node + `"}`),
 		},
 	})
 	return f

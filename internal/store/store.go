@@ -623,6 +623,17 @@ type ClientRepo interface {
 	// in one realm carrying a mapper id already in use in another is a 409, so
 	// the uniqueness is server-wide. See HoldsProtocolMapper.
 	ProtocolMapperOwner(ctx context.Context, mapperID string) (string, error)
+
+	// RegisterNode records a cluster node against a client, upserting on the
+	// node's name. Upserting rather than conflicting is measured: registering
+	// one name twice answers 204 both times and leaves one entry, whose
+	// timestamp is the second registration's.
+	RegisterNode(ctx context.Context, clientID, node string, at int64) error
+	// UnregisterNode removes one. It reports ErrNotFound for a node that is
+	// not registered, which is the measured
+	// `404 {"error":"Client does not have node "}` - and unlike the client
+	// scope detaches beside it, that 404 is real rather than a silent 204.
+	UnregisterNode(ctx context.Context, clientID, node string) error
 }
 
 // ClientScopeRepo stores a realm's client scopes and the two membership sets
@@ -718,6 +729,21 @@ type UserRepo interface {
 	// The hash is not among them: nothing but a reset-password may change it,
 	// and that goes through SetCredential.
 	UpdateCredential(ctx context.Context, c *model.Credential) error
+
+	// ListFederatedIdentities returns a user's identity provider links in
+	// **insertion order**, which is measured and is why the table carries a
+	// sequence column. It returns every stored link, including ones naming an
+	// alias the realm has no provider for: the filter that hides those is the
+	// listing endpoint's and lives in internal/admin, because the two writes
+	// beside it do not apply it.
+	ListFederatedIdentities(ctx context.Context, realmID, userID string) ([]model.FederatedIdentity, error)
+	// LinkFederatedIdentity stores one. It reports ErrConflict when the user
+	// already holds a link to that alias, which is the measured
+	// `409 {"errorMessage":"User is already linked with provider"}`.
+	LinkFederatedIdentity(ctx context.Context, realmID, userID string, fi model.FederatedIdentity) error
+	// UnlinkFederatedIdentity removes one, reporting ErrNotFound when there is
+	// none - the measured `404 {"error":"Link not found"}`.
+	UnlinkFederatedIdentity(ctx context.Context, realmID, userID, provider string) error
 }
 
 // GroupRepo is the group tree and the users in it.
