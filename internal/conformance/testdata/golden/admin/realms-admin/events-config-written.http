@@ -1,0 +1,12 @@
+# GET /admin/realms/gloak-probe-events/events/config
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"eventsEnabled":true,"eventsExpiration":900,"eventsListeners":["jboss-logging","email"],"enabledEventTypes":["LOGOUT","REGISTER","LOGIN"],"adminEventsEnabled":true,"adminEventsDetailsEnabled":true}

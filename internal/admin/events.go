@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/url"
 	"slices"
@@ -211,7 +210,13 @@ func (h *handler) updateEventsConfig(w http.ResponseWriter, r *http.Request, rc 
 	if !requireJSONBody(w, r) {
 		return
 	}
-	body, err := io.ReadAll(r.Body)
+	// readRequestBody rather than io.ReadAll: the conformance verifier hands the
+	// handler a request whose Body is **nil** for a case that sends none, where
+	// net/http's server never does. The measured "no body at all" case is the
+	// only one that reaches it, so io.ReadAll here panicked on exactly the case
+	// this endpoint most needed - which is how localization.go found the same
+	// thing, also on the run that recorded its goldens.
+	body, err := readRequestBody(r)
 	if err != nil {
 		writeEventsConfigNoBody(w)
 		return
