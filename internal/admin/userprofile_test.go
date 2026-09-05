@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/ekalinin/gloak/internal/model"
@@ -97,12 +98,15 @@ func TestTheBuiltInUserProfileIsAlreadyCanonical(t *testing.T) {
 }
 
 // TestARealmWithNoUserProfileComponentAnswersTheBuiltInDefault is the second
-// cell, and the two differ: the default carries `"required":{"roles":["user"]}`
-// on email, firstName and lastName where master's component carries no
-// `required` at all.
+// cell, and the two differ in exactly one measured way: the default carries
+// `"required":{"roles":["user"]}` on email, firstName and lastName where
+// master's component carries no `required` at all.
 //
-// A handler falling back on bootstrap's seed instead would answer master's
-// bytes here and be wrong in a way no golden on master could see.
+// **The assertion is that difference and not the constant.** Comparing the
+// response against `defaultUserProfile` is a tautology - the constant is on
+// both sides, so a mutation that rewrites it passes - and this test was written
+// that way first and survived exactly that mutation. What is asserted here is a
+// property of the pair, which no single-sided edit can satisfy.
 func TestARealmWithNoUserProfileComponentAnswersTheBuiltInDefault(t *testing.T) {
 	h, _, _ := newServer(t)
 	admin := adminToken(t, h)
@@ -116,12 +120,26 @@ func TestARealmWithNoUserProfileComponentAnswersTheBuiltInDefault(t *testing.T) 
 	if w.Code != http.StatusOK {
 		t.Fatalf("GET profile: %d %s", w.Code, w.Body)
 	}
-	if got := w.Body.String(); got != defaultUserProfile {
-		t.Errorf("a created realm's profile:\n got %s\nwant %s", got, defaultUserProfile)
-	}
+	created := w.Body.String()
 	master := get(t, h, userProfilePath, admin).Body.String()
-	if master == w.Body.String() {
-		t.Errorf("master and a created realm answer the same profile; they were measured differing")
+
+	if created == master {
+		t.Fatalf("master and a created realm answer the same profile; they were measured differing:\n%s", created)
+	}
+	// Three `required` blocks in the created realm's and none in master's,
+	// which is the whole of the measured difference.
+	if got := strings.Count(created, `"required":{"roles":["user"]}`); got != 3 {
+		t.Errorf("a created realm's profile has %d required blocks, want 3:\n%s", got, created)
+	}
+	if strings.Contains(master, `"required"`) {
+		t.Errorf("master's profile carries a required block:\n%s", master)
+	}
+	// And the four attributes are the same four, so the difference really is
+	// the required blocks rather than a different attribute set.
+	for _, name := range []string{"username", "email", "firstName", "lastName"} {
+		if !strings.Contains(created, `"name":"`+name+`"`) || !strings.Contains(master, `"name":"`+name+`"`) {
+			t.Errorf("%s is missing from one of the two profiles", name)
+		}
 	}
 }
 
