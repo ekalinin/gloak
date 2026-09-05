@@ -71,26 +71,35 @@ var eventsReadRoles = []string{"view-events", "manage-events"}
 
 var eventsWriteRoles = []string{"manage-events"}
 
-// knownEventListeners is what `eventsListeners` will accept, and there are three
-// answers rather than two.
+// knownEventListeners and globalEventListeners are what `eventsListeners` will
+// accept, and there are **two different 400s** rather than one.
 //
 // `GET /admin/serverinfo` reports three `eventsListener` providers on a default
-// 26.7.1 - `email`, `jboss-logging` and `workflow-event-listener` - and a name
-// outside that set is `400 {"error":"Unknown event listener"}`. But
-// `workflow-event-listener` is **accepted and then dropped**: a `PUT` naming all
-// three read back as `["jboss-logging","email"]`. So the three states are
-// refused-with-400, stored, and silently discarded, and only the last two look
-// alike from outside.
+// 26.7.1. A name outside those three is
+// `400 {"error":"Unknown event listener"}`; `workflow-event-listener`, which is
+// one of the three, is
+// `400 {"error":"Global event listeners not allowed in realm specific
+// configuration"}`. Only `email` and `jboss-logging` can be stored.
+//
+// The two refusals are decided **per entry in array order**: a list naming an
+// unknown name and then the global one answers the first sentence and the
+// reverse order answers the second, so it is one pass with two tests and not two
+// passes. Measured on a created realm and on master, which agree.
+//
+// (This pair read `workflow-event-listener` as "accepted and silently dropped"
+// until the fixture for this chapter refused to take. The probe that said so had
+// `curl -o /dev/null` with no `-w`, so it never saw the 400 and read the
+// unchanged config as a drop. **Never pipe a probe anywhere without reading its
+// own status code** - which is the same rule this repository already has for
+// `go test`.)
 var knownEventListeners = map[string]bool{
 	"email":                   true,
 	"jboss-logging":           true,
 	"workflow-event-listener": true,
 }
 
-// storedEventListeners is the subset of the above that a realm actually keeps.
-var storedEventListeners = map[string]bool{
-	"email":         true,
-	"jboss-logging": true,
+var globalEventListeners = map[string]bool{
+	"workflow-event-listener": true,
 }
 
 // realmEventsConfig is the body `GET /admin/realms/{realm}/events/config`
@@ -235,6 +244,11 @@ func (h *handler) updateEventsConfig(w http.ResponseWriter, r *http.Request, rc 
 				httpx.WriteMessageError(w, http.StatusBadRequest, "Unknown event listener")
 				return
 			}
+			if globalEventListeners[name] {
+				httpx.WriteMessageError(w, http.StatusBadRequest,
+					"Global event listeners not allowed in realm specific configuration")
+				return
+			}
 		}
 	}
 
@@ -264,18 +278,18 @@ func applyEventsConfig(rep *realmRepresentation, upd *realmEventsConfigUpdate) {
 		rep.EventsExpiration = &v
 	}
 	if upd.EventsListeners != nil {
-		// `workflow-event-listener` passes the validation above and is dropped
-		// here, which is the third of the three answers this field has. Both
-		// lists are Java sets, so a repeated name collapses; the *order* they
-		// come back in is decodeRealmSettings' job, because two routes write
-		// this state and only one reader serves it.
-		rep.EventsListeners = uniqueStrings(*upd.EventsListeners, storedEventListeners)
+		// Both lists are Java sets, so a repeated name collapses - measured,
+		// ["email","email"] stores one. The *order* they come back in is
+		// decodeRealmSettings' job, because two routes write this state and one
+		// reader serves it.
+		rep.EventsListeners = uniqueStrings(*upd.EventsListeners)
 	}
 	if upd.EnabledEventTypes != nil {
-		// An unknown name is stored as it stands - the list is never validated,
-		// measured: {"enabledEventTypes":["NOT_A_TYPE"]} is a 204 and reads back
-		// holding it.
-		rep.EnabledEventTypes = uniqueStrings(*upd.EnabledEventTypes, nil)
+		// An unknown name is stored as it stands - this list is never validated
+		// where eventsListeners beside it is twice over. Measured:
+		// {"enabledEventTypes":["NOT_A_TYPE"]} is a 204 and reads back holding
+		// it.
+		rep.EnabledEventTypes = uniqueStrings(*upd.EnabledEventTypes)
 	}
 	if upd.AdminEventsEnabled != nil {
 		rep.AdminEventsEnabled = *upd.AdminEventsEnabled
@@ -285,16 +299,12 @@ func applyEventsConfig(rep *realmRepresentation, upd *realmEventsConfigUpdate) {
 	}
 }
 
-// uniqueStrings collapses a list into the set a Java HashSet would hold, keeping
-// only the names keep admits when keep is not nil. The result is never nil, so
-// an empty list marshals as `[]` rather than as null - which is the reading
-// `eventsListeners` has and `enabledEventTypes` does not.
-func uniqueStrings(in []string, keep map[string]bool) []string {
+// uniqueStrings collapses a list into the set a Java HashSet would hold. The
+// result is never nil, so an empty list marshals as `[]` rather than as null -
+// which is the reading `eventsListeners` has and `enabledEventTypes` does not.
+func uniqueStrings(in []string) []string {
 	out := make([]string, 0, len(in))
 	for _, name := range in {
-		if keep != nil && !keep[name] {
-			continue
-		}
 		if !slices.Contains(out, name) {
 			out = append(out, name)
 		}

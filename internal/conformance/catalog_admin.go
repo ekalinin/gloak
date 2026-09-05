@@ -17538,4 +17538,445 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 	},
+
+	// The events family, six operations on three paths, measured 2026-09-04
+	// against a live 26.7.1. See
+	// docs/superpowers/plans/2026-09-04-events-family.md.
+	//
+	// **Two of the six answer `[]` and mean it**, and the reason is different on
+	// each: a user event is written by internal/oidc's login path, and an admin
+	// event needs a measured (operationType, resourceType, resourcePath,
+	// representation) quadruple for each of internal/admin's 152 write routes.
+	// The listing cases below are honest about that rather than quiet - the
+	// parameter rejections are real behaviour about the request, and the empty
+	// body is real behaviour about a realm whose flags are off, which is every
+	// realm a default install has.
+	{
+		// A realm that has never been written. Five keys, no eventsExpiration,
+		// and 103 of the enumeration's 132 event types in declaration order -
+		// byte-identical on master and on a created realm, cmp-verified.
+		//
+		// The realm representation one path segment away serves
+		// `enabledEventTypes: []` for this same stored state. One value, two
+		// views, and this is the cell where they disagree.
+		ID: "admin/realms-admin/events-config",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get the events provider configuration",
+			Retrieved: "2026-09-04",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/events/config",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/events/config",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The same read on a realm written away from every default, which is
+		// what makes four rules assertable in one body: eventsExpiration is
+		// present because it is not zero, both lists come back in a Java
+		// HashSet's order rather than the request's, and a non-empty
+		// enabledEventTypes is served as it stands where the empty one above is
+		// served as the 103 defaults.
+		//
+		// Nothing is masked. The fixture's PUT sends `email, jboss-logging` and
+		// `LOGIN, LOGOUT, REGISTER`; this asserts `jboss-logging, email` and
+		// `LOGOUT, REGISTER, LOGIN`, which is the order javamap.KeyOrder
+		// computes and is measured reproducible from both insertion orders of
+		// each set.
+		ID: "admin/realms-admin/events-config-written",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get the events provider configuration, written",
+			Retrieved: "2026-09-04",
+		},
+		Status:  Implemented,
+		Fixture: "events-config",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-events/events/config",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The 204 carries X-Frame-Options because the request declares
+		// application/json, where the two deletes below carry no Content-Type
+		// and do not. Same family, same status, opposite answers, decided by the
+		// request.
+		ID: "admin/realms-admin/events-config-update",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: update the events provider configuration",
+			Retrieved: "2026-09-04",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/events/config",
+		Fixture:   "events-config",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-events/events/config",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"eventsEnabled":true,"adminEventsEnabled":true}`),
+		},
+		AssertHeaders:       []string{"X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type"},
+	},
+	{
+		// The fifteenth strict JSON decoder, and it reports a line and a column
+		// - which is the question AGENTS.md's strict-decoder bullet is still
+		// asking of two other families.
+		ID: "admin/realms-admin/events-config-unknown-field",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: update the events provider configuration, unknown field",
+			Retrieved: "2026-09-04",
+		},
+		Status:  Implemented,
+		Fixture: "events-config",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-events/events/config",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"zz":1}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// One of the field's **two** 400s. An unregistered name is
+		// `Unknown event listener`; `workflow-event-listener`, which the server
+		// does register, is the other sentence. A list holding both answers
+		// about whichever comes first in the array.
+		ID: "admin/realms-admin/events-config-unknown-listener",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: update the events provider configuration, unknown listener",
+			Retrieved: "2026-09-04",
+		},
+		Status:  Implemented,
+		Fixture: "events-config",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-events/events/config",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"eventsListeners":["nope"]}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The other one, and the pair is why this field does not get a single
+		// validation helper. `workflow-event-listener` is a registered provider,
+		// so it is not the sentence above; it is global, so a realm may not name
+		// it at all.
+		ID: "admin/realms-admin/events-config-global-listener",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: update the events provider configuration, global listener",
+			Retrieved: "2026-09-04",
+		},
+		Status:  Implemented,
+		Fixture: "events-config",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-events/events/config",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"eventsListeners":["jboss-logging","workflow-event-listener"]}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// An empty body is a 500 here as it is on PUT /admin/realms/{realm}, and
+		// a literal `null` is the same 500 - which is why the handler tests for
+		// both before decoding rather than letting encoding/json accept the
+		// second silently.
+		ID: "admin/realms-admin/events-config-no-body",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: update the events provider configuration, no body",
+			Retrieved: "2026-09-04",
+		},
+		Status:  Implemented,
+		Fixture: "events-config",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-events/events/config",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// text/plain is the 415. An **absent** Content-Type is a 204, which is
+		// the opposite of what the first hand probe of this endpoint reported:
+		// it used `curl -d`, which supplies application/x-www-form-urlencoded of
+		// its own accord and is itself a 415.
+		ID: "admin/realms-admin/events-config-wrong-content-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: update the events provider configuration, wrong content type",
+			Retrieved: "2026-09-04",
+		},
+		Status:  Implemented,
+		Fixture: "events-config",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-events/events/config",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "text/plain",
+			},
+			Body: []byte(`{"eventsEnabled":true}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// `[]`, and it is the whole state Gloak can reach. It is also what
+		// Keycloak answers on any realm whose eventsEnabled is off, which is
+		// every realm a default install has - so this golden is byte-exact
+		// rather than a stand-in, and the divergence lives one flag away.
+		ID: "admin/realms-admin/events-empty",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get events",
+			Retrieved: "2026-09-04",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/events",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/events",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		ID: "admin/realms-admin/admin-events-empty",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get admin events",
+			Retrieved: "2026-09-04",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/admin-events",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/admin-events",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// **A malformed integer bound is answered before the caller's role.** A
+		// caller holding no admin role gets this 404 where the same request
+		// without the bound gets a 403, and every other bad parameter on this
+		// route gets that caller a 403 too - so one parameter binds ahead of
+		// authorization and seven do not. These two listings are the sixth and
+		// seventh producers of the generic 404 from a bad bound.
+		ID: "admin/realms-admin/events-malformed-bound",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get events, malformed bound",
+			Retrieved: "2026-09-04",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/events",
+			Query:   map[string]string{"first": "abc"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The sentence names `'dateFrom'` in quotes, and the accepted forms are
+		// `yyyy-MM-dd` strictly - `2020-1-1` is this 400 - or a non-negative run
+		// of digits.
+		ID: "admin/realms-admin/events-malformed-date",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get events, malformed date",
+			Retrieved: "2026-09-04",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/events",
+			Query:   map[string]string{"dateFrom": "x"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The message names a parameter the query string does not have**: the
+		// key is `direction` and the sentence says `sortDirection`. It is also
+		// case-sensitive, so `DESC` is this 400 and `desc` is a 200.
+		ID: "admin/realms-admin/events-bad-direction",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get events, bad direction",
+			Retrieved: "2026-09-04",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/events",
+			Query:   map[string]string{"direction": "DESC"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// An unknown enumeration member is a **500**, where every other bad
+		// parameter on this route is a 400 or a 404. Keycloak's own defect,
+		// reproduced, and it needs the whole 132-name enumeration to reproduce:
+		// `type=LOGIN` is a 200 and `type=login` is this.
+		ID: "admin/realms-admin/events-unknown-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get events, unknown type",
+			Retrieved: "2026-09-04",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/events",
+			Query:   map[string]string{"type": "NOT_A_TYPE"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The same 500 on the other listing's own enumeration, which is a
+		// different set of 39 names. One case each, because a shared validator
+		// checking one enumeration for both would pass this and fail the one
+		// above.
+		ID: "admin/realms-admin/admin-events-unknown-resource-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get admin events, unknown resource type",
+			Retrieved: "2026-09-04",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/admin-events",
+			Query:   map[string]string{"resourceTypes": "NOT_A_RESOURCE"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// A well-formed filtered read, so the two 500s above are known to be
+		// about the value and not about the parameter existing.
+		ID: "admin/realms-admin/admin-events-filtered",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get admin events, filtered",
+			Retrieved: "2026-09-04",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/admin/realms/master/admin-events",
+			Query: map[string]string{
+				"operationTypes": "CREATE", "resourceTypes": "REALM",
+				"first": "0", "max": "10", "direction": "desc",
+			},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The 204 sends **no** Cache-Control and **no** X-Frame-Options, the
+		// second because the request declares no Content-Type. The config PUT
+		// above is the other way round on that header for that reason alone.
+		ID: "admin/realms-admin/events-clear",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: delete all events",
+			Retrieved: "2026-09-04",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/events",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/events",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type", "X-Frame-Options"},
+	},
+	{
+		ID: "admin/realms-admin/admin-events-clear",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: delete all admin events",
+			Retrieved: "2026-09-04",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/admin-events",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/admin-events",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"Cache-Control", "Content-Type", "X-Frame-Options"},
+	},
+	{
+		// The realm is resolved before anything else on this family, malformed
+		// bound or not - and its 404 has the full stop the protocol side's does
+		// not.
+		ID: "admin/realms-admin/events-config-unknown-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get the events provider configuration, unknown realm",
+			Retrieved: "2026-09-04",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-no-such-realm/events/config",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
 }

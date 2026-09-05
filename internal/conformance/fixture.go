@@ -1406,6 +1406,10 @@ var Fixtures = map[string]Fixture{
 	// pair, because that is the state whose example token this project can
 	// check against a second install.
 	"evaluate-scopes": evaluateScopesFixture(),
+
+	// The events family. Its own realm, because the config read has to assert
+	// values no default realm carries and master's realm goldens would see them.
+	"events-config": eventsConfigFixture(),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -7023,4 +7027,55 @@ func evaluateScopesFixture() Fixture {
 			},
 		},
 	}
+}
+
+// eventsConfigRealm is the realm the events config cases write in, and the name
+// carries a warning: **no case may read this realm's `/admin-events`.** The
+// fixture below turns adminEventsEnabled on so the config read asserts a
+// non-default value for both admin flags, and Keycloak records an admin event
+// for every one of the fixture's own writes in consequence - which Gloak does
+// not, and which is exactly the divergence this chapter declares. A listing case
+// pointed here would be measuring that divergence instead of the listing.
+const eventsConfigRealm = "gloak-probe-events"
+
+// eventsConfigFixture builds a realm whose events config is written away from
+// every default, so that one golden asserts four measured rules at once.
+//
+// The body it sends and what comes back are not the same bytes, and each
+// difference is a rule:
+//
+//   - `eventsListeners` goes in `email, jboss-logging` and comes back
+//     `jboss-logging, email` - a Java HashSet's order, javamap.KeyOrder's, and
+//     not the request's.
+//   - `enabledEventTypes` goes in `LOGIN, LOGOUT, REGISTER` and comes back
+//     `LOGOUT, REGISTER, LOGIN`, the same rule on a second list.
+//   - `eventsExpiration` is 900 and therefore present, where a realm that has
+//     never been written has no such key at all.
+//   - a non-empty `enabledEventTypes` is served as it stands, where the empty
+//     one every default realm has is served as the 103 defaults.
+//
+// `workflow-event-listener` is deliberately **not** in the list. It is one of
+// the three providers the server reports and it is refused with its own 400,
+// which is what this fixture found out the hard way.
+//
+// Re-running it is idempotent: the realm create carries idempotentCreate and the
+// PUT is a straight overwrite, measured answering 204 and the identical read
+// twice running.
+func eventsConfigFixture() Fixture {
+	f := realmFixture(eventsConfigRealm)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/" + eventsConfigRealm + "/events/config",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"eventsEnabled":true,"eventsExpiration":900,` +
+				`"eventsListeners":["email","jboss-logging"],` +
+				`"enabledEventTypes":["LOGIN","LOGOUT","REGISTER"],` +
+				`"adminEventsEnabled":true,"adminEventsDetailsEnabled":true}`),
+		},
+	})
+	return f
 }

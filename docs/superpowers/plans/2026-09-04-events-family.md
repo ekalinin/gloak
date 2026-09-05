@@ -227,12 +227,22 @@ stored - `{"enabledEventTypes":["NOT_A_TYPE"]}` is a 204 and reads back
 listener"}`. Two neighbouring array fields, opposite readings of empty and
 opposite validation.
 
-A third listener state exists: `workflow-event-listener` is registered - it is
-one of the three `eventsListener` providers `GET /admin/serverinfo` reports - so
-it is not the 400, and it is **silently dropped** rather than stored.
-`["jboss-logging","email","workflow-event-listener"]` reads back as
-`["jboss-logging","email"]`. Accepted-and-stored, accepted-and-dropped,
-refused-with-400: three answers, and only the first two look alike.
+**The listener field has two different 400s.** `workflow-event-listener` is one
+of the three `eventsListener` providers `GET /admin/serverinfo` reports, so it is
+not the unknown-name sentence; it is
+`400 {"error":"Global event listeners not allowed in realm specific
+configuration"}`. Only `email` and `jboss-logging` can be stored. A list holding
+both an unknown name and the global one answers about **whichever comes first in
+the array**, so it is one pass with two tests. Measured on a created realm and on
+`master`, which agree.
+
+**This bullet said the global listener was "accepted and silently dropped" for
+most of this cut, and it was wrong.** The probe that said so ran
+`curl -o /dev/null` with no `-w`, so it never saw the 400 and read the unchanged
+config as evidence of a drop. It was caught by the conformance fixture refusing
+to take, three steps later. **A probe that does not read its own status code is
+the `go test` rule wearing different clothes**, and this is the second time in
+one cut that a `curl` default has been the variable rather than the server.
 
 **Both lists come back in `javamap.KeyOrder`'s order and it is reproducible.**
 Every set was written in both of two insertion orders and read back identically:
@@ -329,7 +339,9 @@ malformed  {                   400 {"error":"invalid_request","error_description
 an array   []                  400 {"error":"unknown_error","error_description":"Cannot parse the JSON"}
 unknown field                  400 {"error":"Invalid json representation for RealmEventsConfigRepresentation. Unrecognized field \"zz\" at line 1 column 8."}
 wrong JSON type for a value    400 {"error":"unknown_error","error_description":"Cannot parse the JSON"}
-unknown eventsListeners entry  400 {"error":"Unknown event listener"}
+unregistered eventsListeners entry
+                               400 {"error":"Unknown event listener"}
+a global eventsListeners entry 400 {"error":"Global event listeners not allowed in realm specific configuration"}
 unknown enabledEventTypes entry 204, stored
 ```
 

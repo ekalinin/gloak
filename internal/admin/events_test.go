@@ -230,40 +230,54 @@ func TestTheTwoEventListsReadEmptyInOppositeDirections(t *testing.T) {
 	}
 }
 
-// TestEventListenersHaveThreeAnswers pins the field that looks like a two-state
-// validation and is not.
+// TestEventListenersHaveTwoRefusals pins the field that looks like one
+// validation and is two, decided per entry in the array's own order.
 //
-// An unregistered name is a 400, `email` and `jboss-logging` are stored, and
+// An unregistered name is `Unknown event listener`;
 // `workflow-event-listener` - which GET /admin/serverinfo does report as a
-// provider - is accepted and silently dropped. And a refused name leaves nothing
-// written: the same body without it turns eventsEnabled on.
-func TestEventListenersHaveThreeAnswers(t *testing.T) {
+// provider - is `Global event listeners not allowed in realm specific
+// configuration`. A list holding both answers about whichever comes first.
+//
+// **Neither refusal writes anything**: the same body without the bad entry turns
+// eventsEnabled on, which is the control that makes the assertion mean
+// something.
+func TestEventListenersHaveTwoRefusals(t *testing.T) {
 	h, _, _ := newServer(t)
 	admin := adminToken(t, h)
 
-	w := send(t, h, http.MethodPut, eventsConfigPath, admin,
-		`{"eventsEnabled":true,"eventsListeners":["nope"]}`)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("unknown listener: %d %s", w.Code, w.Body)
-	}
-	if got := strings.TrimSpace(w.Body.String()); got != `{"error":"Unknown event listener"}` {
-		t.Errorf("body %s", got)
-	}
-	if eventsConfigOfRealm(t, h, admin)["eventsEnabled"] != false {
-		t.Error("the refused write turned eventsEnabled on - validation must complete before anything is stored")
+	const unknown = `{"error":"Unknown event listener"}`
+	const global = `{"error":"Global event listeners not allowed in realm specific configuration"}`
+	for _, c := range []struct{ body, want string }{
+		{`{"eventsEnabled":true,"eventsListeners":["nope"]}`, unknown},
+		{`{"eventsEnabled":true,"eventsListeners":["workflow-event-listener"]}`, global},
+		{`{"eventsEnabled":true,"eventsListeners":["jboss-logging","workflow-event-listener"]}`, global},
+		{`{"eventsEnabled":true,"eventsListeners":["nope","workflow-event-listener"]}`, unknown},
+		{`{"eventsEnabled":true,"eventsListeners":["workflow-event-listener","nope"]}`, global},
+	} {
+		w := send(t, h, http.MethodPut, eventsConfigPath, admin, c.body)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("%s: %d %s, want 400", c.body, w.Code, w.Body)
+		}
+		if got := strings.TrimSpace(w.Body.String()); got != c.want {
+			t.Errorf("%s: body %s, want %s", c.body, got, c.want)
+		}
+		if eventsConfigOfRealm(t, h, admin)["eventsEnabled"] != false {
+			t.Fatalf("%s: the refused write turned eventsEnabled on - validation must complete first", c.body)
+		}
 	}
 
+	// The control, and the dedupe and the order with it.
 	if w := send(t, h, http.MethodPut, eventsConfigPath, admin,
-		`{"eventsEnabled":true,"eventsListeners":["jboss-logging","email","workflow-event-listener"]}`); w.Code != http.StatusNoContent {
-		t.Fatalf("three listeners: %d %s", w.Code, w.Body)
+		`{"eventsEnabled":true,"eventsListeners":["email","jboss-logging","email"]}`); w.Code != http.StatusNoContent {
+		t.Fatalf("two listeners: %d %s", w.Code, w.Body)
 	}
 	cfg := eventsConfigOfRealm(t, h, admin)
 	got, _ := cfg["eventsListeners"].([]any)
 	if len(got) != 2 || got[0] != "jboss-logging" || got[1] != "email" {
-		t.Errorf("got %v, want [jboss-logging email] - the third is dropped, not refused", got)
+		t.Errorf("got %v, want [jboss-logging email] - deduped and in javamap.KeyOrder's order", got)
 	}
 	if cfg["eventsEnabled"] != true {
-		t.Error("the accepted write did not land, so the probe above proves nothing")
+		t.Error("the accepted write did not land, so the refusals above prove nothing")
 	}
 }
 
