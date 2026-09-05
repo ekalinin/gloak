@@ -179,6 +179,34 @@ type Client struct {
 	// `locale`. Like a client scope's, they are **omitted** from the
 	// representation when empty rather than serialised as `[]`.
 	ProtocolMappers []ProtocolMapper
+	// RegisteredNodes is the cluster nodes `POST .../clients/{uuid}/nodes` has
+	// registered, keyed by node name, valued by the **unix second** it was
+	// registered at - ten digits, where every timestamp on the user
+	// representation is thirteen. Measured 2026-09-05.
+	//
+	// It is a Go map and therefore serialised sorted, which is the same
+	// divergence F95 records for Attributes. No measurement distinguishes the
+	// two: every node set reachable through the API is written one name at a
+	// time by the caller, so nothing in this repository has yet observed a
+	// two-element one served by Keycloak.
+	RegisteredNodes map[string]int64
+}
+
+// FederatedIdentity is a user's link to an identity provider.
+//
+// **IdentityProvider is an alias and not a reference.** The write path does not
+// check that the realm has a provider by that name - a `POST` to an unregistered
+// alias is a measured 204 - and the read path filters on it, so a link may exist
+// and be invisible. See 0034_federated_identity_and_client_node.sql.
+//
+// UserID and Username are the identity at the *other* end, not this realm's;
+// they are named for the wire's `userId` and `userName`, which are the
+// provider's values. Both may be empty, because a `POST` with the body `{}` is
+// a measured 204.
+type FederatedIdentity struct {
+	IdentityProvider string
+	UserID           string
+	Username         string
 }
 
 // User is an account within a realm.

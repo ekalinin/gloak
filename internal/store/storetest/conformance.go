@@ -3905,6 +3905,142 @@ func runComponentWritesAndInitialAccess(t *testing.T, newStore func(t *testing.T
 	})
 
 	runAuthenticationFlows(t, newStore)
+	runFederatedIdentitiesAndNodes(t, newStore)
+}
+
+// runFederatedIdentitiesAndNodes covers the two tables 0034 added. They are one
+// function because they arrived in one migration and for no other reason; they
+// share no column and no caller.
+//
+// Both halves assert an **absence** as well as a presence, because both are on
+// the wire: a user with no link serialises `[]` and a client with no node omits
+// `registeredNodes` altogether, so a driver that answered an empty map where
+// the other answered nil would change the response body without changing any
+// value in it.
+func runFederatedIdentitiesAndNodes(t *testing.T, newStore func(t *testing.T) store.Store) {
+	t.Run("federated identities keep insertion order and collide per provider", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		realm := newRealm(t, s)
+		u := &model.User{ID: model.NewID(), RealmID: realm.ID, Username: "linked", Enabled: true}
+		if err := s.Users().Create(ctx, u); err != nil {
+			t.Fatalf("Users().Create: %v", err)
+		}
+
+		if got, err := s.Users().ListFederatedIdentities(ctx, realm.ID, u.ID); err != nil || len(got) != 0 {
+			t.Fatalf("a user with no link: %v, %v", got, err)
+		}
+
+		// zeta first, alpha second. The listing must answer them that way: the
+		// order is insertion order and neither the alias nor the external id
+		// sorts to it.
+		zeta := model.FederatedIdentity{IdentityProvider: "zeta", UserID: "ext-z", Username: "name-z"}
+		alpha := model.FederatedIdentity{IdentityProvider: "alpha", UserID: "ext-a", Username: "name-a"}
+		for _, fi := range []model.FederatedIdentity{zeta, alpha} {
+			if err := s.Users().LinkFederatedIdentity(ctx, realm.ID, u.ID, fi); err != nil {
+				t.Fatalf("LinkFederatedIdentity(%s): %v", fi.IdentityProvider, err)
+			}
+		}
+		got, err := s.Users().ListFederatedIdentities(ctx, realm.ID, u.ID)
+		if err != nil {
+			t.Fatalf("ListFederatedIdentities: %v", err)
+		}
+		if !reflect.DeepEqual(got, []model.FederatedIdentity{zeta, alpha}) {
+			t.Errorf("insertion order lost: %+v", got)
+		}
+
+		// The second link to one provider is the measured 409.
+		if err := s.Users().LinkFederatedIdentity(ctx, realm.ID, u.ID,
+			model.FederatedIdentity{IdentityProvider: "zeta", UserID: "other"}); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("relinking zeta: %v, want ErrConflict", err)
+		}
+
+		// Unlinking one that is not there is the measured `Link not found`,
+		// and it is a real 404 rather than the silent 204 the client-scope
+		// detaches answer.
+		if err := s.Users().UnlinkFederatedIdentity(ctx, realm.ID, u.ID, "nosuch"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("unlinking nosuch: %v, want ErrNotFound", err)
+		}
+		if err := s.Users().UnlinkFederatedIdentity(ctx, realm.ID, u.ID, "zeta"); err != nil {
+			t.Fatalf("UnlinkFederatedIdentity: %v", err)
+		}
+		if got, err := s.Users().ListFederatedIdentities(ctx, realm.ID, u.ID); err != nil ||
+			!reflect.DeepEqual(got, []model.FederatedIdentity{alpha}) {
+			t.Errorf("after the unlink: %+v, %v", got, err)
+		}
+
+		// The links go with the user, through the schema's cascade.
+		if err := s.Users().Delete(ctx, realm.ID, u.ID); err != nil {
+			t.Fatalf("Users().Delete: %v", err)
+		}
+		if got, err := s.Users().ListFederatedIdentities(ctx, realm.ID, u.ID); err != nil || len(got) != 0 {
+			t.Errorf("after the user went: %+v, %v", got, err)
+		}
+	})
+
+	t.Run("a client's nodes upsert, and no node means no map at all", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		realm := newRealm(t, s)
+		c := &model.Client{ID: model.NewID(), RealmID: realm.ID, ClientID: "noded", Enabled: true}
+		if err := s.Clients().Create(ctx, c); err != nil {
+			t.Fatalf("Clients().Create: %v", err)
+		}
+
+		got, err := s.Clients().ByID(ctx, realm.ID, c.ID)
+		if err != nil {
+			t.Fatalf("ByID: %v", err)
+		}
+		if got.RegisteredNodes != nil {
+			t.Errorf("a client with no node: %v, want nil", got.RegisteredNodes)
+		}
+
+		if err := s.Clients().RegisterNode(ctx, c.ID, "n1.example.com", 1788641822); err != nil {
+			t.Fatalf("RegisterNode: %v", err)
+		}
+		// The same name again is an upsert rather than a conflict, and the
+		// second timestamp is the one that survives.
+		if err := s.Clients().RegisterNode(ctx, c.ID, "n1.example.com", 1788641900); err != nil {
+			t.Fatalf("RegisterNode twice: %v", err)
+		}
+		if err := s.Clients().RegisterNode(ctx, c.ID, "n2.example.com", 1788641901); err != nil {
+			t.Fatalf("RegisterNode n2: %v", err)
+		}
+		got, err = s.Clients().ByID(ctx, realm.ID, c.ID)
+		if err != nil {
+			t.Fatalf("ByID: %v", err)
+		}
+		want := map[string]int64{"n1.example.com": 1788641900, "n2.example.com": 1788641901}
+		if !reflect.DeepEqual(got.RegisteredNodes, want) {
+			t.Errorf("nodes: %v, want %v", got.RegisteredNodes, want)
+		}
+		// The listing reads the same rows as the single read; a driver filling
+		// one and not the other is exactly the split this suite exists for.
+		list, err := s.Clients().ListByRealm(ctx, realm.ID)
+		if err != nil || len(list) != 1 || !reflect.DeepEqual(list[0].RegisteredNodes, want) {
+			t.Errorf("ListByRealm: %+v, %v", list, err)
+		}
+
+		if err := s.Clients().UnregisterNode(ctx, c.ID, "nosuch"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("unregistering nosuch: %v, want ErrNotFound", err)
+		}
+		if err := s.Clients().UnregisterNode(ctx, c.ID, "n1.example.com"); err != nil {
+			t.Fatalf("UnregisterNode: %v", err)
+		}
+		if err := s.Clients().UnregisterNode(ctx, c.ID, "n2.example.com"); err != nil {
+			t.Fatalf("UnregisterNode n2: %v", err)
+		}
+		// Back to nil rather than to an empty map, which is what keeps the key
+		// off the wire.
+		got, err = s.Clients().ByID(ctx, realm.ID, c.ID)
+		if err != nil || got.RegisteredNodes != nil {
+			t.Errorf("after both went: %v, %v", got.RegisteredNodes, err)
+		}
+
+		if err := s.Clients().Delete(ctx, realm.ID, c.ID); err != nil {
+			t.Fatalf("Clients().Delete: %v", err)
+		}
+	})
 }
 
 // runAuthenticationFlows covers the whole of AuthenticationFlowRepo: the flows,
