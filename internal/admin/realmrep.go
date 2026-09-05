@@ -131,7 +131,16 @@ type realmRepresentation struct {
 	// own key set.
 	SMTPServer map[string]string `json:"smtpServer"`
 
-	EventsEnabled               bool     `json:"eventsEnabled"`
+	EventsEnabled bool `json:"eventsEnabled"`
+	// EventsExpiration is **absent exactly when it is zero**, and a pointer for
+	// that reason rather than for the absent/empty one the display names have.
+	// Measured through GET .../events/config and GET /admin/realms/{realm}
+	// together: 900 appears on both, 0 disappears from both, and **-5 appears as
+	// -5**. A plain int with omitempty drops the negative value the server
+	// keeps, and a plain int without it emits a key neither read has.
+	//
+	// Both measured realms have it unset, so no committed golden moves.
+	EventsExpiration            *int     `json:"eventsExpiration,omitempty"`
 	EventsListeners             []string `json:"eventsListeners"`
 	EnabledEventTypes           []string `json:"enabledEventTypes"`
 	AdminEventsEnabled          bool     `json:"adminEventsEnabled"`

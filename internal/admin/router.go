@@ -122,6 +122,29 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /admin/realms/{realm}/client-policies/profiles",
 		h.guardAny(realmWriteRoles, h.updateClientProfiles))
 
+	// The events family, six operations on three paths. `events/config` is the
+	// realm representation's own state too - the same relationship the four
+	// registrations above have - but it does **not** take the realm pair:
+	// view-realm and manage-realm are 403 on all six, and the family is
+	// authorised out of view-events and manage-events, which nothing in this
+	// project had read before. See events.go.
+	//
+	// The two listings have a guard of their own because a malformed `first` or
+	// `max` is answered **before** the caller's role, where every other bad
+	// parameter on the same route is answered after it.
+	mux.HandleFunc("GET /admin/realms/{realm}/events",
+		h.guardEventsListing(h.listEvents))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/events",
+		h.guardAny(eventsWriteRoles, h.clearEvents))
+	mux.HandleFunc("GET /admin/realms/{realm}/admin-events",
+		h.guardEventsListing(h.listAdminEvents))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/admin-events",
+		h.guardAny(eventsWriteRoles, h.clearAdminEvents))
+	mux.HandleFunc("GET /admin/realms/{realm}/events/config",
+		h.guardAny(eventsReadRoles, h.readEventsConfig))
+	mux.HandleFunc("PUT /admin/realms/{realm}/events/config",
+		h.guardAny(eventsWriteRoles, h.updateEventsConfig))
+
 	// Localization, seven operations. Measured 2026-09-03; see
 	// docs/superpowers/plans/2026-09-03-realms-admin-remainder.md.
 	//
