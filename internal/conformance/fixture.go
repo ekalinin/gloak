@@ -676,6 +676,18 @@ var Fixtures = map[string]Fixture{
 		probeScopeClientSAMLID, "gloak-probe-cs-saml",
 		probeSAMLScopeID, "gloak-probe-cs-saml-scope", true),
 
+	// The certificate chapter's two fixtures. Inserted here rather than at
+	// either end of the map, which is where two branches collide.
+	//
+	// The second one uploads probeCertificatePEM, so the read that follows it
+	// asserts a certificate this repository holds as a constant rather than one
+	// the server minted. That is what makes three of this chapter's four
+	// goldens carry no mask at all.
+	"admin-token-certificate-client": certificateClientFixture(
+		probeCertificateClientID, "gloak-probe-cert"),
+	"admin-token-certificate-uploaded": certificateUploadedClientFixture(
+		probeCertificateUploadedClientID, "gloak-probe-cert-uploaded"),
+
 	// ---------------------------------------------------------------------
 	// P5 cut B: protocol mappers. Appended here rather than filed beside the
 	// client-scope fixtures above, because internal/conformance/fixture.go
@@ -6983,6 +6995,134 @@ func authFlowDeleteFixture() Fixture {
 		}),
 	)
 	return f
+}
+
+// The certificate chapter's two clients. Fixed ids, because the body's id wins
+// on POST /clients and the shared container answers a repeat create with 409.
+const (
+	probeCertificateClientID         = "ce27f000-0000-4000-8000-000000000001"
+	probeCertificateUploadedClientID = "ce27f000-0000-4000-8000-000000000002"
+)
+
+// probeCertificatePEM is the certificate the three upload cases send.
+//
+// It is one certificate a live 26.7.1 generated on 2026-09-05 through
+// POST .../certificates/jwt.credential/generate, kept verbatim. Its private key
+// went with the container that made it and is nowhere in this repository.
+//
+// **It is a constant so that the responses are.** All three upload operations
+// echo what they are given - upload-certificate answers this certificate's own
+// base64 DER, the identity-provider one answers the public key inside it - so a
+// fixed input makes a byte-exact golden with no mask at all. That is the other
+// half of F161's answer: the operations the entry files as blocked by
+// multipart/form-data are the ones whose goldens assert the most.
+//
+// The armour is sent although Keycloak accepts bare base64 too, measured, since
+// the armoured form is what a caller sends.
+const probeCertificatePEM = `-----BEGIN CERTIFICATE-----
+MIIErzCCApcCBgGgcq9MLDANBgkqhkiG9w0BAQsFADAbMRkwFwYDVQQDDBBjLW9w
+ZW5pZC1jb25uZWN0MB4XDTI2MDkwNTE3NDYyNloXDTI5MDkwNTE3NDgwNFowGzEZ
+MBcGA1UEAwwQYy1vcGVuaWQtY29ubmVjdDCCAiIwDQYJKoZIhvcNAQEBBQADggIP
+ADCCAgoCggIBAJ1098mobGTNFCJUm0XrXD1p+0wzjM2mXSuub3QUU2Ga0p8IsiTn
+3F+p40J/KbBDPhGqFyD9xPXERsjSxF5DQ5EVvX8ALjdGRpXBzV6wYBeqmZm+VS1a
+XYaQXLBNEZiNApzZy4P1ByTGPAEe+AtHl78gCKBuUIM/+2+a8fFMP3gf0Ow6Wqet
+VlP8ELPy1GviGzdUkavd4AC0brEtCZ7JWTmp7u7fu7D0K3ERfy25lPbWlsQ4Mi9O
+Vpq1OQIRp3Drc4qztA003vlbD0R3/YUYDGIB/PfyaRffBAsdZzD3QPwl6UCoIwBz
+vn0lJFZX+FVwdjNzPuJTOtYvZBplcF/BpfjG+IGsxYyFPufdJ3vNiTYus4qwJdxD
+DPveZwhQJyqjymIpYcyI0d0IXNOm1JNsRAxLin2mP2l3UQDJoOTOvjg8DhO44qDw
+4ukqHUugqZky2iEtnSPloJgNK/QOBHhgmIVHLPZGcrof8RnkBEcV7845Xw5W1sdv
+E+HmD+mzjBYk1h39MzKBojOPlA5jAEPh8DkpPsNrDjutqqrJOa96YwW5KLVWchhx
+u8WQaifN3tGcMDiO53olNJKK8IWvkL7sC+7zCwhioPznyfET7iG+5yFEsMl3QKxq
+VWOipF2WR5IJffxRqcDsMlcULiwGNeNuaBNfl/W5z21+eVQlAQuexVxNAgMBAAEw
+DQYJKoZIhvcNAQELBQADggIBABi6vbxhntiROCZNaM2F8HtGmPxNXeDozE0o+U+I
+Z7CDOVA6pNIICwPGkuNbJ1JQCSHX7VbExv0u1QBwLW1AQDhz+Da/HtQg4d0T17Q2
+zV6OqV0n+0oaMVfmAV64Z0uKRvFUM7VdU2l09iOC6h7YWHGeRcTXHbq/T97D8KWz
+0EqRxw6cmNhIxtBIFrirol/cFRMYh7zUta9kZvIvuXkCllun0mkjNA+rgzgIOLNg
++KSvpU/yLf4tC3XuBgw+IqHldDn3y9uosiDPDXo9JQRqpK7G0gUi3sds8Xk9DZrJ
+mjfO9Y3TbhMXG0xyNxJznS/oAlnZuTRhWZw4KgT57IA0cBHpZ8G4gBuKbacWT6Et
+pV++4tBrnE3K2YUua99+KXbW/Drm0HKQSlxFlrt+eqVoJrF9xUuahafPBkONggtw
+Naami0Ti6b4/csKY/i04bYXVcYj6aducFe3FhS99Z27VfZt/uVRaNbGRAOMn8zfk
+PrYH02a76pbVH9pLfGjIlZOEhSjE9ntB64P/oEyKixYycOMOnO/L3rnGbs8U2SDf
+JbTz9QSOiOdQVCb/rhlSUcbJKP+xXSo7j+C23Id6LU7YrUcy+J9vLwwf+Hu/cqkT
+cWj7+chn8y76mWX5oNf+YKLAuFl+6yrlhWSYPyQKfHwEYHhNFDs71gHPjcIzSNZy
+xGe8
+-----END CERTIFICATE-----
+`
+
+// certificateClientFixture creates one client for the certificate chapter, with
+// a fixed id so nothing has to capture from Location on the shared container.
+func certificateClientFixture(clientUUID, clientID string) Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{adminTokenStep(), {
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"id":"` + clientUUID + `","clientId":"` + clientID +
+					`","enabled":true,"protocol":"openid-connect"}`),
+			},
+			ExpectStatus: idempotentCreate,
+		}},
+	}
+}
+
+// certificateUploadedClientFixture is the same client with probeCertificatePEM
+// already uploaded, which is what lets the read beside it assert real bytes.
+func certificateUploadedClientFixture(clientUUID, clientID string) Fixture {
+	f := certificateClientFixture(clientUUID, clientID)
+	f.Steps = append(f.Steps, Step{
+		Request: certificateUploadRequest(
+			"/admin/realms/master/clients/"+clientUUID+
+				"/certificates/jwt.credential/upload-certificate",
+			"Certificate PEM", probeCertificatePEM),
+	})
+	return f
+}
+
+// certificateUploadBoundary is the multipart boundary every request in the
+// certificate family uses.
+//
+// It is a constant rather than minted per request, and that is the whole point:
+// a random boundary would put different bytes on the wire on the recorder's side
+// and the verifier's, and these three operations **echo their input**, so a
+// request that is not byte-identical produces a response that is not either.
+// It is checked against probeCertificatePEM by
+// TestCertificateBoundaryIsNotInTheBody, because a boundary occurring inside the
+// payload would split it.
+const certificateUploadBoundary = "gloakprobecertificateboundary"
+
+// certificateUploadRequest builds the multipart/form-data request the three
+// upload operations take.
+//
+// **The harness needed nothing new for this**, which is half of F161's answer.
+// Request.Body carries the encoded body and Request.Headers carries the
+// Content-Type with the boundary in it; buildRequest writes Headers last, so it
+// wins over the form encoding, and Expand only rewrites {{name}}, so any payload
+// survives it. A golden holds a *response*, and all three of these answer JSON.
+//
+// The parts are written by hand rather than through mime/multipart because the
+// order and the exact CRLFs are part of what is sent, and a writer that changed
+// its framing between Go releases would move a golden.
+func certificateUploadRequest(path, format, file string) Request {
+	var b strings.Builder
+	part := func(disposition, value string) {
+		b.WriteString("--" + certificateUploadBoundary + "\r\n")
+		b.WriteString("Content-Disposition: form-data; " + disposition + "\r\n\r\n")
+		b.WriteString(value + "\r\n")
+	}
+	part(`name="keystoreFormat"`, format)
+	part(`name="file"; filename="certificate.pem"`, file)
+	b.WriteString("--" + certificateUploadBoundary + "--\r\n")
+	return Request{
+		Method: http.MethodPost,
+		Path:   path,
+		Headers: map[string]string{
+			"Authorization": "Bearer {{access_token}}",
+			"Content-Type":  "multipart/form-data; boundary=" + certificateUploadBoundary,
+		},
+		Body: []byte(b.String()),
+	}
 }
 
 // evaluateScopesFixture captures the two ids the scope evaluator's cases need

@@ -1670,6 +1670,45 @@ func TestHTMLMaskVariesGuardCanFail(t *testing.T) {
 	}
 }
 
+// TestCertificateBoundaryIsNotInTheBody is the one thing a hand-written
+// multipart body can get wrong silently.
+//
+// A boundary occurring inside a part's payload splits it, and the server would
+// then answer about a certificate that is not the one the catalogue holds - on
+// both sides, identically, so the comparison would still pass and the golden
+// would be a contract for a request nobody meant to send. mime/multipart's own
+// writer mints a random boundary to avoid this, and a random boundary is exactly
+// what these cases cannot have: all three operations echo their input, so the
+// recorder and the verifier have to send the same bytes.
+func TestCertificateBoundaryIsNotInTheBody(t *testing.T) {
+	if !strings.Contains(probeCertificatePEM, "BEGIN CERTIFICATE") {
+		t.Fatal("probeCertificatePEM is not a certificate any more; this test is checking nothing")
+	}
+	if strings.Contains(probeCertificatePEM, certificateUploadBoundary) {
+		t.Errorf("the multipart boundary %q occurs inside probeCertificatePEM, "+
+			"so every upload case sends a truncated certificate", certificateUploadBoundary)
+	}
+	// And the assembled request really does carry the whole payload, which is
+	// the property the check above only implies.
+	r := certificateUploadRequest("/x", "Certificate PEM", probeCertificatePEM)
+	if !bytes.Contains(r.Body, []byte(probeCertificatePEM)) {
+		t.Error("the assembled multipart body does not contain the certificate whole")
+	}
+	if !strings.HasSuffix(string(r.Body), "--"+certificateUploadBoundary+"--\r\n") {
+		t.Errorf("the multipart body has no closing boundary: %q", tailOf(r.Body))
+	}
+	if ct := r.Headers["Content-Type"]; !strings.Contains(ct, certificateUploadBoundary) {
+		t.Errorf("Content-Type %q does not name the boundary the body uses", ct)
+	}
+}
+
+func tailOf(b []byte) string {
+	if len(b) > 60 {
+		return string(b[len(b)-60:])
+	}
+	return string(b)
+}
+
 // TestEveryGoldenBodyIsText sweeps the committed tree, not the diff.
 //
 // It walks testdata/golden rather than the catalogue on purpose: a golden file
