@@ -187,7 +187,8 @@ routes on the same tag that do not. All seven tails are server-minted.
 
 ```
 Could not find flow with id           GET /flows/{id}, PUT /flows/{id}
-Flow not found                        DELETE /flows/{id}, POST /flows/{alias}/copy
+Flow not found                        DELETE /flows/{id}, POST /flows/{alias}/copy,
+                                      GET /flows/{alias}/executions
 flow not found                        PUT /flows/{alias}/executions
 Illegal execution                     every /executions/{id} route, and
                                       POST /executions/{id}/config
@@ -195,10 +196,16 @@ Could not find authenticator config   all four config routes, and
                                       GET /executions/{id}/config/{id}
 ```
 
-The second and third differ **only in the case of the first letter**. AGENTS.md
-already records three pairs separated by a full stop alone; this is the first
-separated by capitalisation. It is also the first time one missing resource has
-**three** spellings decided by which route went looking.
+The second and third differ **only in the case of the first letter**, and they
+are **the same path under two verbs**. AGENTS.md already records three pairs
+separated by a full stop alone; this is the first separated by capitalisation
+and the first where one path answers two spellings depending on the verb. It is
+also the first time one missing resource has **three** spellings decided by
+which route went looking.
+
+The verb split was got wrong first: only the `PUT` was probed by hand, the
+lower-case answer was taken to belong to the path, and the golden recorded from
+the reference is what refuted it.
 
 ### The rejections that are not 404s
 
@@ -210,6 +217,9 @@ separated by capitalisation. It is also the first time one missing resource has
 | `POST /flows/{alias}/copy` with a taken `newName` | 409 `{"errorMessage":"New flow alias name already exists"}` |
 | `PUT /flows/{id}` with no alias | 409 `{"errorMessage":"Failed to update flow with empty alias name"}` |
 | `DELETE /flows/{id}` on a built-in flow | **400** `{"error":"Can't delete built in flow"}` |
+| adding an execution or a sub-flow to a built-in flow | **400**, two sentences, see below |
+| removing an execution from a built-in flow | **400** `It is illegal to remove execution from a built in flow` |
+| raising or lowering a built-in flow's execution | **400** `It is illegal to modify execution in a built in flow` |
 | `POST .../executions/execution`, unknown or absent provider | 400 `{"error":"No authentication provider found for id: <id or null>"}` |
 | `POST .../executions/execution` on an unknown flow | **400** `{"error":"Parent flow doesn't exist"}` |
 | `POST .../executions/flow` with no `type` | **500** `unknown_error` |
@@ -294,6 +304,52 @@ that `PUT /flows/{id}` renames a built-in flow (204, measured). It is asserted
 against Gloak by `TestLoginWalksTheRealmsBoundBrowserFlow`, which binds a second
 flow and watches the `execution` parameter follow.
 
+### Six things the goldens found that every hand probe had missed
+
+This is the most useful paragraph in the file. The cases were recorded against
+the reference, the verifier ran them against Gloak, and **eleven failed at
+once**. Every one of the six causes was a measurement the hand probes could not
+have made, because every hand probe wrote to a flow the probe had just created.
+
+**1. `builtIn` guards four writes on a flow's executions, not just the flow
+delete.** All four are 400 with an `error` body:
+
+```
+add an execution      It is illegal to add execution to a built in flow
+add a sub-flow        It is illegal to add sub-flow to a built in flow
+remove an execution   It is illegal to remove execution from a built in flow
+raise or lower        It is illegal to modify execution in a built in flow
+```
+
+**2. And it does not guard the fifth.** `PUT /flows/{alias}/executions` changing
+a row's `requirement` on a built-in flow is a **204**. Four refusals and one
+permission on one object, so "builtIn means read-only" is wrong by exactly that
+one - and it is the one binding B3 needs, since disabling the seeded browser
+flow's `auth-cookie` is how a caller turns SSO off without copying a flow first.
+
+**3. The built-in check runs before the provider check.** An unknown provider
+offered to a built-in flow answers about the flow, not about the provider.
+
+**4. `authenticatorConfig` is an alias in one serialisation and an id in
+another.** `GET /flows/{id}` carries `"authenticatorConfig":"review profile
+config"`; `GET /executions/{id}` carries the config's UUID. The hand probe had
+the UUID in front of it and read it as though it were an alias.
+
+**5. `GET /flows/{alias}/executions` on an unknown alias answers `Flow not
+found`**, capitalised, where the **`PUT` on the identical path** answers
+`flow not found`. Only the PUT had been probed, and the lower-case answer was
+assumed to belong to the path rather than to the verb. So the capitalisation
+pair is split by verb on one path, which is sharper than what the plan claimed.
+
+**6. `POST /flows/{alias}/copy`'s `Location` keeps the alias percent-encoded.**
+`docker%20auth`, not `docker auth`. `r.PathValue` has already decoded the
+segment, so building the header from it emits a raw space into a header value.
+
+Each of the six now has a named test and a mutation. The whole family is
+recorded twice as a result: six operations have a **refusal** case against a
+seeded flow and a **success** case against one the caller made, and the pair is
+what says the guard is on `builtIn` rather than on the route.
+
 ### Two probes that were measuring themselves
 
 **One.** An extraction that read `alias` off `GET /flows` crashed on the
@@ -341,22 +397,51 @@ Written in that file's voice, for whoever folds this cut.
   split that bullet records as unexplained, on a route family it has not seen,
   and it points the same way: the body decides, not the route and not the verb.
 
-- **One missing flow has three spellings and two of them differ only in
-  capitalisation.** `Could not find flow with id` from `GET` and `PUT
-  /flows/{id}`, `Flow not found` from `DELETE /flows/{id}` and from
-  `POST /flows/{alias}/copy`, and the lower-case **`flow not found`** from
-  `PUT /flows/{alias}/executions`. The not-found list already holds three pairs
-  separated by a full stop alone; this is the first separated by the case of a
-  letter. With `Illegal execution` and `Could not find authenticator config`
-  the list gains five.
+- **One missing flow has three spellings, and the pair that differs only in
+  capitalisation is split by verb on one path.** `Could not find flow with id`
+  from `GET` and `PUT /flows/{id}`; `Flow not found` from `DELETE /flows/{id}`,
+  from `POST /flows/{alias}/copy` **and from `GET /flows/{alias}/executions`**;
+  and the lower-case **`flow not found`** from the **`PUT` on that same
+  executions path**. The not-found list already holds three pairs separated by a
+  full stop alone; this is the first separated by the case of a letter, and the
+  first where one path answers two spellings depending on the verb. With
+  `Illegal execution` and `Could not find authenticator config` the list gains
+  five.
+
+- **`builtIn` refuses four writes on a flow's executions and permits the
+  fifth.** Adding an execution, adding a sub-flow, removing an execution and
+  both priority swaps are **400** with four different sentences - `It is illegal
+  to {add execution to, add sub-flow to, remove execution from, modify execution
+  in} a built in flow` - and the built-in check runs **before** the provider
+  check, so an unknown provider offered to a built-in flow answers about the
+  flow. But `PUT /flows/{alias}/executions` changing a row's `requirement` on
+  the same flow is a **204**. "builtIn means read-only" is wrong by exactly that
+  one, and it is the one that matters: disabling the built-in browser flow's
+  `auth-cookie` is how a caller turns SSO off without copying a flow first.
+  Every hand probe in this cut missed the whole rule, because every one of them
+  wrote to a flow it had just created; eleven conformance cases recorded against
+  the reference failed at once and that is what found it.
 
 - **A built-in flow can be renamed and cannot be deleted.** `PUT /flows/{id}`
   answers 204 on `browser` and the listing then serves the new alias; `DELETE`
   answers **400** `{"error":"Can't delete built in flow"}` - not 403, not 409,
-  apostrophe included. Only the delete looks at `builtIn`. On a realm whose
-  `browserFlow` still names the old alias that rename detaches the login from
-  its flow, which is why the destructive half of this cut was done in created
-  realms.
+  apostrophe included. Only the delete looks at the flow's own `builtIn`; the
+  four refusals above look at the **parent flow** of the row being written. On a
+  realm whose `browserFlow` still names the old alias that rename detaches the
+  login from its flow, which is why the destructive half of this cut was done in
+  created realms.
+
+- **`authenticatorConfig` is an alias in one serialisation of a row and an id in
+  another.** `GET /flows/{id}`'s nested rows carry
+  `"authenticatorConfig":"review profile config"`; `GET /executions/{id}` on the
+  same row carries the config's UUID. Same key, one route apart, two kinds of
+  value - and the flat listing carries **both**, the id under
+  `authenticationConfig` and the alias under `alias`. Reading the single read's
+  value as an alias is the mistake this cut made and a golden caught.
+
+- **`POST /flows/{alias}/copy`'s `Location` keeps the alias percent-encoded.**
+  `docker%20auth`, not `docker auth`. Go's `r.PathValue` has already decoded the
+  segment, so building the header from it puts a raw space into a header value.
 
 - **Two creates make a resource the API cannot name afterwards.**
   `POST /flows/{alias}/copy` with no `newName` is a 201 producing a top-level
@@ -432,6 +517,13 @@ one is a count that has grown.
    `auth-username-password-form` execution's row id in the realm's bound browser
    flow, which is why it is stable and why it differs between realms.
 
+6. **Neither document records that `builtIn` refuses four writes on a flow's
+   executions**, or that it permits the fifth, or that the copy's `Location`
+   keeps its alias percent-encoded, or that `authenticatorConfig` is an alias in
+   one serialisation and an id in another. All four belong in the observed
+   document under Authentication Management when this cut is folded; they are in
+   the entries above, in AGENTS.md's voice.
+
 ## Follow-up dispositions
 
 **F103 - closes.** The twenty-one are served and the model is no longer
@@ -476,9 +568,16 @@ family and the holdout is still the client. Nothing in this cut touches
 
 ## What the tests pin, and the mutation that found a survivor
 
-Fifteen mutations, one per claim, each confirming a **named** test fails, each
-reverted with the revert checked. They ran in a `git clone --no-local` of the
-worktree, because a worktree copied with `cp` shares its git dir.
+Twenty-two mutations, one per claim, each confirming a **named** test fails,
+each reverted with the revert checked. They ran in a `git clone --no-local` of
+the worktree, because a worktree copied with `cp` shares its git dir.
+
+Two of the twenty-two were re-aimed rather than counted as survivors: a mutation
+clearing `notInMaster` in the seed file changes **master**, not the created
+realm, so it belongs to `TestMasterOmitsTheOrganizationFlows` and not to its
+sibling. A mutation aimed at the wrong test reports "survived" and means
+nothing, which is the same failure as a `-run` selector naming a test in another
+package.
 
 **One survived, and it was a finding.** Disabling the seed's not-in-master guard
 on the *flow* loop alone left `TestMasterOmitsTheOrganizationFlows` passing: the
@@ -497,10 +596,19 @@ three guards together.
 Before: **451 of 541** enumerated behaviours served, 4 chapters not enumerated.
 The chapter `admin/authentication-management` read **18 of 39**.
 
-After: see the PR body, which carries the number `TestCoverage` computed rather
-than the one this section predicts. The chapter is expected to read 39 of 39 and
-the total 472 of 541, and if it reads anything else the meter is right and this
-paragraph is wrong.
+After: **472 of 541**, and the chapter reads **39 of 39**. Both numbers are what
+`TestCoverage` computed, not what the plan predicted - the plan predicted the
+same two, which is the first time in this project a parity prediction has
+matched, and it matched because the denominator is the vendored description
+rather than anything a person counted.
+
+All twenty-one landed. The boundary the plan reserved the right to draw - "fewer
+than twenty-one with a defensible boundary is the better outcome" - was not
+needed for the operations. It was needed for the *semantics*, and §1.5 of the
+plan is where it is drawn.
+
+`README.md` still says 451 in two places. It is a document this branch may not
+edit; the fold updates it, as the folds for the previous two cuts did.
 
 ## What is left undone
 
@@ -508,7 +616,16 @@ paragraph is wrong.
   addressed by its own alias is served too, because the store resolves any
   alias; whether Keycloak refuses that was not measured.
 - **`POST /executions` with a `parentFlow` naming a sub-flow** was not measured;
-  Gloak accepts it.
+  Gloak accepts it when the sub-flow is not built in.
+- **Whether the four built-in refusals also cover a *sub-flow* of a built-in
+  flow** was not measured. Gloak resolves the row's immediate parent, so a row
+  inside `forms` - itself built in - is refused; a row inside a caller-made
+  sub-flow attached to a built-in parent would be allowed. Which of the two
+  Keycloak does is unmeasured and the seed cannot produce the second case
+  without a write that is itself refused.
+- **The percent-encoding of a copy's `Location`** is measured on one alias,
+  `docker auth`, and reproduced with `url.PathEscape`. Which encoding Keycloak
+  uses for a character the two escape differently is unmeasured.
 - **The `level`/`index` walk is not measured past three levels in a *created*
   flow.** The seed reaches level 5 and is asserted; a caller nesting six deep is
   not.
