@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // idPattern keeps IDs safe to use as file paths: lowercase slug segments
@@ -1835,18 +1836,48 @@ func TestGoldenSweepCanFail(t *testing.T) {
 // failure mode this project has met six times in a fortnight. These are the
 // inputs known to differ.
 func TestGoldenTextGuardCanFail(t *testing.T) {
-	// The first eight bytes of a real JKS and a real PKCS12, taken from
-	// POST .../certificates/jwt.credential/download on a live 26.7.1 on
-	// 2026-09-05. The JKS magic is not valid UTF-8; the PKCS12 header is valid
-	// UTF-8 and carries NUL, so the two halves of the rule are each exercised by
-	// a body this repository actually declined to record.
-	jks := []byte{0xfe, 0xed, 0xfe, 0xed, 0x00, 0x00, 0x00, 0x02}
-	if err := RefuseNonTextBody(jks); err == nil {
-		t.Error("a JKS keystore was accepted as a golden body")
+	for _, tc := range refusedBodies {
+		t.Run(tc.name, func(t *testing.T) {
+			// The declared properties first. A row that claims to exercise one
+			// half and trips both is the whole reason this table exists, and it
+			// has to fail here rather than read as coverage.
+			if utf8.Valid(tc.body) == tc.invalidUTF8 {
+				t.Errorf("row claims invalidUTF8=%v and utf8.Valid says otherwise", tc.invalidUTF8)
+			}
+			if carriesControlByte(tc.body) != tc.controlByte {
+				t.Errorf("row claims controlByte=%v and its bytes say otherwise", tc.controlByte)
+			}
+			if !tc.invalidUTF8 && !tc.controlByte {
+				t.Fatal("this row trips neither half, so the guard has no reason to refuse it")
+			}
+			if err := RefuseNonTextBody(tc.body); err == nil {
+				t.Errorf("%x was accepted as a golden body", tc.body)
+			}
+		})
 	}
-	pkcs12 := []byte{0x30, 0x80, 0x02, 0x01, 0x03, 0x30, 0x80, 0x06}
-	if err := RefuseNonTextBody(pkcs12); err == nil {
-		t.Error("a PKCS12 keystore was accepted as a golden body")
+
+	// **The claim the table exists to make.** Each half of the rule needs a body
+	// that trips it *alone*, or a mutation disabling that half survives - which
+	// is exactly what happened here: the first version of this test used the two
+	// keystore magics and nothing else, and both of those are invalid UTF-8
+	// **and** carry control bytes, so neither half was pinned. Making either
+	// half unreachable left the package `ok`.
+	var onlyUTF8, onlyControl int
+	for _, tc := range refusedBodies {
+		switch {
+		case tc.invalidUTF8 && !tc.controlByte:
+			onlyUTF8++
+		case tc.controlByte && !tc.invalidUTF8:
+			onlyControl++
+		}
+	}
+	if onlyUTF8 == 0 {
+		t.Error("no refused body is invalid UTF-8 *and nothing else*, so the UTF-8 half " +
+			"of RefuseNonTextBody could be deleted and this test would still pass")
+	}
+	if onlyControl == 0 {
+		t.Error("no refused body carries a control byte *and nothing else*, so the " +
+			"control-byte half of RefuseNonTextBody could be deleted and this test would still pass")
 	}
 
 	// And the other direction, so the guard is not simply refusing everything.
@@ -1863,4 +1894,94 @@ func TestGoldenTextGuardCanFail(t *testing.T) {
 			t.Errorf("a text body was refused: %q: %v", ok, err)
 		}
 	}
+}
+
+// refusedBodies is every body RefuseNonTextBody must decline, each declaring
+// **which half of the rule its bytes trip**.
+//
+// The declaration is the point. RefuseNonTextBody is two rules - not valid
+// UTF-8, or carrying a control byte - and the UTF-8 check runs first and
+// returns, so a body tripping both proves only that *something* refused it. A
+// table of such bodies cannot say which half did the work, and each half can
+// then be deleted with the tests still green. Both were, measured.
+//
+// So the real keystore bytes stay - they are what this repository actually
+// declined to record, and they belong here - but they are labelled as tripping
+// both, and two synthetic rows carry the halves apart:
+//
+//	0xff and 0xc3 0x28   invalid UTF-8, and every byte is >= 0x20 and not 0x7f
+//	"a\x00b", "a\x7fb"   plain ASCII, so valid UTF-8, with one control byte in it
+//
+// The synthetic rows are not measurements and do not pretend to be. They are
+// the smallest inputs that separate two conditions, which is a different job
+// from recording what a server sent.
+var refusedBodies = []struct {
+	name        string
+	body        []byte
+	invalidUTF8 bool
+	controlByte bool
+}{
+	{
+		// A lone 0xff is not a lead byte in any UTF-8 sequence, and it is above
+		// 0x20 and is not 0x7f, so the control-byte loop would pass it.
+		name: "a lone 0xff, invalid UTF-8 and nothing else",
+		body: []byte{0xff}, invalidUTF8: true, controlByte: false,
+	},
+	{
+		// 0xc3 announces a two-byte sequence and 0x28 is not a continuation
+		// byte. Both are printable ASCII range or above, so again only the
+		// UTF-8 half can refuse this.
+		name: "a truncated two-byte sequence, invalid UTF-8 and nothing else",
+		body: []byte{0xc3, 0x28}, invalidUTF8: true, controlByte: false,
+	},
+	{
+		name: "a NUL between two letters, valid UTF-8 and nothing else",
+		body: []byte("a\x00b"), invalidUTF8: false, controlByte: true,
+	},
+	{
+		// DEL is the one control byte above 0x20, and it is the reason the rule
+		// says "and b != 0x7f" rather than just "b >= 0x20".
+		name: "a DEL between two letters, valid UTF-8 and nothing else",
+		body: []byte("a\x7fb"), invalidUTF8: false, controlByte: true,
+	},
+	{
+		// The first eight bytes of a real JKS, from
+		// POST .../certificates/jwt.credential/download on a live 26.7.1 on
+		// 2026-09-05. It trips **both** halves - 0xfe is not a UTF-8 lead byte
+		// and the four NULs are control bytes - so it cannot tell them apart,
+		// and that is why the rows above exist.
+		name:        "a real JKS magic, which trips both halves",
+		body:        []byte{0xfe, 0xed, 0xfe, 0xed, 0x00, 0x00, 0x00, 0x02},
+		invalidUTF8: true, controlByte: true,
+	},
+	{
+		// A real PKCS12 header from the same recording, and it trips both too.
+		// This row's comment used to say it was "valid UTF-8 and carries NUL",
+		// and **both halves of that were wrong**: 0x80 is a continuation byte
+		// with no lead byte in front of it, and there is no 0x00 anywhere in
+		// these eight bytes - 0x02, 0x01, 0x03 and 0x06 are the control bytes.
+		name:        "a real PKCS12 header, which trips both halves",
+		body:        []byte{0x30, 0x80, 0x02, 0x01, 0x03, 0x30, 0x80, 0x06},
+		invalidUTF8: true, controlByte: true,
+	},
+}
+
+// carriesControlByte is the control-byte half of RefuseNonTextBody's rule,
+// written out again so the table above can classify its own rows.
+//
+// The duplication is deliberate and narrow: it exists to check what the
+// **fixtures** are, not what the guard does. A mutation to the guard is caught
+// by the RefuseNonTextBody call beside it; this one is what stops a row from
+// quietly claiming to exercise a half it does not reach.
+func carriesControlByte(body []byte) bool {
+	for _, b := range body {
+		if b >= 0x20 && b != 0x7f {
+			continue
+		}
+		if b == '\t' || b == '\n' || b == '\r' {
+			continue
+		}
+		return true
+	}
+	return false
 }
