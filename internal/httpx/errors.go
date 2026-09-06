@@ -776,6 +776,27 @@ func SetUserinfoSecurityHeaders(w http.ResponseWriter) {
 //	application/x-www-form-urlencoded   X-Frame-Options
 //	application/json;charset=UTF-8      X-Frame-Options
 //
+// **It is an allow-list of three media types and it was written as a prefix
+// test**, which is a distinction no measurement could make until something sent
+// a fourth `application/*`. Re-swept 2026-09-06 on the same endpoint, one fresh
+// user per row so every row is really a 204, with application/json in the same
+// run as the control that differs:
+//
+//	application/json                    X-Frame-Options
+//	application/xml                     X-Frame-Options
+//	application/x-www-form-urlencoded   X-Frame-Options
+//	application/yaml                    no X-Frame-Options
+//	application/yaml;charset=UTF-8      no X-Frame-Options
+//	application/octet-stream            no X-Frame-Options
+//	application/pdf                     no X-Frame-Options
+//	application/ld+json                 no X-Frame-Options
+//
+// `application/ld+json` is what rules out a "+json suffix" reading, and the two
+// yaml rows agree with the already-recorded `application/json;charset=UTF-8`
+// that the parameters are not looked at. `PUT /workflows/{id}` is the first
+// route in this project to send `application/yaml`, and under the prefix test
+// it answered with a header Keycloak does not send.
+//
 // It holds across every 204 measured elsewhere: the client, user, realm-role
 // and credential deletes send no Content-Type and omit the header; the client
 // and user updates, reset-password and disable-credential-types send JSON and
@@ -798,10 +819,39 @@ func SetUserinfoSecurityHeaders(w http.ResponseWriter) {
 // groups.
 func WriteNoContent(w http.ResponseWriter, r *http.Request) {
 	suppressDate(w)
-	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/") {
+	if !framedRequestMediaTypes[requestMediaType(r)] {
 		w.Header().Del("X-Frame-Options")
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// framedRequestMediaTypes is the measured allow-list above: the three request
+// media types a 204 carries X-Frame-Options for. See WriteNoContent.
+var framedRequestMediaTypes = map[string]bool{
+	"application/json":                  true,
+	"application/xml":                   true,
+	"application/x-www-form-urlencoded": true,
+}
+
+// requestMediaType is the request's Content-Type with its parameters cut and
+// its case folded. `application/json;charset=UTF-8` carries the header and
+// `application/yaml;charset=UTF-8` does not, so the parameters are measured to
+// play no part; `APPLICATION/JSON` and `Application/Json` both carry it, so the
+// case does not either.
+//
+// **It does not trim, and that is measured rather than an oversight.**
+// `application/json ; charset=UTF-8`, with a space before the semicolon,
+// answers with **no** X-Frame-Options where the same value without the space
+// carries it. Jakarta's media-type parser splits on the semicolon and does not
+// strip what is left, so the subtype is the four characters `json` followed by
+// a space and matches nothing. Adding a TrimSpace here is the tidy-up that
+// makes a measured header appear where Keycloak sends none.
+func requestMediaType(r *http.Request) string {
+	ct := r.Header.Get("Content-Type")
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = ct[:i]
+	}
+	return strings.ToLower(ct)
 }
 
 // WriteBearerChallenge writes the userinfo rejection: text/plain, an empty
