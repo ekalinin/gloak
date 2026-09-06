@@ -1,0 +1,14 @@
+# GET /admin/realms/gloak-probe-wf-read/workflows/1f100000-0000-4000-8000-000000000001
+HTTP/1.1 200 OK
+Content-Type: application/yaml;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Robots-Tag: none
+
+---
+name: "gloak-probe-wf-read"
+"on": "user-created"
+steps:
+- uses: "disable-user"
+  after: "P5D"

@@ -44,7 +44,7 @@ func TestWorkflowGuardIsTheAdminRoleItselfAndNotItsComposites(t *testing.T) {
 	}
 	all, err := s.Roles().ListClientRoles(ctx, realm.ID, container.ID)
 	if err != nil {
-		t.Fatalf("ListByClient: %v", err)
+		t.Fatalf("ListClientRoles: %v", err)
 	}
 	if len(all) < 20 {
 		t.Fatalf("master-realm holds %d roles, so this is not the sweep it claims", len(all))
@@ -102,15 +102,15 @@ func TestWorkflowReadsNegotiateWithYAMLWinningTies(t *testing.T) {
 	const yaml = "application/yaml;charset=UTF-8"
 	const json = "application/json;charset=UTF-8"
 	for accept, want := range map[string]string{
-		"":                                         yaml,
-		"*/*":                                      yaml,
-		"text/html":                                yaml,
-		"text/plain":                               yaml,
-		"application/json, application/yaml":       yaml,
-		"application/yaml":                         yaml,
-		"application/json":                         json,
+		"":                                   yaml,
+		"*/*":                                yaml,
+		"text/html":                          yaml,
+		"text/plain":                         yaml,
+		"application/json, application/yaml": yaml,
+		"application/yaml":                   yaml,
+		"application/json":                   json,
 		"application/yaml;q=0.5, application/json": json,
-		"application/*":                            yaml,
+		"application/*": yaml,
 	} {
 		req := httptest.NewRequest(http.MethodGet, workflowBase, nil)
 		req.Header.Set("Authorization", "Bearer "+admin)
