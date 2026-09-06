@@ -721,12 +721,22 @@ either, because killing one would turn a question into a contract:
 | chapter | before | after |
 |---|---|---|
 | `admin/users` | 26 / 34 | 31 / 34 |
-| total | 498 / 541 | 503 / 541 |
+| total | 512 / 541 | 517 / 541 |
 
-Measured with `cmd/parity` against the merge base `087053c`, which is where this
-branch was cut. `main` moved to `74db295` while it was open and brought the
-`Workflows` tag with it; no operation is claimed by both cuts and the
-per-chapter row is unaffected, so the merged branch's increment is the same +5.
+Measured with `cmd/parity`. The branch was cut at `087053c`, where it read
+**498 → 503**; `main` moved to `74db295` while it was open and brought the
+`Workflows` tag with it, so the rebased branch reads **512 → 517**. The
+per-chapter row is the same either way: no operation is claimed by both cuts,
+and the increment is +5 against both bases.
+
+**The rebase was checked rather than trusted.** Every line this branch adds was
+compared before and after: twenty-one of the twenty-three files are byte-
+identical, and the two both cuts appended to - `catalog_admin.go` and
+`fixture.go` - keep every one of this branch's lines with main's additions as
+the only difference. The conflict in those two was three appends at the same
+three places and was resolved by taking main's file whole and re-applying this
+branch's block from `git show` rather than from the conflict markers, which is
+what made the check possible.
 
 **One recorder artefact, not committed.** `make record` on this branch produced
 a diff to `admin/clients/evaluate-scope-mappings-not-granted.http` that gained
