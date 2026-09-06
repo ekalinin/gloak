@@ -1,0 +1,9 @@
+# GET /admin/realms/gloak-probe-wf-empty/workflows
+HTTP/1.1 200 OK
+Content-Type: application/yaml;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Robots-Tag: none
+
+--- []

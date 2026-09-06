@@ -63,7 +63,72 @@ type Store interface {
 	Localizations() LocalizationRepo
 	ClientInitialAccess() ClientInitialAccessRepo
 	AuthenticationFlows() AuthenticationFlowRepo
+	Workflows() WorkflowRepo
 	Close() error
+}
+
+// WorkflowRepo stores a realm's workflows, their steps and the steps scheduled
+// against one resource.
+//
+// **It is one repository over three tables** for AuthenticationFlowRepo's
+// reason: every operation on the tag crosses at least two of them. A read
+// serves a workflow with its steps inside it, a delete takes both with it, and
+// the scheduled listing is a join from a resource back to the workflows that
+// hold the steps.
+type WorkflowRepo interface {
+	// List returns a realm's workflows **sorted by name**, byte-ascending,
+	// with each workflow's steps in insertion order. The sort is measured
+	// rather than convenient: three workflows added zzz, aaa, mmm came back
+	// aaa, mmm, zzz, which is why no conformance case masks this listing's
+	// order.
+	//
+	// The listing's `search`, `exact`, `first` and `max` are the handler's,
+	// not this method's: `search` is a case-insensitive substring and either
+	// bound alone pages, which is a third paging rule and belongs beside the
+	// measurement that says so.
+	List(ctx context.Context, realmID string) ([]*model.Workflow, error)
+	// ByID resolves one workflow inside one realm. An id that matches nothing
+	// - including one that resolves in a different realm - is ErrNotFound,
+	// which every route on this tag answers **400**
+	// `Not a valid workflow resource: <id>` rather than 404.
+	ByID(ctx context.Context, realmID, id string) (*model.Workflow, error)
+	// ByName resolves one workflow by name, which is what the create's
+	// uniqueness check needs. The measured 400 says a name is unique per
+	// realm.
+	ByName(ctx context.Context, realmID, name string) (*model.Workflow, error)
+	// Create stores a workflow and its steps. The caller mints both sets of
+	// ids: the **workflow's** id may come from the request body - a create
+	// naming `id: my-own-id` produced exactly that id and put it in Location,
+	// which is POST /clients' rule on a third endpoint - while a **step's**
+	// id in the body is measured to be ignored and replaced.
+	Create(ctx context.Context, w *model.Workflow) error
+	// Update replaces a workflow's fields and its whole step list. It is a
+	// replace rather than a merge, and the steps get fresh ids: a PUT
+	// re-measured on 26.7.1 came back with a step id that was not the one the
+	// workflow had before.
+	Update(ctx context.Context, w *model.Workflow) error
+	// Delete removes a workflow, its steps and anything scheduled from them.
+	// A missing row is ErrNotFound, which the handler answers 400 rather than
+	// 404 - a second delete of the same id is not a 204 here.
+	Delete(ctx context.Context, realmID, id string) error
+
+	// Schedule stores one activation's rows, replacing whatever that
+	// (workflow, resource) pair already had. An activation writes one row per
+	// step, so a repeat is idempotent and answers 204 either way.
+	Schedule(ctx context.Context, realmID string, rows []model.WorkflowScheduledStep) error
+	// Unschedule removes them. A resource that was never activated is not an
+	// error: the measured deactivate answers 204 before any activate.
+	Unschedule(ctx context.Context, realmID, workflowID, resourceType, resourceID string) error
+	// ScheduledFor returns every scheduled row for one resource id, whatever
+	// its type. The route takes no type, and an id that names nothing is 200
+	// with an empty array rather than a 404 - so this method resolves nothing
+	// and filters on the id alone.
+	ScheduledFor(ctx context.Context, realmID, resourceID string) ([]model.WorkflowScheduledStep, error)
+	// StepByID resolves one step by its own id, anywhere in the realm, which
+	// is what `POST /workflows/migrate` needs: its `from` and `to` are step
+	// ids and an id that resolves to nothing is the same 400 a workflow id
+	// gets.
+	StepByID(ctx context.Context, realmID, stepID string) (*model.WorkflowStep, error)
 }
 
 // AuthenticationFlowRepo stores a realm's authentication flow model: the flows,

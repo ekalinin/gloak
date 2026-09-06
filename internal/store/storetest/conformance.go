@@ -3703,6 +3703,7 @@ func runLocalizationConformance(t *testing.T, newStore func(t *testing.T) store.
 	})
 
 	runComponentWritesAndInitialAccess(t, newStore)
+	runWorkflows(t, newStore)
 }
 
 // newRealm creates one realm for a subtest that only needs somewhere to hang
@@ -4467,6 +4468,211 @@ func runAuthenticationFlows(t *testing.T, newStore func(t *testing.T) store.Stor
 		}
 		if configs, err := s.AuthenticationFlows().ListConfigs(ctx, other.ID); err != nil || len(configs) != 0 {
 			t.Errorf("after the realm went: %v, %v", configs, err)
+		}
+	})
+}
+
+// runWorkflows covers WorkflowRepo, which is one repository over three tables.
+//
+// It is a function called from RunConformance for runComponentWritesAndInitialAccess's
+// reason: a second exported entry point is a thing one driver can forget to
+// call, and this package exists to stop the two drivers diverging.
+func runWorkflows(t *testing.T, newStore func(t *testing.T) store.Store) {
+	t.Run("workflows sort by name and keep their steps in insertion order", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		realm := newRealm(t, s)
+
+		// Added zzz, aaa, mmm - the order the live 26.7.1 was probed in,
+		// which came back aaa, mmm, zzz.
+		for _, name := range []string{"zzz", "aaa", "mmm"} {
+			w := &model.Workflow{
+				ID: model.NewID(), RealmID: realm.ID, Name: name, On: "user-created",
+				Steps: []model.WorkflowStep{
+					{ID: model.NewID(), Uses: "disable-user", After: "P1D"},
+					{ID: model.NewID(), Uses: "delete-user", After: "P2D"},
+				},
+			}
+			if err := s.Workflows().Create(ctx, w); err != nil {
+				t.Fatalf("Create %s: %v", name, err)
+			}
+		}
+
+		got, err := s.Workflows().List(ctx, realm.ID)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		var names []string
+		for _, w := range got {
+			names = append(names, w.Name)
+		}
+		if strings.Join(names, ",") != "aaa,mmm,zzz" {
+			t.Errorf("listing order %v, want aaa,mmm,zzz", names)
+		}
+		if len(got[0].Steps) != 2 ||
+			got[0].Steps[0].Uses != "disable-user" || got[0].Steps[1].Uses != "delete-user" {
+			t.Errorf("steps out of insertion order: %+v", got[0].Steps)
+		}
+	})
+
+	t.Run("a workflow name is unique per realm and its id is the caller's", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		realm := newRealm(t, s)
+		other := &model.Realm{ID: model.NewID(), Name: "other", Enabled: true}
+		if err := s.Realms().Create(ctx, other); err != nil {
+			t.Fatalf("Realms().Create: %v", err)
+		}
+
+		first := &model.Workflow{ID: "chosen-id", RealmID: realm.ID, Name: "wf", On: "user-created"}
+		if err := s.Workflows().Create(ctx, first); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		err := s.Workflows().Create(ctx,
+			&model.Workflow{ID: model.NewID(), RealmID: realm.ID, Name: "wf"})
+		if !errors.Is(err, store.ErrConflict) {
+			t.Errorf("a repeated name gave %v, want ErrConflict", err)
+		}
+		// The same name in another realm is not a conflict, which is what
+		// makes the constraint (realm_id, name) rather than name.
+		if err := s.Workflows().Create(ctx,
+			&model.Workflow{ID: model.NewID(), RealmID: other.ID, Name: "wf"}); err != nil {
+			t.Errorf("the same name in another realm: %v", err)
+		}
+		// A workflow of one realm does not resolve in the other, which is
+		// the 400 the handler answers for a cross-realm id.
+		if _, err := s.Workflows().ByID(ctx, other.ID, "chosen-id"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("cross-realm ByID gave %v, want ErrNotFound", err)
+		}
+		if got, err := s.Workflows().ByName(ctx, realm.ID, "wf"); err != nil || got.ID != "chosen-id" {
+			t.Errorf("ByName: %+v, %v", got, err)
+		}
+	})
+
+	t.Run("an update replaces the step list rather than merging into it", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		realm := newRealm(t, s)
+		w := &model.Workflow{
+			ID: model.NewID(), RealmID: realm.ID, Name: "wf", On: "user-created",
+			If: "has-role", ScheduleAfter: "P1D", ScheduleBatchSize: 25,
+			CancelInProgress: "true",
+			Steps: []model.WorkflowStep{
+				{ID: model.NewID(), Uses: "disable-user", After: "P1D"},
+				{ID: model.NewID(), Uses: "delete-user", After: "P2D"},
+			},
+		}
+		if err := s.Workflows().Create(ctx, w); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+
+		w.Name = "renamed"
+		w.If = ""
+		w.ScheduleBatchSize = 0
+		w.Steps = []model.WorkflowStep{{ID: model.NewID(), Uses: "notify-user", After: "P9D"}}
+		if err := s.Workflows().Update(ctx, w); err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+
+		got, err := s.Workflows().ByID(ctx, realm.ID, w.ID)
+		if err != nil {
+			t.Fatalf("ByID: %v", err)
+		}
+		if got.Name != "renamed" || got.If != "" || got.ScheduleBatchSize != 0 ||
+			got.ScheduleAfter != "P1D" || got.CancelInProgress != "true" {
+			t.Errorf("update did not replace the fields: %+v", got)
+		}
+		if len(got.Steps) != 1 || got.Steps[0].Uses != "notify-user" {
+			t.Errorf("the old steps survived the update: %+v", got.Steps)
+		}
+
+		if err := s.Workflows().Update(ctx,
+			&model.Workflow{ID: "nope", RealmID: realm.ID, Name: "x"}); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("update of a missing workflow gave %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("a delete takes the steps and the schedule with it and refuses a repeat", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		realm := newRealm(t, s)
+		step := model.WorkflowStep{ID: model.NewID(), Uses: "disable-user", After: "P1D"}
+		w := &model.Workflow{
+			ID: model.NewID(), RealmID: realm.ID, Name: "wf", On: "user-created",
+			Steps: []model.WorkflowStep{step},
+		}
+		if err := s.Workflows().Create(ctx, w); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := s.Workflows().Schedule(ctx, realm.ID, []model.WorkflowScheduledStep{{
+			WorkflowID: w.ID, StepID: step.ID, ResourceType: "USERS",
+			ResourceID: "u1", ScheduledAt: 1, Status: "PENDING",
+		}}); err != nil {
+			t.Fatalf("Schedule: %v", err)
+		}
+
+		if err := s.Workflows().Delete(ctx, realm.ID, w.ID); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+		// **The second delete is ErrNotFound, not a success.** A repeat of
+		// the delete on a live 26.7.1 is 400, unlike every other delete in
+		// this API that answers 204 twice.
+		if err := s.Workflows().Delete(ctx, realm.ID, w.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("second delete gave %v, want ErrNotFound", err)
+		}
+		if _, err := s.Workflows().StepByID(ctx, realm.ID, step.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("the step outlived its workflow: %v", err)
+		}
+		if rows, err := s.Workflows().ScheduledFor(ctx, realm.ID, "u1"); err != nil || len(rows) != 0 {
+			t.Errorf("the schedule outlived its workflow: %v, %v", rows, err)
+		}
+	})
+
+	t.Run("activation is idempotent, deactivation of nothing is not an error", func(t *testing.T) {
+		ctx := context.Background()
+		s := newStore(t)
+		realm := newRealm(t, s)
+		steps := []model.WorkflowStep{
+			{ID: model.NewID(), Uses: "disable-user", After: "P1D"},
+			{ID: model.NewID(), Uses: "delete-user", After: "P2D"},
+		}
+		w := &model.Workflow{
+			ID: model.NewID(), RealmID: realm.ID, Name: "wf", On: "user-created", Steps: steps,
+		}
+		if err := s.Workflows().Create(ctx, w); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		rows := []model.WorkflowScheduledStep{
+			{WorkflowID: w.ID, StepID: steps[0].ID, ResourceType: "USERS", ResourceID: "u1", ScheduledAt: 10, Status: "PENDING"},
+			{WorkflowID: w.ID, StepID: steps[1].ID, ResourceType: "USERS", ResourceID: "u1", ScheduledAt: 20, Status: "PENDING"},
+		}
+
+		// Deactivating before any activation is the measured 204.
+		if err := s.Workflows().Unschedule(ctx, realm.ID, w.ID, "USERS", "u1"); err != nil {
+			t.Errorf("Unschedule before Schedule: %v", err)
+		}
+		for range 2 {
+			if err := s.Workflows().Schedule(ctx, realm.ID, rows); err != nil {
+				t.Fatalf("Schedule: %v", err)
+			}
+		}
+		got, err := s.Workflows().ScheduledFor(ctx, realm.ID, "u1")
+		if err != nil {
+			t.Fatalf("ScheduledFor: %v", err)
+		}
+		if len(got) != 2 {
+			t.Errorf("a repeated activation left %d rows, want 2", len(got))
+		}
+		// An id that names nothing is an empty result rather than an error:
+		// the route answers 200 and [] for one.
+		if rows, err := s.Workflows().ScheduledFor(ctx, realm.ID, "nobody"); err != nil || len(rows) != 0 {
+			t.Errorf("ScheduledFor an unknown id: %v, %v", rows, err)
+		}
+		if err := s.Workflows().Unschedule(ctx, realm.ID, w.ID, "USERS", "u1"); err != nil {
+			t.Fatalf("Unschedule: %v", err)
+		}
+		if rows, err := s.Workflows().ScheduledFor(ctx, realm.ID, "u1"); err != nil || len(rows) != 0 {
+			t.Errorf("after Unschedule: %v, %v", rows, err)
 		}
 	})
 }

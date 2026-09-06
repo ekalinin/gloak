@@ -583,29 +583,18 @@ func writeAuthzScopeNotFound(w http.ResponseWriter, r *http.Request) {
 	writeEmptyStatus(w, r, http.StatusNotFound)
 }
 
-// writeEmptyStatus writes a status with no body, deciding X-Frame-Options the
-// way httpx.WriteNoContent does.
+// writeEmptyStatus is httpx.WriteEmptyStatus.
 //
-// **The rule AGENTS.md records for a 204 is really about an empty body.**
-// Measured 2026-09-01 on `GET .../scope/{unknown}`, whose 404 carries
-// `X-Frame-Options` when the request declared `application/json` and omits it
-// for `text/plain` and for no Content-Type at all - and on the DELETE's 404
-// and the search's 400 and 204, which agree. httpx.WriteNoContent is the one
-// place that decides it for 204s and it is hard-wired to that status.
+// The body of it moved to internal/httpx on 2026-09-06, which is what F133
+// asked for and what the `Workflows` branch could do because it owns that
+// package. The name stays here as a one-line forward rather than being spelled
+// out at its fourteen call sites: the diff that moves the rule and the diff
+// that renames the callers are two different reviews, and only the first one is
+// about a measurement.
 //
-// **This belongs in internal/httpx and is here because that package was not
-// this branch's to change.** It writes no body, so the divergence that
-// package's boundary rule exists to prevent - a second marshaller drifting on
-// the bytes - is not reachable through it, and the Date suppression it does
-// need is one line. See the follow-up; moving it is a rename.
+// The rule it applies is **not** the one this function used to apply. It was
+// `strings.HasPrefix(contentType, "application/")` on both sides of the move,
+// and `application/yaml` refutes that - see httpx.WriteNoContent.
 func writeEmptyStatus(w http.ResponseWriter, r *http.Request, status int) {
-	// Keycloak sends no Date on any response and net/http adds one; every
-	// writer in internal/httpx suppresses it, and an empty-bodied response is
-	// no exception. The conformance harness cannot see this - it serves
-	// through httptest.ResponseRecorder, which adds no Date either.
-	w.Header()["Date"] = nil
-	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/") {
-		w.Header().Del("X-Frame-Options")
-	}
-	w.WriteHeader(status)
+	httpx.WriteEmptyStatus(w, r, status)
 }

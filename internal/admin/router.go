@@ -717,6 +717,40 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /admin/realms/{realm}/clients-initial-access/{initialAccessID}",
 		h.guardAny(initialAccessWriteRoles, h.deleteClientInitialAccess))
 
+	// Workflows, all nine. **Authorised out of neither pair - out of no pair at
+	// all.** Every one of the twenty-one master-realm admin roles is 403 on
+	// every route here, singly and in combination, and so are all twenty-one
+	// held together with create-realm, which is `admin`'s whole composite
+	// closure. The realm role `admin` itself is the only thing that opens them,
+	// measured in both directions with GET /users and GET /admin/realms as
+	// controls. That is a fourth answer to "which roles" in this branch alone,
+	// and the third time in three neighbouring chapters that the description's
+	// tag predicts nothing.
+	//
+	// **`{type}` is an enum**, so the two activation routes name it
+	// `{resourceType}` and check it in the handler: `USERS` and `CLIENTS` reach
+	// the store and every other spelling - `users` included - is the router's
+	// own `{"error":"HTTP 404 Not Found"}`, which net/http's mux would not
+	// produce for a segment it happily matched.
+	mux.HandleFunc("GET /admin/realms/{realm}/workflows",
+		h.guardAny(workflowRoles, h.listWorkflows))
+	mux.HandleFunc("POST /admin/realms/{realm}/workflows",
+		h.guardAny(workflowRoles, h.createWorkflow))
+	mux.HandleFunc("POST /admin/realms/{realm}/workflows/migrate",
+		h.guardAny(workflowRoles, h.migrateWorkflowSteps))
+	mux.HandleFunc("GET /admin/realms/{realm}/workflows/scheduled/{resourceID}",
+		h.guardAny(workflowRoles, h.listScheduledWorkflows))
+	mux.HandleFunc("GET /admin/realms/{realm}/workflows/{workflowID}",
+		h.guardAny(workflowRoles, h.readWorkflow))
+	mux.HandleFunc("PUT /admin/realms/{realm}/workflows/{workflowID}",
+		h.guardAny(workflowRoles, h.updateWorkflow))
+	mux.HandleFunc("DELETE /admin/realms/{realm}/workflows/{workflowID}",
+		h.guardAny(workflowRoles, h.deleteWorkflow))
+	mux.HandleFunc("POST /admin/realms/{realm}/workflows/{workflowID}/activate/{resourceType}/{resourceID}",
+		h.guardAny(workflowRoles, h.activateWorkflow))
+	mux.HandleFunc("POST /admin/realms/{realm}/workflows/{workflowID}/deactivate/{resourceType}/{resourceID}",
+		h.guardAny(workflowRoles, h.deactivateWorkflow))
+
 	// Authentication Management, the eighteen operations of P8's first cut.
 	// The other twenty-one - the flows, the executions and the shared
 	// authenticator config - are not here, and that is a decision rather than

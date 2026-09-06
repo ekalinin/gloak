@@ -83,6 +83,63 @@ func TestWriteNoContentOmitsDateHeader(t *testing.T) {
 	}
 }
 
+// The 204's X-Frame-Options is decided by an allow-list of three request media
+// types, not by an `application/` prefix.
+//
+// The table is the 2026-09-06 re-sweep in WriteNoContent's doc comment, and the
+// five rows that carry `application/` and answer without the header are what a
+// prefix test cannot express. `application/json` and `application/yaml` sitting
+// in one table is the pair that matters: a prefix test passes every other row
+// here and fails those two together.
+func TestWriteNoContentFramesThreeMediaTypesAndNoOthers(t *testing.T) {
+	framed := []string{
+		"application/json",
+		"application/xml",
+		"application/x-www-form-urlencoded",
+		"application/json;charset=UTF-8",
+		"APPLICATION/JSON",
+		"Application/Json",
+	}
+	bare := []string{
+		"",
+		"*/*",
+		"text/plain",
+		"application/yaml",
+		"application/yaml;charset=UTF-8",
+		"application/YAML",
+		"application/octet-stream",
+		"application/pdf",
+		"application/ld+json",
+		// A space before the semicolon, measured to answer without the
+		// header where the same value without the space carries it. It is
+		// the row that says the parameters are cut and what is left is not
+		// trimmed.
+		"application/json ; charset=UTF-8",
+	}
+
+	send := func(contentType string) http.Header {
+		w := httptest.NewRecorder()
+		httpx.SetSecurityHeaders(w)
+		r := httptest.NewRequest(http.MethodDelete, "/x", nil)
+		if contentType != "" {
+			r.Header.Set("Content-Type", contentType)
+		}
+		httpx.WriteNoContent(w, r)
+		return w.Result().Header
+	}
+
+	for _, ct := range framed {
+		if send(ct).Get("X-Frame-Options") == "" {
+			t.Errorf("Content-Type %q: want X-Frame-Options", ct)
+		}
+	}
+	for _, ct := range bare {
+		if got := send(ct).Get("X-Frame-Options"); got != "" {
+			t.Errorf("Content-Type %q: X-Frame-Options = %q, want it absent", ct, got)
+		}
+	}
+}
+
 func TestWriteOAuthError(t *testing.T) {
 	w := httptest.NewRecorder()
 
