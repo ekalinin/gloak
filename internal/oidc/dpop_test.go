@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -343,4 +344,111 @@ func indexOf(values []string, want string) int {
 		}
 	}
 	return -1
+}
+
+// TestDPoPIsCheckedAfterTheDuplicateParameterAndBeforeTheGrant pins the two
+// adjacencies either side of the proof, each by a request that is wrong in two
+// ways. No golden can: a Case sends one request and the answer to a request
+// wrong in one way says nothing about the order.
+func TestDPoPIsCheckedAfterTheDuplicateParameterAndBeforeTheGrant(t *testing.T) {
+	h, s, _ := newHandler(t)
+	router := NewRouter(s, h.keys, h.issuerBase)
+
+	send := func(form url.Values) string {
+		req := httptest.NewRequest(http.MethodPost, dpopTestPath, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("DPoP", "not-a-proof")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return dpopDescription(t, w)
+	}
+
+	duplicated := passwordGrantForm("")
+	duplicated["zz"] = []string{"1", "2"}
+	if got := send(duplicated); got != descDuplicatedParameter {
+		t.Errorf("a bad proof with a duplicated key: got %q, want %q", got, descDuplicatedParameter)
+	}
+
+	wrongPassword := passwordGrantForm("")
+	wrongPassword.Set("password", "gloak-probe-wrong")
+	if got := send(wrongPassword); got != descDPoPHeaderFailure {
+		t.Errorf("a bad proof with a wrong password: got %q, want %q", got, descDPoPHeaderFailure)
+	}
+
+	// The control: without the header the same two requests answer about the
+	// other fault, so neither row above is measuring the endpoint refusing
+	// everything.
+	if got := postForm(t, router, dpopTestPath, wrongPassword).Code; got != http.StatusBadRequest {
+		t.Errorf("control: a wrong password with no proof got %d", got)
+	}
+}
+
+// TestDPoPComparesTheURLBeforeTheMethod is the other adjacency, and it needs a
+// proof wrong about both. A proof wrong about one says nothing.
+func TestDPoPComparesTheURLBeforeTheMethod(t *testing.T) {
+	h, s, _ := newHandler(t)
+	router := NewRouter(s, h.keys, h.issuerBase)
+
+	both := testProof(t,
+		map[string]any{"typ": "dpop+jwt", "alg": "ES256"},
+		map[string]any{
+			"htm": http.MethodGet,
+			"htu": "http://localhost:8080/realms/master/protocol/openid-connect/userinfo",
+			"iat": time.Now().Unix(),
+			"jti": freshJTI(t),
+		})
+	w := postWithDPoP(t, router, &both)
+	if got := dpopDescription(t, w); got != descDPoPURLMismatch {
+		t.Errorf("wrong about both: got %q, want %q", got, descDPoPURLMismatch)
+	}
+
+	// The control: the same proof with the URL put right answers about the
+	// method, so the row above is an ordering and not a preference for one
+	// sentence.
+	methodOnly := testProof(t,
+		map[string]any{"typ": "dpop+jwt", "alg": "ES256"},
+		map[string]any{
+			"htm": http.MethodGet,
+			"htu": "http://localhost:8080" + dpopTestPath,
+			"iat": time.Now().Unix(),
+			"jti": freshJTI(t),
+		})
+	w = postWithDPoP(t, router, &methodOnly)
+	if got := dpopDescription(t, w); got != descDPoPMethodMismatch {
+		t.Errorf("wrong about the method alone: got %q, want %q", got, descDPoPMethodMismatch)
+	}
+}
+
+// TestDPoPIatWindowIsAsymmetric pins both edges. The golden for
+// dpop-proof-not-active is thirty seconds old and would still be refused by a
+// window half that size, so the numbers themselves are unasserted without this.
+//
+// [now-25, now+15], measured at one second's resolution against a container
+// whose clock agreed with the host's.
+func TestDPoPIatWindowIsAsymmetric(t *testing.T) {
+	h, s, _ := newHandler(t)
+	router := NewRouter(s, h.keys, h.issuerBase)
+
+	for _, tc := range []struct {
+		offset time.Duration
+		want   int
+	}{
+		{-24 * time.Second, http.StatusOK},
+		{-26 * time.Second, http.StatusBadRequest},
+		{14 * time.Second, http.StatusOK},
+		{16 * time.Second, http.StatusBadRequest},
+	} {
+		proof := testProof(t,
+			map[string]any{"typ": "dpop+jwt", "alg": "ES256"},
+			map[string]any{
+				"htm": http.MethodPost,
+				"htu": "http://localhost:8080" + dpopTestPath,
+				"iat": time.Now().Add(tc.offset).Unix(),
+				"jti": freshJTI(t),
+			})
+		w := postWithDPoP(t, router, &proof)
+		if w.Code != tc.want {
+			t.Errorf("iat %+v: want %d, got %d: %s", tc.offset, tc.want, w.Code, w.Body)
+		}
+	}
 }
