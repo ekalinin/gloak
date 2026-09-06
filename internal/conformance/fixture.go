@@ -1518,6 +1518,21 @@ var Fixtures = map[string]Fixture{
 	"workflow-forbidden-caller": callerFixture("gloak-probe-caller-wf",
 		"manage-realm", "view-realm", "manage-users", "view-users",
 		"manage-clients", "view-clients"),
+
+	// A user with **no email address**, which no other fixture here produces:
+	// userFixture gives every user one. It is the state half of the three email
+	// writes' first check, and without it their 400 is unreachable - the
+	// endpoints answer about the user before they answer about the mail, so a
+	// case set built on a user that has an email measures only the second half.
+	"emailless-user": emaillessUserFixture("gloak-probe-no-email"),
+
+	// A realm of its own for `PUT /users/profile`, and the realm is the point
+	// rather than the isolation habit. That write **breaks every login in the
+	// realm it lands in** - `{}` leaves a profile with no username attribute,
+	// and a bodyless one installs a default whose three `required` blocks the
+	// bootstrap administrator cannot satisfy. Both were reached while this cut
+	// was being measured and both cost a container. Master is never written.
+	"user-profile-write-realm": realmFixture(userProfileWriteRealm),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -7980,5 +7995,50 @@ func workflowCaptureStepIDStep(realm string) Step {
 			},
 		},
 		Capture: map[string]string{"workflow_step_id": "0/steps/0/id"},
+	}
+}
+
+// userProfileWriteRealm is the realm `PUT /users/profile`'s cases address.
+//
+// It is a realm of its own for a reason stronger than tidiness: that write is
+// the one operation in this catalogue whose success **breaks the realm it lands
+// in**, so master is out of the question and so is any realm another case
+// reads.
+const userProfileWriteRealm = "gloak-probe-upwrite"
+
+// emaillessUserFixture creates a user carrying **no email address**, which
+// userFixture cannot do: it gives every user one, and a user with an email
+// cannot reach the first check of the three email writes.
+//
+// firstName and lastName are set and the email is not, so the user differs from
+// userFixture's in exactly the field under test.
+func emaillessUserFixture(username string) Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method: http.MethodPost,
+					Path:   "/admin/realms/master/users",
+					Headers: map[string]string{
+						"Authorization": "Bearer {{access_token}}",
+						"Content-Type":  "application/json",
+					},
+					Body: []byte(`{"username":"` + username + `","enabled":true,` +
+						`"firstName":"Ada","lastName":"Lovelace"}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/users",
+					Query:   map[string]string{"username": username, "exact": "true"},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"user_id": "0/id"},
+			},
+		},
 	}
 }
