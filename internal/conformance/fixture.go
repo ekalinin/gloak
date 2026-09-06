@@ -7457,13 +7457,14 @@ func clientNodeFixture(uuid, clientID, node string) Fixture {
 	return f
 }
 
-// The four objects introspect-in-audience creates. They are named here rather
-// than inline because five steps refer to them and a typo in one would look
+// The six objects introspect-in-audience creates. They are named here rather
+// than inline because eight steps refer to them and a typo in one would look
 // like a measurement.
 const (
 	audIntrospectClient = "gloak-probe-aud-introspect"
 	audIssuerClient     = "gloak-probe-aud-issuer"
 	audRole             = "gloak-probe-aud-role"
+	audIssuerRole       = "gloak-probe-aud-issuer-role"
 	audUser             = "gloak-probe-aud-user"
 	audPassword         = "gloak-probe-aud-password"
 )
@@ -7612,6 +7613,49 @@ func introspectInAudienceFixture() Fixture {
 					Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/clients/{{client_uuid}}",
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body:    []byte(`[{"id":"{{role_id}}","name":"` + audRole + `"}]`),
+				},
+				ExpectStatus: []int{http.StatusNoContent},
+			},
+			// **The user holds a role on the *issuing* client too, and that is
+			// the input no fixture in this catalogue had ever supplied.**
+			//
+			// Without it the issuer is simply absent from the role map, so
+			// `aud` excluding it and `aud` never containing it are the same
+			// bytes - and a mutation that dropped the exclusion from
+			// token.Audience passed oidc/introspection/access-token-outside-audience
+			// on 2026-09-06 for exactly that reason. Its user holds no role on
+			// gloak-confidential, so there was nothing to exclude.
+			//
+			// With it the two halves separate, and both are in this case's
+			// golden: `resource_access` carries three keys including
+			// gloak-probe-aud-issuer, and `aud` carries two and does not. That
+			// is AGENTS.md's measured sentence - "give the user a role on the
+			// requesting client and that client appears in resource_access and
+			// still not in aud" - asserted by a golden rather than only by
+			// internal/token's own test.
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients/{{issuer_uuid}}/roles",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"name":"` + audIssuerRole + `"}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients/{{issuer_uuid}}/roles/" + audIssuerRole,
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"issuer_role_id": "id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/clients/{{issuer_uuid}}",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`[{"id":"{{issuer_role_id}}","name":"` + audIssuerRole + `"}]`),
 				},
 				ExpectStatus: []int{http.StatusNoContent},
 			},

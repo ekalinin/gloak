@@ -2291,7 +2291,16 @@ var oidcPending = []Case{
 		// is: that case's subject is the bootstrapped administrator, whose aud
 		// and resource_access enumerate every admin container in the realm, so
 		// every realm any fixture creates moves its golden. This one's subject
-		// holds one client role and default-roles-master and enumerates nothing.
+		// holds two client roles and default-roles-master and enumerates
+		// nothing.
+		//
+		// **The body also pins the exclusion, which nothing in this catalogue
+		// did.** The user holds a role on the *issuing* client as well, so
+		// resource_access carries gloak-probe-aud-issuer and aud does not - and
+		// a mutation dropping the exclusion from token.Audience passed
+		// access-token-outside-audience, whose user holds no role on the client
+		// that mints its token. Two conditions, and the case that looked like it
+		// covered them supplied only one.
 		Fixture: "introspect-in-audience",
 		Request: Request{
 			Method: http.MethodPost,
