@@ -1460,6 +1460,12 @@ var Fixtures = map[string]Fixture{
 	// exactly that, and it is what separates a refusal that precedes
 	// authorization from one that follows it.
 	"no-role-caller": callerFixture("gloak-probe-caller-none"),
+
+	// The two fixtures the protocol remainder needed, both of them lifting a
+	// Reason rather than adding surface. See
+	// docs/superpowers/handover/protocol-remainder.md.
+	"introspect-in-audience": introspectInAudienceFixture(),
+	"frontchannel-logout":    frontchannelLogoutFixture(),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -7429,4 +7435,211 @@ func clientNodeFixture(uuid, clientID, node string) Fixture {
 		},
 	})
 	return f
+}
+
+// The four objects introspect-in-audience creates. They are named here rather
+// than inline because five steps refer to them and a typo in one would look
+// like a measurement.
+const (
+	audIntrospectClient = "gloak-probe-aud-introspect"
+	audIssuerClient     = "gloak-probe-aud-issuer"
+	audRole             = "gloak-probe-aud-role"
+	audUser             = "gloak-probe-aud-user"
+	audPassword         = "gloak-probe-aud-password"
+)
+
+// introspectInAudienceFixture puts the introspecting client inside an access
+// token's audience, which the case it serves recorded as impossible.
+//
+// **The Reason it lifts said "no fixture can put the introspecting client in an
+// access token's audience", and that was a claim about the API rather than
+// about the harness.** An access token's `aud` holds the clients the *user*
+// holds roles on **minus the issuing client**, so one client cannot be both
+// ends of it - but two can. Measured 2026-09-06:
+//
+//	gloak-probe-aud-introspect   owns gloak-probe-aud-role and does the asking
+//	gloak-probe-aud-issuer       mints the token by the password grant
+//	gloak-probe-aud-user         holds gloak-probe-aud-role
+//
+//	aud   ["gloak-probe-aud-introspect","account"]
+//	azp   "gloak-probe-aud-issuer"
+//
+// and the introspection answers 200 `"active":true` with the nineteen-key body.
+//
+// It deliberately does **not** address `admin`. The bootstrapped administrator
+// holds `create-realm`, so its `aud` and `resource_access` enumerate every admin
+// container in the realm and every realm any fixture creates adds a key - which
+// is what put PristineRealm on active-refresh-token. A purpose-made user holding
+// one client role and `default-roles-master` enumerates nothing, so this case
+// needs no container of its own.
+//
+// The last step overwrites {{access_token}} with the subject's token, which is
+// confidentialClientFixture's device: nothing after it needs the admin's.
+func introspectInAudienceFixture() Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"clientId":"` + audIntrospectClient + `","enabled":true,` +
+						`"publicClient":false,"standardFlowEnabled":false,"defaultClientScopes":[]}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients",
+					Query:   map[string]string{"clientId": audIntrospectClient},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"client_uuid": "0/id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients/{{client_uuid}}/client-secret",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"client_secret": "value"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients/{{client_uuid}}/roles",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"name":"` + audRole + `"}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients/{{client_uuid}}/roles/" + audRole,
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"role_id": "id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"clientId":"` + audIssuerClient + `","enabled":true,` +
+						`"publicClient":false,"directAccessGrantsEnabled":true,"defaultClientScopes":[]}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients",
+					Query:   map[string]string{"clientId": audIssuerClient},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"issuer_uuid": "0/id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients/{{issuer_uuid}}/client-secret",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"issuer_secret": "value"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/users",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					// The inline credentials array rather than reset-password:
+					// it is one request instead of two and it is the route
+					// measured to store a usable password.
+					Body: []byte(`{"username":"` + audUser + `","enabled":true,` +
+						`"credentials":[{"type":"password","value":"` + audPassword + `","temporary":false}]}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/users",
+					Query:   map[string]string{"username": audUser},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"user_id": "0/id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/clients/{{client_uuid}}",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`[{"id":"{{role_id}}","name":"` + audRole + `"}]`),
+				},
+				ExpectStatus: []int{http.StatusNoContent},
+			},
+			{
+				Request: Request{
+					Method: http.MethodPost,
+					Path:   "/realms/master/protocol/openid-connect/token",
+					Form: map[string]string{
+						"grant_type":    "password",
+						"client_id":     audIssuerClient,
+						"client_secret": "{{issuer_secret}}",
+						"username":      audUser,
+						"password":      audPassword,
+						"scope":         "openid",
+					},
+				},
+				Capture: map[string]string{"access_token": "access_token"},
+			},
+		},
+	}
+}
+
+// frontchannelLogoutFixture signs a browser in at a client registered for
+// front-channel logout and leaves the jar behind, because the jar is what the
+// case's own request needs.
+//
+// **The cookies are not decoration and the p6 sweep did not isolate them.**
+// That cut recorded the condition as "a session holding a client with
+// `frontchannelLogout: true` and a `frontchannel.logout.url`", and measured
+// 2026-09-06 that is too narrow: with exactly that client and a live session, a
+// logout carrying no cookies answers the ordinary 302. Six cookie subsets, one
+// login each:
+//
+//	no cookies                                    302
+//	KEYCLOAK_IDENTITY of the hint's own session   200
+//	KEYCLOAK_IDENTITY of another live session     200
+//	KEYCLOAK_SESSION  of the hint's own session   200
+//	KEYCLOAK_SESSION  of another live session     302
+//	AUTH_SESSION_ID only                          302
+//
+// So the browser has to identify a session, and the login below is what puts
+// one in the jar. A direct grant would not: it makes the same server-side
+// session and hands back no cookies.
+func frontchannelLogoutFixture() Fixture {
+	const clientID = "gloak-probe-frontchannel"
+	attributes := `,"frontchannelLogout":true,"attributes":{` +
+		`"frontchannel.logout.url":"http://localhost:9998/frontlogout",` +
+		`"post.logout.redirect.uris":"` + browserRedirectURI + `"}`
+	steps := append(browserClientSteps(clientID, attributes),
+		authorizeStep(clientID, nil), loginStep())
+	return Fixture{State: "bootstrap", Steps: append(steps, Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type":   "authorization_code",
+				"client_id":    clientID,
+				"redirect_uri": browserRedirectURI,
+				"code":         "{{code}}",
+			},
+		},
+		Capture: map[string]string{"id_token": "id_token"},
+	})}
 }

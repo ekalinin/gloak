@@ -503,15 +503,19 @@ var oidcPending = []Case{
 			Section:   "Grant types: implicit",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
-		Reason: "the implicit flow is out of P3's scope",
-		// Measured 2026-08-29 on a client with the implicit flow disabled,
-		// which is the default: 302 with the error in the **fragment**, not
-		// the query, without any response_mode being asked for - the default
-		// response mode follows the response type. A case for that belongs
-		// with whichever sub-project builds the implicit flow, and writing one
-		// here would claim surface P3 is not building.
-		Fixture: "",
+		Status: Implemented,
+		// **The Reason said "the implicit flow is out of P3's scope" until
+		// 2026-09-06, and it was a claim about a plan phase rather than about
+		// this response.** F94 filed exactly that. What the case measures is
+		// not the implicit flow: it is the **refusal** a client with the flow
+		// disabled gets, which is the default and which internal/oidc has
+		// served and unit-tested since P3 (F52's first half). Re-measured
+		// 2026-09-06 - 302 with the error in the **fragment**, not the query,
+		// with no response_mode asked for, because the default response mode
+		// follows the response type. `response_type=token` alone answers the
+		// same sentence and `response_type=code` answers the login page, which
+		// is the control that says the flag is what decided it.
+		Fixture: "browser-client",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/protocol/openid-connect/auth",
@@ -524,7 +528,15 @@ var oidcPending = []Case{
 				"nonce":         "abc123",
 			},
 		},
-		AssertHeaders: []string{"Location"},
+		AssertHeaders: []string{"Location", "Cache-Control"},
+		// The eighth measured member of "GET /auth's redirect back to the
+		// client is the one response in the browser flow that omits
+		// X-Frame-Options", and it omits Content-Security-Policy with it -
+		// where POST /login-actions/authenticate's error redirect, to the same
+		// URI with the same status, carries all six. Nothing asserted this on
+		// a rejection carrying no cookies until now, and AssertHeaders can
+		// never catch a header that should be missing.
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy", "Set-Cookie"},
 	},
 	{
 		ID: "oidc/authorization/response-mode-fragment",
@@ -2104,13 +2116,13 @@ var oidcPending = []Case{
 			Section:   "Logout endpoint: frontchannel logout",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
 		// **The old reason was wrong in its second half, and that half was the
 		// interesting one.** Front-channel logout makes no outbound call at
 		// all: Keycloak answers the browser with a page and the *browser*
 		// fetches the iframes. So this response is exactly the shape the
-		// harness records, and what keeps it Pending is only its body - the
-		// same "the login theme is P13" the five sibling page cases carry.
+		// harness records, and what kept it Pending was believed to be only its
+		// body - the same "the login theme is P13" the five sibling page cases
+		// carry.
 		//
 		// Measured 2026-08-31, and it is the seventh response shape of this
 		// endpoint rather than a variant of one of the six:
@@ -2137,17 +2149,56 @@ var oidcPending = []Case{
 		// The envelope is served now. internal/oidc's own tests are what assert
 		// it, because Gloak's placeholder body cannot carry the iframes and this
 		// golden would not compare equal until it can.
-		Reason:  "the login theme is P13, and this response is a theme page",
-		Fixture: "", // deliberately none while the case is Pending: a Pending case's fixture never runs, and a promoted one needs P13 first
+		//
+		// **Recorded rather than Pending as of 2026-09-06, and the Reason that
+		// kept it Pending has expired in its wording.** "The login theme is
+		// P13" was true when it was written; P13 closed on 2026-09-02 and this
+		// page is not one of the nine it enumerated - it is a tenth. What
+		// stopped it being recordable was believed to be the theme and is
+		// really two other things, both measured:
+		//
+		//  1. Gloak's body is themePageBody's placeholder. The measured page is
+		//     4348 bytes: the ordinary chrome, one <li> per client with a
+		//     hidden <iframe>, a readystatechange script and a Continue link.
+		//  2. **Gloak's gate is wrong, and no case could have seen it.** Gloak
+		//     serves the page whenever the session holds a front-channel
+		//     client; Keycloak also requires the **request** to identify a
+		//     browser session. Six cookie subsets, one login each, 2026-09-06:
+		//     no cookies 302; KEYCLOAK_IDENTITY of the hint's own session 200;
+		//     KEYCLOAK_IDENTITY of another live session 200; KEYCLOAK_SESSION
+		//     of the hint's own session 200; KEYCLOAK_SESSION of another 302;
+		//     AUTH_SESSION_ID alone 302.
+		//
+		// The p6 handover records the condition as the client's two settings
+		// and nothing else, because that sweep drove a cookie jar throughout
+		// and never sent the request without one - the same shape as the
+		// hintless-logout bullet in AGENTS.md, where the jar was the variable
+		// and the hint was not, in the opposite direction.
+		//
+		// Recorded is what the golden earns: nothing in the body is minted by
+		// this request. The sid inside the iframe's src is the session the
+		// fixture's own login opened, which loginStep captures as
+		// {{session_state}}, and the /resources/<version>/ segment is
+		// ReplaceThemeResource's.
+		Status: Recorded,
+		Reason: "Gloak serves themePageBody's placeholder here, and serves it to a request carrying no browser " +
+			"cookies where Keycloak answers a 302",
+		Fixture: "frontchannel-logout",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/protocol/openid-connect/logout",
 			Query: map[string]string{
-				"client_id":     "gloak-frontchannel-client",
-				"id_token_hint": "REPLACE-WITH-A-REAL-ID-TOKEN",
+				"id_token_hint":            "{{id_token}}",
+				"post_logout_redirect_uri": browserRedirectURI,
+				"state":                    "xyz123",
 			},
 		},
-		AssertHeaders: []string{"Content-Type"},
+		// Content-Security-Policy is the one header that tells this page from
+		// the confirmation page, which shares its title: it is computed from
+		// the session's clients rather than being the constant every other
+		// theme page sends.
+		AssertHeaders:   []string{"Content-Type", "Cache-Control", "Content-Language", "Content-Security-Policy"},
+		VolatileHeaders: []string{"Set-Cookie"},
 	},
 
 	// --- Introspection endpoint ---
@@ -2158,35 +2209,50 @@ var oidcPending = []Case{
 			Section:   "Introspection endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
-		Reason: "no fixture can put the introspecting client in an access token's audience",
-		// The confidential client that P1's note was waiting for now exists,
-		// and it is still not enough. Measured 2026-08-23: introspecting a
-		// freshly minted, unexpired access token answers 200
-		// {"active":false}, and the server log gives the reason - `reason=
-		// "Client 'gloak-confidential' is not in the token audience"`. An
-		// access token's aud holds the clients the *user* has roles on, never
-		// the issuing client, so a client cannot introspect its own token.
+		Status: Implemented,
+		// **The Reason read "no fixture can put the introspecting client in an
+		// access token's audience" from P1 until 2026-09-06, and it was a claim
+		// about the API where the evidence was about one client.** Everything
+		// it says about the rule is right: an access token's aud holds the
+		// clients the *user* has roles on **minus the issuing client**, so
+		// gloak-confidential introspecting its own token answers 200
+		// {"active":false} with `reason="Client 'gloak-confidential' is not in
+		// the token audience"` in the log. What does not follow is that no
+		// fixture can arrange it. One client cannot be both ends; **two can**.
 		//
-		// Reaching an active body therefore needs the caller inside that aud,
-		// which needs either a role on the caller assigned to the user - the
-		// Role Mapper tag, P2's second cut - or an audience protocol mapper,
-		// which is P5. Recording it now would put {"active":false} in a file
-		// named active-access-token, which is worse than leaving it Pending.
+		// Measured 2026-09-06: give the user a role on the introspecting client
+		// and mint the token at a *different* client, and the introspecting
+		// client is in aud - ["gloak-probe-aud-introspect","account"] with azp
+		// gloak-probe-aud-issuer - and the introspection answers 200
+		// "active":true with the same nineteen-key body a refresh token gets.
+		// The entry that wrote the reason down, F18, named both routes to it
+		// and called them P2's second cut and P5; the first of those landed on
+		// 2026-08-23 and nobody came back.
 		//
-		// The refusal itself is measured and recorded, as
-		// access-token-outside-audience below.
-		Fixture: "",
+		// The refusal is still measured and still recorded, as
+		// access-token-outside-audience below, which is the control that says
+		// the exclusion is real rather than this case being the general answer.
+		//
+		// **It is deliberately not PristineRealm**, where active-refresh-token
+		// is: that case's subject is the bootstrapped administrator, whose aud
+		// and resource_access enumerate every admin container in the realm, so
+		// every realm any fixture creates moves its golden. This one's subject
+		// holds one client role and default-roles-master and enumerates nothing.
+		Fixture: "introspect-in-audience",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token/introspect",
 			Form: map[string]string{
-				"client_id":     "gloak-confidential",
-				"client_secret": "REPLACE-WITH-A-REAL-SECRET",
-				"token":         "REPLACE-WITH-AN-ACCESS-TOKEN-NAMING-THIS-CLIENT-IN-AUD",
+				"client_id":     "gloak-probe-aud-introspect",
+				"client_secret": "{{client_secret}}",
+				"token":         "{{access_token}}",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
+		Volatile:      []string{"exp", "iat", "jti", "sub", "sid"},
+		// Java sets, exactly as on active-refresh-token beside it.
+		Unordered:      []string{"aud", "realm_access/roles", "resource_access/*/roles"},
+		UnorderedWords: []string{"scope"},
 	},
 	{
 		// The refusal measured while trying to record active-access-token.
