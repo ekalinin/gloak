@@ -1,6 +1,7 @@
 package oidc
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -15,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ekalinin/gloak/internal/model"
 )
 
 // The five behaviours below are DPoP's and **no golden can hold any of them**,
@@ -450,5 +453,51 @@ func TestDPoPIatWindowIsAsymmetric(t *testing.T) {
 		if w.Code != tc.want {
 			t.Errorf("iat %+v: want %d, got %d: %s", tc.offset, tc.want, w.Code, w.Body)
 		}
+	}
+}
+
+// TestDPoPBindsAFullAccessTokenInTheSamePlace is the other claim set. Every
+// other test here uses admin-cli, which is a **lightweight** client - so a
+// mutation moving cnf on the full access token survived the whole suite until
+// this test existed, and the position was measured on both.
+func TestDPoPBindsAFullAccessTokenInTheSamePlace(t *testing.T) {
+	h, s, realm := newHandler(t)
+	full := &model.Client{
+		ID: model.NewID(), RealmID: realm.ID, ClientID: "gloak-probe-dpop-full",
+		Enabled: true, PublicClient: true, DirectAccessGrantsEnabled: true,
+	}
+	if err := s.Clients().Create(context.Background(), full); err != nil {
+		t.Fatalf("Clients().Create: %v", err)
+	}
+	router := NewRouter(s, h.keys, h.issuerBase)
+
+	form := url.Values{
+		"grant_type": {"password"},
+		"client_id":  {"gloak-probe-dpop-full"},
+		"username":   {"admin"},
+		"password":   {"admin"},
+	}
+	req := httptest.NewRequest(http.MethodPost, dpopTestPath, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	proof := validProof(t)
+	req.Header.Set("DPoP", proof)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	body := decodeTokenResponse(t, w)
+	keys, claims := claimOrder(t, body.AccessToken)
+	if _, lightweight := claims["sub"]; !lightweight {
+		t.Fatalf("this client's access token has no sub, so it is the lightweight set: %v", keys)
+	}
+	cnf, ok := claims["cnf"].(map[string]any)
+	if !ok {
+		t.Fatalf("the full access token carries no cnf: %v", keys)
+	}
+	if cnf["jkt"] != dpopTestJkt {
+		t.Errorf("cnf.jkt %v, want %s", cnf["jkt"], dpopTestJkt)
+	}
+	next := indexOf(keys, "cnf") + 1
+	if next <= 0 || next >= len(keys) || keys[next] != "scope" {
+		t.Errorf("cnf is not immediately before scope, order %v", keys)
 	}
 }
