@@ -246,6 +246,76 @@ func TestANodeRegistrationIsAnUpsert(t *testing.T) {
 	}
 }
 
+// TestTestNodesAvailableIsTheThirdRouteOnTheClientSubjectGuard is the read's
+// five cells, and it is the cell `view-clients` occupies that earns the test:
+// this is a **read** that refuses the view role, which is the third such route
+// in the whole API and the second on this one client.
+//
+// `GET /clients` runs beside it as a control known to differ, and it differs
+// in the two cells that matter: it opens to `view-clients` and to
+// `query-clients` where this route refuses both. A guard that had quietly
+// widened to `clientsReadRoles` would still pass the control and fail here.
+func TestTestNodesAvailableIsTheThirdRouteOnTheClientSubjectGuard(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := adminToken(t, h)
+	uuid := nodeClient(t, h, admin, "node-test-available")
+	real := "/admin/realms/master/clients/" + uuid + "/test-nodes-available"
+	missing := "/admin/realms/master/clients/00000000-0000-0000-0000-000000000000/test-nodes-available"
+
+	for _, tc := range []struct {
+		role                            string
+		wantReal, wantMissing, wantList int
+	}{
+		{"manage-clients", http.StatusOK, http.StatusNotFound, http.StatusOK},
+		{"view-clients", http.StatusForbidden, http.StatusNotFound, http.StatusOK},
+		{"query-clients", http.StatusForbidden, http.StatusNotFound, http.StatusOK},
+		{"manage-users", http.StatusForbidden, http.StatusForbidden, http.StatusForbidden},
+		{"manage-realm", http.StatusForbidden, http.StatusForbidden, http.StatusForbidden},
+	} {
+		token := tokenForRole(t, h, s, realm, tc.role)
+		if w := get(t, h, real, token); w.Code != tc.wantReal {
+			t.Errorf("%s on a real client: %d %s, want %d", tc.role, w.Code, w.Body, tc.wantReal)
+		}
+		if w := get(t, h, missing, token); w.Code != tc.wantMissing {
+			t.Errorf("%s on an unknown client: %d %s, want %d", tc.role, w.Code, w.Body, tc.wantMissing)
+		}
+		if w := get(t, h, "/admin/realms/master/clients", token); w.Code != tc.wantList {
+			t.Errorf("CONTROL: %s on GET /clients: %d, want %d", tc.role, w.Code, tc.wantList)
+		}
+	}
+}
+
+// TestTestNodesAvailableCarriesCacheControlAndPushRevocationDoesNot is the
+// header split measured on 2026-09-06, and it needs a test rather than a golden
+// because the claim is about **two** responses.
+//
+// Both write `globalRequestResult{}`, both answer `{}`, both are on one client,
+// one path segment apart - and this one carries `Cache-Control: no-cache` where
+// the other carries none. A single golden asserts what its own endpoint sends
+// and cannot say the neighbour disagrees, which is how a shared writer that
+// stamped the header on both would pass a full tree.
+func TestTestNodesAvailableCarriesCacheControlAndPushRevocationDoesNot(t *testing.T) {
+	h, _, _ := newServer(t)
+	admin := adminToken(t, h)
+	uuid := nodeClient(t, h, admin, "node-cache-control")
+	base := "/admin/realms/master/clients/" + uuid
+
+	w := get(t, h, base+"/test-nodes-available", admin)
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != "{}" {
+		t.Fatalf("test-nodes-available: %d %s", w.Code, w.Body)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("test-nodes-available Cache-Control: %q, want no-cache", got)
+	}
+	push := send(t, h, http.MethodPost, base+"/push-revocation", admin, "")
+	if push.Code != http.StatusOK {
+		t.Fatalf("push-revocation: %d %s", push.Code, push.Body)
+	}
+	if got := push.Header().Get("Cache-Control"); got != "" {
+		t.Errorf("CONTROL: push-revocation Cache-Control: %q, want none", got)
+	}
+}
+
 // clientKeys reads a client representation back as a decoded map.
 func clientKeys(t *testing.T, h http.Handler, token, path string) map[string]any {
 	t.Helper()

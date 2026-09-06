@@ -284,42 +284,67 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /admin/realms/{realm}/organizations/{orgID}/members/invite-existing-user",
 		h.guardOrganizationAnd(organizationWriteRoles, organizationMemberWriteRoles, h.inviteExistingOrganizationUser))
 
-	// **`GET /organizations/members/{member-id}/organizations` is the one
-	// operation of this cut that is not served, and the reason is Go's
-	// ServeMux rather than anything about Keycloak.**
+	// **`GET /organizations/members/{member-id}/organizations`, the tag's last
+	// operation, registered through a wildcard because `ServeMux` refuses the
+	// pattern it wants.** F153 recorded the conflict; what follows is what
+	// closes it.
 	//
-	// It and `GET /organizations/{orgID}/members/{memberID}` above are both
-	// four segments, and they overlap on exactly one concrete path -
-	// `/organizations/members/members/organizations`. Neither matches a strict
-	// subset of the other, so `net/http` calls them conflicting and panics at
-	// registration. Registering the overlap as a third, fully literal pattern
-	// does **not** resolve it: `conflictsWith` is pairwise and knows nothing
-	// about a third pattern, checked against Go 1.26.6 rather than inferred
-	// from the documentation, which reads as though it might.
+	// The pattern conflicts with **three** of the routes above, not one. It is
+	// four segments with a literal `members` second and a literal
+	// `organizations` fourth, and every four-segment pattern with a literal
+	// third collides with it on exactly one concrete path:
 	//
-	// The two ways out both cost more than the route is worth. A dispatcher on
-	// `organizations/{a}/{b}/{c}` would swallow every four-segment path under
-	// the tag that Gloak does not serve - the eleven F120 group routes among
-	// them - and those answer the unmatched-path 404 **with none of the five
-	// security headers**, which only WithKeycloakFallbacks can produce; a
-	// handler writing that body itself would get the headers wrong. Dropping
-	// the org-scoped read instead loses a route that matters more.
+	//	{orgID}/members/{memberID}                 /organizations/members/members/organizations
+	//	{orgID}/groups/{groupID}                   /organizations/members/groups/organizations
+	//	{orgID}/identity-providers/{idpAlias}      /organizations/members/identity-providers/organizations
 	//
-	// Keycloak's own answers to the overlap are measured, so the next cut needs
-	// no container:
+	// Neither side of any pair is a strict subset of the other, and a third,
+	// fully literal pattern does not break the tie - `net/http`'s conflict
+	// check is pairwise, re-checked against Go 1.26.6 on 2026-09-06 rather than
+	// inherited from F153.
 	//
-	//	/organizations/members/members/organizations  404 {"error":"HTTP 404 Not Found"}
-	//	/organizations/members/members                404 {"errorMessage":"Organization not found."}
+	// **The only pattern that conflicts with none of them is the one that is a
+	// strict superset of all of them**, so the route is registered as a
+	// wildcard dispatcher on `{a}/{b}/{c}` plus one literal per collision. The
+	// literals are needed because Go gives the *more specific* pattern the win,
+	// and Keycloak gives it to the **top-level route**: all three collision
+	// paths, and `members/count/organizations` beside them, answer
+	// `404 {"error":"HTTP 404 Not Found"}` on a live 26.7.1, which is what that
+	// route answers for a member id resolving to nothing.
 	//
-	// The first is the top-level route reading `members` as a user id that
-	// resolves to nothing; the second is the org-scoped route reading it as an
-	// organization id. So JAX-RS prefers the literal segment on the
-	// four-segment shape and the wildcard on the three-segment one.
+	// **F153's objection to a dispatcher was that it would swallow paths whose
+	// 404 only WithKeycloakFallbacks can produce, and that is measured false
+	// here.** Every four-segment GET under `/organizations` that Gloak does not
+	// serve answers with **all five security headers** on a live 26.7.1:
 	//
-	// Its guard is measured too, and it is **not** its org-scoped twin's:
-	// `query-organizations` opens it and is 403 on the other, while
-	// `query-users` opens neither. Two routes serving byte-identical bodies,
-	// two role sets.
+	//	{a resolvable org}/bogus/thing   404 {"error":"HTTP 404 Not Found"}
+	//	nosuchorg/bogus/thing            404 {"errorMessage":"Organization not found."}
+	//	members/bogus/x                  404 {"errorMessage":"Organization not found."}
+	//
+	// So the dispatcher is **more** faithful than the fallback for these paths,
+	// which is the same finding F153's 2026-09-03 note recorded for the group
+	// family, now measured on the shape it said was still open. The dispatcher
+	// is `GET`-only on purpose: `POST` and `PATCH` on those paths answer a real
+	// 405, and reproducing a 405 is F31's standing question rather than this
+	// cut's.
+	//
+	// The guard is **not** its org-scoped twin's, and that is the pair's whole
+	// point: both need a conjunction, and the coarse half here includes
+	// `query-organizations`. Measured 2026-09-06, one pair at a time:
+	//
+	//	                                     top-level   org-scoped
+	//	view-organizations   + view-users        200         200
+	//	manage-organizations + view-users        200         200
+	//	manage-realm         + view-users        200         200
+	//	query-organizations  + view-users        200         403
+	//	view-organizations   + query-users       403         403
+	//	view-organizations   + view-realm        403         403
+	//
+	// Two routes serving byte-identical bodies, two role sets, and `query-users`
+	// opens neither half of either.
+	for _, pattern := range organizationFourSegmentPatterns {
+		mux.HandleFunc(pattern, h.guardOrganizations(organizationsListReadRoles, h.organizationFourSegment))
+	}
 
 	mux.HandleFunc("GET /admin/realms/{realm}/organizations/{orgID}/identity-providers",
 		h.guardOrganizationAnd(organizationReadRoles, identityProviderReadRoles, h.listOrganizationIdentityProviders))
@@ -717,6 +742,15 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /admin/realms/{realm}/clients-initial-access/{initialAccessID}",
 		h.guardAny(initialAccessWriteRoles, h.deleteClientInitialAccess))
 
+	// Client Registration Policy, its one operation, and it goes the other way
+	// from the three above it: **the realm pair opens it and every clients role
+	// is 403**, including view-clients and manage-clients on a listing made of
+	// client scope names. So the two families registered next to each other
+	// here take the two role pairs the other one would predict, measured in
+	// both directions against GET /clients. See clientregistrationpolicy.go.
+	mux.HandleFunc("GET /admin/realms/{realm}/client-registration-policy/providers",
+		h.guardAny(clientRegistrationPolicyReadRoles, h.listClientRegistrationPolicyProviders))
+
 	// Workflows, all nine. **Authorised out of neither pair - out of no pair at
 	// all.** Every one of the twenty-one master-realm admin roles is 403 on
 	// every route here, singly and in combination, and so are all twenty-one
@@ -1089,13 +1123,16 @@ func (h *handler) register(mux *http.ServeMux) {
 	// form the certificate writes immediately above use. See guardClientSubject
 	// for the five-cell measurement that separates the two.
 	//
-	// `GET .../test-nodes-available` is deliberately absent; clientnodes.go
-	// says what it does and why the `{}` a default container answers is not a
-	// contract worth pinning.
+	// `GET .../test-nodes-available` is the third route on the combinator and
+	// takes the same role set the writes do, which is not what the file's
+	// neighbours would predict: it is a **read** that refuses `view-clients`.
+	// clientnodes.go carries the corrected rule and the four-cell measurement.
 	mux.HandleFunc("POST /admin/realms/{realm}/clients/{clientUUID}/nodes",
 		h.guardClientSubject(clientNodeWriteRoles, h.registerClientNode))
 	mux.HandleFunc("DELETE /admin/realms/{realm}/clients/{clientUUID}/nodes/{node}",
 		h.guardClientSubject(clientNodeWriteRoles, h.unregisterClientNode))
+	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/test-nodes-available",
+		h.guardClientSubject(clientNodeWriteRoles, h.testNodesAvailable))
 
 	// The client half of the session family. The four reads take view-clients
 	// **or manage-clients** and push-revocation takes manage-clients alone -
@@ -2268,6 +2305,23 @@ var (
 // a regression in the other family, which is the mistake usersReadRoles and
 // groupsReadRoles already record next door.
 var realmConfigReadRoles = []string{"view-realm", "manage-realm"}
+
+// clientRegistrationPolicyReadRoles is what the `Client Registration Policy`
+// tag's one operation accepts, and it is **the realm pair rather than the
+// clients pair**, which is the surprise: `view-clients`, `manage-clients` and
+// `query-clients` are all 403 on a listing whose one variable option list is
+// made of the realm's client scope names.
+//
+// Measured 2026-09-06 with a token minted per role, nineteen single
+// `master-realm` admin roles plus a caller holding nothing, against
+// `GET /clients` as a control that differs in **both** directions - the three
+// clients roles read it and the realm pair does not.
+//
+// It is a third variable holding the same two names as realmConfigReadRoles
+// and realmRolesReadRoles, for the reason the comment above gives: they were
+// measured on different families and a later measurement that splits them must
+// not read as a regression in the others.
+var clientRegistrationPolicyReadRoles = []string{"view-realm", "manage-realm"}
 
 // clientRolesReadRoles is what both client-role reads accept: view-clients or
 // manage-clients - measured the same way as the realm-role pair above, on an
