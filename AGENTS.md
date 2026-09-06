@@ -48,8 +48,11 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **The charset on `Content-Type` splits by API surface and status class, not by
   endpoint.** On the **Admin API** every 2xx with a body carries
   `;charset=UTF-8` and every error carries plain `application/json` - 158
-  goldens to 151, with one counterexample this file records separately
-  (`POST /groups/{id}/children`'s 201). On the **protocol side** every 200
+  goldens to 151, with **three** counterexamples this file records separately:
+  `POST /groups/{id}/children`'s 201, `POST /partial-export` and
+  `PUT /users/profile`. One counterexample was recorded here until 2026-09-06,
+  and the number grew every time somebody looked - which is the argument for
+  counting the 2xx bodies rather than trusting this sentence. On the **protocol side** every 200
   carries plain `application/json`: token, userinfo, certs, discovery,
   introspection, revocation, device. `Accept` is not the variable - five
   spellings including none at all give the same answer.
@@ -107,82 +110,54 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `{"error":"HTTP 405 Method Not Allowed"}`, measured independently on the
   protocol and admin sides on the same day, so the fallback family has five
   bodies rather than four. See F31 before adding a 405 or defending the 404.
-- **The five security headers have four exceptions, and two of them turned out
-  to be one rule about the response's media type.** A route match and a known
-  path hit with the wrong method both get `Referrer-Policy`,
-  `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options` and
-  `X-Robots-Tag`.
-  **(1) A path matching no route at all gets none of them**, because that request
-  never reaches Keycloak's filter chain.
-  **(2) The media type of the response decides.** Computed over every committed
-  golden on 2026-09-03:
+- **They are not five headers with one rule. They are four with one rule and
+  `X-Frame-Options` with its own.** Computed over all 921 committed goldens on
+  2026-09-06:
 
   ```
-  text/plain          6 goldens    none carries the five
-  text/html          15            all carry them
-  application/json  556 carry them, 13 do not
+  application/json    693 all five,  14 none
+  text/html            15 all five
+  text/plain            7 four of five, missing X-Frame-Options
+  no Content-Type     105 all five,  87 four of five, missing X-Frame-Options
   ```
 
-  and a fourth media type is measured but **not** in that table because no
-  golden can hold it: **`application/octet-stream` carries four of the five,
-  omitting `X-Frame-Options`** - measured on the certificate family's two binary
-  operations against five `application/json` 200s on the same resource that
-  carry all five. It is the **first response measured to carry some of the five
-  rather than all or none**, and the first non-`OPTIONS` one to omit exactly
-  that header, which is the shape (4) describes. Whether the two are one rule is
-  unmeasured: an `OPTIONS` 200 has no media type of its own. Two responses in
-  one family, not a rule.
+  **No golden carries a partial set except one missing exactly
+  `X-Frame-Options`.** That single fact is what says the grouping was wrong, and
+  it took a recount because the first one counted the presence of *one* header
+  and was written up as a statement about five.
 
-  and **twelve of those thirteen are the `Duplicate resource error` family**
-  below, with the thirteenth being the unmatched path of (1). Nothing else
-  disagrees.
-  This absorbs what this file recorded for a fortnight as a `userinfo`
-  exception: `userinfo`'s rejections are `text/plain` and omit the five, its 200s
-  are `application/json` and carry them, and **it was never about the endpoint**.
-  `GET .../localization/{locale}/{key}` is what made it visible - the only
-  `text/plain` 200 in the Admin API, omitting the header under three different
-  request `Content-Type`s, while its **own** 404 is `application/json` and
-  carries it.
-  **(3) A bodyless 204 carries `X-Frame-Options` only when the *request*
-  declared an `application/*` `Content-Type`** - measured across seven
-  Content-Type values on one endpoint, every one answering 204. That is a
-  different axis from (2), because a 204 has no media type of its own, and it
-  covers every delete (no Content-Type, so no header), the client and user
-  updates (JSON, so the header), and `PUT .../userLabel` (`text/plain`, so no
-  header). `httpx.WriteNoContent` is the one place that decides.
-  **(4) An `OPTIONS` 200 sends four of the five, omitting `X-Frame-Options`** -
-  measured on `/auth/device`, `/auth`, `/logout` and `/token`. **No golden
-  records it**, so it cannot be checked from the tree the way (2) can, and
-  whether it is (2) wearing a different hat is unmeasured: the request that
-  would say so is an `OPTIONS` whose response carries a JSON body. The same
-  sweep found that `/auth` is the only one of the four whose `OPTIONS` carries
-  an `Allow` header. See F31.
-  **The `Duplicate resource error` split is what is left, and it is not
-  explained.** A dozen and a half committed goldens answer the byte-identical
-  67-byte body, and **this bullet does not carry the tally** -
-  `TestTheDuplicateResourceErrorSplitIsNotDecidedByTheVerb` computes it, prints
-  it, and asserts the claim rather than the count. That test exists because the
-  number written here drifted three times, the last time **inside one commit**.
-  Ruled out by goldens already in this repository: the status, the body, its
-  length, emptiness, the request's `Content-Type`, **the verb** - both verbs
-  answer this one body both ways - and **the endpoint**:
-  `admin/protocol-mappers/add-models-duplicate-id-same-container` and
-  `-other-container` are the same route, the same verb and the same 67 bytes,
-  and one sends all five while the other sends none. They differ only in which
-  internal failure produced the 409. See F147.
-  A sixth explanation was raised on 2026-09-03 - "the **first** occurrence of a
-  given failure sends none and later ones send all five" - and **it does not
-  reproduce**: on a completely fresh container the very first
-  `Duplicate resource error` it ever produced carried all five, as did six
-  repeats, and the golden recorded in the same cut agrees. The run that appeared
-  to support it reported `0 of five` for every response including the 201s,
-  because its counter used `awk`'s `IGNORECASE`, which BSD `awk` ignores. **A
-  probe that reports the same answer for every input is measuring itself.**
-  **This bullet has been wrong five times, twice refuted by the very golden it
-  cited, and the correction of 2026-09-03 is the first that removes an exception
-  rather than adding one.** Before writing a rule about headers, grep the
-  goldens for a case that would break it - and prefer "not explained" to the
-  next explanation.
+  **`Referrer-Policy`, `Strict-Transport-Security`, `X-Content-Type-Options` and
+  `X-Robots-Tag` are on everything**, with two exceptions:
+  - **a path matching no route** gets none of them, because that request never
+    reaches Keycloak's filter chain;
+  - **the `Duplicate resource error` family** gets none, and nobody has explained
+    why. `TestTheDuplicateResourceErrorSplitIsNotDecidedByTheVerb` computes the
+    tally rather than this bullet carrying it. Ruled out by goldens already here:
+    the status, the body, its length, emptiness, the request's `Content-Type`,
+    the verb - both verbs answer this one body both ways - and the endpoint:
+    `admin/protocol-mappers/add-models-duplicate-id-same-container` and
+    `-other-container` are the same route, the same verb and the same 67 bytes,
+    and one sends all five while the other sends none. A "first occurrence"
+    hypothesis was measured on a fresh container and refuted. See F147.
+
+  **`X-Frame-Options` is additionally absent** on `text/plain` (all seven
+  goldens), on `application/octet-stream` (measured, no golden can hold one -
+  see F161), on an `OPTIONS` 200 (measured on four endpoints, no golden records
+  it), and on a **204 whose *request* declared no `application/*`
+  `Content-Type`** - measured across seven Content-Type values on one endpoint,
+  which is what `httpx.WriteNoContent` decides. `userinfo` was recorded as an
+  endpoint exception for a fortnight and is none: its rejections are
+  `text/plain` and its 200s are `application/json`, and its own six goldens said
+  so the whole time.
+  Whether those four are one rule about the media type is **not settled**: a
+  204 has no media type of its own, and an `OPTIONS` 200 carrying a JSON body is
+  the request nobody has sent.
+  **This bullet has been wrong six times, twice refuted by the very golden it
+  cited and once by a recount of the probe that wrote it.** The corrections of
+  2026-09-03 and 2026-09-06 are the only two that **removed** a rule rather than
+  adding one. Before writing a rule about headers, grep the goldens for a case
+  that would break it - and check that the script answers the question the
+  sentence will claim.
 - **That rule was wrong once already.** P2's Task 11 recorded it as "a
   successful `DELETE`'s 204 omits it", from four deletes that all happened to
   send no `Content-Type`. When a new 204 disagrees with a header rule, measure
@@ -2133,6 +2108,39 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   the only operation in that tag not under `/clients/{uuid}/certificates/` -
   a fourth instance of the description's tag failing to predict the guard, and
   the first where the route is not even in the tag's path family.
+
+- **A federated-identity link can exist and be invisible.** `POST
+  .../users/{id}/federated-identity/{alias}` naming an alias no provider carries
+  is a **204** and stores the row; the listing then answers `[]`, and a repeat of
+  the same `POST` is a **409**. Registering a provider with that alias makes the
+  row appear. So the listing filters on the provider existing and the write does
+  not, and a caller can be told "created", then "already exists", while every
+  read says there is nothing there.
+- **`GET /users/profile` is a canonicalisation, not an echo.** It rewrites the
+  stored `UPConfig` into its own field order rather than returning what was
+  written, and on `master` the two happen to agree to the byte - which is a
+  coincidence and the reason an echo implementation passes there. A test written
+  to defend the echo is what refuted it.
+- **`PUT /users/profile {}` breaks every login in the realm**, the same way a
+  second `declarative-user-profile` component does - and it is the endpoint that
+  writes that component. Measure it in a created realm.
+- **`registeredNodes` uses Java's *sized* HashMap constructor**, and it is the
+  first `javamap.KeyOrder` counterexample **outside a bucket collision**:
+  `KeyOrder` inverts `{127.0.0.1, ct3}`, which does not collide, where
+  `SizedKeyOrder` places all three measured key sets.
+- **`POST /testSMTPConnection` fails against a working SMTP server**, because it
+  mails the test to **the caller** and the bootstrap `admin` has no email
+  address. It answers 500 to `{}`, to an unreachable host and to a reachable one
+  alike; giving `admin` an address turns the reachable case into a 204. Without a
+  mail catcher as a control, a probe of this endpoint measures itself.
+- **The three email writes are a mail client, not three operations.** Measured
+  over four states: a 400 for a user with no email, two *different* 500s
+  depending on the realm's `smtpServer`, and a 204 with a real message delivered
+  when SMTP is reachable.
+- **`users-management-permissions` is `client-types`' gate**, measured rather
+  than assumed: 501 to a caller holding no admin role at all, `Realm not found.`
+  for a bogus realm, 401 with no token. That is the first of the five gate shapes
+  met on a second family.
 
 ## Boundaries
 
