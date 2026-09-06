@@ -8364,6 +8364,13 @@ const (
 // The private key inside them went with the container that made it and protects
 // nothing.
 //
+// The same two files are under internal/keystore/testdata, where that package's
+// own tests hold its reader to them. They are copied rather than shared because
+// a package reaching into another package's testdata is a build-tag accident
+// waiting to happen, and because the two copies answer different questions:
+// there, that a reader reads Keycloak's bytes; here, that the endpoint answers
+// what a golden says it does.
+//
 // **The PKCS12 is the one that matters most.** It is indefinite-length BER with
 // its content octets in a constructed OCTET STRING, which is what BouncyCastle
 // writes and what `encoding/asn1` refuses outright; without a case sending it,
