@@ -1,6 +1,8 @@
 package conformance
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"os"
 	"strings"
@@ -201,4 +203,96 @@ func TestBuildRequestSendsNoQuestionMarkWithoutAQuery(t *testing.T) {
 	if strings.Contains(req.URL.String(), "?") {
 		t.Fatalf("an empty query added a separator: %q", req.URL.String())
 	}
+}
+
+// TestAMintedProofIsFreshEveryTime is the property the whole mechanism rests
+// on. A DPoP proof's jti may be used once, so two runs of one fixture must
+// disagree - and if they did not, the second recording of a bound-token case
+// would answer "DPoP proof has already been used" and write that as the
+// contract.
+func TestAMintedProofIsFreshEveryTime(t *testing.T) {
+	p := Proof{Method: http.MethodPost, Path: tokenEndpointPath}
+	first, err := mintProof(p, testIssuer)
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	second, err := mintProof(p, testIssuer)
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	if first == second {
+		t.Fatal("two mints of one declaration produced the same proof, so its jti is reusable")
+	}
+	// The header is the same bytes both times - the same key, the same typ,
+	// the same alg - which is what says the difference is in the claims rather
+	// than only in a randomised signature.
+	if strings.SplitN(first, ".", 2)[0] != strings.SplitN(second, ".", 2)[0] {
+		t.Error("the two proofs disagree in the JOSE header, so the key is not fixed")
+	}
+	if decodeProofClaims(t, first)["jti"] == decodeProofClaims(t, second)["jti"] {
+		t.Error("the two proofs share a jti, which may be used once")
+	}
+}
+
+// TestAMintedProofNamesTheRequestItWillBeSentOn pins the two claims that make
+// this value uncomputable anywhere but here: htu is built from the base URL,
+// which differs between the recorder and the verifier, and htm is the case's
+// own verb.
+func TestAMintedProofNamesTheRequestItWillBeSentOn(t *testing.T) {
+	raw, err := mintProof(Proof{Method: http.MethodPost, Path: tokenEndpointPath},
+		"http://example.test:9")
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	claims := decodeProofClaims(t, raw)
+	if got := claims["htu"]; got != "http://example.test:9"+tokenEndpointPath {
+		t.Errorf("htu %v, want the base and the path", got)
+	}
+	if got := claims["htm"]; got != http.MethodPost {
+		t.Errorf("htm %v, want POST", got)
+	}
+	for _, name := range []string{"iat", "jti"} {
+		if _, ok := claims[name]; !ok {
+			t.Errorf("a proof with nothing declared wrong is missing %s", name)
+		}
+	}
+}
+
+// TestAProofRefusesAnOmissionThatIsNotAMandatoryClaim keeps Proof.Omit from
+// being a field that silently does nothing. A typo there would produce a
+// perfectly valid proof and a case measuring the wrong thing - which is the
+// shape of the inert masks this repository has already paid for.
+func TestAProofRefusesAnOmissionThatIsNotAMandatoryClaim(t *testing.T) {
+	if _, err := mintProof(Proof{Method: http.MethodPost, Path: tokenEndpointPath,
+		Omit: "nonce"}, testIssuer); err == nil {
+		t.Fatal("omitting a claim that is not mandatory was accepted")
+	}
+	for _, name := range []string{"htm", "htu", "iat", "jti"} {
+		raw, err := mintProof(Proof{Method: http.MethodPost, Path: tokenEndpointPath,
+			Omit: name}, testIssuer)
+		if err != nil {
+			t.Fatalf("omit %s: %v", name, err)
+		}
+		if _, ok := decodeProofClaims(t, raw)[name]; ok {
+			t.Errorf("omit %s: the claim is still there", name)
+		}
+	}
+}
+
+// decodeProofClaims reads a minted proof's payload.
+func decodeProofClaims(t *testing.T, raw string) map[string]any {
+	t.Helper()
+	parts := strings.Split(raw, ".")
+	if len(parts) != 3 {
+		t.Fatalf("not a JWT: %q", raw)
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatalf("parse payload: %v", err)
+	}
+	return claims
 }

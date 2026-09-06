@@ -1046,14 +1046,16 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-20",
 		},
 		Status: Pending,
-		// The one of the five that is still unreachable, and it is the only one
-		// whose Reason survived that cut unchanged. The token endpoint
-		// dispatches the grant; what is missing is an auth_req_id, and a default
-		// 26.7.1 mints none - see the CIBA block further down. Re-measured
-		// 2026-09-06 with the authentication request answering 503, so the
-		// reason has now survived two cuts rather than one.
-		Reason:  "a default 26.7.1 has no CIBA authentication channel, so no auth_req_id can be obtained to redeem",
-		Fixture: "", // needs an auth_req_id, which needs an external authentication channel endpoint
+		// The token endpoint dispatches the grant; what is missing is an
+		// auth_req_id. **Re-measured 2026-09-06 with a second container, and
+		// the reason is sharper than "a default 26.7.1 has no channel" -
+		// which is true and reads like a fact about Keycloak.** One
+		// `--spi-ciba-auth-channel--ciba-http-auth-channel--http-authentication-channel-uri`
+		// on start-dev lifts the 503, and the whole flow then completes
+		// against a listener on the host. See the CIBA block further down for
+		// what stands between that and a recording.
+		Reason:  "CIBA needs a channel URI set at startup and a listener the container calls out to, and the recorder sets neither",
+		Fixture: "", // needs an auth_req_id, which needs the startup option and an inbound callout the harness has no shape for
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
@@ -1135,6 +1137,25 @@ var oidcPending = []Case{
 		},
 		AssertHeaders: []string{"Content-Type"},
 	},
+	// --- DPoP, RFC 9449 ---
+	//
+	// **DPoP verification is opportunistic.** `admin-cli` carries no
+	// `dpop.bound.access.tokens` attribute and every case below reaches the
+	// check anyway, because the *header* turns it on. The attribute makes the
+	// header mandatory instead, which is what dpop-proof-missing measures.
+	//
+	// The refusals are a ladder and its **order is measured**, by nine proofs
+	// each wrong in two ways: typ, alg, the jwk, the signature, the mandatory
+	// claims, then **htu before htm**, then iat, then jti. A proof with a
+	// broken signature and a wrong htm answers about the signature; one wrong
+	// about both URLs and methods answers about the URL. Each case below sets
+	// exactly one field of its `Proof`, so the declaration is the diagnosis.
+	//
+	// The proofs are **minted by the fixture**, not written down. Eight of them
+	// could have been literals - every check above answers the same sentence
+	// forever, since none of them reaches the iat window - but htu is the
+	// case's own absolute URL and the recorder's base is a container's mapped
+	// port, so even a stale proof has to be computed. See Fixture.Proofs.
 	{
 		ID: "oidc/token/dpop-bound-token",
 		Doc: Doc{
@@ -1142,34 +1163,29 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: DPoP-bound tokens",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
-		// **"DPoP is not implemented" was true of Gloak and wrong about why this
-		// case is Pending.** DPoP is a `DEFAULT` feature on 26.7.1 and the grant
-		// works: a proof signed ES256 answers 200 with `token_type: DPoP` and a
-		// `cnf.jkt` on the access *and* refresh tokens. What cannot be expressed
-		// is the request, for two independent measured reasons - a proof carries
-		// an `iat` and is refused outside a window of tens of seconds, and its
-		// `jti` is single-use, so a literal could not be recorded and replayed
-		// even seconds later. The harness is the limit, not the container.
+		// Pending until 2026-09-06 with "a proof carries a per-request iat and
+		// a single-use jti, so no literal proof can be recorded and replayed".
+		// Both halves were true and the conclusion did not follow. The window
+		// is **forty seconds wide**, [now-25, now+15], measured at one second's
+		// resolution - so a proof minted one round trip before this request is
+		// nowhere near stale - and the jti only rules out a *literal*. What was
+		// actually missing was a computed value, which the harness had none of;
+		// Fixture.Proofs is that, and it is on the fixture rather than on a
+		// Step because a Step reads values out of responses.
 		//
-		// **Re-checked 2026-09-06 and it holds, with one half it did not say.**
-		// The sentence explains why no *literal* proof works. What it leaves
-		// open is whether a fixture could compute one, and the answer is in
-		// fixture.go rather than in DPoP: a `Step` is a request, and all four
-		// capture forms - Capture, CaptureHeader, CaptureForm, CaptureQuery -
-		// read a value out of a **response**. The harness has no computed value
-		// of any kind, so there is nowhere to sign a proof even though a proof
-		// minted seconds before the case's request would be inside the window.
-		// That is a harness question with a harness answer, and it is the half
-		// worth writing down, because "the proof goes stale" reads as though a
-		// faster harness would fix it.
-		Reason:  "a DPoP proof carries a per-request iat and a single-use jti, so no literal proof can be recorded and replayed",
-		Fixture: "", // needs a proof JWT minted per request, and no Step computes a value: every capture reads a response
+		// What the body asserts is one word. `token_type` is DPoP where the
+		// same request without the header answers Bearer, and the binding
+		// itself - cnf.jkt, on the access **and** refresh tokens and not on the
+		// ID token, immediately before scope on both - is inside tokens this
+		// golden masks. dpop-refresh-key-mismatch is what asserts the binding,
+		// because its refusal names it.
+		Status:  Implemented,
+		Fixture: "dpop-valid",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
 			Headers: map[string]string{
-				"DPoP": "REPLACE-WITH-A-REAL-DPOP-PROOF",
+				"DPoP": "{{dpop_proof}}",
 			},
 			Form: map[string]string{
 				"grant_type": "password",
@@ -1179,9 +1195,14 @@ var oidcPending = []Case{
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
-		Volatile: []string{
-			"access_token", "refresh_token", "id_token", "session_state",
-		},
+		// No id_token: this request does not ask for openid, and the Pending
+		// case's mask listed one anyway - a mask nothing could judge while the
+		// case had no golden. TestNoMaskIsInertOnItsGolden reported it the
+		// moment there were bytes to judge it against.
+		Volatile: []string{"access_token", "refresh_token", "session_state"},
+		// See password-grant-admin-cli for why scope's word order is not stable
+		// across container starts.
+		UnorderedWords: []string{"scope"},
 	},
 	{
 		ID: "oidc/token/dpop-header-invalid",
@@ -1190,24 +1211,11 @@ var oidcPending = []Case{
 			Section:   "Token endpoint: DPoP-bound tokens",
 			Retrieved: "2026-08-31",
 		},
-		// Recorded rather than Pending: this half of DPoP **is** expressible as
-		// a literal, and measuring it costs nothing while leaving the contract
-		// in the repository for whoever implements the rest.
-		//
-		// It is also the surprising half. The client is `admin-cli`, which
-		// carries no `dpop.bound.access.tokens` attribute at all, and the header
-		// is still validated - so DPoP verification is **opportunistic**, not
-		// switched on per client. Gloak ignores the header and answers 200 with
-		// tokens, which is the divergence this case names.
-		//
-		// **Re-checked 2026-09-06 and it holds.** `grep -i dpop internal/` finds
-		// a client attribute the registration endpoint stores and echoes, the
-		// discovery document's `dpop_signing_alg_values_supported`, and a field
-		// on the client-description converter - and no proof verification
-		// anywhere. F135 says the omission is deliberate, so this stays
-		// Recorded: the contract is in the repository for whoever builds it.
-		Status:  Recorded,
-		Reason:  "DPoP is not implemented; Gloak ignores the header and issues an unbound token",
+		// Recorded from 2026-08-31 to 2026-09-06, when DPoP was measured in
+		// full and not built. It is the one case in this family whose request
+		// is a literal: a header that is not a JWT at all fails before anything
+		// about a proof is looked at.
+		Status:  Implemented,
 		Fixture: "bootstrap",
 		Request: Request{
 			Method: http.MethodPost,
@@ -1220,6 +1228,332 @@ var oidcPending = []Case{
 				"client_id":  "admin-cli",
 				"username":   "admin",
 				"password":   "admin",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// A client carrying dpop.bound.access.tokens sending **no header at
+		// all**. The same sentence answers a header that is present and empty
+		// on a client that requires nothing, which is the surprising half:
+		// `DPoP:` with an empty value is a refusal where no header is a 200.
+		// That one is pinned by internal/oidc's own test, because a Request's
+		// Headers map cannot hold a header with an empty value distinctly from
+		// one it does not set.
+		ID: "oidc/token/dpop-proof-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Token endpoint: DPoP-bound tokens",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "dpop-required-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type": "password",
+				"client_id":  "gloak-probe-dpop",
+				"username":   "admin",
+				"password":   "admin",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// typ is compared exactly: DPOP+JWT is refused as well, and an
+		// **absent** typ interpolates the literal word "null" rather than
+		// nothing - pinned in internal/oidc, since a Proof either spells a typ
+		// or takes the default.
+		ID: "oidc/token/dpop-wrong-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Token endpoint: DPoP-bound tokens",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "dpop-wrong-type",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/realms/master/protocol/openid-connect/token",
+			Headers: map[string]string{"DPoP": "{{dpop_proof}}"},
+			Form: map[string]string{
+				"grant_type": "password",
+				"client_id":  "admin-cli",
+				"username":   "admin",
+				"password":   "admin",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// `none` and `HS256` both answer here rather than at the signature, so
+		// an unsigned proof never reaches a verifier.
+		ID: "oidc/token/dpop-unsupported-alg",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Token endpoint: DPoP-bound tokens",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "dpop-unsupported-alg",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/realms/master/protocol/openid-connect/token",
+			Headers: map[string]string{"DPoP": "{{dpop_proof}}"},
+			Form: map[string]string{
+				"grant_type": "password",
+				"client_id":  "admin-cli",
+				"username":   "admin",
+				"password":   "admin",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "oidc/token/dpop-no-jwk",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Token endpoint: DPoP-bound tokens",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "dpop-no-jwk",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/realms/master/protocol/openid-connect/token",
+			Headers: map[string]string{"DPoP": "{{dpop_proof}}"},
+			Form: map[string]string{
+				"grant_type": "password",
+				"client_id":  "admin-cli",
+				"username":   "admin",
+				"password":   "admin",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// EdDSA is one of the ten advertised algorithms, so this is past the
+		// alg check and the key is the problem. The sentence names the
+		// algorithm **twice** and the key type once, which is Keycloak's and
+		// not a mistake here.
+		ID: "oidc/token/dpop-key-type-mismatch",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Token endpoint: DPoP-bound tokens",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "dpop-key-type",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/realms/master/protocol/openid-connect/token",
+			Headers: map[string]string{"DPoP": "{{dpop_proof}}"},
+			Form: map[string]string{
+				"grant_type": "password",
+				"client_id":  "admin-cli",
+				"username":   "admin",
+				"password":   "admin",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// ES384 over a P-256 key: the key **type** is right and the curve is
+		// not, and that is a different sentence from the case above and from
+		// the signature failure below. Three verification refusals, two of
+		// which name a Java class, and they are not interchangeable.
+		ID: "oidc/token/dpop-curve-mismatch",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Token endpoint: DPoP-bound tokens",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "dpop-curve",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/realms/master/protocol/openid-connect/token",
+			Headers: map[string]string{"DPoP": "{{dpop_proof}}"},
+			Form: map[string]string{
+				"grant_type": "password",
+				"client_id":  "admin-cli",
+				"username":   "admin",
+				"password":   "admin",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// A well-formed proof whose signature does not verify. The description
+		// carries a Java exception class name, which is measured verbatim and
+		// is the second of the two "DPoP verification failure:" sentences.
+		ID: "oidc/token/dpop-signature-invalid",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Token endpoint: DPoP-bound tokens",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "dpop-bad-signature",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/realms/master/protocol/openid-connect/token",
+			Headers: map[string]string{"DPoP": "{{dpop_proof}}"},
+			Form: map[string]string{
+				"grant_type": "password",
+				"client_id":  "admin-cli",
+				"username":   "admin",
+				"password":   "admin",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// One claim absent, and all four answer the same sentence - so this
+		// case measures the set rather than the claim. jti is the one dropped
+		// because it is the only one whose absence a reader might expect to be
+		// forgiven.
+		ID: "oidc/token/dpop-missing-claims",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Token endpoint: DPoP-bound tokens",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "dpop-missing-claims",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/realms/master/protocol/openid-connect/token",
+			Headers: map[string]string{"DPoP": "{{dpop_proof}}"},
+			Form: map[string]string{
+				"grant_type": "password",
+				"client_id":  "admin-cli",
+				"username":   "admin",
+				"password":   "admin",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// htu is compared with the query cut and exactly otherwise: a proof
+		// whose htu carries ?x=1 is **accepted**, one naming another host is
+		// not. It is compared before htm, which is what a proof wrong about
+		// both says.
+		ID: "oidc/token/dpop-htu-mismatch",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Token endpoint: DPoP-bound tokens",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "dpop-htu-mismatch",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/realms/master/protocol/openid-connect/token",
+			Headers: map[string]string{"DPoP": "{{dpop_proof}}"},
+			Form: map[string]string{
+				"grant_type": "password",
+				"client_id":  "admin-cli",
+				"username":   "admin",
+				"password":   "admin",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "oidc/token/dpop-htm-mismatch",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Token endpoint: DPoP-bound tokens",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "dpop-htm-mismatch",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/realms/master/protocol/openid-connect/token",
+			Headers: map[string]string{"DPoP": "{{dpop_proof}}"},
+			Form: map[string]string{
+				"grant_type": "password",
+				"client_id":  "admin-cli",
+				"username":   "admin",
+				"password":   "admin",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// Thirty seconds old, against a measured window of [now-25, now+15].
+		// **Its lowest second is a 500 on Keycloak** - a proof at exactly
+		// now-25 passes the window and dies storing its jti - and that one
+		// second is not reproduced; see internal/oidc/dpop.go.
+		ID: "oidc/token/dpop-proof-not-active",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Token endpoint: DPoP-bound tokens",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "dpop-stale",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/realms/master/protocol/openid-connect/token",
+			Headers: map[string]string{"DPoP": "{{dpop_proof}}"},
+			Form: map[string]string{
+				"grant_type": "password",
+				"client_id":  "admin-cli",
+				"username":   "admin",
+				"password":   "admin",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// A bound refresh token presented with **no** proof. Both refresh
+		// refusals are invalid_grant, where every other DPoP sentence on this
+		// endpoint is invalid_request - so the code follows the grant and not
+		// the check.
+		ID: "oidc/token/dpop-refresh-proof-missing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Token endpoint: DPoP-bound tokens",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "dpop-bound-refresh",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type":    "refresh_token",
+				"client_id":     "admin-cli",
+				"refresh_token": "{{refresh_token}}",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The same bound refresh token presented with a **valid** proof from
+		// another key. This is the case that asserts the binding: the refusal
+		// names it, where the successful grant's cnf.jkt is inside a token
+		// every golden masks.
+		ID: "oidc/token/dpop-refresh-key-mismatch",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Token endpoint: DPoP-bound tokens",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "dpop-bound-refresh-other",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/realms/master/protocol/openid-connect/token",
+			Headers: map[string]string{"DPoP": "{{dpop_proof_other}}"},
+			Form: map[string]string{
+				"grant_type":    "refresh_token",
+				"client_id":     "admin-cli",
+				"refresh_token": "{{refresh_token}}",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
@@ -2839,6 +3173,17 @@ var oidcPending = []Case{
 	// That makes the 503 a contract rather than a gap - the same shape as
 	// client-types answering 501 and .../client-secret/rotated answering a
 	// permanent 404 - and it is what oidc/ciba/channel-unavailable records.
+	//
+	// **2026-09-06: it is a contract about start-dev, not about Keycloak.** A
+	// second container started with
+	// `--spi-ciba-auth-channel--ciba-http-auth-channel--http-authentication-channel-uri`
+	// and `--add-host=host.docker.internal:host-gateway`, with a listener on
+	// the host, answers the identical request 200 and takes the whole flow
+	// through: `authorization_pending`, `slow_down` on a poll inside the
+	// interval, and nine keys with `token_type: Bearer` once the channel calls
+	// `.../ext/ciba/auth/callback` with `{"status":"SUCCEED"}`. Both containers
+	// answer an unknown auth_req_id identically, so the option is the only
+	// variable. The three Pending cases below say what that costs.
 	{
 		ID: "oidc/ciba/authentication-request",
 		Doc: Doc{
@@ -3073,16 +3418,27 @@ var oidcPending = []Case{
 		// project's container regime can record this case, and saying "not
 		// implemented" would read as a to-do somebody could close.
 		//
-		// **Re-measured 2026-09-06 and it holds.** A client carrying
-		// `oidc.ciba.grant.enabled` sending a valid authentication request to
-		// `/realms/master/protocol/openid-connect/ext/ciba/auth` answers 503
-		// {"error":"server_error","error_description":"Failed to send
-		// authentication request"}. `GET /admin/serverinfo` reports CIBA as
-		// `"type":"DEFAULT","enabled":true`, so the feature is on and the
-		// **channel** is what is missing - which is the distinction that keeps
-		// this from reading as a disabled preview.
-		Reason:  "a default 26.7.1 has no CIBA authentication channel, so no auth_req_id can be obtained to poll with",
-		Fixture: "", // needs an auth_req_id, which needs an external authentication channel endpoint
+		// **Re-measured 2026-09-06 against two containers, and the sentence is
+		// now about the recorder rather than about Keycloak.** A second
+		// container started with
+		// `--spi-ciba-auth-channel--ciba-http-auth-channel--http-authentication-channel-uri`
+		// pointed at a listener on the host answers the identical request 200
+		// with an auth_req_id, and this poll then answers
+		// `authorization_pending` - so the 503 is the artefact of a **startup
+		// option**, not of a missing feature. `GET /admin/serverinfo` reports
+		// CIBA as `"type":"DEFAULT","enabled":true` on both, the
+		// `ciba-auth-channel` SPI is `"internal": true` with no component type,
+		// and the realm's four CIBA attributes do not include the URI - so
+		// nothing running can set it.
+		//
+		// What stands between that and a recording is two files this stream
+		// does not own and one shape the harness has not got: `startKeycloak`
+		// lives in record_test.go and starts `start-dev` with no options, the
+		// listener would have to be stood up there too, and `Run` sends
+		// requests and reads responses - a callout **arrives**, and there is no
+		// capture for that.
+		Reason:  "CIBA needs a channel URI set at startup and a listener the container calls out to, and the recorder sets neither",
+		Fixture: "", // needs an auth_req_id, which needs the startup option: see the comment above
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
@@ -3102,10 +3458,19 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-20",
 		},
 		Status: Pending,
-		// The same 503, re-measured 2026-09-06 alongside poll-pending's. The
-		// reason holds and is now dated.
-		Reason:  "a default 26.7.1 has no CIBA authentication channel, so no auth_req_id can be obtained to approve",
-		Fixture: "", // needs an auth_req_id a second user approved, which needs that channel
+		// The hardest of the three, and the only one whose blocker is the
+		// harness's shape rather than the container's options. It needs an
+		// auth_req_id somebody **approved**, and the approval arrives as an
+		// inbound request: Keycloak POSTs the authentication request to the
+		// channel, and the channel calls back to
+		// `.../ext/ciba/auth/callback` with the bearer it was handed. Driven
+		// by hand on 2026-09-06 it works and answers 200 with the ordinary
+		// nine keys, `token_type: Bearer`. A fixture cannot: `Fixture` is a
+		// starting state and a list of requests, with nowhere to stand a
+		// listener up and no capture that reads one. That is F122's boundary
+		// measured from the other side.
+		Reason:  "the approval arrives as an inbound callout, and a fixture is a list of requests with no listener and no capture for one",
+		Fixture: "", // needs an auth_req_id a second party approved, which needs that callout
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",

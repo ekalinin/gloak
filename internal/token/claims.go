@@ -69,6 +69,7 @@ type accessClaims struct {
 	AllowedOrigins    []string       `json:"allowed-origins,omitempty"`
 	RealmAccess       *roleClaim     `json:"realm_access,omitempty"`
 	ResourceAccess    resourceAccess `json:"resource_access,omitempty"`
+	Cnf               *confirmation  `json:"cnf,omitempty"`
 	Scope             string         `json:"scope"`
 	EmailVerified     bool           `json:"email_verified"`
 	PreferredUsername string         `json:"preferred_username"`
@@ -76,6 +77,35 @@ type accessClaims struct {
 
 type roleClaim struct {
 	Roles []string `json:"roles"`
+}
+
+// confirmation is the cnf claim a DPoP-bound token carries, RFC 9449's
+// confirmation method.
+//
+// It has **two** keys and the second is Keycloak's own, measured 2026-09-06:
+// {"jkt":"<thumbprint>","kc-jkt-type":"DPoP"}. Emitting the RFC's single jkt
+// would be a divergence in a claim a client can read.
+//
+// It goes on the access token and the refresh token and **not** on the ID
+// token, immediately before scope on both - measured on a lightweight client
+// and on a full one, whose claim sets otherwise share nothing.
+type confirmation struct {
+	Jkt     string `json:"jkt"`
+	JktType string `json:"kc-jkt-type"`
+}
+
+// JktTypeDPoP is the only value of cnf's kc-jkt-type this project has
+// measured. Keycloak has a second confirmation method - the mTLS certificate
+// thumbprint - and nothing here reaches it.
+const JktTypeDPoP = "DPoP"
+
+// confirmationClaim is the cnf claim for a thumbprint, or nil when the request
+// carried no proof and Keycloak omits the key.
+func confirmationClaim(jkt string) *confirmation {
+	if jkt == "" {
+		return nil
+	}
+	return &confirmation{Jkt: jkt, JktType: JktTypeDPoP}
 }
 
 // resourceAccess is the resource_access claim: one entry per client the user
@@ -122,14 +152,15 @@ func (r resourceAccess) MarshalJSON() ([]byte, error) {
 // authorise from the token and must resolve the session from sid - see section
 // 4.1 of docs/superpowers/specs/2026-08-21-p1-token-foundation-design.md.
 type lightweightClaims struct {
-	Exp   int64  `json:"exp"`
-	Iat   int64  `json:"iat"`
-	Jti   string `json:"jti"`
-	Iss   string `json:"iss"`
-	Typ   string `json:"typ"`
-	Azp   string `json:"azp"`
-	Sid   string `json:"sid"`
-	Scope string `json:"scope"`
+	Exp   int64         `json:"exp"`
+	Iat   int64         `json:"iat"`
+	Jti   string        `json:"jti"`
+	Iss   string        `json:"iss"`
+	Typ   string        `json:"typ"`
+	Azp   string        `json:"azp"`
+	Sid   string        `json:"sid"`
+	Cnf   *confirmation `json:"cnf,omitempty"`
+	Scope string        `json:"scope"`
 }
 
 // idClaims is the ID token's claim set. aud is a string here, and it is the
@@ -172,18 +203,19 @@ type idClaims struct {
 // carries what the access token puts in aud, under the same absent/string/array
 // rule. prov is "default".
 type refreshClaims struct {
-	Exp   int64  `json:"exp"`
-	Iat   int64  `json:"iat"`
-	Jti   string `json:"jti"`
-	Iss   string `json:"iss"`
-	Aud   string `json:"aud"`
-	Sub   string `json:"sub"`
-	Typ   string `json:"typ"`
-	Azp   string `json:"azp"`
-	Sid   string `json:"sid"`
-	Scope string `json:"scope"`
-	AudX  any    `json:"aud_x,omitempty"`
-	Prov  string `json:"prov"`
+	Exp   int64         `json:"exp"`
+	Iat   int64         `json:"iat"`
+	Jti   string        `json:"jti"`
+	Iss   string        `json:"iss"`
+	Aud   string        `json:"aud"`
+	Sub   string        `json:"sub"`
+	Typ   string        `json:"typ"`
+	Azp   string        `json:"azp"`
+	Sid   string        `json:"sid"`
+	Cnf   *confirmation `json:"cnf,omitempty"`
+	Scope string        `json:"scope"`
+	AudX  any           `json:"aud_x,omitempty"`
+	Prov  string        `json:"prov"`
 }
 
 // parsedClaims is the subset every token type shares, read back on the way in.
@@ -203,6 +235,7 @@ type parsedClaims struct {
 	Scope string          `json:"scope"`
 	Iat   int64           `json:"iat"`
 	Exp   int64           `json:"exp"`
+	Cnf   *confirmation   `json:"cnf"`
 }
 
 // Token types, spelled as Keycloak spells them in the typ claim.

@@ -2,9 +2,16 @@ package conformance
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/url"
 	"path"
@@ -126,6 +133,32 @@ type Fixture struct {
 	// and is the only one today.
 	State string
 	Steps []Step
+	// Proofs are DPoP proofs minted before the steps run, one per name, each
+	// substituted wherever `{{name}}` appears - in a step's headers and in the
+	// case's own request alike.
+	//
+	// **It is the only computed value in this harness, and it is on the
+	// fixture rather than on a Step for a reason.** A Step sends bytes and
+	// reads a response; all four of its capture forms read a value *out of*
+	// one. A DPoP proof cannot come from any of them: it is signed by the
+	// client, it names the request it will be sent on, and its jti may be used
+	// once. So the fixture computes and the Step stays exactly what it was.
+	//
+	// Three measured facts decide the shape:
+	//
+	//   - The iat window is forty seconds wide, [now-25, now+15], so a proof
+	//     minted here - one HTTP round trip before the case's own request - is
+	//     nowhere near stale. "The proof goes stale" reads as though a faster
+	//     harness would fix it and that was never the problem.
+	//   - The jti is single-use, so the value has to be fresh per run and
+	//     cannot be a literal in the catalogue.
+	//   - htu is the case's **own absolute URL**, which differs between the
+	//     recorder (a container's mapped port) and the verifier (testIssuer).
+	//     That is why this is computed from base rather than written down.
+	//
+	// The two keys are fixed, so cnf.jkt is a stable byte string that a golden
+	// asserts rather than masks.
+	Proofs map[string]Proof
 	// Delay is waited out after the last step and before the case's own
 	// request. It exists for one measured behaviour: a token that has to be
 	// expired when the case asks about it.
@@ -456,6 +489,44 @@ var Fixtures = map[string]Fixture{
 	// one form field removed: the consent endpoint reads `cancel` and nothing
 	// else, so a POST carrying only the hidden `code` is an approval.
 	"device-approved": deviceApprovedFixture(),
+
+	// DPoP. Each of these mints one proof under the name `dpop_proof`, which
+	// the case then puts in its own DPoP header, and the proof's declaration
+	// says what the request is wrong about. The valid one is the control:
+	// every other fixture here is it with exactly one field set.
+	//
+	// They all use admin-cli, which carries **no** dpop.bound.access.tokens
+	// attribute - the header is what turns verification on, measured.
+	"dpop-valid":           dpopFixture(Proof{}),
+	"dpop-wrong-type":      dpopFixture(Proof{Type: "JWT"}),
+	"dpop-unsupported-alg": dpopFixture(Proof{Alg: "none"}),
+	"dpop-no-jwk":          dpopFixture(Proof{OmitJWK: true}),
+	// EdDSA is one of the ten algorithms the discovery document advertises, so
+	// this gets past the alg check and dies on the key being an EC one.
+	"dpop-key-type": dpopFixture(Proof{Alg: "EdDSA"}),
+	// ES384 is an EC algorithm, so the key **type** is right and the curve is
+	// not - and that is a different sentence from the one above.
+	"dpop-curve":          dpopFixture(Proof{Alg: "ES384"}),
+	"dpop-bad-signature":  dpopFixture(Proof{BreakSignature: true}),
+	"dpop-missing-claims": dpopFixture(Proof{Omit: "jti"}),
+	// The URL is a literal rather than base + a path, because the mismatch has
+	// to hold on the recorder and on the verifier alike.
+	"dpop-htu-mismatch": dpopFixture(Proof{HTU: "http://gloak-probe.invalid/token"}),
+	"dpop-htm-mismatch": dpopFixture(Proof{Method: http.MethodGet}),
+	// Thirty seconds is outside the measured window's twenty-five, and it is
+	// the one refusal whose proof is otherwise perfect.
+	"dpop-stale": dpopFixture(Proof{Age: 30 * time.Second}),
+	// A client that carries the attribute, for the request that sends no
+	// header at all.
+	"dpop-required-client": clientFixtureBody(
+		`{"clientId":"gloak-probe-dpop","protocol":"openid-connect","publicClient":true,` +
+			`"directAccessGrantsEnabled":true,"standardFlowEnabled":false,` +
+			`"attributes":{"dpop.bound.access.tokens":"true"}}`),
+	// A bound refresh token, so the case's own request can be wrong about the
+	// key that holds it. The step spends its own proof; a second one under
+	// another name is what the mismatch case sends.
+	"dpop-bound-refresh":       dpopBoundRefreshFixture(false),
+	"dpop-bound-refresh-other": dpopBoundRefreshFixture(true),
 
 	// Dynamic client registration. Every one of these registers its client
 	// through an **administrator's access token**, which is measured to work:
@@ -3728,6 +3799,202 @@ func (s *Session) Apply(r *http.Request) {
 	cookies(s.Cookies).send(r)
 }
 
+// tokenEndpointPath is the path every DPoP proof here is minted for, and the
+// path every DPoP case sends. It is spelled once because htm and htu have to
+// agree with the request or the proof is refused about the wrong thing.
+const tokenEndpointPath = "/realms/master/protocol/openid-connect/token"
+
+// dpopFixture mints one proof for a POST to the token endpoint, filling in the
+// method and path so that a Proof declaration says only what it breaks.
+func dpopFixture(p Proof) Fixture {
+	if p.Method == "" {
+		p.Method = http.MethodPost
+	}
+	if p.Path == "" && p.HTU == "" {
+		p.Path = tokenEndpointPath
+	}
+	return Fixture{State: "bootstrap", Proofs: map[string]Proof{"dpop_proof": p}}
+}
+
+// dpopBoundRefreshFixture takes a DPoP-bound token set through the password
+// grant, so a case can present its refresh token wrongly.
+//
+// otherKey mints a **second** proof, from the other key, for the case's own
+// request. Two proofs rather than one because the step spends its own: a jti
+// may be used once, so the request that follows cannot repeat it.
+func dpopBoundRefreshFixture(otherKey bool) Fixture {
+	f := Fixture{
+		State: "bootstrap",
+		Proofs: map[string]Proof{
+			"dpop_proof": {Method: http.MethodPost, Path: tokenEndpointPath},
+		},
+		Steps: []Step{{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    tokenEndpointPath,
+				Headers: map[string]string{"DPoP": "{{dpop_proof}}"},
+				Form: map[string]string{
+					"grant_type": "password",
+					"client_id":  "admin-cli",
+					"username":   "admin",
+					"password":   "admin",
+				},
+			},
+			Capture: map[string]string{"refresh_token": "refresh_token"},
+		}},
+	}
+	if otherKey {
+		f.Proofs["dpop_proof_other"] = Proof{
+			Method: http.MethodPost, Path: tokenEndpointPath, Key: ProofKeySecondName,
+		}
+	}
+	return f
+}
+
+// Proof declares one DPoP proof. Every field beyond Method and Path exists
+// because a measured refusal needs it, and each is named for what it breaks.
+//
+// The zero value of the four spelling fields is the valid proof: typ
+// dpop+jwt, alg ES256, the jwk in the header, all four mandatory claims, an
+// iat of now and a signature that verifies. A case that wants a refusal sets
+// exactly one of them, so a reader can see what the request is wrong about
+// without decoding anything.
+type Proof struct {
+	// Method is htm and Path is what htu is built from: base + Path, with the
+	// query cut - which is what the server is measured to compare.
+	Method string
+	Path   string
+	// HTU overrides Method/Path's URL with a literal, for the one case whose
+	// refusal is that the URL does not match. It is absolute and it is
+	// deliberately not derived from base: the mismatch has to hold on the
+	// recorder and on the verifier, whose bases differ.
+	HTU string
+	// Key names which of the two fixed keys signs. The empty string is the
+	// first; "second" is the other, and exists so that a refresh bound to one
+	// key can be presented with the other.
+	Key string
+	// Type is the JOSE header's typ and Alg is its alg. Empty means the
+	// measured valid values.
+	Type string
+	Alg  string
+	// OmitJWK leaves the public key out of the header.
+	OmitJWK bool
+	// Omit drops one mandatory claim: htm, htu, iat or jti. All four answer
+	// the same sentence, which is why this is one field rather than four.
+	Omit string
+	// Age is subtracted from iat. Anything over 25 seconds is outside the
+	// measured window.
+	Age time.Duration
+	// BreakSignature flips the last byte of the signature, so the proof is
+	// well formed and does not verify.
+	BreakSignature bool
+}
+
+// The two fixed signing keys, as P-256 private scalars.
+//
+// Fixed rather than generated so that cnf.jkt is the same string on every
+// recording and every verification, which is what lets a golden assert the
+// binding instead of masking it. They are test material and sign nothing but
+// proofs sent to a throwaway container.
+const (
+	proofKeyFirst  = "36b2a9616df68459e8b6de63acbb7a60f27644364d9423f8af1a25fae5ae80a8"
+	proofKeySecond = "1111111111111111111111111111111111111111111111111111111111111111"
+	// ProofKeySecondName is Proof.Key's value for the second key.
+	ProofKeySecondName = "second"
+)
+
+// mintProof signs one DPoP proof.
+//
+// It builds the compact serialisation by hand rather than through a JOSE
+// library because three of the refusals are about bytes a library will not
+// emit: a typ it considers wrong, a missing jwk, and a signature that does not
+// verify.
+func mintProof(p Proof, base string) (string, error) {
+	scalar := proofKeyFirst
+	if p.Key == ProofKeySecondName {
+		scalar = proofKeySecond
+	}
+	raw, err := hex.DecodeString(scalar)
+	if err != nil {
+		return "", fmt.Errorf("proof key: %w", err)
+	}
+	curve := elliptic.P256()
+	d := new(big.Int).SetBytes(raw)
+	x, y := curve.ScalarBaseMult(d.Bytes())
+	key := &ecdsa.PrivateKey{PublicKey: ecdsa.PublicKey{Curve: curve, X: x, Y: y}, D: d}
+
+	xb, yb := make([]byte, 32), make([]byte, 32)
+	key.X.FillBytes(xb)
+	key.Y.FillBytes(yb)
+	jwk := map[string]string{
+		"crv": "P-256",
+		"kty": "EC",
+		"x":   base64.RawURLEncoding.EncodeToString(xb),
+		"y":   base64.RawURLEncoding.EncodeToString(yb),
+	}
+
+	header := map[string]any{
+		"typ": firstNonEmpty(p.Type, "dpop+jwt"),
+		"alg": firstNonEmpty(p.Alg, "ES256"),
+	}
+	if !p.OmitJWK {
+		header["jwk"] = jwk
+	}
+
+	htu := p.HTU
+	if htu == "" {
+		htu = base + p.Path
+	}
+	jti := make([]byte, 16)
+	if _, err := rand.Read(jti); err != nil {
+		return "", fmt.Errorf("proof jti: %w", err)
+	}
+	claims := map[string]any{
+		"htm": p.Method,
+		"htu": htu,
+		"iat": time.Now().Add(-p.Age).Unix(),
+		"jti": hex.EncodeToString(jti),
+	}
+	if p.Omit != "" {
+		if _, ok := claims[p.Omit]; !ok {
+			return "", fmt.Errorf("proof omits %q, which is not a mandatory claim", p.Omit)
+		}
+		delete(claims, p.Omit)
+	}
+
+	headerJSON, err := json.Marshal(header)
+	if err != nil {
+		return "", err
+	}
+	claimsJSON, err := json.Marshal(claims)
+	if err != nil {
+		return "", err
+	}
+	signing := base64.RawURLEncoding.EncodeToString(headerJSON) + "." +
+		base64.RawURLEncoding.EncodeToString(claimsJSON)
+	digest := sha256.Sum256([]byte(signing))
+	r, s, err := ecdsa.Sign(rand.Reader, key, digest[:])
+	if err != nil {
+		return "", err
+	}
+	sig := make([]byte, 64)
+	r.FillBytes(sig[:32])
+	s.FillBytes(sig[32:])
+	if p.BreakSignature {
+		sig[63] ^= 0xff
+	}
+	return signing + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+}
+
+// firstNonEmpty is the zero-value-means-the-measured-default rule Proof rests
+// on.
+func firstNonEmpty(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
 // RunFixture is Run for the callers that need only the captured values.
 func RunFixture(f Fixture, base string, do Do) (map[string]string, error) {
 	s, err := Run(f, base, do)
@@ -3751,6 +4018,15 @@ func RunFixture(f Fixture, base string, do Do) (map[string]string, error) {
 func Run(f Fixture, base string, do Do) (*Session, error) {
 	vars := map[string]string{}
 	jar := cookies{}
+	// Minted before the steps, because a step may send one and because the
+	// window they live inside is forty seconds wide either way.
+	for name, p := range f.Proofs {
+		proof, err := mintProof(p, base)
+		if err != nil {
+			return nil, fmt.Errorf("fixture proof %q: %w", name, err)
+		}
+		vars[name] = proof
+	}
 	for i, s := range f.Steps {
 		req, err := buildRequest(base, Expand(s.Request, vars))
 		if err != nil {
