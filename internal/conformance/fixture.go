@@ -7877,6 +7877,11 @@ func workflowFixture(realm, name, id string) Fixture {
 // wins on two and loses on a third" bullet is about - so one create in this
 // fixture may choose an id and the other may not, and the difference is one
 // line apart.
+//
+// It is captured from the **listing** rather than from the create's `Location`,
+// because the recorder runs a fixture again for every case that names it and
+// the second create is a 409 with no `Location` at all. Reading it back is the
+// only capture that survives a repeat.
 func workflowSubjectFixture(realm, name, id string, activate bool) Fixture {
 	f := realmFixture(realm)
 	f.Steps = append(f.Steps, Step{
@@ -7889,8 +7894,15 @@ func workflowSubjectFixture(realm, name, id string, activate bool) Fixture {
 			},
 			Body: []byte(`{"username":"gloak-probe-wf-subject","enabled":true}`),
 		},
-		CaptureHeader: map[string]string{"workflow_subject_id": "Location"},
-		ExpectStatus:  idempotentCreate,
+		ExpectStatus: idempotentCreate,
+	}, Step{
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/" + realm + "/users",
+			Query:   map[string]string{"username": "gloak-probe-wf-subject"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		Capture: map[string]string{"workflow_subject_id": "0/id"},
 	})
 	f.Steps = append(f.Steps, workflowCreateStep(realm, name, id),
 		workflowCaptureStepIDStep(realm))
@@ -7914,11 +7926,23 @@ func workflowSubjectFixture(realm, name, id string, activate bool) Fixture {
 // `uses` outside the fifteen step providers is 400 and an `after` that is not
 // an ISO-8601 duration is 400. Only `on` is optional.
 //
-// It accepts a 400 as well as a 201 because the recorder shares one container
-// and a fixture named by more than one case runs its steps again - and this
-// family's duplicate is a **400** where every other create in this file answers
-// 409. The workflow the first run made is still there with the id the body
-// named, which is what makes the repeat harmless.
+// It accepts a 400 and a 409 as well as a 201, because the recorder shares one
+// container and a fixture named by more than one case runs its steps again -
+// and **the repeat answers two different things**.
+//
+// A duplicate **name** with a different id is reliably
+// `400 {"errorMessage":"Workflow name must be unique. …"}`, which
+// admin/workflows/create-duplicate-name records. A duplicate **id** is
+// `Duplicate resource error` in two shapes: `400 {"errorMessage":…}` and
+// `409 {"error":"conflict","error_description":…}`, measured alternating on one
+// container within seconds of each other with the same body and the same
+// caller. Nothing in the request decides it, so no golden can hold it and this
+// list has to admit both. It is the same phrase AGENTS.md already records as
+// behaving oddly - the `Duplicate resource error` family is the one that sends
+// no security headers and that nobody has explained.
+//
+// Whichever answer comes back, the workflow the first run made is still there
+// with the id the body named, which is what makes the repeat harmless.
 func workflowCreateStep(realm, name, id string) Step {
 	return Step{
 		Request: Request{
@@ -7936,8 +7960,10 @@ func workflowCreateStep(realm, name, id string) Step {
 }
 
 // workflowDuplicateNameIsA400 is idempotentCreate for the one family whose
-// repeat is not a conflict. See workflowCreateStep.
-var workflowDuplicateNameIsA400 = []int{http.StatusCreated, http.StatusBadRequest}
+// repeat answers two statuses. See workflowCreateStep.
+var workflowDuplicateNameIsA400 = []int{
+	http.StatusCreated, http.StatusBadRequest, http.StatusConflict,
+}
 
 // workflowCaptureStepIDStep reads the listing as JSON purely to capture the
 // step id, which nothing else can reach: `GET /workflows` takes no `includeId`,

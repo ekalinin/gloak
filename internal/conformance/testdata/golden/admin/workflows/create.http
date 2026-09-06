@@ -1,0 +1,9 @@
+# POST /admin/realms/gloak-probe-wf-create/workflows
+HTTP/1.1 201 Created
+Content-Length: {{volatile}}
+Location: {{issuer}}/admin/realms/gloak-probe-wf-create/workflows/1f100000-0000-4000-8000-0000000000c1
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Robots-Tag: none
+

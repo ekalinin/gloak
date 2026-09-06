@@ -284,6 +284,21 @@ func (h *handler) createWorkflow(w http.ResponseWriter, r *http.Request, rc *req
 		return
 	}
 	if err := h.store.Workflows().Create(r.Context(), wf); err != nil {
+		// **A duplicate id is not the duplicate name beside it.** The name
+		// check above is `Workflow name must be unique. …`, measured
+		// identically three times; a repeated **id** answers
+		// `Duplicate resource error` in **two shapes** - 400 with
+		// `errorMessage` and 409 with the RFC 6749 body - alternating on one
+		// container within seconds, with the same body and the same caller.
+		// Nothing in the request decides which, so no golden can hold it. The
+		// 400 is served here because it is the one measured in isolation with
+		// its headers read off the wire; the 409 is recorded in
+		// docs/superpowers/handover/f121-workflows.md as unexplained rather
+		// than implemented as a rule.
+		if errors.Is(err, store.ErrConflict) {
+			httpx.WriteAdminError(w, http.StatusBadRequest, "Duplicate resource error")
+			return
+		}
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
