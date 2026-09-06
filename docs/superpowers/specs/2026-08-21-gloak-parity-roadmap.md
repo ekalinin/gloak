@@ -242,11 +242,13 @@ operations is allocated below; none is left unassigned.
 | Events family | `events`, `admin-events` and their config, **done 2026-09-04** | P14 | `admin/realms-admin` 33->39. **Not a second F157**: an Admin API write Gloak already serves does produce an admin event, measured. What refused emitting is the content - none of an event's four fields follows from its route, and `internal/admin` has 152 write routes. F162 carries the sweep | 6 ops |
 | F161 | What a golden can assert about a binary body, **done 2026-09-05** | P5 | `admin/client-attribute-certificate` 0->4. The answer is **nothing**, enforced by a ratchet rather than left as a paragraph. The entry's own description was wrong twice: five of seven answer JSON, and the three multipart operations are the **most** assertable of the seven | 4 ops |
 | Scattered remainder | Eight small families across three tags, **done 2026-09-06** | P2, P9, P14 | `admin/users` 20->26, `admin/clients` 28->30, `admin/realms-admin` 39->42. Eleven of twenty-seven taken; the email family is **a mail client, not four operations**, `impersonation` is F148's shape and stays `Pending`, and `partial-export` is 40 kB of realm. **A federated-identity link can exist and be invisible** | 11 ops |
+| Protocol remainder | Ten written reasons re-checked, **done 2026-09-06** | P3, P6, P13, F38 | `oidc/authorization` 25->27, `oidc/introspection` 4->5. **Four reasons expired and six held.** An access token's `aud` cannot be exercised with one client, which is why the introspection case had been unreachable; front-channel logout has a second blocker nobody had measured | 3 ops |
+| Partial export | `partial-export` and `partialImport`, **done 2026-09-06** | P14 | `admin/realms-admin` 42->44. The export is `GET /admin/realms/{realm}` **spliced**, not transcribed, so `realmrep.go` stays the one truth. Answers F163: the parse code separates **syntax from binding**, not shapes | 2 ops |
 
 Denominator today: **413 Admin API operations plus 122 protocol behaviours, 535
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **498 of 541**
-after the scattered remainder, and **P2, P4 and P5 are complete** -
+surface is not counted and which the report says so about. Served: **503 of 541**
+after the protocol remainder and the partial export, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -277,7 +279,37 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-06 (twenty-first fold).** `make conformance` reports **498 of
+**Updated 2026-09-06 (twenty-second fold).** `make conformance` reports **503 of
+541**. The protocol remainder re-checked ten written reasons and the partial
+export landed sixteen cases.
+
+**The round's lesson is that a reason is a measurement with a date on it, and
+re-checking one is work.** Ten cases carried a written reason for not being
+built. **Four had expired** - one was a statement about a plan phase, one was
+lifted by a mechanism built four days later, and one was true of a fixture with
+one client and false of a fixture with two. **Six held**, and a reason
+re-checked and confirmed is now recorded as re-checked with its date, which is
+what stops the next cut re-deriving it.
+
+One expired reason had **a second blocker underneath it that had never been
+measured**: front-channel logout depends on the browser's cookies, and the sweep
+that wrote the original reason drove a cookie jar throughout, so it could not
+have isolated it. An expired reason is not the same as a clear road.
+
+**A defect that two cuts hand-reverted on the same day is a defect nobody could
+file.** `admin/clients/evaluate-scope-mappings-not-granted` moves under
+`make record` - five realm roles committed, twenty-one recorded - and both cuts
+reverted it rather than commit it, because it lived in a file the other stream
+owned. It is F40's shape, `PristineRealm` closes it, and the fix is in this
+fold. **A recurring hand-revert is a defect report with nowhere to go.**
+
+**And I did the thing I have been requiring of every cut.** One of my review
+mutations changed no byte - the line held a named role set rather than the
+literal I was replacing - and I read the resulting pass as a result. The agents'
+harnesses now refuse a mutation that does not change the file; mine has no such
+check.
+
+**Earlier on 2026-09-06 (twenty-first fold).** `make conformance` reports **498 of
 541**. Eleven of the twenty-seven scattered operations across three tags, with
 the other sixteen left carrying stated reasons.
 
