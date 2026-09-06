@@ -381,9 +381,15 @@ one-word change in a chapter this branch does not own.
 ## 4. Parity, before and after
 
 ```
-before   498 of 541 enumerated behaviours served, admin/workflows 0 of 9
-after    507 of 541 enumerated behaviours served, admin/workflows 9 of 9
+at the branch point   498 of 541, admin/workflows 0 of 9
+rebased onto main     503 of 541, admin/workflows 0 of 9
+after                 512 of 541, admin/workflows 9 of 9
 ```
+
+The middle row is arithmetic rather than a second measurement: main moved five
+operations ahead while this branch was open, and the branch adds nineteen cases
+claiming exactly the nine workflow operations and changes no other case's
+`Status` or `Operation`.
 
 Nine operations, and the chapter is complete rather than half-served: every one
 of the nine claims an `Operation` in the catalogue and answers a golden recorded
