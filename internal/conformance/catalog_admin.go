@@ -20035,6 +20035,12 @@ var adminCases = []Case{
 		// the eight provider ids came back in the **same** order on both
 		// realms and are asserted whole; masking either would be a mask that
 		// changes nothing.
+		//
+		// The mask covers a second thing and it is worth naming: Gloak appends
+		// `openid` after the store's own ordering, so the served list differs
+		// from the recorded one on this container as well. Removing the mask
+		// fails this case rather than failing TestNoMaskIsInertOnItsGolden,
+		// checked by mutation.
 		ID: "admin/client-registration-policy/providers",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
