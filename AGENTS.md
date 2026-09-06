@@ -108,8 +108,9 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   say what the rule is**, which is exactly why nothing has been changed on the
   strength of any of them. The 405 body is
   `{"error":"HTTP 405 Method Not Allowed"}`, measured independently on the
-  protocol and admin sides on the same day, so the fallback family has five
-  bodies rather than four. See F31 before adding a 405 or defending the 404.
+  protocol and admin sides on the same day, so the fallback family has **six**
+  bodies - the sixth is `HTTP 406 Not Acceptable`, from a JSON-only read asked
+  for `application/yaml`. See F31 before adding a 405 or defending the 404.
 - **They are not five headers with one rule. They are four with one rule and
   `X-Frame-Options` with its own.** Computed over all 921 committed goldens on
   2026-09-06:
@@ -149,9 +150,17 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   endpoint exception for a fortnight and is none: its rejections are
   `text/plain` and its 200s are `application/json`, and its own six goldens said
   so the whole time.
-  Whether those four are one rule about the media type is **not settled**: a
-  204 has no media type of its own, and an `OPTIONS` 200 carrying a JSON body is
-  the request nobody has sent.
+  **Settled on 2026-09-06 for the response side.** `GET /workflows/{id}` sends
+  four headers for `application/yaml` and five for `application/json` - **one
+  route, one status, one caller, differing only in `Accept`** - so the response's
+  media type decides and `application/yaml` joins `text/plain` and
+  `application/octet-stream`. The **request** side is a rule of its own and it is
+  an **allow-list of three exact media types**, not the `application/` prefix
+  Gloak tested in two places: `application/ld+json` rules out a "+json suffix"
+  reading, and the parameters are cut **without being trimmed**, so
+  `application/json ; charset=UTF-8` with a space sends no header. What is still
+  unsettled is only the `OPTIONS` cell, because an `OPTIONS` 200 carrying a JSON
+  body is the request nobody has sent.
   **This bullet has been wrong six times, twice refuted by the very golden it
   cited and once by a recount of the probe that wrote it.** The corrections of
   2026-09-03 and 2026-09-06 are the only two that **removed** a rule rather than
@@ -1189,9 +1198,18 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   endpoints all report a line and column; **whether the organization pair does is
   not measured**, and that is the request to send before anybody writes the
   number back down as a rule.
-- **The `Workflows` tag answers `application/yaml`**, chunked, and is not gated
-  by `organizationsEnabled` at all.
-
+- **The `Workflows` tag answers `application/yaml` on exactly two of its nine
+  operations**, and is not gated by `organizationsEnabled` at all - the second
+  half is measured and the first was wrong until 2026-09-06. Off the responses:
+  **two YAML reads, one JSON read and six answers with no body**. The "nine"
+  came off the description's content lists, which name a media type on **request**
+  bodies too, and this file and the observed document repeated it.
+  `GET /workflows/scheduled/{resource-id}` is JSON only and answers
+  `Accept: application/yaml` with **406** `{"error":"HTTP 406 Not Acceptable"}` -
+  a sixth body in the fallback family this file records as five.
+  Its guard is the realm role **`admin` itself**: all twenty-one `master-realm`
+  roles are 403 singly, and so are all twenty-one together with `create-realm` -
+  `admin`'s whole composite closure - while `admin` alone is 200.
 - **`session_state` is minted by the login page, not by the login.** The
   authentication session's root id is created at `GET /auth`, goes out inside
   `AUTH_SESSION_ID`, and is then the redirect's `session_state`, the
@@ -2177,6 +2195,21 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   the whole catalogue until a fixture supplied that second condition, because
   the subject held no role on the issuing client and there was nothing to
   exclude.
+
+- **Keycloak's YAML is SnakeYAML's and no Go library reproduces it.** Measured
+  four ways against the recorded bytes, including the control of parsing them and
+  emitting them back: `gopkg.in/yaml.v3` omits the `---`, indents a nested
+  sequence one level too far, writes plain scalars where Keycloak double-quotes
+  **everything**, and writes a bare `on` where Keycloak writes `"on"` because
+  SnakeYAML is **YAML 1.1**. Only two of the four are reachable through any
+  option, and `SetIndent(2)` and `SetIndent(4)` produced byte-identical output
+  because it moves both indents together. So `internal/httpx/yaml.go` emits and
+  the library is used **only to read request bodies**, where the bytes are not
+  observable - `internal/javamap`'s situation one layer up.
+- **`POST /workflows` honours a body `id` and it need not be a UUID, while a
+  step's id in the same body is discarded**, and `POST /users` ignores one
+  entirely. That names the third endpoint this file's id bullet leaves unnamed,
+  and the three of them disagree in three different ways about the same field.
 
 ## Boundaries
 
