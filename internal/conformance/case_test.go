@@ -72,7 +72,16 @@ func TestGoldenIsAssertedFollowsTheStatus(t *testing.T) {
 // Pending golden that arrives without a reason, which is the half of F72 that
 // was never about how many there were. What went with the last entry is
 // TestNoPendingGoldenIsCompared, whose own comment said to delete it.
-var parkedGoldens = map[string]string{}
+var parkedGoldens = map[string]string{
+	"admin/realms-admin/partial-export-clients": "measured 2026-09-06 by recording it twice: " +
+		"every id in this body is minted with the database - the realm's, six clients', every " +
+		"client scope's, every protocol mapper's, every component's and every authenticator " +
+		"config's - and several of its collections have no reproducible order besides, so " +
+		"`\"profile\",\"roles\"` came back `\"roles\",\"profile\"`. It was Recorded until then " +
+		"and churned wholesale on every run, which put a hand-revert into three cuts' work. " +
+		"Read it as a measurement of what partial-export carries, never as bytes Gloak must " +
+		"serve.",
+}
 
 // TestEveryParkedGoldenIsDeclared enforces F72 in both directions.
 //

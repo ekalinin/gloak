@@ -2211,6 +2211,47 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   entirely. That names the third endpoint this file's id bullet leaves unnamed,
   and the three of them disagree in three different ways about the same field.
 
+- **`GET .../test-nodes-available` has one condition, not two.** It was written
+  down here and in a handover as two, "either alone gives `{}`". It is a
+  non-empty effective `adminUrl`: a client with one and **no node at all**
+  answers `{"failedRequests":["<the adminUrl>"]}`, and with nodes it answers one
+  URL per node - the adminUrl with its **host replaced by the node's name**,
+  scheme, port and path kept. The cell that was wrong is the one a two-condition
+  reading has no reason to send.
+  `failedRequests` is **sorted** where `registeredNodes` beside it is
+  `javamap.SizedKeyOrder`'s - one map, two orders, one response.
+- **Every four-segment `GET` under `/organizations` that the server does not
+  serve answers 404 with all five security headers**, on both of its two bodies:
+  `HTTP 404 Not Found` when the organization resolves and
+  `Organization not found.` when it does not. Gloak answered six such paths with
+  the header-less unmatched-path 404 and the wrong body until 2026-09-06. That
+  is F153's objection measured false on the shape it said was still open, and it
+  is why the top-level member route is registered as a wildcard dispatcher plus
+  one literal per collision: **Go gives the win to the more specific pattern and
+  Keycloak gives it to the top-level route.** The conflict is three routes, not
+  one.
+- **`GET /users/profile/metadata` is a real derivation and was recorded as
+  indistinguishable from a constant.** That was true of the two profiles a
+  default install has, and stopped being true when `PUT /components/{id}` became
+  reachable: a third profile answers 1278 bytes where the default answers 1196.
+  A claim that nothing reachable distinguishes a derivation has a shelf life -
+  it expires when the state that would distinguish it becomes writable.
+- **`PUT /users/profile` breaks a realm two ways, and the second has no warning
+  attached to it.** `{}` writes a profile that no bootstrapped administrator
+  satisfies. A **bodyless** `PUT` deletes the component row outright, master
+  falls back to the built-in default, and that default marks `email`,
+  `firstName` and `lastName` required for `user` - which the bootstrap `admin`
+  cannot satisfy either. Same failure, different route.
+  Its validator set is the **thirty registered providers**, not the thirteen the
+  component catalogue declares.
+- **`application/zip` carries four of the five security headers, omitting
+  `X-Frame-Options`** - a fifth media type for that rule, measured on
+  `installation/providers` and holdable by no golden.
+  The same family has a third leg nobody had named: `saml-sp-descriptor` is
+  **`text/plain` carrying a per-request `ID_<uuid>`**, and **no mask in this
+  harness reaches inside a text body**. The recorder refuses a binary body and
+  accepts that one, so it churns rather than failing loudly.
+
 ## Boundaries
 
 | Package | Owns | Must not |

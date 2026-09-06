@@ -4768,7 +4768,25 @@ meeting: a probe whose fixed input supplies a condition the claim needs.
 fixed - the case is `Recorded` with that as its reason, which moves the recorded
 column rather than the total, and is the honest reading.
 
-## F166: `admin/clients/evaluate-scope-mappings-not-granted` was polluted by the recorder (fixed 2026-09-06)
+## F166: `admin/clients/evaluate-scope-mappings-not-granted` was polluted by the recorder (fixed and **verified** 2026-09-06)
+
+**Verified by recording.** A full `make record` on a tree carrying the flag moved
+**one** golden, and it was not this one. The fix works.
+
+That verification was worth making, because between the fix and it I twice drew
+a conclusion from a report without asking which tree it was made on:
+
+- a cut reported the artefact after the flag landed, and I read that as the fix
+  having failed. Its recording predated the flag and its rebase postdated it, so
+  the artefact said nothing either way - **the cut checked the dates and I had
+  not**;
+- another cut reported "the same shape" on a **different** case, and I read a
+  comparison as a recurrence.
+
+**A symptom report is evidence only about the tree it was taken on**, and the
+cheapest way to find out is `git merge-base --is-ancestor`.
+
+
 
 Two independent cuts on the same day reported this golden moving under
 `make record`: the committed bytes hold **five** realm roles and every recording
@@ -4785,3 +4803,35 @@ Worth keeping for the pattern rather than the fix: **two cuts reverted the same
 file by hand on the same day and neither could report it as a defect**, because
 each was inside a boundary that made it somebody else's. A recurring hand-revert
 is a defect report that nobody has anywhere to file.
+
+## F167: `partial-export-clients` cannot be `Recorded`, and now is not (fixed 2026-09-06)
+
+The case was `Recorded`, so the recorder rewrote its golden on every run - and
+**that golden cannot survive a recording**. Measured by recording it twice: every
+id in the body is minted with the database (the realm's, six clients', every
+client scope's, every protocol mapper's, every component's, every authenticator
+config's) and several of its collections have no reproducible order besides, so
+`"profile","roles"` came back `"roles","profile"`.
+
+It is not one mask away, and F113's rule already covered it: **a body carrying
+per-request values cannot be `Recorded`, whatever else is true of it.** It is
+`Pending` now and declared in `parkedGoldens` with that reason, so the recorder
+leaves it alone under F69.
+
+The cost of getting this wrong was three cuts hand-reverting the same file, none
+of them able to fix it because it sat in another stream's chapter - the same
+pattern F166 records. **Two files churning in three cuts' diffs is a defect
+report nobody could file**, and both are closed now.
+
+## F168: an anchor named by content moves with the content
+
+Two parallel cuts were told to split `catalog_admin.go` by anchor: one appending
+at the very end of `adminCases`, the other inserting "immediately after the last
+`admin/workflows` case", which was then mid-file.
+
+By the time the second cut got there, `main`'s last seven cases *were* the other
+stream's - so the two anchors were the same place and the second PR went `DIRTY`.
+The instruction was mine and it was wrong in a way worth naming: **an anchor
+defined by what is currently last is not an anchor.** A stable one is a named
+marker, a file boundary, or a separate file - and a separate file is what a
+catalogue split by chapter would have given for free.
