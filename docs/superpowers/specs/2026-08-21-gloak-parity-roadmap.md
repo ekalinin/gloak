@@ -245,13 +245,14 @@ operations is allocated below; none is left unassigned.
 | Protocol remainder | Ten written reasons re-checked, **done 2026-09-06** | P3, P6, P13, F38 | `oidc/authorization` 25->27, `oidc/introspection` 4->5. **Four reasons expired and six held.** An access token's `aud` cannot be exercised with one client, which is why the introspection case had been unreachable; front-channel logout has a second blocker nobody had measured | 3 ops |
 | F121 | The `Workflows` tag and a YAML emitter, **done 2026-09-06** | P14 | `admin/workflows` 0->9, the whole tag. **Two of the nine answer YAML, not nine** - the entry counted request bodies. `gopkg.in/yaml.v3` differs from SnakeYAML on four counts and two are unreachable by option, so `internal/httpx` emits and the library only reads. F133 closed on the way | 9 ops |
 | Users singles | Five of the `Users` tag's eight, **done 2026-09-06** | P2, F148 | `admin/users` 26->31. The three emails are served as **refusals**: `realmrep.go` builds every realm with an `SMTPServer` map nothing reads or writes, so the 400 and 500 are the whole reachable answer. `impersonation` refused on F148 and consents on F110 | 5 ops |
+| DPoP | RFC 9449, **done 2026-09-06** | P1, P3 | `oidc/token` 19->34 and its `Recorded` column emptied. The reason for not building it was **true about the 200 and wrong as a reason**: eight of twelve refusals never reach the `iat` window, and the window is forty seconds wide. `Fixture.Proofs` is one field with three consumers. **CIBA refused**, and its 503 is an artefact of a startup option rather than a missing feature | 15 cases |
 | Clients singles | Three singles across three tags, **done 2026-09-06** | P2, P12, F153 | `admin/client-registration-policy` and `admin/organizations` **complete**. **F153 is refuted on its own shape**: every four-segment `GET` under `/organizations` carries all five security headers, and Gloak answered six of them wrongly until this cut | 3 ops |
 | Partial export | `partial-export` and `partialImport`, **done 2026-09-06** | P14 | `admin/realms-admin` 42->44. The export is `GET /admin/realms/{realm}` **spliced**, not transcribed, so `realmrep.go` stays the one truth. Answers F163: the parse code separates **syntax from binding**, not shapes | 2 ops |
 
 Denominator today: **413 Admin API operations plus 122 protocol behaviours, 535
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **520 of 541**
-after the scattered singles, and **P2, P4 and P5 are complete** -
+surface is not counted and which the report says so about. Served: **535 of 554**
+after DPoP, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -282,7 +283,40 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-06 (twenty-fourth fold).** `make conformance` reports **520 of
+**Updated 2026-09-06 (twenty-fifth fold).** `make conformance` reports **535 of
+554**. `oidc/token` went 19 to 34 and its `Recorded` column emptied; the
+denominator moved to 554 because thirteen DPoP behaviours nobody had catalogued
+became cases.
+
+**The round's lesson is that a reason can be true about the answer it was drawn
+from and wrong as a reason.** DPoP's said "a proof carries a per-request `iat`
+and a single-use `jti`, so no literal proof can be replayed". Every word of that
+is true **of the 200**. But every structural check - `typ`, `alg`, the `jwk`,
+the signature, the mandatory claims, `htu`, `htm` - runs **before** the window
+and the cache, so **eight of the twelve refusals never reach either** and answer
+the same sentence forever. And the window turned out to be **forty seconds
+wide**, so staleness was never the obstacle it was written up as.
+
+What was actually missing was **one computed value**, and the harness gained one
+field, one function and three consumers - which is F38's rule kept rather than
+argued with.
+
+**CIBA was refused, and its reason is now a different sentence.** The 503 is an
+artefact of a **startup option**: a second container with the auth-channel URI
+pointed at a host listener takes the whole flow through, and both containers
+answer an unknown `auth_req_id` identically, so the option is the only variable.
+What blocks a recording is the recorder's own container and an approval that
+**arrives as a request**, which `Run` has no capture for. That is F122's
+boundary measured from the other side, and it is the harness's rather than
+Docker's - the container reached a host listener on the first try.
+
+**And a probe measured `curl` rather than Keycloak.** Two spellings of an empty
+`DPoP` header answered 400 and 200 seconds apart on one client, which is
+impossible on the wire. `curl` **drops** a header written `-H "Name:  "`. That
+is the tenth shape of a tool answering for itself, and the fifth found by
+noticing an answer that could not be true rather than by suspecting the tool.
+
+**Earlier on 2026-09-06 (twenty-fourth fold).** `make conformance` reports **520 of
 541**. Two parallel cuts took eight of the twenty remaining scattered operations,
 and `admin/client-registration-policy` and `admin/organizations` are complete.
 
