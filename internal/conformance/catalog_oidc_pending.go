@@ -1047,9 +1047,11 @@ var oidcPending = []Case{
 		},
 		Status: Pending,
 		// The one of the five that is still unreachable, and it is the only one
-		// whose Reason survived this cut unchanged. The token endpoint
+		// whose Reason survived that cut unchanged. The token endpoint
 		// dispatches the grant; what is missing is an auth_req_id, and a default
-		// 26.7.1 mints none - see the CIBA block further down.
+		// 26.7.1 mints none - see the CIBA block further down. Re-measured
+		// 2026-09-06 with the authentication request answering 503, so the
+		// reason has now survived two cuts rather than one.
 		Reason:  "a default 26.7.1 has no CIBA authentication channel, so no auth_req_id can be obtained to redeem",
 		Fixture: "", // needs an auth_req_id, which needs an external authentication channel endpoint
 		Request: Request{
@@ -2112,6 +2114,14 @@ var oidcPending = []Case{
 		// `POST /revoke` end sessions and call **nobody**, so hanging the
 		// notification off session removal fires on two paths Keycloak does
 		// not.
+		//
+		// **Re-read 2026-09-06 and it holds unchanged**, which is worth
+		// recording as re-read: the three things it says would have to exist
+		// still do not. `Step` is a request and every capture reads a response -
+		// Capture, CaptureHeader, CaptureForm, CaptureQuery - so the harness has
+		// no side for a second socket and no way to start a listener. Nothing
+		// this cut built moves it: Case.VolatileHTMLInput masks a value inside a
+		// response body, which is the wrong half of the problem.
 		Reason:  "the harness holds one request and one response, and this is a request Keycloak makes",
 		Fixture: "", // deliberately none: a Pending case's fixture never runs, and this one would need a listener the harness has no way to start
 		Request: Request{
@@ -2190,11 +2200,16 @@ var oidcPending = []Case{
 		// hintless-logout bullet in AGENTS.md, where the jar was the variable
 		// and the hint was not, in the opposite direction.
 		//
-		// Recorded is what the golden earns: nothing in the body is minted by
-		// this request. The sid inside the iframe's src is the session the
-		// fixture's own login opened, which loginStep captures as
-		// {{session_state}}, and the /resources/<version>/ segment is
-		// ReplaceThemeResource's.
+		// Recorded is what the golden earns, and it needed one mask to earn it.
+		// The sid inside the iframe's src is the session the fixture's own login
+		// opened, which loginStep captures as {{session_state}}, and the
+		// /resources/<version>/ segment is ReplaceThemeResource's. **The tab_id
+		// in the chrome's restart URL is neither**: it is minted by this
+		// request, measured 2026-09-06, so it is VolatileHTMLQuery's.
+		//
+		// That was got wrong first. A probe said the page carried the login's
+		// tab and it was reading the page's own value twice; two `make record`
+		// runs disagreeing on that one substring is what refuted it.
 		Status: Recorded,
 		Reason: "Gloak serves themePageBody's placeholder here, and serves it to a request carrying no browser " +
 			"cookies where Keycloak answers a 302",
@@ -2214,6 +2229,11 @@ var oidcPending = []Case{
 		// theme page sends.
 		AssertHeaders:   []string{"Content-Type", "Cache-Control", "Content-Language", "Content-Security-Policy"},
 		VolatileHeaders: []string{"Set-Cookie"},
+		// Masked rather than captured, and **unguarded until this case is
+		// promoted**: TestNoHTMLMaskVariesNothing reads Implemented cases only,
+		// so nothing here checks that these bytes move. What says they do is the
+		// two recordings that disagreed on them.
+		VolatileHTMLQuery: []string{"tab_id"},
 	},
 
 	// --- Introspection endpoint ---
@@ -3017,6 +3037,15 @@ var oidcPending = []Case{
 		// block comment above oidc/ciba/authentication-request. Nothing in this
 		// project's container regime can record this case, and saying "not
 		// implemented" would read as a to-do somebody could close.
+		//
+		// **Re-measured 2026-09-06 and it holds.** A client carrying
+		// `oidc.ciba.grant.enabled` sending a valid authentication request to
+		// `/realms/master/protocol/openid-connect/ext/ciba/auth` answers 503
+		// {"error":"server_error","error_description":"Failed to send
+		// authentication request"}. `GET /admin/serverinfo` reports CIBA as
+		// `"type":"DEFAULT","enabled":true`, so the feature is on and the
+		// **channel** is what is missing - which is the distinction that keeps
+		// this from reading as a disabled preview.
 		Reason:  "a default 26.7.1 has no CIBA authentication channel, so no auth_req_id can be obtained to poll with",
 		Fixture: "", // needs an auth_req_id, which needs an external authentication channel endpoint
 		Request: Request{
@@ -3037,7 +3066,9 @@ var oidcPending = []Case{
 			Section:   "Grant types: client initiated backchannel authentication",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status: Pending,
+		// The same 503, re-measured 2026-09-06 alongside poll-pending's. The
+		// reason holds and is now dated.
 		Reason:  "a default 26.7.1 has no CIBA authentication channel, so no auth_req_id can be obtained to approve",
 		Fixture: "", // needs an auth_req_id a second user approved, which needs that channel
 		Request: Request{

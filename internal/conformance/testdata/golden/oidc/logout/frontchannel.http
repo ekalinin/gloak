@@ -57,7 +57,7 @@ X-Robots-Tag: none
         import { startSessionPolling } from "/resources/{{theme_resource}}/login/keycloak.v2/js/authChecker.js";
 
         startSessionPolling(
-            "/realms/master/login-actions/restart?client_id=gloak-probe-frontchannel&tab_id=6XQppbISZDA&skip_logout=true"
+            "/realms/master/login-actions/restart?client_id=gloak-probe-frontchannel&tab_id=zr3tGlZfkes&skip_logout=true"
         );
     </script>
     <script type="module">

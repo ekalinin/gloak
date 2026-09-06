@@ -1,0 +1,16 @@
+# POST {{login_action}}
+HTTP/1.1 200 OK
+Cache-Control: no-store, must-revalidate, max-age=0
+Content-Length: {{volatile}}
+Content-Security-Policy: frame-src 'self'; frame-ancestors 'self'; object-src 'none';
+Content-Type: text/html
+Referrer-Policy: no-referrer
+Set-Cookie: {{volatile}}
+Set-Cookie: {{volatile}}
+Set-Cookie: {{volatile}}
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+<HTML>  <HEAD>    <TITLE>OIDC Form_Post Response</TITLE>  <SCRIPT> if (typeof history.replaceState === 'function') {  history.replaceState({}, "some title", "{{issuer}}/realms/master/login-actions/authenticate?client_id=gloak-probe-browser&tab_id={{tab_id}}&client_data=eyJydSI6Imh0dHA6Ly9sb2NhbGhvc3Q6OTk5OS9jYWxsYmFjayIsInJ0IjoiY29kZSIsInJtIjoiZm9ybV9wb3N0Iiwic3QiOiJ4eXoxMjMifQ"); }</SCRIPT></HEAD>  <BODY Onload="document.forms[0].submit()">    <FORM METHOD="POST" ACTION="http://localhost:9999/callback">  <INPUT TYPE="HIDDEN" NAME="code" VALUE="{{code}}" />  <INPUT TYPE="HIDDEN" NAME="iss" VALUE="{{issuer}}/realms/master" />  <INPUT TYPE="HIDDEN" NAME="state" VALUE="xyz123" />  <INPUT TYPE="HIDDEN" NAME="session_state" VALUE="{{session_state}}" />      <NOSCRIPT>        <P>JavaScript is disabled. We strongly recommend to enable it. Click the button below to continue .</P>        <INPUT name="continue" TYPE="SUBMIT" VALUE="CONTINUE" />      </NOSCRIPT>    </FORM>  </BODY></HTML>

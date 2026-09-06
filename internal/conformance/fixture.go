@@ -7660,6 +7660,15 @@ func frontchannelLogoutFixture() Fixture {
 	attributes := `,"frontchannelLogout":true,"attributes":{` +
 		`"frontchannel.logout.url":"http://localhost:9998/frontlogout",` +
 		`"post.logout.redirect.uris":"` + browserRedirectURI + `"}`
+	// **The logout page's chrome carries a tab_id the logout request mints, not
+	// the login's**, measured 2026-09-06 - so no capture here can reach it and
+	// the case masks it with Case.VolatileHTMLQuery instead.
+	//
+	// The first probe of that question said the opposite. It grepped a whole
+	// script's output for `tab_id=`, and the only place that string occurs in
+	// that output is the logout page itself, so it compared the body with
+	// itself and reported a match. What refuted it was `make record`: the
+	// golden's tab moved between two runs while every other byte held still.
 	steps := append(browserClientSteps(clientID, attributes),
 		authorizeStep(clientID, nil), loginStep())
 	return Fixture{State: "bootstrap", Steps: append(steps, Step{
