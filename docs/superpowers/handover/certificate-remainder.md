@@ -23,8 +23,13 @@ seven to everything.
 
 ### 1.2 What `upload` needs from the file: the whole keystore, decrypted
 
-The hypothesis worth testing was that it might store only a certificate, which
-would have made a purpose-built extractor smaller than a reader. It is refuted:
+**The brief's guess was that it might store only a certificate**, which would
+have made a purpose-built extractor smaller than a reader. It is kept here as a
+refuted guess rather than dropped, because it is the obvious one and the next
+person will have it too: the operation is named "upload certificate and
+eventually private key", its sibling `upload-certificate` really does store one
+certificate, and nothing short of sending a keystore says otherwise. It is
+refuted:
 
 ```
 POST .../upload with a JKS Keycloak itself produced
@@ -225,6 +230,13 @@ Keycloak sends.
 container and one more after a restart. It was prose that nothing compared,
 which is exactly how it drifted, and inside a day. It is now in a golden -
 `admin/client-attribute-certificate/download-unsupported-format`.
+
+That is the **fourth prose count to drift in this project this fortnight**,
+after the security-header tally, the `javamap` key-set count and the create
+`Location` count. Putting it in a golden is the same fix that worked for the
+header tally: the number stops living in a sentence somebody has to re-read and
+starts living somewhere a run can disagree with it. Every observable value in a
+handover is a value nothing compares, and this one had one day to prove it.
 
 **`POST .../upload-certificate` with a file part that is present and empty
 answers `200 {"certificate":""}`**, storing an empty string, where Gloak answers
@@ -501,12 +513,12 @@ in the same run and `git status` showed eight new files and nothing else.
 
 ### The mutation pass
 
-Eighteen mutations, one per claim, each confirmed to fail the **named** test,
-each reverted with `git checkout --` and the revert checked with
-`git diff --quiet`. The harness runs `go vet` first, so a mutation that does not
-compile is reported `BUILD-FAILED` and never counted - which happened once, on
-M2's first attempt, exactly as intended - and it reads `go test`'s **exit code
-before anything else**, so a zero exit can never be reported as a kill.
+Twenty mutations, one per claim, each confirmed to fail the **named** test, each
+reverted with `git checkout --` and the revert checked with `git diff --quiet`.
+The harness runs `go vet` first, so a mutation that does not compile is reported
+`BUILD-FAILED` and never counted - which happened once, on M2's first attempt,
+exactly as intended - and it reads `go test`'s **exit code before anything
+else**, so a zero exit can never be reported as a kill.
 
 ```
 M1  the Mighty Aphrodite phrase changed        killed  TestReadJKSMatchesWhatKeycloakReports
@@ -527,6 +539,8 @@ M15 upload answers the first entry             killed  TestConformance
 M16 upload unlocks a JKS with the store password killed TestKeystoreRoundTrip
 M17 the JSON refusal loses its syntax split    killed  TestKeystoreDownloadRefusalOrder
 M18 an absent Content-Type is accepted         killed  TestKeystoreDownloadRefusalOrder
+M19 the chunked join loses its tag-class guard killed  TestBERToDERJoinsChunksOnlyUnderAContextTag  (was SURVIVED)
+M20 the chunked join disabled outright         killed  TestBERToDERJoinsChunksOnlyUnderAContextTag
 ```
 
 ### M2 survived, and the reason is the shape this project keeps meeting
@@ -544,9 +558,67 @@ named test.
 
 **The fix is a positive control, not another refusal.** The test now also
 requires the key password to open the key, so it asserts both directions of a
-two-direction rule. That is the eleventh survivor of this shape here and the
-first in this cut: a test whose inputs satisfy fewer conditions than the claim
-needs, or - as here - whose assertions cover one direction of it.
+two-direction rule. That is the eleventh survivor of this shape here: a test
+whose inputs satisfy fewer conditions than the claim needs, or - as here - whose
+assertions cover one direction of it.
+
+### M19 survived too, and it is M2's shape with the corpus playing the part
+
+**Found on review, after this branch was pushed and CI was green.** The
+coordinator dropped the tag-class test from the chunked-string join in
+`berToDER`:
+
+```go
+if indefinite && allOctetStrings {          // was: indefinite && tag&0xc0 == 0x80 && allOctetStrings
+```
+
+`./internal/keystore/` and `./internal/admin/` were both `ok`.
+
+**The guard is load-bearing**, and it is stated at the line now. Without it the
+rule reads "any indefinite constructed node whose children are all OCTET
+STRINGs", so a BER `SEQUENCE OF OCTET STRING` - `30 80 04 .. 04 .. 00 00` -
+collapses into `10 ..`, a primitive universal SEQUENCE, which is not a legal tag
+and has lost both of its values. That shape is reachable rather than
+hypothetical: a PKCS12 attribute's `attrValues SET OF ANY` around a `localKeyId`
+is `31 { 04 .. }`, and a writer that streamed it would send it indefinite.
+Keycloak's writer sends it **definite**, which is why every keystore in this
+repository is silent on the question.
+
+So this is M2's shape with a different thing playing the missing part. M2 was an
+assertion set a wrong implementation could satisfy entirely - three refusals and
+no positive control. M19 is an **input** set a wrong implementation can satisfy
+entirely: the corpus is three real keystores and none of them contains the
+discriminating shape. Neither is fixed by another keystore, and this one is not
+fixable by one at all.
+
+`TestBERToDERJoinsChunksOnlyUnderAContextTag` is therefore a hand-built byte
+slice, and it carries the control the coordinator asked for: **a row the guard's
+presence does not change**, so the test cannot be satisfied by an
+implementation that joins nothing. The two rows were checked to do different
+work rather than assumed to:
+
+```
+                                    SEQUENCE row   context-tag row (the control)
+M19  the class guard dropped            FAIL            PASS
+M20  the join branch disabled           PASS            FAIL
+```
+
+Each row is the sole killer of its own mutation, which is what says the test
+pins the **guard** and not merely the rewrite. The two inputs are asserted to
+differ in exactly one byte - the tag - so the pair cannot drift into two
+unrelated cases, and the table declares per row whether the class test is what
+decides it, in the spirit of F161's `refusedBodies`.
+
+A third row pins the other half of the documented rule - a **definite** length
+is left alone whatever its children are - and it is labelled as a control for a
+different mutation rather than as coverage of this one.
+
+**A process note worth keeping.** The first attempt at this fix was made with
+the `ber.go` documentation edited and **not committed**, and the mutation
+harness's `git checkout --` reverted it along with the mutation. Nothing was
+lost that could not be retyped, but the brief's "commit before any edit a
+mutation pass will revert" is not advice about tidiness: a harness that reverts
+to HEAD will silently eat the work that explains why the mutation matters.
 
 ### What is not covered
 
@@ -569,3 +641,10 @@ needs, or - as here - whose assertions cover one direction of it.
   no probe sent one.
 - The upload's `keyAlias`-absent 500 and its `Certificate PEM` 500 are the same
   body, so no measurement here can say which check ran first.
+- **The BER normaliser's corpus is three real keystores and one hand-built
+  vector.** M19 is what showed the corpus alone cannot decide the tag-class
+  question, and the same is true of everything else `berToDER` does that
+  BouncyCastle's writer never produces: high-tag-number forms are refused
+  outright, and a constructed OCTET STRING with a *definite* length is joined on
+  a rule no measurement here exercises. Both are written down at the line; both
+  are unprobed cells rather than pinned ones, and saying so is the point.
