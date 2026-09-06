@@ -1,0 +1,11 @@
+# PUT /admin/realms/gloak-probe-upwrite/users/profile
+HTTP/1.1 200 OK
+Content-Length: {{volatile}}
+Content-Type: application/json
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"attributes":[{"name":"username","validations":{"up-username-not-idn-homograph":{},"length":{"max":255,"min":3}},"permissions":{"view":["admin","user"],"edit":["admin","user"]},"multivalued":false},{"name":"email","required":{"roles":["user"]},"permissions":{"view":["admin","user"],"edit":["admin"]},"group":"g1","multivalued":false}],"groups":[{"name":"g1","displayHeader":"h"}]}
