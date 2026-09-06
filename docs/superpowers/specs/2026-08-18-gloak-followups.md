@@ -3906,6 +3906,15 @@ decision about that package before it is nine handlers.
 
 ## F122: the two admin logout triggers notify nobody
 
+**2026-09-06: measured from the third side, and the boundary is the harness's.**
+CIBA's approval **arrives as a request** - the channel calls
+`.../ext/ciba/auth/callback` - and `Run` sends requests and reads responses with
+no capture for an inbound one. That is this entry's shape a third time, after
+back-channel logout and `k_push_not_before`, and it is the first where the
+missing half is in `internal/conformance` rather than across a package
+boundary. The container reached a listener on the host on the first try, so
+Docker is not the obstacle.
+
 **2026-09-03: measured from the other side, and the boundary held.**
 `POST .../push-revocation` - in both its realm and client forms - is the same
 shape of decision. Keycloak POSTs a signed JWT to `{adminUrl}/k_push_not_before`
@@ -4835,3 +4844,42 @@ The instruction was mine and it was wrong in a way worth naming: **an anchor
 defined by what is currently last is not an anchor.** A stable one is a named
 marker, a file boundary, or a separate file - and a separate file is what a
 catalogue split by chapter would have given for free.
+
+## F169: the three CIBA cases need a recorder that can be called back
+
+Their reason was "a default 26.7.1 has no CIBA authentication channel". Measured
+2026-09-06, that is **an artefact of a startup option**, not a missing feature:
+`CIBA` reports `"type":"DEFAULT","enabled":true`, and a container started with
+
+```
+--spi-ciba-auth-channel--ciba-http-auth-channel--http-authentication-channel-uri
+```
+
+pointed at a listener on the host takes the whole flow through -
+`authorization_pending`, `slow_down` on a poll inside the interval, and nine
+keys once the channel posts `{"status":"SUCCEED"}` to
+`.../ext/ciba/auth/callback`. Both containers answer an unknown `auth_req_id`
+identically, so the option is the only variable. It **cannot be set on a running
+server**: the SPI is `"internal": true` with no component type, and the realm's
+four CIBA attributes do not include it.
+
+So three things stand between these cases and a recording, and none is CIBA:
+
+1. `startKeycloak` in `record_test.go` would have to pass the option;
+2. something would have to serve the channel endpoint for the duration;
+3. **`Run` has no capture for an inbound request** - the approval arrives as one.
+
+The third is the real one and it is F122's shape a third time. The first two are
+a container flag and twenty lines; the third is a question about what a fixture
+is.
+
+## F170: `iat`'s lowest second is a 500 and Gloak reproduces the window without it
+
+`[now-25, now+15]` is the DPoP proof window, and `now-25` exactly answers a
+**500** where `now-26` refuses and `now-24` succeeds. It is a single-use cache
+entry whose remaining life computes to zero.
+
+Gloak reproduces the window and not the 500, which is a deliberate divergence of
+the same class as F131's: reproducing a server error for one second of a forty
+second window is a tidy-up that buys nothing and costs a branch nobody can read.
+Filed so the next person meets the decision rather than the symptom.

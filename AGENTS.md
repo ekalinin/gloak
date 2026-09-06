@@ -2252,6 +2252,48 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   harness reaches inside a text body**. The recorder refuses a binary body and
   accepts that one, so it churns rather than failing loudly.
 
+- **DPoP verification is opportunistic, and a header present and empty is not a
+  header absent.** `admin-cli` carries no `dpop.bound.access.tokens` attribute
+  and a proof sent to it still binds both tokens, so the **header** turns
+  verification on and the attribute only makes it mandatory. `DPoP:` with an
+  empty value answers `400 DPoP proof is missing` where no header at all answers
+  200 with a `Bearer` token. That pair was measured wrong first: **`curl` drops
+  a header written `-H "Name:  "`** rather than sending an empty one, so the 200
+  that spelling produced was curl's answer to a request it never made.
+- **A DPoP proof's refusal ladder is nine checks deep and two are not where they
+  look.** `typ`, `alg`, the `jwk`, the signature, the mandatory claim set,
+  **`htu` before `htm`**, `iat`, then `jti` - measured by nine proofs each wrong
+  in two ways. Within the endpoint the proof is verified **after** client
+  authentication and the duplicated-parameter check and **before** the grant,
+  once for every grant rather than once per grant. **Eight of the twelve
+  refusals never reach the `iat` window at all**, which is why "a proof cannot
+  be replayed" was true of the 200 and wrong as a reason to build nothing.
+- **The DPoP `iat` window is forty seconds wide and its lowest second is a 500.**
+  `[now-25, now+15]`, measured at one second's resolution: `now-26` refuses,
+  `now-25` is a **500**, `now-24` through `now+15` are 200s, `now+16` refuses
+  again. The edge is a single-use cache entry whose remaining life computes to
+  zero. The first sweep looked non-monotonic and reading that as noise would
+  have been wrong - it is one window with a defect on its edge.
+- **`cnf` goes on the access and refresh tokens, immediately before `scope`, and
+  never on the ID token**, which `internal/token`'s types enforce rather than a
+  test: `idClaims` has no such field, so the mutation that would add it does not
+  compile. Its value has **two** keys, `{"jkt":"…","kc-jkt-type":"DPoP"}`, and
+  the second is Keycloak's own - emitting RFC 9449's single `jkt` is a
+  divergence in a claim a client reads.
+- **A bound refresh token's two refusals are `invalid_grant` where every other
+  DPoP sentence on that endpoint is `invalid_request`** - so the code follows
+  the grant and not the check.
+- **CIBA's 503 is a fact about `start-dev`, not about Keycloak.** `CIBA` reports
+  `"type":"DEFAULT","enabled":true`, and a container started with
+  `--spi-ciba-auth-channel--ciba-http-auth-channel--http-authentication-channel-uri`
+  pointed at a listener on the host answers the identical request 200 and takes
+  the flow through `authorization_pending`, `slow_down` and nine keys. Both
+  containers answer an unknown `auth_req_id` identically, so the option is the
+  only variable, and it **cannot be set on a running server** - the SPI is
+  `"internal": true` with no component type. What keeps the three CIBA cases
+  unrecordable is the **recorder's container** and an inbound callout `Run` has
+  no capture for: F122's boundary, measured from the other side.
+
 ## Boundaries
 
 | Package | Owns | Must not |
