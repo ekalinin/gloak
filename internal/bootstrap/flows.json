@@ -204,6 +204,20 @@
       ]
     },
     {
+      "alias": "saml ecp",
+      "description": "SAML ECP Profile Authentication Flow",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": true,
+      "executions": [
+        {
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "authenticator": "http-basic-authenticator"
+        }
+      ]
+    },
+    {
       "alias": "Organization",
       "description": "",
       "providerId": "basic-flow",

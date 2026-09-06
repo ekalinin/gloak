@@ -484,6 +484,19 @@ func (h *handler) flowRepresentation(r *http.Request, rc *reqContext, idx *flowI
 // is not the "200 with a shorter list to a weaker caller" pattern - a
 // query-clients caller's body is byte-identical to a manage-realm caller's. See
 // flowListReadRoles.
+// samlECPFlowAlias is the one top-level flow the listing hides.
+//
+// **`saml ecp` is `topLevel: true` and is not in `GET .../flows`.** Measured
+// 2026-09-06 on master and on a created realm: both listings answer seven
+// flows, both exports carry eighteen and twenty-one with `saml ecp` among them
+// and marked top level, and `GET .../flows/saml%20ecp/executions` serves its one
+// execution. So the flow exists, is addressable and is filtered out of the one
+// read whose whole job is to enumerate top-level flows.
+//
+// It became visible only when partial-export was built, because the export is
+// the first body that enumerates every flow rather than the top-level seven.
+const samlECPFlowAlias = "saml ecp"
+
 func (h *handler) listFlows(w http.ResponseWriter, r *http.Request, rc *reqContext) {
 	idx, ok := h.loadFlows(w, r, rc)
 	if !ok {
@@ -496,7 +509,7 @@ func (h *handler) listFlows(w http.ResponseWriter, r *http.Request, rc *reqConte
 	}
 	out := make([]authenticationFlowRepresentation, 0, len(idx.ordered))
 	for _, f := range idx.ordered {
-		if !f.TopLevel {
+		if !f.TopLevel || flowAliasOf(f) == samlECPFlowAlias {
 			continue
 		}
 		rep, err := h.flowRepresentation(r, rc, idx, f, aliases)

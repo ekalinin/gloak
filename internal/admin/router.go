@@ -204,6 +204,21 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /admin/realms/{realm}/users-management-permissions",
 		h.guardRealmFeature(writeFeatureNotEnabled))
 
+	// The export and the import pair, and **their guards are opposite shapes
+	// on one tag**. The export's grows with the query - manage-realm always,
+	// plus a clients role when exportClients is set and a groups-or-users role
+	// when exportGroupsAndRoles is - so its conditional halves are checked in
+	// the handler, where the parameters are known. See exportClientsRoles.
+	//
+	// The import's does **not** grow with the body: manage-realm alone was
+	// measured answering 200 for a user, a client and a group alike, so a
+	// caller holding no manage-users creates users through it. Two neighbouring
+	// operations, one tag, opposite answers to the same question.
+	mux.HandleFunc("POST /admin/realms/{realm}/partial-export",
+		h.guardAny(realmWriteRoles, h.partialExport))
+	mux.HandleFunc("POST /admin/realms/{realm}/partialImport",
+		h.guardAny(realmWriteRoles, h.partialImport))
+
 	// The realm's credential registrators: a four-name constant, the same four
 	// on master and on a created realm. realmConfigReadRoles is measured - the
 	// realm pair opens it and thirteen other admin roles were swept and refused.
@@ -1763,7 +1778,7 @@ func (h *handler) guardGroupPath(fine []string, next func(http.ResponseWriter, *
 		if c == nil {
 			return
 		}
-		group, err := h.groupAtPath(r, realm.ID, groupByPathSegments(r.PathValue("path")))
+		group, err := h.groupAtPath(r.Context(), realm.ID, groupByPathSegments(r.PathValue("path")))
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				writeGroupPathNotFound(w)
@@ -2181,6 +2196,32 @@ var realmWriteRoles = []string{"manage-realm"}
 // realmRolesReadRoles is what both realm-role reads accept: view-realm or
 // manage-realm, measured across eight single-role callers.
 var realmRolesReadRoles = []string{"view-realm", "manage-realm"}
+
+// exportClientsRoles and exportGroupsAndRolesRoles are the two halves
+// POST .../partial-export's query switches on, and they are checked **on top
+// of** realmWriteRoles rather than instead of it.
+//
+// Measured 2026-09-06, one role at a time over all 22 realm-management roles
+// and then again with manage-realm plus each of the other 21, on all four
+// parameter settings:
+//
+//	manage-realm alone            200 403 403 403
+//	view-realm alone              403 403 403 403
+//	manage-realm + view-clients   200 200 403 403
+//	manage-realm + query-groups   200 403 200 403
+//	manage-realm + view-clients + query-groups  200 200 200 200
+//
+// **view-realm is refused**, which is what makes realmConfigReadRoles the wrong
+// set here even though every other realm-shaped read takes it: reusing it would
+// open a whole-realm export to a read-only caller. And the two halves are not
+// the neighbouring families' sets either - query-clients and create-client do
+// not open the clients half although clientsReadRoles holds the first, and
+// query-users does not open the other half although usersReadRoles holds it.
+// Both were measured on this route rather than carried over.
+var (
+	exportClientsRoles        = []string{"view-clients", "manage-clients"}
+	exportGroupsAndRolesRoles = []string{"query-groups", "view-users", "manage-users"}
+)
 
 // realmConfigReadRoles is what the realm's own configuration reads accept: the
 // key set, the default groups listing and both client-policy reads. Measured
