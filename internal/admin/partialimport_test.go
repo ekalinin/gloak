@@ -435,10 +435,40 @@ func TestPartialImportRollsBackOnAConflict(t *testing.T) {
 	if code != http.StatusConflict {
 		t.Fatalf("%d %s, measured 409", code, body)
 	}
-	w := send(t, h, http.MethodGet, "/admin/realms/master/users?username=pi-r-new&exact=true", token, "")
-	if !strings.Contains(w.Body.String(), "[]") {
-		t.Errorf("the 409 left pi-r-new behind: %s", w.Body)
+	// **The listing is parsed rather than searched for "[]".** A user
+	// representation carries `"disableableCredentialTypes":[]` and
+	// `"requiredActions":[]`, so a substring check for an empty array passes on
+	// a body that holds the very user it is asserting is absent - which is
+	// exactly what a mutation dropping the rollback survived on.
+	if n := len(usersNamed(t, h, token, "pi-r-new")); n != 0 {
+		t.Errorf("the 409 left %d copies of pi-r-new behind", n)
 	}
+	// The control: the user the fixture did create is still there, so a listing
+	// that answers nothing for every name would not pass this test.
+	if n := len(usersNamed(t, h, token, "pi-r-existing")); n != 1 {
+		t.Fatalf("the control does not differ: pi-r-existing is there %d times", n)
+	}
+}
+
+// usersNamed reads the user listing back as rows, so a test can count them.
+func usersNamed(t *testing.T, h http.Handler, token, username string) []struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
+} {
+	t.Helper()
+	w := send(t, h, http.MethodGet,
+		"/admin/realms/master/users?username="+username+"&exact=true", token, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("list users: %d %s", w.Code, w.Body)
+	}
+	var rows []struct {
+		ID       string `json:"id"`
+		Username string `json:"username"`
+	}
+	if err := decodeJSON(w.Body.Bytes(), &rows); err != nil {
+		t.Fatalf("parse the listing: %v", err)
+	}
+	return rows
 }
 
 // TestPartialImportRefusesADuplicateInsideOneBody pins the seventh conflict
