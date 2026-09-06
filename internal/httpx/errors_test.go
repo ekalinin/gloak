@@ -442,3 +442,74 @@ func TestWriteThemePagePolicyKeepsTheEnvelope(t *testing.T) {
 		t.Error("the computed policy is the constant; the page would be indistinguishable")
 	}
 }
+
+// TestWriteFormPostEscapesItsOwnWay pins the third escaping this package has,
+// and pins it against the other two rather than on its own - which is the only
+// way a shared-helper tidy-up gets caught.
+//
+// Measured 2026-09-06 with a state of a"b<c>d&e'f:
+//
+//	form_post          a&quot;b&lt;c&gt;d&amp;e&apos;f
+//	theme title        a&quot;b&lt;c&gt;d&amp;e&#39;f     (Freemarker's)
+//	html.EscapeString  a&#34;b&lt;c&gt;d&amp;e&#39;f
+//
+// So the single quote is where all three part company, and the double quote is
+// where html.EscapeString parts from both.
+func TestWriteFormPostEscapesItsOwnWay(t *testing.T) {
+	w := httptest.NewRecorder()
+	httpx.WriteFormPost(w, "http://localhost:9999/callback",
+		map[string]string{"state": `a"b<c>d&e'f`}, "")
+	const want = `VALUE="a&quot;b&lt;c&gt;d&amp;e&apos;f"`
+	if !strings.Contains(w.Body.String(), want) {
+		t.Errorf("body does not carry %s:\n%s", want, w.Body.String())
+	}
+	// The two spellings this must not be. Both appear in this repository and
+	// both are right somewhere else.
+	for _, wrong := range []string{"&#39;", "&#34;"} {
+		if strings.Contains(w.Body.String(), wrong) {
+			t.Errorf("body carries %s, which is another escaper's spelling", wrong)
+		}
+	}
+}
+
+// TestWriteFormPostScriptIsNotEscapedAndTheActionIs is one response with two
+// escapings a few bytes apart, both measured.
+func TestWriteFormPostScriptIsNotEscapedAndTheActionIs(t *testing.T) {
+	w := httptest.NewRecorder()
+	httpx.WriteFormPost(w, "http://localhost:9999/cb?a=1&b=2",
+		map[string]string{"code": "x"},
+		"http://localhost:8080/realms/master/login-actions/authenticate?client_id=p&tab_id=t")
+	body := w.Body.String()
+	if !strings.Contains(body, `ACTION="http://localhost:9999/cb?a=1&amp;b=2"`) {
+		t.Errorf("the action is not escaped:\n%s", body)
+	}
+	if !strings.Contains(body,
+		`"http://localhost:8080/realms/master/login-actions/authenticate?client_id=p&tab_id=t"`) {
+		t.Errorf("the script's URL is escaped and the measured one is not:\n%s", body)
+	}
+}
+
+// TestWriteFormPostHeadersAreNotTheThemes pins the two headers a reader would
+// copy from the login page and be wrong about: the charset and the language.
+func TestWriteFormPostHeadersAreNotTheThemes(t *testing.T) {
+	w := httptest.NewRecorder()
+	httpx.WriteFormPost(w, "http://localhost:9999/callback", map[string]string{"code": "x"}, "")
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	if got := w.Header().Get("Content-Type"); got != "text/html" {
+		t.Errorf("Content-Type = %q, want text/html with no charset", got)
+	}
+	if got := w.Header().Get("Content-Language"); got != "" {
+		t.Errorf("Content-Language = %q, want none", got)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store, must-revalidate, max-age=0" {
+		t.Errorf("Cache-Control = %q", got)
+	}
+	for _, name := range []string{"Referrer-Policy", "Strict-Transport-Security",
+		"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag", "Content-Security-Policy"} {
+		if w.Header().Get(name) == "" {
+			t.Errorf("%s is missing", name)
+		}
+	}
+}

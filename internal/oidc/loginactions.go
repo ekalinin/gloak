@@ -266,9 +266,12 @@ func (h *handler) writeExpiredAuthentication(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return false
 	}
-	httpx.WriteLoginActionRedirect(w, h.authorizationErrorLocation(realm.Name, redirectURI,
+	// Measured 2026-09-06 under form_post: the same four keys in the same Java
+	// map order - error_description, iss, state, error - a 200 with the form,
+	// and **no** <SCRIPT>, where this endpoint's success carries one.
+	h.writeAuthorizationError(w, httpx.WriteLoginActionRedirect, realm.Name, redirectURI,
 		defaultResponseMode(q, responseTypeCode), authErrTemporarilyUnavailable,
-		descAuthenticationExpired, state, hasState))
+		descAuthenticationExpired, state, hasState)
 	return true
 }
 
@@ -423,8 +426,36 @@ func (h *handler) completeLogin(w http.ResponseWriter, r *http.Request, realm *m
 	if err := h.setLoginCookies(w, realm, k, session.ID, user); err != nil {
 		return err
 	}
-	httpx.WriteLoginActionRedirect(w, h.authorizationCodeLocation(realm.Name, tab, session.ID, code))
+	// **This is the one response in the whole flow whose form_post body carries
+	// the <SCRIPT>.** Measured 2026-09-06 as a 2x2: /auth's rejection, /auth's
+	// SSO success and this endpoint's rejection all answer the same form
+	// without it, and only the successful credential POST scrubs its own URL
+	// out of the browser's history. The URL it scrubs to is this endpoint's
+	// with three of the action's five parameters - client_id, tab_id,
+	// client_data - and neither the session_code nor the execution.
+	h.writeAuthorizationCode(w, httpx.WriteLoginActionRedirect, realm.Name, tab, session.ID, code,
+		h.loginActionReplaceState(realm, tab))
 	return nil
+}
+
+// loginActionReplaceState is the URL the form_post success writes into
+// history.replaceState, and it is deliberately not loginActionURL: it drops the
+// session_code and the execution and keeps the other three, in the order the
+// action carries them.
+//
+// It returns "" when the tab's client_data cannot be rebuilt, which is the same
+// failure loginActionURL reports by returning an error - and here the honest
+// answer is no script rather than a script naming half a URL.
+func (h *handler) loginActionReplaceState(realm *model.Realm, tab *authTab) string {
+	data, err := tab.clientData()
+	if err != nil {
+		return ""
+	}
+	return h.realmBase(realm.Name) + "/login-actions/authenticate?" + strings.Join([]string{
+		"client_id=" + url.QueryEscape(tab.ClientID),
+		"tab_id=" + url.QueryEscape(tab.TabID),
+		"client_data=" + url.QueryEscape(data),
+	}, "&")
 }
 
 // clearRestartCookie is the Max-Age=0 KC_RESTART an **interactive** login ends

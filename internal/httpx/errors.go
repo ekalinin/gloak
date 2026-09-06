@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/ekalinin/gloak/internal/javamap"
 )
 
 // SetSecurityHeaders sets the five security headers Keycloak 26.7.1 attaches
@@ -177,6 +179,102 @@ func WriteLoginActionRedirect(w http.ResponseWriter, location string) {
 	w.Header().Set("Location", location)
 	w.WriteHeader(http.StatusFound)
 }
+
+// WriteFormPost writes response_mode=form_post's answer: a 200 carrying an
+// auto-submitting HTML form, where query and fragment carry a 302.
+//
+// Measured 2026-09-06 on four cells of one 2x2, and the whole of what varies
+// between them is the parameters and one <SCRIPT>:
+//
+//	GET  /auth                        rejection      no SCRIPT
+//	GET  /auth                        SSO success    no SCRIPT
+//	POST /login-actions/authenticate  rejection      no SCRIPT
+//	POST /login-actions/authenticate  success        SCRIPT
+//
+// So the script follows the successful login rather than the endpoint or the
+// status: the two 200s from /auth and the two responses from /login-actions
+// each split, which is why replaceState is a parameter and not a derivation
+// from anything else here.
+//
+// **The header set is not the theme's.** Content-Type is `text/html` with **no
+// charset**, where the login page's is `text/html;charset=utf-8`, and there is
+// no Content-Language at all. Cache-Control is /auth's own string.
+//
+// params is a map because the order is not the caller's to choose: it is a Java
+// HashMap's, and javamap.KeyOrder places all six sets measured on 2026-09-06 -
+// {code iss state session_state} came back in that order and
+// {error error_description state iss} came back
+// `error_description, iss, state, error`, neither of which is the order the
+// query redirect uses for the same four parameters. Dropping `state` and
+// dropping `error_description` each moved the rest exactly as KeyOrder
+// predicted, which is what makes this a rule rather than two coincidences.
+func WriteFormPost(w http.ResponseWriter, action string, params map[string]string, replaceState string) {
+	names := make([]string, 0, len(params))
+	for n := range params {
+		names = append(names, n)
+	}
+
+	var b strings.Builder
+	b.WriteString(`<HTML>  <HEAD>    <TITLE>OIDC Form_Post Response</TITLE>  `)
+	if replaceState != "" {
+		// **Not escaped.** Measured 2026-09-06: the URL's `&` separators come
+		// back raw inside the <SCRIPT>, where the same character in an INPUT's
+		// VALUE eight bytes later comes back `&amp;`. One response, two
+		// escapings, decided by which of the two the value is in.
+		b.WriteString(`<SCRIPT> if (typeof history.replaceState === 'function') {  history.replaceState({}, "some title", "`)
+		b.WriteString(replaceState)
+		b.WriteString(`"); }</SCRIPT>`)
+	}
+	// The action **is** escaped where the script's URL is not: measured on a
+	// client whose one registered redirect URI is
+	// `http://localhost:9999/cb?a=1&b=2`, which comes back with `&amp;`.
+	b.WriteString(`</HEAD>  <BODY Onload="document.forms[0].submit()">    <FORM METHOD="POST" ACTION="`)
+	b.WriteString(escapeFormPostValue(action))
+	b.WriteString(`">`)
+	for _, n := range javamap.KeyOrder(names) {
+		b.WriteString(`  <INPUT TYPE="HIDDEN" NAME="`)
+		b.WriteString(n)
+		b.WriteString(`" VALUE="`)
+		b.WriteString(escapeFormPostValue(params[n]))
+		b.WriteString(`" />`)
+	}
+	// The NOSCRIPT button spells its attribute `name` in lower case where every
+	// hidden input above spells it `NAME`. Measured, and tidying it up would
+	// change the bytes.
+	b.WriteString(`      <NOSCRIPT>        <P>JavaScript is disabled. We strongly recommend to enable it. ` +
+		`Click the button below to continue .</P>        <INPUT name="continue" TYPE="SUBMIT" ` +
+		`VALUE="CONTINUE" />      </NOSCRIPT>    </FORM>  </BODY></HTML>`)
+
+	suppressDate(w)
+	SetSecurityHeaders(w)
+	SetContentSecurityPolicy(w)
+	w.Header().Set("Cache-Control", "no-store, must-revalidate, max-age=0")
+	w.Header().Set("Content-Type", "text/html")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(b.String()))
+}
+
+// escapeFormPostValue is this response's own escaping, and it is a **third**
+// spelling rather than a shared one.
+//
+// Measured 2026-09-06 with a state of `a"b<c>d&e'f`:
+//
+//	a&quot;b&lt;c&gt;d&amp;e&apos;f
+//
+// `html.EscapeString` spells the two quotes `&#34;` and `&#39;` and is wrong on
+// both; `escapeThemeTitle` fixes the double quote and still spells the single
+// one `&#39;`, which is Freemarker's. This one is a jakarta form encoder's, and
+// the single quote is where the two part company - so a shared helper is wrong
+// on one of the two whichever spelling it picks.
+func escapeFormPostValue(s string) string { return formPostEscaper.Replace(s) }
+
+var formPostEscaper = strings.NewReplacer(
+	"&", "&amp;",
+	"<", "&lt;",
+	">", "&gt;",
+	`"`, "&quot;",
+	"'", "&apos;",
+)
 
 // Cookie is one Set-Cookie header in Keycloak's own spelling.
 //

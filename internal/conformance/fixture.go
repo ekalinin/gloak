@@ -7486,7 +7486,7 @@ func introspectInAudienceFixture() Fixture {
 					Path:    "/admin/realms/master/clients",
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 					Body: []byte(`{"clientId":"` + audIntrospectClient + `","enabled":true,` +
-						`"publicClient":false,"standardFlowEnabled":false,"defaultClientScopes":[]}`),
+						`"publicClient":false,"standardFlowEnabled":false}`),
 				},
 				ExpectStatus: idempotentCreate,
 			},
@@ -7529,8 +7529,21 @@ func introspectInAudienceFixture() Fixture {
 					Method:  http.MethodPost,
 					Path:    "/admin/realms/master/clients",
 					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					// **Neither scope list is named, and that is load-bearing.**
+					// A client inherits the realm's client scopes only when it
+					// names *neither*, so the obvious tidy-up -
+					// "defaultClientScopes":[] to keep the create explicit -
+					// takes the `roles` scope away, and with it the mappers
+					// that write `aud` and `resource_access`. Measured
+					// 2026-09-06 on two clients differing in that one field:
+					// the empty list answers `scope: openid` with **no aud and
+					// no resource_access at all**, where the omitted one
+					// answers `openid email profile` and
+					// aud ["gloak-probe-aud-introspect","account"]. The first
+					// recording of this case put {"active":false} in a file
+					// named active-access-token for exactly that reason.
 					Body: []byte(`{"clientId":"` + audIssuerClient + `","enabled":true,` +
-						`"publicClient":false,"directAccessGrantsEnabled":true,"defaultClientScopes":[]}`),
+						`"publicClient":false,"directAccessGrantsEnabled":true}`),
 				},
 				ExpectStatus: idempotentCreate,
 			},
