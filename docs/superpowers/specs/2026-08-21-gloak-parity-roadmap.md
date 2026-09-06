@@ -244,12 +244,14 @@ operations is allocated below; none is left unassigned.
 | Scattered remainder | Eight small families across three tags, **done 2026-09-06** | P2, P9, P14 | `admin/users` 20->26, `admin/clients` 28->30, `admin/realms-admin` 39->42. Eleven of twenty-seven taken; the email family is **a mail client, not four operations**, `impersonation` is F148's shape and stays `Pending`, and `partial-export` is 40 kB of realm. **A federated-identity link can exist and be invisible** | 11 ops |
 | Protocol remainder | Ten written reasons re-checked, **done 2026-09-06** | P3, P6, P13, F38 | `oidc/authorization` 25->27, `oidc/introspection` 4->5. **Four reasons expired and six held.** An access token's `aud` cannot be exercised with one client, which is why the introspection case had been unreachable; front-channel logout has a second blocker nobody had measured | 3 ops |
 | F121 | The `Workflows` tag and a YAML emitter, **done 2026-09-06** | P14 | `admin/workflows` 0->9, the whole tag. **Two of the nine answer YAML, not nine** - the entry counted request bodies. `gopkg.in/yaml.v3` differs from SnakeYAML on four counts and two are unreachable by option, so `internal/httpx` emits and the library only reads. F133 closed on the way | 9 ops |
+| Users singles | Five of the `Users` tag's eight, **done 2026-09-06** | P2, F148 | `admin/users` 26->31. The three emails are served as **refusals**: `realmrep.go` builds every realm with an `SMTPServer` map nothing reads or writes, so the 400 and 500 are the whole reachable answer. `impersonation` refused on F148 and consents on F110 | 5 ops |
+| Clients singles | Three singles across three tags, **done 2026-09-06** | P2, P12, F153 | `admin/client-registration-policy` and `admin/organizations` **complete**. **F153 is refuted on its own shape**: every four-segment `GET` under `/organizations` carries all five security headers, and Gloak answered six of them wrongly until this cut | 3 ops |
 | Partial export | `partial-export` and `partialImport`, **done 2026-09-06** | P14 | `admin/realms-admin` 42->44. The export is `GET /admin/realms/{realm}` **spliced**, not transcribed, so `realmrep.go` stays the one truth. Answers F163: the parse code separates **syntax from binding**, not shapes | 2 ops |
 
 Denominator today: **413 Admin API operations plus 122 protocol behaviours, 535
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **512 of 541**
-after the `Workflows` tag, and **P2, P4 and P5 are complete** -
+surface is not counted and which the report says so about. Served: **520 of 541**
+after the scattered singles, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -280,7 +282,37 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-06 (twenty-third fold).** `make conformance` reports **512 of
+**Updated 2026-09-06 (twenty-fourth fold).** `make conformance` reports **520 of
+541**. Two parallel cuts took eight of the twenty remaining scattered operations,
+and `admin/client-registration-policy` and `admin/organizations` are complete.
+
+**The round's lesson is that a symptom report is evidence only about the tree it
+was taken on.** A cut reported a recorder artefact after the fix for it had
+landed, and I read that as the fix having failed - and said so. Its recording
+predated the flag and its rebase postdated it, so the report said nothing either
+way. **The cut checked the dates; I had not.** A second report I read as a
+recurrence was a comparison to a *different* case.
+
+Settled the only way it could be: **one `make record` on a tree carrying the
+flag moved one golden, and it was not that one.** The fix works.
+
+**What the recording did find is the other half of the same problem.**
+`partial-export-clients` was `Recorded`, so the recorder rewrote it every run,
+and that body cannot survive a recording: every id in it is minted with the
+database and several of its collections have no reproducible order, so
+`"profile","roles"` came back `"roles","profile"`. F113's rule already covered it
+- a body carrying per-request values cannot be `Recorded` - and it is `Pending`
+and declared now. **Two files were churning in three cuts' diffs and neither cut
+could fix either, because both sat in another stream's chapter.**
+
+**And an instruction of mine was wrong in a way worth naming.** I split
+`catalog_admin.go` between the two cuts by anchor: one at the very end, one
+"immediately after the last `admin/workflows` case". By the time the second got
+there the last cases *were* the other stream's, so both anchors were the same
+place and a PR went `DIRTY`. **An anchor defined by what is currently last is not
+an anchor.**
+
+**Earlier on 2026-09-06 (twenty-third fold).** `make conformance` reports **512 of
 541**. `admin/workflows` went 0 of 9 to **9 of 9** and F121 is paid.
 
 **The round's lesson is that a media type named in a description is not a media

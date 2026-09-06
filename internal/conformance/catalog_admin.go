@@ -19025,9 +19025,25 @@ var adminCases = []Case{
 			Section:   "Realms Admin: partial export with exportClients",
 			Retrieved: "2026-09-06",
 		},
-		Status: Recorded,
-		Reason: "the body carries the six bootstrapped clients, and master-realm has no name, " +
-			"neither client-scope list and account-console's audience resolve serves a populated " +
+		// **Pending rather than Recorded, and the difference is F113's rule.**
+		// A Recorded golden is re-recorded on every run, and this body cannot
+		// survive one: measured 2026-09-06, a second recording against a fresh
+		// container rewrote it wholesale. Every id in it is minted with the
+		// database - the realm's, six clients', every client scope's, every
+		// protocol mapper's, every component's and every authenticator
+		// config's - and several of its collections have no reproducible order
+		// besides, so `"profile","roles"` came back `"roles","profile"`.
+		//
+		// So it is not one mask away. A body carrying per-request values cannot
+		// be Recorded, whatever else is true of it, and the churn this case put
+		// into three cuts' diffs is what that rule exists to prevent. It is
+		// declared in parkedGoldens with the same reason.
+		Status: Pending,
+		Reason: "every id is minted with the database and several collections have no " +
+			"reproducible order, so a Recorded golden churns wholesale on every run - " +
+			"measured 2026-09-06. What it measures is still worth reading: the body " +
+			"carries the six bootstrapped clients, master-realm has no name, neither " +
+			"client-scope list and account-console's audience resolve serves a populated " +
 			"config - the three differences admin/clients/list-all is Recorded for",
 		PristineRealm: true,
 		Fixture:       "admin-token",
