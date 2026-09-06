@@ -3874,7 +3874,31 @@ representation never shows. Eleven operations under
 currently counted under `Role Mapper` and `Client Role Mappings`, wait on
 understanding it.
 
-## F121: the `Workflows` tag needs a YAML writer
+## F121: the `Workflows` tag needs a YAML writer (paid 2026-09-06)
+
+**Paid, all nine, and the entry's own count was wrong.** It says "nine
+operations answering `application/yaml`". **Two** answer YAML. The number came
+off the description's content lists, which name a media type on **request**
+bodies as well as responses; off the responses it is two YAML reads, one JSON
+read and six answers with no body.
+
+**The decision the entry named was real and went against the library.**
+`gopkg.in/yaml.v3` was measured four ways against the recorded bytes, with the
+control of parsing them and emitting them back, and differs on all four: no
+`---`, a nested sequence indented one level too far, plain scalars where
+Keycloak double-quotes everything, and a bare `on` where SnakeYAML writes `"on"`
+because it is YAML 1.1. Two of the four are unreachable through any option, and
+`SetIndent(2)` and `SetIndent(4)` gave byte-identical output because it moves
+both indents together.
+
+So `internal/httpx` gained an emitter rather than a dependency, and the library
+is promoted to direct **only for reading request bodies**, where the bytes are
+not observable. `go.sum` is unchanged. That is `internal/javamap`'s situation one
+layer up, and the entry was right that this was a decision about `internal/httpx`
+before it was nine handlers.
+
+What the finding said, kept for the record:
+
 
 Nine operations answering `application/yaml`, chunked. `internal/httpx` owns
 every response body this project writes and has no YAML path, so this is a
@@ -4074,7 +4098,15 @@ This is F54's shape for the fourth time. The rule "Gloak deletes the `Date`
 header on every response" has now been false three times in three different
 writers, each found by somebody reading a socket rather than by a test.
 
-## F133: `writeEmptyStatus` lives in `internal/admin`
+## F133: `writeEmptyStatus` lives in `internal/admin` (closed 2026-09-06)
+
+**Closed.** It moved into `internal/httpx` on the way through F121, which is
+where every response body this project writes belongs. The move was made by the
+cut that needed a second writer in that package anyway, which is the cheapest
+moment such a move ever gets.
+
+What the finding said, kept for the record:
+
 
 It writes no body, so no second marshaller exists and the boundary rule is not
 broken in substance - but `internal/httpx` is where every other writer lives,

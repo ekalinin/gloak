@@ -243,12 +243,13 @@ operations is allocated below; none is left unassigned.
 | F161 | What a golden can assert about a binary body, **done 2026-09-05** | P5 | `admin/client-attribute-certificate` 0->4. The answer is **nothing**, enforced by a ratchet rather than left as a paragraph. The entry's own description was wrong twice: five of seven answer JSON, and the three multipart operations are the **most** assertable of the seven | 4 ops |
 | Scattered remainder | Eight small families across three tags, **done 2026-09-06** | P2, P9, P14 | `admin/users` 20->26, `admin/clients` 28->30, `admin/realms-admin` 39->42. Eleven of twenty-seven taken; the email family is **a mail client, not four operations**, `impersonation` is F148's shape and stays `Pending`, and `partial-export` is 40 kB of realm. **A federated-identity link can exist and be invisible** | 11 ops |
 | Protocol remainder | Ten written reasons re-checked, **done 2026-09-06** | P3, P6, P13, F38 | `oidc/authorization` 25->27, `oidc/introspection` 4->5. **Four reasons expired and six held.** An access token's `aud` cannot be exercised with one client, which is why the introspection case had been unreachable; front-channel logout has a second blocker nobody had measured | 3 ops |
+| F121 | The `Workflows` tag and a YAML emitter, **done 2026-09-06** | P14 | `admin/workflows` 0->9, the whole tag. **Two of the nine answer YAML, not nine** - the entry counted request bodies. `gopkg.in/yaml.v3` differs from SnakeYAML on four counts and two are unreachable by option, so `internal/httpx` emits and the library only reads. F133 closed on the way | 9 ops |
 | Partial export | `partial-export` and `partialImport`, **done 2026-09-06** | P14 | `admin/realms-admin` 42->44. The export is `GET /admin/realms/{realm}` **spliced**, not transcribed, so `realmrep.go` stays the one truth. Answers F163: the parse code separates **syntax from binding**, not shapes | 2 ops |
 
 Denominator today: **413 Admin API operations plus 122 protocol behaviours, 535
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **503 of 541**
-after the protocol remainder and the partial export, and **P2, P4 and P5 are complete** -
+surface is not counted and which the report says so about. Served: **512 of 541**
+after the `Workflows` tag, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -279,7 +280,35 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-06 (twenty-second fold).** `make conformance` reports **503 of
+**Updated 2026-09-06 (twenty-third fold).** `make conformance` reports **512 of
+541**. `admin/workflows` went 0 of 9 to **9 of 9** and F121 is paid.
+
+**The round's lesson is that a media type named in a description is not a media
+type a response carries.** F121 said "nine operations answering
+`application/yaml`". Two do. The count came off the description's content lists,
+which name a media type on **request** bodies as well as responses - and this
+document and AGENTS.md both repeated it without anybody sending a request.
+
+**The decision F121 named was real and the library lost.** `gopkg.in/yaml.v3`
+was measured four ways against the recorded bytes, with the control of parsing
+them and emitting them back, and differs on all four - no `---`, a nested
+sequence one level too deep, plain scalars where Keycloak double-quotes
+everything, and a bare `on` where SnakeYAML writes `"on"` because it is YAML 1.1.
+Two are unreachable through any option. So `internal/httpx` gained an emitter and
+the library reads request bodies only, where bytes are not observable. That is
+`internal/javamap`'s situation one layer up, and it is the second time this
+project has had to reproduce a Java library's formatting rather than import a Go
+one.
+
+**And the header rule this document called unsettled three days ago is settled
+for the response side.** `GET /workflows/{id}` sends four security headers for
+`application/yaml` and five for `application/json` - one route, one status, one
+caller, differing only in `Accept`. The request side turned out to be a rule of
+its own: an **allow-list of three exact media types**, not the `application/`
+prefix Gloak tested in two places, and the parameters are cut without being
+trimmed.
+
+**Earlier on 2026-09-06 (twenty-second fold).** `make conformance` reports **503 of
 541**. The protocol remainder re-checked ten written reasons and the partial
 export landed sixteen cases.
 
