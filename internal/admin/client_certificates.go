@@ -251,6 +251,31 @@ const certificateUploadMaxBytes = 1 << 20
 // same "keystoreFormat cannot be null" 400 as no body, which is what lets this
 // ignore ParseMultipartForm's error and fall through to the same refusal.
 func certificateUpload(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	body, ok := keystoreUpload(w, r)
+	if !ok {
+		return nil, false
+	}
+	// A file part that is **present and empty** is a separate question from an
+	// absent one, and the two upload families answer it differently: measured
+	// 2026-09-06, `.../upload` answers `error loading keystore` where
+	// `.../upload-certificate` answers **`200 {"certificate":""}`**, storing an
+	// empty string. Gloak answers this 400 on both, which is a divergence on
+	// upload-certificate that predates this cut; it is recorded in
+	// docs/superpowers/handover/certificate-remainder.md rather than fixed here,
+	// because reproducing it needs the representation to emit a **present and
+	// empty** certificate and every field of it is omitempty for four other
+	// measured shapes.
+	if len(body) == 0 {
+		httpx.WriteMessageError(w, http.StatusBadRequest, "file cannot be empty")
+		return nil, false
+	}
+	return body, true
+}
+
+// keystoreUpload is certificateUpload's first two checks, which every upload in
+// this family makes in the same order, without the empty-file branch that only
+// the certificate uploads take.
+func keystoreUpload(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	_ = r.ParseMultipartForm(certificateUploadMaxBytes)
 	if r.FormValue("keystoreFormat") == "" {
 		httpx.WriteMessageError(w, http.StatusBadRequest, "keystoreFormat cannot be null")
@@ -270,10 +295,6 @@ func certificateUpload(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 		if err != nil {
 			break
 		}
-	}
-	if len(body) == 0 {
-		httpx.WriteMessageError(w, http.StatusBadRequest, "file cannot be empty")
-		return nil, false
 	}
 	return body, true
 }
