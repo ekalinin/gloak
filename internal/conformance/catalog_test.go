@@ -110,7 +110,7 @@ func TestCatalogIsWellFormed(t *testing.T) {
 		// ReplaceCaptured runs first, so the mask would then be covering
 		// `{{captured}}` - identical on two servings - which is exactly what
 		// TestNoHTMLMaskVariesNothing reports, with the better diagnosis.
-		for _, name := range slices.Concat(c.VolatileHTMLQuery, c.VolatileHTMLCall) {
+		for _, name := range slices.Concat(c.VolatileHTMLQuery, c.VolatileHTMLCall, c.VolatileHTMLInput) {
 			if !htmlMaskName.MatchString(name) {
 				t.Errorf("%q: HTML mask %q is not a placeholder-safe name", c.ID, name)
 			}
@@ -1488,7 +1488,8 @@ func TestInertMaskGuardSeesEveryKind(t *testing.T) {
 		"VolatileTailHeaders": "a header mask, and MaskURLTail already refuses a tail it cannot mask",
 		"VolatileHTMLQuery": "an HTML body mask, watched by TestNoHTMLMaskVariesNothing: " +
 			"it addresses no JSON path, so MaskedValues cannot read what it covers",
-		"VolatileHTMLCall": "the same, one frame along",
+		"VolatileHTMLCall":  "the same, one frame along",
+		"VolatileHTMLInput": "the same, two frames along",
 	}
 	watched := map[string]bool{}
 	for _, m := range bodyMasks {
@@ -1608,7 +1609,8 @@ func TestNoHTMLMaskVariesNothing(t *testing.T) {
 	visited := map[string]bool{}
 	declared := 0
 	for _, c := range Catalog {
-		if c.Status != Implemented || len(c.VolatileHTMLQuery)+len(c.VolatileHTMLCall) == 0 {
+		if c.Status != Implemented ||
+			len(c.VolatileHTMLQuery)+len(c.VolatileHTMLCall)+len(c.VolatileHTMLInput) == 0 {
 			continue
 		}
 		declared++

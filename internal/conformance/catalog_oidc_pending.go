@@ -581,30 +581,34 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: response_mode=form_post",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
-		Reason: "Gloak answers this request the 400 page: form_post is in responseModes and not in " +
-			"servableResponseModes, so the transport does not exist. That is F51. The harness's own " +
-			"blocker is gone - this Reason said 'the harness cannot mask a per-request value inside an " +
-			"HTML body' until 2026-09-03, and the tab_id in the history.replaceState URL is exactly " +
-			"Case.VolatileHTMLQuery's shape now. What is still missing on the mask side is an INPUT " +
-			"VALUE frame for the form's own code and session_state, which no case in the catalogue " +
-			"consumes yet",
-		// Measured 2026-08-29 and recorded in the observed spec: form_post
-		// answers **200** with an auto-submitting form, not a redirect, and
-		// its Content-Type is text/html with no charset where the login page's
-		// is text/html;charset=utf-8. The parameter order inside the form is
-		// code, iss, state, session_state, which is not the query redirect's
-		// state, session_state, iss, code.
+		Status: Implemented,
+		// **Both halves of the Reason were live on 2026-09-06 and both were
+		// lifted.** It read: Gloak answers the 400 page because form_post is in
+		// responseModes and not in servableResponseModes (F51), and the mask
+		// side still wants an INPUT VALUE frame that no case consumes. The
+		// transport is served now, on all four cells of its own 2x2, and the
+		// frame is Case.VolatileHTMLInput with this case as its first consumer
+		// and three of F146's theme pages behind it.
 		//
-		// It is Pending rather than Recorded because the golden cannot be
-		// written yet. The body carries a live code, session_state, tab_id and
-		// client_data, all minted by this request. Case.Volatile addresses
-		// paths into a JSON document and there is no equivalent for HTML, so
-		// the golden would churn on every recording and could never match a
-		// served implementation. The mechanism is the next cut's; inventing it
-		// here to land one case is how a harness grows a feature nothing
-		// needs twice.
-		Fixture: "",
+		// (F38's mechanism was never this case's blocker in the shape a
+		// follow-up note suggested: `prefixMasksLeftInPlace` does not name this
+		// case and never did. Its two entries are the device authorization
+		// request and the client registration create, and both want a body-side
+		// VolatileTail, which is a different mechanism.)
+		//
+		// Measured 2026-08-29, re-measured in full 2026-09-06: **200** with an
+		// auto-submitting form rather than a redirect; Content-Type `text/html`
+		// with **no charset** where the login page's is
+		// `text/html;charset=utf-8`, and **no Content-Language** where every
+		// theme page has one. The inputs are code, iss, state, session_state -
+		// which is not the query redirect's state, session_state, iss, code, and
+		// is javamap.KeyOrder over the same four names.
+		//
+		// The <SCRIPT> is the part a reader would put on the wrong response. It
+		// is on **this** cell alone: /auth's form_post rejection, /auth's
+		// form_post SSO success and this endpoint's own form_post rejection all
+		// answer the same form without one.
+		Fixture: "browser-login-form",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "{{login_action}}",
@@ -614,8 +618,19 @@ var oidcPending = []Case{
 				"credentialId": "",
 			},
 		},
-		AssertHeaders:   []string{"Content-Type", "Cache-Control"},
-		VolatileHeaders: []string{"Set-Cookie"},
+		// Content-Language is asserted absent rather than left out: it is the
+		// one header a reader copying the login page's envelope would add, and
+		// AssertHeaders can never catch a header that should be missing.
+		AssertHeaders: []string{
+			"Content-Type", "Cache-Control", "Content-Security-Policy", "X-Frame-Options",
+		},
+		AssertAbsentHeaders: []string{"Content-Language"},
+		VolatileHeaders:     []string{"Set-Cookie"},
+		// The two values this request mints. Everything else in the body stays
+		// compared: the form's action, the iss, the state, the order of the four
+		// inputs, the NOSCRIPT block, and the replaceState URL - whose tab_id is
+		// the fixture's capture rather than a mask.
+		VolatileHTMLInput: []string{"code", "session_state"},
 	},
 	{
 		ID: "oidc/authorization/invalid-redirect-uri",

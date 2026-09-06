@@ -356,7 +356,7 @@ var Fixtures = map[string]Fixture{
 	"browser-login-s256":  browserFormFixture("gloak-probe-browser", "", pkceS256Query),
 	"browser-login-plain": browserFormFixture("gloak-probe-browser", "", pkcePlainQuery),
 	"browser-login-frag":  browserFormFixture("gloak-probe-browser", "", map[string]string{"response_mode": "fragment"}),
-	"browser-login-form":  browserFormFixture("gloak-probe-browser", "", map[string]string{"response_mode": "form_post"}),
+	"browser-login-form":  browserFormPostFixture("gloak-probe-browser"),
 	// The login page again, with its action's four per-request parameters taken
 	// one at a time rather than whole, so the case can send a wrong execution
 	// and get "Page has expired". See browserExpiredPageFixture.
@@ -2874,6 +2874,26 @@ func browserFormFixture(clientID, attributes string, authQuery map[string]string
 		State: "bootstrap",
 		Steps: append(browserClientSteps(clientID, attributes), authorizeStep(clientID, authQuery)),
 	}
+}
+
+// browserFormPostFixture is browserFormFixture under response_mode=form_post,
+// with the tab_id captured beside the action.
+//
+// The tab is the one per-request value in the response body that a fixture can
+// hold: the form_post success carries a <SCRIPT> whose replaceState URL names
+// client_id, tab_id and client_data, and the tab is minted by **this fixture's**
+// GET /auth. Capturing it rather than masking it leaves the value asserted to be
+// the tab the login actually used instead of merely present.
+//
+// client_data is neither captured nor masked, for browserClientData's reason one
+// mode along: it is a function of the request, both servers build it byte for
+// byte, and here it carries `"rm":"form_post"` where that constant does not.
+// The code and the session_state are the case's own request's and are
+// Case.VolatileHTMLInput's two consumers.
+func browserFormPostFixture(clientID string) Fixture {
+	step := authorizeStep(clientID, map[string]string{"response_mode": "form_post"})
+	step.CaptureForm = map[string]string{"login_action": "action", "tab_id": "query:tab_id"}
+	return Fixture{State: "bootstrap", Steps: append(browserClientSteps(clientID, ""), step)}
 }
 
 // browserExpiredPageFixture stops at the login page like browserFormFixture and

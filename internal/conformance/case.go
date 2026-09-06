@@ -340,6 +340,33 @@ type Case struct {
 	// although it is the same shape: its argument is the whole restart URL, and
 	// masking it would assert that a URL is present and nothing else.
 	VolatileHTMLCall []string
+
+	// VolatileHTMLInput names form inputs in an HTML body whose value attribute
+	// is minted per request. The value is replaced with {{<name>}}; the element,
+	// its other attributes, its position among its siblings and the value's
+	// position inside it all stay compared.
+	//
+	// It is the third frame of the same shape, and it is built here rather than
+	// beside the other two because the cut that built those said so: "the frame
+	// is a third Case field of the same shape and is not built here because it
+	// would have no consumer". It has four now -
+	// oidc/authorization/response-mode-form-post, whose `code` and
+	// `session_state` are minted by the case's own request, and three of F146's
+	// theme pages, which carry a generated secret in a hidden input.
+	//
+	// The attribute names are matched **case-insensitively** because one body
+	// spells them one way and the other spells them the other:
+	// response_mode=form_post's markup is Keycloak's own and spells
+	// `<INPUT TYPE="HIDDEN" NAME="code" VALUE="...">`, while the theme's
+	// Freemarker output spells `<input type="hidden" name="..." value="...">`.
+	// The input's **name** is compared exactly; only the attribute spellings
+	// fold.
+	//
+	// A name the body does not carry is an error rather than a silent no-op, an
+	// input carrying no value attribute is an error rather than a skip, and a
+	// name whose values never move is TestNoHTMLMaskVariesNothing's failure -
+	// the same three rules the two frames beside it follow.
+	VolatileHTMLInput []string
 }
 
 // buildRequest turns a Case's Request into an *http.Request aimed at base.

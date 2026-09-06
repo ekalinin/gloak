@@ -697,6 +697,104 @@ func TestReplaceHTMLValuesRefusesAMaskThatCoversNothing(t *testing.T) {
 	}
 }
 
+// formPostFragment is the shape response_mode=form_post answers, cut down to
+// what the input mask has to get right: two markup dialects in one body.
+//
+// The first three inputs are Keycloak's own upper-case attributes, the fourth
+// is the theme's lower-case Freemarker output, and the fifth is the NOSCRIPT
+// button whose `name` is lower case where the hidden inputs' is upper. A masker
+// that folded the input's **name** as well as the attribute's would mask
+// `CODE` here; one that did not fold the attribute at all would find nothing.
+const formPostFragment = `<FORM METHOD="POST" ACTION="http://x/cb">` +
+	`  <INPUT TYPE="HIDDEN" NAME="code" VALUE="abc.def.ghi" />` +
+	`  <INPUT TYPE="HIDDEN" NAME="iss" VALUE="http://x/realms/master" />` +
+	`  <INPUT TYPE="HIDDEN" NAME="session_state" VALUE="_4arRIkCK2SR" />` +
+	`  <input type="hidden" name="totpSecret" value="KZ2W CZLB" />` +
+	`  <INPUT name="continue" TYPE="SUBMIT" VALUE="CONTINUE" /></FORM>`
+
+// TestHTMLInputMaskCoversTheValueAndNothingElse. The element, its other
+// attributes, the order of the inputs and every byte outside the two masked
+// values stay compared - which is the bargain the two frames beside this one
+// already make.
+func TestHTMLInputMaskCoversTheValueAndNothingElse(t *testing.T) {
+	got, err := ReplaceHTMLValues([]byte(formPostFragment), Case{
+		VolatileHTMLInput: []string{"code", "totpSecret"},
+	})
+	if err != nil {
+		t.Fatalf("mask: %v", err)
+	}
+	want := strings.NewReplacer(
+		"abc.def.ghi", "{{code}}",
+		"KZ2W CZLB", "{{totpSecret}}",
+	).Replace(formPostFragment)
+	if string(got) != want {
+		t.Fatalf("want:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+// TestHTMLInputMaskReadsWhatItCovers, through the same finder the masker
+// splices with. `iss` is here because it is the one input in this body whose
+// value a golden should keep, and the guard has to be able to say so.
+func TestHTMLInputMaskReadsWhatItCovers(t *testing.T) {
+	values, err := HTMLMaskedValues([]byte(formPostFragment), Case{
+		VolatileHTMLInput: []string{"code", "iss", "continue"},
+	})
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	for name, want := range map[string][]string{
+		"code":     {"abc.def.ghi"},
+		"iss":      {"http://x/realms/master"},
+		"continue": {"CONTINUE"},
+	} {
+		got := make([]string, 0, len(values[name]))
+		for _, v := range values[name] {
+			got = append(got, string(v))
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: covers %q, want %q", name, got, want)
+		}
+	}
+}
+
+// An input mask names a whole attribute rather than the tail of a longer one.
+// Without the boundary check a mask on `id` would fire on `data-id`, and a mask
+// that reaches further than it says is this file's recurring disease.
+func TestHTMLInputMaskDoesNotFireOnALongerAttributeName(t *testing.T) {
+	in := []byte(`<input data-name="id" name="id" value="BBB" />`)
+	got, err := ReplaceHTMLValues(in, Case{VolatileHTMLInput: []string{"id"}})
+	if err != nil {
+		t.Fatalf("mask: %v", err)
+	}
+	if want := `<input data-name="id" name="id" value="{{id}}" />`; string(got) != want {
+		t.Fatalf("want %s, got %s", want, got)
+	}
+}
+
+// An input carrying no value attribute is refused rather than reaching past its
+// own `>` for the next one. The second input is what makes this discriminate:
+// without the tag boundary the masker finds a `value="` further down the body
+// and covers another element's value while reporting success.
+func TestHTMLInputMaskRefusesAnInputWithNoValue(t *testing.T) {
+	in := []byte(`<input type="hidden" name="credentialId"><input name="other" value="X">`)
+	if _, err := ReplaceHTMLValues(in, Case{VolatileHTMLInput: []string{"credentialId"}}); err == nil {
+		t.Fatal("an input with no value attribute was masked rather than refused")
+	}
+}
+
+// The three rules the frames share, on this frame: a name the body does not
+// carry, and a value with no bytes in it.
+func TestHTMLInputMaskRefusesNothingAndEmptiness(t *testing.T) {
+	if _, err := ReplaceHTMLValues([]byte(formPostFragment),
+		Case{VolatileHTMLInput: []string{"nosuchinput"}}); err == nil {
+		t.Fatal("a mask over nothing was applied rather than refused")
+	}
+	if _, err := ReplaceHTMLValues([]byte(`<input name="code" value="" />`),
+		Case{VolatileHTMLInput: []string{"code"}}); err == nil {
+		t.Fatal("an empty input value was masked rather than refused")
+	}
+}
+
 // A query mask fires on a whole parameter and not on the tail of a longer one.
 // Without the boundary check `tab_id` would also mask `client_tab_id`, and a
 // mask that reaches further than it says is the disease this file's other
