@@ -917,20 +917,46 @@ func (h *handler) register(mux *http.ServeMux) {
 	// or with anything else in this file.
 	//
 	// `GET /users/profile` is opened by five roles - view-users, manage-users,
-	// **query-users**, view-realm and manage-realm - and refused to the nine
+	// **query-users**, view-realm and manage-realm - and refused to the ten
 	// others swept, view-clients and manage-clients among them. That is the
 	// whole users read set including query-users, which opens no other route in
-	// the family, plus the realm pair. `PUT` on the same path is manage-realm
-	// alone and is not served; see internal/admin/userprofile.go for what a
-	// PUT does to the realm and why.
+	// the family, plus the realm pair.
+	//
+	// **`GET /users/profile/metadata` shares it exactly**, and that is measured
+	// rather than assumed: fifteen master-realm roles, one at a time and a
+	// fresh token each, and the two endpoints agree cell for cell. So the
+	// variable is reused rather than a second list written beside it.
+	//
+	// **`PUT` on that same path is manage-realm alone**, so the write guard is
+	// not a slice of the read guard's five: a manage-users caller may read this
+	// profile and may not write it. Measured with callers **inside** the realm
+	// they address - the first sweep used master's callers against a created
+	// realm, where a master caller's rights do not reach, and read 403 in every
+	// cell. See internal/admin/userprofile.go for what that PUT does to a realm.
 	//
 	// The three per-user reads take userReadRoles behind the family's coarse
 	// gate, measured: query-users gets `User not found` for a user that does
 	// not exist and 403 for one that does.
 	mux.HandleFunc("GET /admin/realms/{realm}/users/profile",
 		h.guardAny(userProfileReadRoles, h.readUserProfile))
+	mux.HandleFunc("PUT /admin/realms/{realm}/users/profile",
+		h.guardAny(realmWriteRoles, h.updateUserProfile))
+	mux.HandleFunc("GET /admin/realms/{realm}/users/profile/metadata",
+		h.guardAny(userProfileReadRoles, h.readUserProfileMetadata))
 	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/unmanagedAttributes",
 		h.guardUserSubject(userReadRoles, h.readUnmanagedAttributes))
+
+	// The three email writes. **They are one implementation wearing three
+	// paths** - reset-password-email answers execute-actions-email's sentence
+	// word for word - and they take manage-users alone, swept one role at a
+	// time over eight. See internal/admin/useremails.go for why only the
+	// refusals are served and for the ten-step rejection order.
+	mux.HandleFunc("PUT /admin/realms/{realm}/users/{userID}/execute-actions-email",
+		h.guardUserSubject(userWriteRoles, h.executeActionsEmail))
+	mux.HandleFunc("PUT /admin/realms/{realm}/users/{userID}/reset-password-email",
+		h.guardUserSubject(userWriteRoles, h.resetPasswordEmail))
+	mux.HandleFunc("PUT /admin/realms/{realm}/users/{userID}/send-verify-email",
+		h.guardUserSubject(userWriteRoles, h.sendVerifyEmail))
 	mux.HandleFunc("GET /admin/realms/{realm}/users/{userID}/configured-user-storage-credential-types",
 		h.guardUserSubject(userReadRoles, h.readConfiguredUserStorageCredentialTypes))
 

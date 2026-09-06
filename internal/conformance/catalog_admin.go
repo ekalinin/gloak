@@ -20160,4 +20160,417 @@ var adminCases = []Case{
 		},
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
+	{
+		// The metadata master answers: 1196 bytes,
+		// md5 d96998890507ef0a1b55714721f626c3.
+		//
+		// `application/json;charset=UTF-8` and **no `Cache-Control`**, which is
+		// the read beside it's pair rather than writeAdminJSON's - asserted
+		// absent for the same reason that one is.
+		ID: "admin/users/profile-metadata",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get the UserProfileMetadata from the configuration",
+			Retrieved: "2026-09-06",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/users/profile/metadata",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/profile/metadata",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The same endpoint on a realm whose **profile** differs from master's
+		// by three `required` blocks, and whose metadata does not differ at
+		// all. The two goldens being byte-identical is the assertion, and it is
+		// only worth making because admin/users/profile and
+		// admin/users/profile-created-realm are not.
+		//
+		// It is what made this endpoint look like a constant for a fortnight,
+		// and the request that refutes that reading cannot live here: it needs
+		// a third profile, which only a component write produces. That one is
+		// TestTheMetadataIsDerivedAndNotAConstant in internal/admin.
+		ID: "admin/users/profile-metadata-created-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get the UserProfileMetadata, a created realm",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "user-profile-created-realm",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-userprofile/users/profile/metadata",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The profile write's 200, and its `Content-Type` is the point:
+		// `application/json` with **no charset**, which makes it the third
+		// Admin API 2xx body outside the charset rule after
+		// `POST /groups/{id}/children`'s 201 and `POST /partial-export`.
+		// `Cache-Control` is asserted absent beside it.
+		//
+		// The body is the request canonicalised - `groups` moved after
+		// `attributes`, `permissions` rewritten view-first, `multivalued`
+		// filled in - and it is byte-identical to what the read then serves.
+		// The request is deliberately not already canonical, so a handler that
+		// echoed it would fail here rather than pass.
+		//
+		// **It addresses a realm of its own.** See the fixture.
+		ID: "admin/users/profile-write",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: set the configuration for the user profile",
+			Retrieved: "2026-09-06",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/users/profile",
+		Fixture:   "user-profile-write-realm",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-upwrite/users/profile",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"groups":[{"displayHeader":"h","name":"g1"}],"attributes":[` +
+				`{"name":"username","permissions":{"edit":["admin","user"],"view":["admin","user"]},` +
+				`"validations":{"up-username-not-idn-homograph":{},"length":{"max":255,"min":3}}},` +
+				`{"name":"email","permissions":{"edit":["admin"],"view":["admin","user"]},` +
+				`"required":{"roles":["user"]},"group":"g1"}]}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// `{"attributes":[]}` earns **two** refusals and they arrive in one
+		// body, joined with `, ` inside one pair of brackets. That is the case
+		// that decides the list shape: a validator returning on the first
+		// problem is right on every other refusal this endpoint has and wrong
+		// on the one a caller clearing the profile actually sends.
+		//
+		// An **absent** `attributes` is a different body and a 200 - see
+		// TestAProfilePutWithAnEmptyObjectIsNotTheReset - so this 400 is about
+		// an empty list rather than about a missing one.
+		ID: "admin/users/profile-write-undeletable",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: set the configuration for the user profile, attributes removed",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "user-profile-write-realm",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-upwrite/users/profile",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"attributes":[],"groups":[]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The strict decoder, and the class is `UPAttribute` rather than
+		// `UPConfig` because the unknown field is inside an element of
+		// `attributes`. Three classes on one body, and the **column is absolute
+		// in the whole request** on all three - which is what stops a decoder
+		// from being handed the sub-object.
+		//
+		// This is the sixteenth strict decoder in this API and the first whose
+		// class depends on where the field sits.
+		ID: "admin/users/profile-write-unknown-field",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: set the configuration for the user profile, an unknown field",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "user-profile-write-realm",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-upwrite/users/profile",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"attributes":[{"name":"username","zz":1,` +
+				`"permissions":{"view":["admin","user"],"edit":["admin","user"]}},` +
+				`{"name":"email","permissions":{"view":["admin","user"],"edit":["admin","user"]}}],` +
+				`"groups":[]}`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The three email writes answer about the **user** before they answer
+		// about the mail, and this is the half of that pair a golden can hold:
+		// a user with no email address, on a realm whose SMTP is the default.
+		//
+		// Its sibling below sends the identical request to a user who has one
+		// and gets the send failure, which is what makes the pair a measurement
+		// rather than a constant.
+		ID: "admin/users/execute-actions-email-no-email",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: send an execute-actions email, a user with no email",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "emailless-user",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/users/{{user_id}}/execute-actions-email",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`["UPDATE_PASSWORD"]`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The send failure on a realm whose `smtpServer` is `{}`, which is
+		// every default realm and **every Gloak realm there is**: the realm
+		// representation carries a literal empty map that nothing reads from
+		// storage. So this 500 is not one branch of four, it is the whole
+		// reachable answer for a user who has an email - the shape
+		// `configured-user-storage-credential-types` and `client-types` already
+		// have, with the difference that this one becomes reachable the day a
+		// cut stores `smtpServer`.
+		ID: "admin/users/execute-actions-email",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: send an execute-actions email",
+			Retrieved: "2026-09-06",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/users/{user-id}/execute-actions-email",
+		Fixture:   "federated-identity-empty",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/users/{{user_id}}/execute-actions-email",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`["UPDATE_PASSWORD"]`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// **The same sentence, word for word, including the words "execute
+		// actions"** - on a route whose path says nothing about them. That is
+		// what says the two are one implementation, and it is the reason this
+		// golden is worth having beside the one above rather than being read as
+		// a duplicate of it.
+		ID: "admin/users/reset-password-email",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: send a reset-password email",
+			Retrieved: "2026-09-06",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/users/{user-id}/reset-password-email",
+		Fixture:   "federated-identity-empty",
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/master/users/{{user_id}}/reset-password-email",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// And the third answers its **own** constant, which is what stops the
+		// family being one message. It interpolates nothing and is identical in
+		// both failing states.
+		ID: "admin/users/send-verify-email",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: send a verify-email email",
+			Retrieved: "2026-09-06",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/users/{user-id}/send-verify-email",
+		Fixture:   "federated-identity-empty",
+		Request: Request{
+			Method:  http.MethodPut,
+			Path:    "/admin/realms/master/users/{{user_id}}/send-verify-email",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// The required actions are checked **last**, after the email and after
+		// the client. This request is wrong in exactly one way, so it is the
+		// row that pins the message; the ordering that puts it tenth is
+		// TestTheEmailRejectionOrder's, because an order needs requests wrong
+		// in two ways and a golden holds one response.
+		ID: "admin/users/execute-actions-email-invalid-action",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: send an execute-actions email, an unknown action",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "federated-identity-empty",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/users/{{user_id}}/execute-actions-email",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`["NOSUCHACTION"]`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// A `client_id` naming nothing, which runs after the user's email and
+		// before the actions. The message has **no full stop** where the
+		// redirect refusal beside it has one.
+		ID: "admin/users/execute-actions-email-unknown-client",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: send an execute-actions email, an unknown client",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "federated-identity-empty",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/users/{{user_id}}/execute-actions-email",
+			Query:  map[string]string{"client_id": "gloak-probe-nosuchclient"},
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`["UPDATE_PASSWORD"]`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// A `redirect_uri` the client has not registered, and **Gloak does not
+		// serve this one**.
+		//
+		// Deciding it means `matchRedirectURI` in internal/oidc/authorize.go,
+		// which is unexported and in a package this branch may not touch.
+		// AGENTS.md records that comparison at length - nothing normalised, a
+		// wildcard that is not a bare prefix, the query and fragment cut in one
+		// branch only - and records that this project got it wrong once. A
+		// second copy of a rule with eight recorded corner cases is a second
+		// copy that will diverge, which is F148's argument applied to an error
+		// branch rather than to a whole operation.
+		//
+		// **Recorded rather than left silent**: Gloak answers the send failure
+		// here, so the verifier requires this golden *not* to match, and the day
+		// the comparison moves somewhere both packages can reach, the suite
+		// fails with "already matches" and tells whoever moved it to promote
+		// this case.
+		ID: "admin/users/execute-actions-email-bad-redirect",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: send an execute-actions email, an unregistered redirect_uri",
+			Retrieved: "2026-09-06",
+		},
+		Status: Recorded,
+		Reason: "deciding whether a redirect_uri matches a client's patterns is matchRedirectURI " +
+			"in internal/oidc, which this branch may not touch; a second copy of that comparison " +
+			"is the copy F148 settled against",
+		Fixture: "federated-identity-empty",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/master/users/{{user_id}}/execute-actions-email",
+			Query: map[string]string{
+				"client_id":    "account",
+				"redirect_uri": "http://gloak-probe.invalid/nowhere",
+			},
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`["UPDATE_PASSWORD"]`),
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		// `GET /users/{id}/consents` answers `200 []` for a user who has
+		// consented to nothing, `application/json;charset=UTF-8` with
+		// `Cache-Control: no-cache`, and **Gloak deliberately does not serve
+		// it.**
+		//
+		// An internal/admin handler answering `[]` would be right for every
+		// user in a freshly started Gloak and wrong the moment anybody clicks
+		// through the consent page: internal/oidc/authsession.go's
+		// `consentStore` records that grant, and internal/oidc/consent.go calls
+		// `grant(...)` on every approval. The Admin API would then say a user
+		// has never consented while the package next door remembers that they
+		// have.
+		//
+		// That is **not** attack-detection's shape and not
+		// `configured-user-storage-credential-types`'. Those answer the empty
+		// case because nothing in the project writes the state. Here something
+		// does, in a package this branch may not touch, so the two halves have
+		// to move in one cut - which is exactly what F110 says, and what
+		// `consentStore`'s own doc comment says by naming these two endpoints.
+		//
+		// Measured 2026-09-06 so that cut does not have to: an unknown user is
+		// `404 {"error":"User not found"}`, and the guard is `view-users` or
+		// `manage-users` with `query-users` refused.
+		ID: "admin/users/consents",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get consents granted by the user",
+			Retrieved: "2026-09-06",
+		},
+		Status: Pending,
+		Reason: "a handler answering [] would pin \"this user has never consented\" as a contract " +
+			"while internal/oidc's consentStore is recording that they have; F110's two halves " +
+			"have to move in one cut and internal/oidc is not this branch's",
+		Fixture: "federated-identity-empty",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/{{user_id}}/consents",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The revoke, refused on the same follow-up, and its two 404s are
+		// measured because they are the part a later cut would get wrong.
+		//
+		// **The client is resolved before the consent**, so a `{client}` naming
+		// nothing answers `404 {"error":"Client not found"}` and a real client
+		// with no consent answers
+		// `404 {"error":"Consent nor offline token not found"}` - two 404s one
+		// lookup apart, and the second is a spelling of not-found this API did
+		// not previously have. An id that is a UUID rather than a clientId
+		// takes the first branch, because the segment is a clientId. The guard
+		// is `manage-users` alone.
+		ID: "admin/users/consents-revoke",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: revoke consent and offline tokens for a client",
+			Retrieved: "2026-09-06",
+		},
+		Status: Pending,
+		Reason: "the row it revokes lives in internal/oidc's consentStore, which this branch may " +
+			"not touch; serving the 404 alone would make a revoke that cannot fail look like one " +
+			"that found nothing - see F110",
+		Fixture: "federated-identity-empty",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/master/users/{{user_id}}/consents/account",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
 }

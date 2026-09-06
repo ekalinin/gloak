@@ -102,6 +102,11 @@ type unknownField struct {
 	name   string
 	line   int
 	column int
+	// offset is where the field's key sits in the whole body. It is what lets a
+	// caller checking several objects of the document pick the one Jackson
+	// would have reached first - see firstUnknownProfileField, the only caller
+	// that checks more than one.
+	offset int
 }
 
 // firstUnknownField finds the first top-level key of body that out's type does
@@ -122,8 +127,30 @@ type unknownField struct {
 //
 // A scanner that reported Go's byte offset would be right on none of them.
 func firstUnknownField(body []byte, out any) (unknownField, bool) {
+	return firstUnknownFieldFrom(body, 0, out)
+}
+
+// firstUnknownFieldFrom is firstUnknownField over the object that starts at
+// from, reporting the position that object's fields occupy in the **whole**
+// body rather than in the fragment.
+//
+// It exists for the one document in this package with two nesting levels that
+// are each strict in their own name. Measured 2026-09-06 on eight bodies:
+// `PUT /users/profile` reports `UPConfig` for a field at the top,
+// `UPAttribute` for one inside an element of `attributes` and `UPGroup` for one
+// inside `groups`, and **the line and column are absolute in the request body
+// in all three cases** - an unknown field 192 bytes into an attribute answered
+// column 199, which is the same arithmetic the top-level fields answer and not
+// a per-object one. So the class is what varies with depth and the position is
+// not, which is why this takes an offset rather than a sub-slice: slicing would
+// have reported the fragment's own column and been right only on the first
+// attribute of a document with no whitespace.
+func firstUnknownFieldFrom(body []byte, from int, out any) (unknownField, bool) {
+	if from < 0 || from > len(body) {
+		return unknownField{}, false
+	}
 	known := declaredJSONNames(reflect.TypeOf(out))
-	dec := json.NewDecoder(bytes.NewReader(body))
+	dec := json.NewDecoder(bytes.NewReader(body[from:]))
 	tok, err := dec.Token()
 	if err != nil || tok != json.Delim('{') {
 		return unknownField{}, false
@@ -137,7 +164,8 @@ func firstUnknownField(body []byte, out any) (unknownField, bool) {
 		// InputOffset after the key is the offset of the character just past
 		// the key's closing quote; the value's own token starts after any
 		// whitespace and the colon.
-		start := skipToValue(body, int(dec.InputOffset()))
+		keyAt := from + int(dec.InputOffset())
+		start := skipToValue(body, keyAt)
 		end := consumedThrough(body, start)
 		var raw json.RawMessage
 		if err := dec.Decode(&raw); err != nil {
@@ -154,6 +182,7 @@ func firstUnknownField(body []byte, out any) (unknownField, bool) {
 				// 8 and not 7 - a first attempt got exactly that wrong on all
 				// four measured bodies at once.
 				column: end - lineStart(body, start) + 2,
+				offset: keyAt,
 			}, true
 		}
 	}

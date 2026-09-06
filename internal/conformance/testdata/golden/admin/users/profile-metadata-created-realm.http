@@ -1,0 +1,11 @@
+# GET /admin/realms/gloak-probe-userprofile/users/profile/metadata
+HTTP/1.1 200 OK
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"attributes":[{"name":"username","displayName":"${username}","required":true,"readOnly":false,"validators":{"username-prohibited-characters":{"ignore.empty.value":true},"multivalued":{"max":"1"},"length":{"max":255,"ignore.empty.value":true,"min":3},"up-username-not-idn-homograph":{"ignore.empty.value":true}},"multivalued":false},{"name":"email","displayName":"${email}","required":false,"readOnly":false,"validators":{"multivalued":{"max":"1"},"length":{"max":255,"ignore.empty.value":true},"email":{"ignore.empty.value":true}},"multivalued":false},{"name":"firstName","displayName":"${firstName}","required":false,"readOnly":false,"validators":{"person-name-prohibited-characters":{"ignore.empty.value":true},"multivalued":{"max":"1"},"length":{"max":255,"ignore.empty.value":true}},"multivalued":false},{"name":"lastName","displayName":"${lastName}","required":false,"readOnly":false,"validators":{"person-name-prohibited-characters":{"ignore.empty.value":true},"multivalued":{"max":"1"},"length":{"max":255,"ignore.empty.value":true}},"multivalued":false}],"groups":[{"name":"user-metadata","displayHeader":"User metadata","displayDescription":"Attributes, which refer to user metadata"}]}
