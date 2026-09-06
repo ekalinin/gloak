@@ -184,6 +184,10 @@ func (s *Store) AuthenticationFlows() store.AuthenticationFlowRepo {
 	return &authenticationFlowRepo{s.db}
 }
 
+func (s *Store) Workflows() store.WorkflowRepo {
+	return &workflowRepo{s.db}
+}
+
 // classify maps driver errors onto the store's sentinels so handlers never
 // inspect driver-specific error text.
 func classify(err error) error {
@@ -4038,6 +4042,254 @@ func collectAuthenticationConfigs(rows *sql.Rows) ([]*model.AuthenticationConfig
 		m, err := scanAuthenticationConfig(rows)
 		if err != nil {
 			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+type workflowRepo struct{ db *sql.DB }
+
+// The two SELECT lists are spelled once each, so a listing and a single-row
+// read cannot come to scan a different set of columns into one scan helper.
+const (
+	workflowColumns     = `id, realm_id, name, on_expression, if_expression, schedule_after, schedule_batch_size, cancel_in_progress, restart_in_progress`
+	workflowStepColumns = `id, uses, after`
+)
+
+// List sorts by name in the database rather than in the handler, because the
+// order is measured on the wire and belongs with the query that produces it.
+func (r *workflowRepo) List(ctx context.Context, realmID string) ([]*model.Workflow, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+workflowColumns+` FROM workflow WHERE realm_id = ? ORDER BY name`, realmID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	out, err := collectWorkflows(rows)
+	if err != nil {
+		return nil, err
+	}
+	for _, w := range out {
+		if w.Steps, err = r.steps(ctx, w.ID); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (r *workflowRepo) ByID(ctx context.Context, realmID, id string) (*model.Workflow, error) {
+	w, err := scanWorkflow(r.db.QueryRowContext(ctx,
+		`SELECT `+workflowColumns+` FROM workflow WHERE realm_id = ? AND id = ?`, realmID, id))
+	if err != nil {
+		return nil, err
+	}
+	if w.Steps, err = r.steps(ctx, w.ID); err != nil {
+		return nil, err
+	}
+	return w, nil
+}
+
+func (r *workflowRepo) ByName(ctx context.Context, realmID, name string) (*model.Workflow, error) {
+	w, err := scanWorkflow(r.db.QueryRowContext(ctx,
+		`SELECT `+workflowColumns+` FROM workflow WHERE realm_id = ? AND name = ?`, realmID, name))
+	if err != nil {
+		return nil, err
+	}
+	if w.Steps, err = r.steps(ctx, w.ID); err != nil {
+		return nil, err
+	}
+	return w, nil
+}
+
+func (r *workflowRepo) steps(ctx context.Context, workflowID string) ([]model.WorkflowStep, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+workflowStepColumns+` FROM workflow_step WHERE workflow_id = ? ORDER BY ordinal`,
+		workflowID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return collectWorkflowSteps(rows)
+}
+
+func (r *workflowRepo) Create(ctx context.Context, w *model.Workflow) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO workflow (`+workflowColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		w.ID, w.RealmID, w.Name, w.On, w.If, w.ScheduleAfter, w.ScheduleBatchSize,
+		w.CancelInProgress, w.RestartInProgress); err != nil {
+		return classify(err)
+	}
+	if err := insertWorkflowSteps(ctx, tx, w); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Update replaces the step list wholesale, which is measured: a PUT comes back
+// with a step id the workflow did not have before.
+func (r *workflowRepo) Update(ctx context.Context, w *model.Workflow) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx,
+		`UPDATE workflow SET name = ?, on_expression = ?, if_expression = ?,
+		   schedule_after = ?, schedule_batch_size = ?, cancel_in_progress = ?,
+		   restart_in_progress = ?
+		 WHERE realm_id = ? AND id = ?`,
+		w.Name, w.On, w.If, w.ScheduleAfter, w.ScheduleBatchSize,
+		w.CancelInProgress, w.RestartInProgress, w.RealmID, w.ID)
+	if err != nil {
+		return classify(err)
+	}
+	if err := affectedOne(res); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM workflow_step WHERE workflow_id = ?`, w.ID); err != nil {
+		return classify(err)
+	}
+	if err := insertWorkflowSteps(ctx, tx, w); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func insertWorkflowSteps(ctx context.Context, tx *sql.Tx, w *model.Workflow) error {
+	for i, s := range w.Steps {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO workflow_step (id, workflow_id, uses, after, ordinal)
+			 VALUES (?, ?, ?, ?, ?)`,
+			s.ID, w.ID, s.Uses, s.After, i); err != nil {
+			return classify(err)
+		}
+	}
+	return nil
+}
+
+func (r *workflowRepo) Delete(ctx context.Context, realmID, id string) error {
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM workflow WHERE realm_id = ? AND id = ?`, realmID, id)
+	if err != nil {
+		return classify(err)
+	}
+	return affectedOne(res)
+}
+
+func (r *workflowRepo) Schedule(ctx context.Context, realmID string, rows []model.WorkflowScheduledStep) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	first := rows[0]
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM workflow_scheduled_step
+		   WHERE workflow_id = ? AND resource_type = ? AND resource_id = ?`,
+		first.WorkflowID, first.ResourceType, first.ResourceID); err != nil {
+		return classify(err)
+	}
+	for _, row := range rows {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO workflow_scheduled_step
+			   (workflow_id, step_id, resource_type, resource_id, scheduled_at, status)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			row.WorkflowID, row.StepID, row.ResourceType, row.ResourceID,
+			row.ScheduledAt, row.Status); err != nil {
+			return classify(err)
+		}
+	}
+	return tx.Commit()
+}
+
+// Unschedule swallows a missing row: deactivating a resource that was never
+// activated is a measured 204.
+func (r *workflowRepo) Unschedule(ctx context.Context, realmID, workflowID, resourceType, resourceID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`DELETE FROM workflow_scheduled_step
+		   WHERE workflow_id = ? AND resource_type = ? AND resource_id = ?`,
+		workflowID, resourceType, resourceID)
+	return classify(err)
+}
+
+func (r *workflowRepo) ScheduledFor(ctx context.Context, realmID, resourceID string) ([]model.WorkflowScheduledStep, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT s.workflow_id, s.step_id, s.resource_type, s.resource_id, s.scheduled_at, s.status
+		   FROM workflow_scheduled_step s
+		   JOIN workflow w ON w.id = s.workflow_id
+		  WHERE w.realm_id = ? AND s.resource_id = ?`, realmID, resourceID)
+	if err != nil {
+		return nil, classify(err)
+	}
+	return collectWorkflowScheduledSteps(rows)
+}
+
+func (r *workflowRepo) StepByID(ctx context.Context, realmID, stepID string) (*model.WorkflowStep, error) {
+	return scanWorkflowStep(r.db.QueryRowContext(ctx,
+		`SELECT s.id, s.uses, s.after FROM workflow_step s
+		   JOIN workflow w ON w.id = s.workflow_id
+		  WHERE w.realm_id = ? AND s.id = ?`, realmID, stepID))
+}
+
+func scanWorkflow(row scanner) (*model.Workflow, error) {
+	m := &model.Workflow{}
+	if err := row.Scan(&m.ID, &m.RealmID, &m.Name, &m.On, &m.If, &m.ScheduleAfter,
+		&m.ScheduleBatchSize, &m.CancelInProgress, &m.RestartInProgress); err != nil {
+		return nil, classify(err)
+	}
+	return m, nil
+}
+
+func collectWorkflows(rows *sql.Rows) ([]*model.Workflow, error) {
+	defer func() { _ = rows.Close() }()
+	out := []*model.Workflow{}
+	for rows.Next() {
+		m, err := scanWorkflow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, classify(rows.Err())
+}
+
+func scanWorkflowStep(row scanner) (*model.WorkflowStep, error) {
+	m := &model.WorkflowStep{}
+	if err := row.Scan(&m.ID, &m.Uses, &m.After); err != nil {
+		return nil, classify(err)
+	}
+	return m, nil
+}
+
+func collectWorkflowSteps(rows *sql.Rows) ([]model.WorkflowStep, error) {
+	defer func() { _ = rows.Close() }()
+	out := []model.WorkflowStep{}
+	for rows.Next() {
+		m, err := scanWorkflowStep(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *m)
+	}
+	return out, classify(rows.Err())
+}
+
+func collectWorkflowScheduledSteps(rows *sql.Rows) ([]model.WorkflowScheduledStep, error) {
+	defer func() { _ = rows.Close() }()
+	out := []model.WorkflowScheduledStep{}
+	for rows.Next() {
+		var m model.WorkflowScheduledStep
+		if err := rows.Scan(&m.WorkflowID, &m.StepID, &m.ResourceType, &m.ResourceID,
+			&m.ScheduledAt, &m.Status); err != nil {
+			return nil, classify(err)
 		}
 		out = append(out, m)
 	}
