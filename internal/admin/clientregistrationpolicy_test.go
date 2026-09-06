@@ -164,15 +164,10 @@ func TestTheRegistrationPolicyListingIsTheRealmPairAndNotTheClientsPair(t *testi
 	}
 }
 
-// TestTheRegistrationPolicyListingDoesNotLeakOneRealmsScopesIntoAnother is the
-// bug a package-level decoded value invites: the providers are decoded once and
-// shared, so filling the option list in place would make the first realm to ask
-// the answer every later realm gets.
-//
-// Two realms, and the assertion is on the **second** read of the first one, so
-// a handler that mutated the shared value fails on the realm it got right the
-// first time.
-func TestTheRegistrationPolicyListingDoesNotLeakOneRealmsScopesIntoAnother(t *testing.T) {
+// TestTheRegistrationPolicyListingIsPerRealm is the visible half: two realms,
+// one client scope that exists in only one of them, and each answer holds its
+// own realm's names.
+func TestTheRegistrationPolicyListingIsPerRealm(t *testing.T) {
 	h, _, _ := newServer(t)
 	admin := adminToken(t, h)
 	if w := send(t, h, http.MethodPost, "/admin/realms", admin,
@@ -196,5 +191,47 @@ func TestTheRegistrationPolicyListingDoesNotLeakOneRealmsScopesIntoAnother(t *te
 		if contains(second, "gloak-probe-master-only") {
 			t.Errorf("round %d: the second realm was given master's scope: %v", i, second)
 		}
+	}
+}
+
+// TestTheRegistrationPolicyListingLeavesTheEmbeddedProvidersAlone is the
+// invariant behind the copy in withAllowedClientScopes, and it is asserted on
+// the shared value rather than on a response because **no sequence of responses
+// can see it**.
+//
+// The providers are decoded once into a package-level slice and every request
+// fills the option list before writing its body, so a handler writing through
+// the shared backing array serves the right answer to every serial caller and
+// is wrong only when two realms are in flight at once. A mutation that dropped
+// the copy survived a two-realm test written the obvious way, which is what
+// this test exists to record: the property is "the shared value is unchanged",
+// and that is what is checked.
+func TestTheRegistrationPolicyListingLeavesTheEmbeddedProvidersAlone(t *testing.T) {
+	h, _, _ := newServer(t)
+	admin := adminToken(t, h)
+
+	shared, err := loadClientRegistrationPolicies()
+	if err != nil {
+		t.Fatalf("load the embedded providers: %v", err)
+	}
+	if len(shared) == 0 || len(shared[0].Properties) == 0 {
+		t.Fatalf("the embedded providers are empty, so this asserts nothing")
+	}
+	if got := shared[0].Properties[0].Options; got != nil {
+		t.Fatalf("the embedded file already carries an option list: %v", got)
+	}
+
+	if w := get(t, h, clientRegistrationPolicyPath, admin); w.Code != http.StatusOK {
+		t.Fatalf("the listing: %d %s", w.Code, w.Body)
+	}
+	// The response really carried the realm's scopes, so the check below is
+	// not passing because the fill never ran.
+	served := registrationPolicyOptions(t, h, admin, clientRegistrationPolicyPath,
+		"allowed-client-templates", "allowed-client-scopes")
+	if len(served) == 0 {
+		t.Fatalf("the served option list is empty, so nothing was filled")
+	}
+	if got := shared[0].Properties[0].Options; got != nil {
+		t.Errorf("serving the listing wrote %d names into the shared providers: %v", len(got), got)
 	}
 }
