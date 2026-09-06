@@ -721,33 +721,83 @@ either, because killing one would turn a question into a contract:
 | chapter | before | after |
 |---|---|---|
 | `admin/users` | 26 / 34 | 31 / 34 |
-| total | 512 / 541 | 517 / 541 |
+| total | 515 / 541 | 520 / 541 |
 
-Measured with `cmd/parity`. The branch was cut at `087053c`, where it read
-**498 → 503**; `main` moved to `74db295` while it was open and brought the
-`Workflows` tag with it, so the rebased branch reads **512 → 517**. The
-per-chapter row is the same either way: no operation is claimed by both cuts,
-and the increment is +5 against both bases.
+Measured with `cmd/parity` three times, because `main` moved twice while this
+branch was open:
 
-**The rebase was checked rather than trusted.** Every line this branch adds was
-compared before and after: twenty-one of the twenty-three files are byte-
-identical, and the two both cuts appended to - `catalog_admin.go` and
-`fixture.go` - keep every one of this branch's lines with main's additions as
-the only difference. The conflict in those two was three appends at the same
-three places and was resolved by taking main's file whole and re-applying this
-branch's block from `git show` rather than from the conflict markers, which is
-what made the check possible.
+```
+087053c   the branch point                498 -> 503
+74db295   after the Workflows tag         512 -> 517
+071576b   after the Clients singles       515 -> 520
+```
+
+The per-chapter row is the same against all three bases: no operation is claimed
+by two cuts, and the increment is +5 every time.
+
+**Both rebases were checked rather than trusted**, and the check is the point
+rather than the ceremony. Every line this branch adds was compared before and
+after: **all twenty-three files byte-identical** on the second rebase, and on
+the first the only difference was main's own additions to the two files both
+cuts had appended to.
+
+The conflicts were resolved by taking main's file whole and re-applying this
+branch's block from `git show`, never by a union of the conflict markers. That
+is what makes the check possible at all - the resolver asserts afterwards that
+every line the branch's own commit added is present, **and that main's cases are
+still in their original order**, which a union cannot promise. A union
+resolution is what spliced one cut's block into the middle of another's case a
+fortnight ago.
+
+**The two anchors do collide, and it is worth saying where.** The expectation
+was that they would not, because the Clients singles were thought to have been
+inserted after the last `admin/workflows` case. They were not: `main`'s last
+seven cases are `admin/clients/test-nodes-available`,
+`test-nodes-available-with-node`, `admin/client-registration-policy/providers`
+and the four `admin/organizations/*` - so that cut appended at **the very end of
+`adminCases`**, which is this branch's anchor exactly. `fixture.go` did not
+conflict, because that cut added no fixture.
 
 **One recorder artefact, not committed.** `make record` on this branch produced
 a diff to `admin/clients/evaluate-scope-mappings-not-granted.http` that gained
 sixteen `gloak-probe-*` realm roles other fixtures create. Nothing in this cut
 creates a realm role, so the shift is in the recorder rather than in the
-catalogue: that case reads a realm-wide listing and is not `PristineRealm`, so
-what it holds depends on how much state the shared container has when it runs.
-It was reverted and the verifier then passed against the committed bytes.
-`scattered-remainder.md` reported the identical artefact on the identical case
-and filed it; **this is the second cut to meet it**, which is the argument for
-marking that case `PristineRealm` rather than for filing it a third time.
+catalogue: that case reads a realm-wide listing, and what it holds depends on
+how much state the shared container has when the recorder reaches it. It was
+reverted and the verifier then passed against the committed bytes.
+
+**This paragraph said something wrong and the correction is worth more than the
+paragraph.** It read "this is the second cut to meet it, which is the argument
+for marking that case `PristineRealm`" - and the case **already carries
+`PristineRealm: true`**, added by `81e30fd`, whose own comment says "PristineRealm
+is what closes it".
+
+But that does **not** mean the flag failed, which is the reading the correction
+was very nearly written as. The dates decide it and they were checked rather
+than assumed:
+
+```
+087053c   the base this branch recorded against   the flag is NOT in the file
+81e30fd   the protocol-remainder fold             adds the flag
+74db295   main, while this branch was open        the flag is in the file
+```
+
+**This branch recorded before the flag existed and rebased afterwards**, so its
+artefact is a pre-flag observation wearing a post-flag branch's clothes and says
+nothing at all about whether the flag works. The two cuts the case's own comment
+cites are pre-flag for the same reason - `81e30fd` is the commit that wrote that
+comment, so everything it could cite necessarily predates it.
+
+The one cut that *is* post-flag is `clients-singles.md`, and **it reports a
+different case**: `admin/realms-admin/partial-export-clients.http`, whose churn
+is per-container UUIDs in a `Recorded` case rather than role pollution in an
+`Implemented` one. Its handover calls that "the same shape as" this artefact,
+which is a comparison and not a recurrence.
+
+So the honest state is that **no recording has yet been made on a tree carrying
+the flag for this case**, and the next `make record` is the first test of it
+rather than the third report of a known symptom. Whoever runs one should say
+which of the two it settles.
 
 Five operations of the eight. **The three left are the consents pair and the
 impersonation**, and none of them is left for want of effort: each names a
