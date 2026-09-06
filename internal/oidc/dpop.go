@@ -307,7 +307,7 @@ func (h *handler) verifyDPoPProof(value, method, url string) (*dpopProof, *dpopE
 	}
 	now := time.Now()
 	iat := time.Unix(*claims.Iat, 0)
-	if iat.Before(now.Add(-dpopProofLifetime - dpopClockSkew)) || iat.After(now.Add(dpopClockSkew)) {
+	if iat.Before(now.Add(-dpopProofLifetime-dpopClockSkew)) || iat.After(now.Add(dpopClockSkew)) {
 		return nil, dpopRefusal(descDPoPNotActive)
 	}
 	if h.proofs.use(claims.Jti, now) {

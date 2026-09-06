@@ -32,7 +32,8 @@ func newHandler(t *testing.T) (*handler, store.Store, *model.Realm) {
 	if err != nil {
 		t.Fatalf("ByName: %v", err)
 	}
-	return &handler{store: s, keys: keys.NewManager(s), issuerBase: "http://localhost:8080"}, s, realm
+	return &handler{store: s, keys: keys.NewManager(s), issuerBase: "http://localhost:8080",
+		proofs: newProofStore()}, s, realm
 }
 
 func TestAuthenticateClientAcceptsAPublicClientWithNoSecret(t *testing.T) {

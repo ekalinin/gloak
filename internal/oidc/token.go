@@ -664,11 +664,11 @@ func (h *handler) writeTokens(w http.ResponseWriter, r *http.Request, realm *mod
 		// token_type follows the **request's** proof rather than the client:
 		// admin-cli carries no dpop.bound.access.tokens attribute and answers
 		// DPoP when a proof is sent, Bearer when one is not.
-		TokenType:        tokenTypeFor(jkt),
-		IDToken:          set.IDToken,
-		NotBeforePolicy:  0,
-		SessionState:     session.ID,
-		Scope:            scope,
+		TokenType:       tokenTypeFor(jkt),
+		IDToken:         set.IDToken,
+		NotBeforePolicy: 0,
+		SessionState:    session.ID,
+		Scope:           scope,
 	}
 	if serviceAccount {
 		body.RefreshToken = ""

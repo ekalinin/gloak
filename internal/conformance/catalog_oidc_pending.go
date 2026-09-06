@@ -1046,14 +1046,16 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-20",
 		},
 		Status: Pending,
-		// The one of the five that is still unreachable, and it is the only one
-		// whose Reason survived that cut unchanged. The token endpoint
-		// dispatches the grant; what is missing is an auth_req_id, and a default
-		// 26.7.1 mints none - see the CIBA block further down. Re-measured
-		// 2026-09-06 with the authentication request answering 503, so the
-		// reason has now survived two cuts rather than one.
-		Reason:  "a default 26.7.1 has no CIBA authentication channel, so no auth_req_id can be obtained to redeem",
-		Fixture: "", // needs an auth_req_id, which needs an external authentication channel endpoint
+		// The token endpoint dispatches the grant; what is missing is an
+		// auth_req_id. **Re-measured 2026-09-06 with a second container, and
+		// the reason is sharper than "a default 26.7.1 has no channel" -
+		// which is true and reads like a fact about Keycloak.** One
+		// `--spi-ciba-auth-channel--ciba-http-auth-channel--http-authentication-channel-uri`
+		// on start-dev lifts the 503, and the whole flow then completes
+		// against a listener on the host. See the CIBA block further down for
+		// what stands between that and a recording.
+		Reason:  "CIBA needs a channel URI set at startup and a listener the container calls out to, and the recorder sets neither",
+		Fixture: "", // needs an auth_req_id, which needs the startup option and an inbound callout the harness has no shape for
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
@@ -3171,6 +3173,17 @@ var oidcPending = []Case{
 	// That makes the 503 a contract rather than a gap - the same shape as
 	// client-types answering 501 and .../client-secret/rotated answering a
 	// permanent 404 - and it is what oidc/ciba/channel-unavailable records.
+	//
+	// **2026-09-06: it is a contract about start-dev, not about Keycloak.** A
+	// second container started with
+	// `--spi-ciba-auth-channel--ciba-http-auth-channel--http-authentication-channel-uri`
+	// and `--add-host=host.docker.internal:host-gateway`, with a listener on
+	// the host, answers the identical request 200 and takes the whole flow
+	// through: `authorization_pending`, `slow_down` on a poll inside the
+	// interval, and nine keys with `token_type: Bearer` once the channel calls
+	// `.../ext/ciba/auth/callback` with `{"status":"SUCCEED"}`. Both containers
+	// answer an unknown auth_req_id identically, so the option is the only
+	// variable. The three Pending cases below say what that costs.
 	{
 		ID: "oidc/ciba/authentication-request",
 		Doc: Doc{
@@ -3405,16 +3418,27 @@ var oidcPending = []Case{
 		// project's container regime can record this case, and saying "not
 		// implemented" would read as a to-do somebody could close.
 		//
-		// **Re-measured 2026-09-06 and it holds.** A client carrying
-		// `oidc.ciba.grant.enabled` sending a valid authentication request to
-		// `/realms/master/protocol/openid-connect/ext/ciba/auth` answers 503
-		// {"error":"server_error","error_description":"Failed to send
-		// authentication request"}. `GET /admin/serverinfo` reports CIBA as
-		// `"type":"DEFAULT","enabled":true`, so the feature is on and the
-		// **channel** is what is missing - which is the distinction that keeps
-		// this from reading as a disabled preview.
-		Reason:  "a default 26.7.1 has no CIBA authentication channel, so no auth_req_id can be obtained to poll with",
-		Fixture: "", // needs an auth_req_id, which needs an external authentication channel endpoint
+		// **Re-measured 2026-09-06 against two containers, and the sentence is
+		// now about the recorder rather than about Keycloak.** A second
+		// container started with
+		// `--spi-ciba-auth-channel--ciba-http-auth-channel--http-authentication-channel-uri`
+		// pointed at a listener on the host answers the identical request 200
+		// with an auth_req_id, and this poll then answers
+		// `authorization_pending` - so the 503 is the artefact of a **startup
+		// option**, not of a missing feature. `GET /admin/serverinfo` reports
+		// CIBA as `"type":"DEFAULT","enabled":true` on both, the
+		// `ciba-auth-channel` SPI is `"internal": true` with no component type,
+		// and the realm's four CIBA attributes do not include the URI - so
+		// nothing running can set it.
+		//
+		// What stands between that and a recording is two files this stream
+		// does not own and one shape the harness has not got: `startKeycloak`
+		// lives in record_test.go and starts `start-dev` with no options, the
+		// listener would have to be stood up there too, and `Run` sends
+		// requests and reads responses - a callout **arrives**, and there is no
+		// capture for that.
+		Reason:  "CIBA needs a channel URI set at startup and a listener the container calls out to, and the recorder sets neither",
+		Fixture: "", // needs an auth_req_id, which needs the startup option: see the comment above
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
@@ -3434,10 +3458,19 @@ var oidcPending = []Case{
 			Retrieved: "2026-08-20",
 		},
 		Status: Pending,
-		// The same 503, re-measured 2026-09-06 alongside poll-pending's. The
-		// reason holds and is now dated.
-		Reason:  "a default 26.7.1 has no CIBA authentication channel, so no auth_req_id can be obtained to approve",
-		Fixture: "", // needs an auth_req_id a second user approved, which needs that channel
+		// The hardest of the three, and the only one whose blocker is the
+		// harness's shape rather than the container's options. It needs an
+		// auth_req_id somebody **approved**, and the approval arrives as an
+		// inbound request: Keycloak POSTs the authentication request to the
+		// channel, and the channel calls back to
+		// `.../ext/ciba/auth/callback` with the bearer it was handed. Driven
+		// by hand on 2026-09-06 it works and answers 200 with the ordinary
+		// nine keys, `token_type: Bearer`. A fixture cannot: `Fixture` is a
+		// starting state and a list of requests, with nowhere to stand a
+		// listener up and no capture that reads one. That is F122's boundary
+		// measured from the other side.
+		Reason:  "the approval arrives as an inbound callout, and a fixture is a list of requests with no listener and no capture for one",
+		Fixture: "", // needs an auth_req_id a second party approved, which needs that callout
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
