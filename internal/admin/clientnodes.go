@@ -15,18 +15,34 @@ import (
 	"github.com/ekalinin/gloak/internal/store"
 )
 
-// The two cluster-node writes, and the third route beside them that this cut
-// does not take.
+// The two cluster-node writes and the read beside them.
 //
-// `GET .../test-nodes-available` is a **two-condition rule**: it answers `{}`
+// **`GET .../test-nodes-available` was written down here as a two-condition
+// rule and it is one condition.** The 2026-09-05 measurement recorded "`{}`
 // unless the client has an `adminUrl` **and** at least one registered node -
-// either alone gives `{}` - and with both it answers
-// `{"failedRequests":["<adminUrl>"]}`, because it performs an outbound push to
-// each node and reports which of them answered. Measured 2026-09-05 in all
-// three states. Gloak makes no such request and signing one is `internal/token`'s
-// work, so pinning the `{}` alone would be a handler that answers `{}` to every
-// input it can reach - which is the shape this project has been caught by
-// before.
+// either alone gives `{}`". Re-measured 2026-09-06 across all four cells, with
+// the node registrations made through the sibling write above:
+//
+//	no adminUrl, no node        {}
+//	no adminUrl, one node       {}
+//	adminUrl,    no node        {"failedRequests":["http://10.255.255.1:9/adm"]}
+//	adminUrl,    one node n1    {"failedRequests":["http://n1:9/adm"]}
+//
+// The condition is a non-empty **effective** adminUrl - `rootUrl` is resolved
+// into a relative one first, and an adminUrl that is the empty string is the
+// `{}` case even with a node registered. The registered nodes decide the
+// *contents*: each contributes the adminUrl with its **host replaced by the
+// node's name**, keeping the scheme, the port and the path, which is why
+// `https://app.example.org/callback` with nodes `zzz, aaa, mmm` answers
+// `https://aaa/callback`, `https://mmm/callback`, `https://zzz/callback`.
+//
+// That list is **sorted**, and it is not the map's order: `registeredNodes`
+// serialises `{kn1, kn2}` as `kn2, kn1` and `failedRequests` answers
+// `kn1, kn2` for the same client in the same response family. One map, two
+// orders, and the second is not `javamap`'s.
+//
+// See testNodesAvailable below for why Gloak answers `{}` to every client it
+// can hold, and why that is a statement about the model rather than a stub.
 
 // guardClientSubject is the third combinator in this package with the same
 // three stages, and it is not either of the other two.
@@ -115,6 +131,50 @@ func (n registeredNodes) MarshalJSON() ([]byte, error) {
 	}
 	buf.WriteByte('}')
 	return buf.Bytes(), nil
+}
+
+// testNodesAvailable serves
+// GET /admin/realms/{realm}/clients/{client-uuid}/test-nodes-available.
+//
+// **`{}`, and the reason is `model.Client`'s field list rather than an unbuilt
+// branch.** The endpoint's one condition is a non-empty `adminUrl`, and Gloak
+// has no such field - not on `model.Client` and not on the client
+// representation, which `sessions.go` already records twice for `logout-all`'s
+// success list and for `push-revocation`. So the non-empty case is not a branch
+// this handler declines to take, it is a state no client this server can hold
+// reaches, and adding the field is the cut that has to build the outbound push
+// with it: Keycloak reports a node as failed **because the push to it failed**,
+// so a handler that listed the nodes without asking them would be inventing an
+// answer rather than measuring one. `pushRealmRevocation` answers its own empty
+// case for the same reason and with the same one line.
+//
+// The `{}` is `globalRequestResult{}`'s bytes, the same type the two
+// push-revocation routes and `logout-all` write, because it is the same
+// `GlobalRequestResult`: `failedRequests` and `successRequests` are both
+// omitted when empty and Keycloak sends `{}`.
+//
+// **It carries `Cache-Control: no-cache` and `POST .../push-revocation` does
+// not**, measured on the same container in the same sweep. Same body, same
+// type, same tag, one path segment apart, and the header splits them - which
+// is the per-endpoint pinning AGENTS.md records, now with a third pair inside
+// this one file after the node write and the node delete.
+//
+// Guard: `manage-clients` alone, and `view-clients` is **403**. Measured
+// 2026-09-06 over nineteen single `master-realm` roles with `GET /clients` as
+// a control that differs. The resolution order is the two node writes' -
+// realm, caller, the coarse `clientsReadRoles` gate, the client, then the
+// route's own role - so a `view-clients` caller gets `Could not find client`
+// for a UUID that resolves to nothing and 403 for one that resolves, and a
+// `query-clients` caller gets exactly the same pair. `guardClientSubject`
+// unchanged, which is what makes this the third route on that combinator.
+//
+// The wrong verbs disagree with each other: `POST`, `PUT` and `DELETE` answer
+// `404 {"error":"HTTP 404 Not Found"}` and **`PATCH` answers a real 405**. That
+// is the protocol mappers' shape - PATCH alone - met on a second family, and
+// Gloak sends 404 to all four. See F31.
+func (h *handler) testNodesAvailable(w http.ResponseWriter, r *http.Request, rc *reqContext, client *model.Client) {
+	w.Header().Set("Cache-Control", "no-cache")
+	httpx.WriteJSONCharset(w, http.StatusOK, globalRequestResult{})
 }
 
 // clientNodeRequest is the body `POST .../nodes` takes. Keycloak's

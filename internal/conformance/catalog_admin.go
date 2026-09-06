@@ -19965,4 +19965,199 @@ var adminCases = []Case{
 		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
+	{
+		// **`{}` is not the empty case of a two-condition rule, it is the whole
+		// answer for a client with no `adminUrl`** - and `model.Client` has no
+		// such field, so it is the whole answer for every client Gloak can
+		// hold. The rule was recorded as two conditions on 2026-09-05 and
+		// re-measured on 2026-09-06 across all four cells; see
+		// internal/admin/clientnodes.go for the table and for why building the
+		// non-empty case means building the outbound push with it.
+		//
+		// It carries `Cache-Control: no-cache` where `POST .../push-revocation`
+		// writes the same `{}` from the same type and carries none. That is
+		// asserted here and its absence is asserted there, which is as close as
+		// two goldens can get to the claim; the pair is compared directly in
+		// internal/admin's own test.
+		ID: "admin/clients/test-nodes-available",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: test if the registered cluster nodes are available",
+			Retrieved: "2026-09-06",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/test-nodes-available",
+		Fixture:   "client-node-bare",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/c10adf00-0000-4000-8000-000000000001/test-nodes-available",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "X-Frame-Options"},
+	},
+	{
+		// The same `{}` from a client that **has** a registered node, which is
+		// the cell the two-condition reading got wrong: a node alone changes
+		// nothing, on Keycloak and here. Two goldens holding the same two bytes
+		// is the point rather than a duplicate - what they assert is that the
+		// difference between the two fixtures makes none, and one case cannot
+		// say that.
+		ID: "admin/clients/test-nodes-available-with-node",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: test nodes available on a client carrying a registered node",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "client-node-registered",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/c10adf00-0000-4000-8000-000000000002/test-nodes-available",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "X-Frame-Options"},
+	},
+	{
+		// The whole `Client Registration Policy` tag: eight providers, 4427
+		// bytes on a default master.
+		//
+		// **PristineRealm because the body names the realm's client scopes.**
+		// `allowed-client-templates`' first property offers every client scope
+		// the realm has plus the literal `openid`, so any fixture that creates
+		// one - and the client-scope chapter creates several - changes what
+		// this case records on a shared container.
+		//
+		// **One `Unordered` and its neighbour deliberately without one.** The
+		// client-scope option list came back in two different orders on master
+		// and on a realm created through `POST /admin/realms`, the same sixteen
+		// names both times, so nothing about the names explains it and it is
+		// ordered by something per-realm. The 39-name mapper list beside it and
+		// the eight provider ids came back in the **same** order on both
+		// realms and are asserted whole; masking either would be a mask that
+		// changes nothing.
+		//
+		// The mask covers a second thing and it is worth naming: Gloak appends
+		// `openid` after the store's own ordering, so the served list differs
+		// from the recorded one on this container as well. Removing the mask
+		// fails this case rather than failing TestNoMaskIsInertOnItsGolden,
+		// checked by mutation.
+		ID: "admin/client-registration-policy/providers",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Registration Policy: retrieve the providers with their configProperties filled",
+			Retrieved: "2026-09-06",
+		},
+		Status:        Implemented,
+		Operation:     "GET /admin/realms/{realm}/client-registration-policy/providers",
+		Fixture:       "admin-token",
+		PristineRealm: true,
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/client-registration-policy/providers",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control", "X-Frame-Options"},
+		Unordered:     []string{"0/properties/0/options"},
+	},
+	{
+		// F153's route, and its body is the org-scoped twin's byte for byte -
+		// `admin/organizations/members-organizations` holds the same bytes from
+		// the same fixture, which is what makes the pair the assertion rather
+		// than either golden alone.
+		//
+		// It reaches a handler at all because of four registered patterns
+		// rather than one: `net/http` refuses the pattern this path wants, and
+		// internal/admin/organizationmembers.go carries the conflict table.
+		ID: "admin/organizations/top-level-member-organizations",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: the organizations a member belongs to, addressed without an organization",
+			Retrieved: "2026-09-06",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/organizations/members/{member-id}/organizations",
+		Fixture:   "org-member-one",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-org-one-mem/organizations/members" +
+				"/{{member_1}}/organizations",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// A member id that resolves to nothing, and the answer is the generic
+		// 404 rather than any of the thirty-five spellings - the same body the
+		// org-scoped member routes use, so this route adds none.
+		ID: "admin/organizations/top-level-member-organizations-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: the top-level member route for a member that does not exist",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "org-member-one",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-org-one-mem/organizations/members" +
+				"/00000000-0000-4000-8000-000000000000/organizations",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **F153's other half, recorded.** A four-segment path under
+		// `/organizations` that names a real organization and no sub-resource
+		// answers the generic 404 **with all five security headers**, where the
+		// unmatched-path 404 carries none of them. That is the measurement the
+		// entry said was still missing, and it is why the wildcard dispatcher
+		// is more faithful here than the fallback rather than less.
+		//
+		// The four security headers and `X-Frame-Options` are asserted by name
+		// because the header set is the whole claim.
+		ID: "admin/organizations/four-segment-unknown-subresource",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: a path under a resolvable organization that names no sub-resource",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "org-member-one",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-org-one-mem/organizations/{{org_id}}/bogus/thing",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{
+			"Content-Type", "X-Frame-Options", "Referrer-Policy",
+			"Strict-Transport-Security", "X-Content-Type-Options", "X-Robots-Tag",
+		},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The same shape with an organization id that resolves to nothing, and
+		// it is the **other** body: `Organization not found.` rather than the
+		// generic 404. One dispatcher, two bodies, and which one is decided by
+		// whether the first segment resolves - which is exactly the distinction
+		// the unmatched-path fallback cannot make.
+		ID: "admin/organizations/four-segment-unknown-organization",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Organizations: a four-segment path under an organization that does not exist",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "org-member-one",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-org-one-mem/organizations/nosuchorg/bogus/thing",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{
+			"Content-Type", "X-Frame-Options", "Referrer-Policy",
+			"Strict-Transport-Security", "X-Content-Type-Options", "X-Robots-Tag",
+		},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
 }

@@ -261,16 +261,15 @@ func (h *handler) listOrganizationMemberOrganizations(w http.ResponseWriter, r *
 	h.writeMemberOrganizations(w, r, rc, u.ID)
 }
 
-// writeMemberOrganizations is the body of the route above.
+// writeMemberOrganizations is the body of the route above, and of the
+// top-level route below.
 //
-// It is a function of its own because the family has a **second** route serving
-// byte-identical bytes - `GET /organizations/members/{member-id}/organizations`,
-// with no organization in its path - which this project does not serve. That
-// route's own behaviour is measured (it does not check membership: a user of
-// the realm who belongs to no organization answers 200 and `[]`, where the
-// route above answers 404 for the same user) and the reason it is unserved is a
-// `net/http` pattern conflict spelled out in router.go beside where it would be
-// registered.
+// The two bodies are **byte-identical**, compared with `cmp` on a member of two
+// organizations on 2026-09-06, which is why there is one function rather than
+// two. They differ in what precedes it: this route resolves the path's
+// organization and refuses a user who is not one of its members, where the
+// top-level route has no organization in its path and answers 200 and `[]` for
+// a user of the realm who belongs to none.
 func (h *handler) writeMemberOrganizations(w http.ResponseWriter, r *http.Request, rc *reqContext, userID string) {
 	orgs, err := h.store.Organizations().MemberOf(r.Context(), rc.realm.ID, userID)
 	if err != nil {
@@ -482,4 +481,120 @@ func pageOrganizationMembers[T any](in []T, q url.Values) []T {
 		out = out[:max]
 	}
 	return out
+}
+
+// organizationFourSegmentPatterns is how
+// `GET /organizations/members/{member-id}/organizations` is registered, and the
+// list is four patterns because `net/http` will not take the one.
+//
+// The first is a wildcard dispatcher and the only pattern that conflicts with
+// none of the family's four-segment routes, being a strict superset of every
+// one of them. The other three are the concrete paths where a more specific
+// registered pattern would otherwise win: Go gives the win to the more
+// specific pattern and Keycloak gives it to the top-level route, measured on
+// all three plus `members/count/organizations`, which needs no literal because
+// no pattern claims it. router.go carries the conflict table and the
+// measurements.
+//
+// The first wildcard is named `orgID` so that organizationFromPath resolves it
+// unchanged - the same helper the family's other twenty-one routes use, which
+// is what stops a second spelling of `Organization not found.` appearing here.
+// On the three literal patterns it is unset and unread: those paths take the
+// top-level branch, whose only path input is the member id.
+var organizationFourSegmentPatterns = []string{
+	"GET /admin/realms/{realm}/organizations/{orgID}/{sub}/{tail}",
+	"GET /admin/realms/{realm}/organizations/members/members/organizations",
+	"GET /admin/realms/{realm}/organizations/members/groups/organizations",
+	"GET /admin/realms/{realm}/organizations/members/identity-providers/organizations",
+}
+
+// organizationFourSegment serves every four-segment GET under
+// `/organizations/` that the more specific patterns did not claim.
+//
+// One of them is an operation - `GET /organizations/members/{member-id}/organizations`
+// - and the rest are 404s that Gloak previously answered out of
+// WithKeycloakFallbacks, with **none** of the five security headers where
+// Keycloak sends all five. Both measured bodies are here rather than in the
+// fallback because this is the only place that can tell them apart:
+//
+//	a resolvable organization    404 {"error":"HTTP 404 Not Found"}
+//	one that resolves to nothing 404 {"errorMessage":"Organization not found."}
+//
+// The order the guard runs in is measured and is **not**
+// guardOrganizationAnd's: the organization is resolved between the two role
+// checks. A `query-organizations` caller gets 404 for an organization that does
+// not exist and 403 for one that does, where guardOrganizationAnd would answer
+// 403 to both. That is guardOrganizationGroupOf's order met on a second shape.
+func (h *handler) organizationFourSegment(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	first, _, last := organizationPathTail(r)
+	if first == organizationMembersSegment && last == organizationsSegment {
+		h.listMemberOrganizations(w, r, rc)
+		return
+	}
+	if _, ok := h.organizationFromPath(w, r, rc); !ok {
+		return
+	}
+	if !rc.caller.hasAny(organizationReadRoles) {
+		writeForbidden(w)
+		return
+	}
+	writeOrganizationMemberNotFound(w)
+}
+
+// listMemberOrganizations serves
+// GET /admin/realms/{realm}/organizations/members/{member-id}/organizations.
+//
+// Its body is `writeMemberOrganizations`', byte for byte, and it takes no
+// organization: `briefRepresentation` is the **only** parameter that does
+// anything. `search`, `first`, `max` and `exact` are all ignored, measured with
+// `search=nomatch` still answering both of a member's organizations - so this
+// is neither of the three paging rules AGENTS.md records, it is a fourth shape
+// that does not page at all.
+//
+// The fine role check precedes the user lookup: a caller holding
+// `view-organizations` and no user-read role is 403 for a member id that
+// resolves to nothing, where a caller holding both is 404. A user id that names
+// nothing and one that is not a UUID both answer
+// `404 {"error":"HTTP 404 Not Found"}` - the same body the org-scoped routes
+// use for a missing member, so this adds no spelling of not-found.
+func (h *handler) listMemberOrganizations(w http.ResponseWriter, r *http.Request, rc *reqContext) {
+	if !rc.caller.hasAny(organizationMemberReadRoles) {
+		writeForbidden(w)
+		return
+	}
+	_, memberID, _ := organizationPathTail(r)
+	u, err := h.store.Users().ByID(r.Context(), rc.realm.ID, memberID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeOrganizationMemberNotFound(w)
+			return
+		}
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	h.writeMemberOrganizations(w, r, rc, u.ID)
+}
+
+// organizationMembersSegment and organizationsSegment are the two literals that
+// decide the branch above. They are the path's own words rather than an
+// organization id and a member id, which is exactly the ambiguity that makes
+// this route need a dispatcher.
+const (
+	organizationMembersSegment = "members"
+	organizationsSegment       = "organizations"
+)
+
+// organizationPathTail returns the three segments after `/organizations/`.
+//
+// It reads them off the path rather than through PathValue because **three of
+// the four patterns are fully literal and declare no wildcards at all**, so
+// PathValue answers "" for them. Every pattern in the list matches exactly
+// seven segments, which is what makes the fixed indices safe; the guard above
+// has already run, so nothing here can be reached by a shorter path.
+func organizationPathTail(r *http.Request) (first, second, third string) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) != 7 {
+		return "", "", ""
+	}
+	return parts[4], parts[5], parts[6]
 }

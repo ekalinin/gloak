@@ -477,3 +477,230 @@ func TestTheMemberOrganizationsReadRefusesANonMember(t *testing.T) {
 		t.Errorf("a member's groups: got %s, want []", w.Body)
 	}
 }
+
+// TestTheTopLevelMemberOrganizationsRouteIsRegistered is the routing half of
+// F153, and it is a routing test rather than a behaviour test because the thing
+// that was broken was registration: `net/http` panicked, and the four patterns
+// in organizationFourSegmentPatterns are what stops it.
+//
+// The four paths below are the ones a more specific registered pattern would
+// otherwise claim, plus one it would not, and Keycloak answers the top-level
+// route on all of them. `members/count/organizations` is in the list although
+// no pattern claims it, because it is the case that says the three literals are
+// three and not four.
+func TestTheTopLevelMemberOrganizationsRouteIsRegistered(t *testing.T) {
+	h, _, _ := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	orgID, userID := orgMemberFixture(t, h, admin)
+	if w := addMember(t, h, admin, orgID, userID); w.Code != http.StatusCreated {
+		t.Fatalf("adding the member: %d %s", w.Code, w.Body)
+	}
+	base := "/admin/realms/master/organizations/members/"
+
+	// The operation itself.
+	w := get(t, h, base+userID+"/organizations", admin)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"gloak-probe-member-org"`) {
+		t.Fatalf("the top-level route: %d %s", w.Code, w.Body)
+	}
+
+	// The four paths a more specific pattern could steal. All four are
+	// `404 {"error":"HTTP 404 Not Found"}` on a live 26.7.1 - the top-level
+	// route reading the middle segment as a member id that resolves to nothing
+	// - and not `Organization not found.`, which is what the org-scoped
+	// patterns would answer for an organization called `members`.
+	for _, member := range []string{"members", "groups", "identity-providers", "count"} {
+		w := get(t, h, base+member+"/organizations", admin)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("%s: got %d %s, want 404", member, w.Code, w.Body)
+		}
+		if got := strings.TrimSpace(w.Body.String()); got != `{"error":"HTTP 404 Not Found"}` {
+			t.Errorf("%s: got %s, want the generic 404", member, got)
+		}
+	}
+}
+
+// TestTheTopLevelMemberOrganizationsRouteMatchesItsTwinByte is the byte
+// comparison that says one function serves both, measured with `cmp` on a live
+// 26.7.1 on a member of two organizations.
+//
+// Two organizations rather than one, because a member of a single organization
+// makes the org-scoped route's own filtering invisible.
+func TestTheTopLevelMemberOrganizationsRouteMatchesItsTwinByte(t *testing.T) {
+	h, _, _ := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	orgID, userID := orgMemberFixture(t, h, admin)
+	second := createOrg(t, h, admin,
+		`{"name":"gloak-probe-second-org","alias":"gloak-probe-second-alias"}`)
+	for _, org := range []string{orgID, second} {
+		if w := addMember(t, h, admin, org, userID); w.Code != http.StatusCreated {
+			t.Fatalf("adding the member to %s: %d %s", org, w.Code, w.Body)
+		}
+	}
+
+	top := get(t, h, "/admin/realms/master/organizations/members/"+userID+"/organizations", admin)
+	scoped := get(t, h, "/admin/realms/master/organizations/"+orgID+"/members/"+userID+"/organizations", admin)
+	if top.Code != http.StatusOK || scoped.Code != http.StatusOK {
+		t.Fatalf("top %d, scoped %d", top.Code, scoped.Code)
+	}
+	if top.Body.String() != scoped.Body.String() {
+		t.Errorf("the two bodies differ:\ntop    %s\nscoped %s", top.Body, scoped.Body)
+	}
+	// Two organizations in it, so the comparison above is not two empty lists.
+	if !strings.Contains(top.Body.String(), `"gloak-probe-second-org"`) {
+		t.Fatalf("the second organization is missing, so the bodies agreeing says nothing: %s", top.Body)
+	}
+}
+
+// TestTheTopLevelMemberOrganizationsRouteIgnoresEveryParameterButBrief is the
+// fourth paging shape this API has, and it is that there is no paging.
+//
+// `search=nomatch` is the assertion that earns the test: it is the parameter a
+// reader would expect to filter, the listing next door does read its own
+// `search`, and this route answers both organizations regardless.
+func TestTheTopLevelMemberOrganizationsRouteIgnoresEveryParameterButBrief(t *testing.T) {
+	h, _, _ := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	orgID, userID := orgMemberFixture(t, h, admin)
+	second := createOrg(t, h, admin,
+		`{"name":"gloak-probe-ignored-org","alias":"gloak-probe-ignored-alias"}`)
+	for _, org := range []string{orgID, second} {
+		if w := addMember(t, h, admin, org, userID); w.Code != http.StatusCreated {
+			t.Fatalf("adding the member to %s: %d %s", org, w.Code, w.Body)
+		}
+	}
+	base := "/admin/realms/master/organizations/members/" + userID + "/organizations"
+
+	plain := get(t, h, base, admin).Body.String()
+	for _, query := range []string{"?search=nomatch", "?search=gloak-probe-member-org",
+		"?first=1&max=1", "?max=1", "?exact=true&search=nomatch", "?briefRepresentation=true"} {
+		if got := get(t, h, base+query, admin).Body.String(); got != plain {
+			t.Errorf("%s changed the answer:\n%s\n%s", query, plain, got)
+		}
+	}
+	// briefRepresentation=false is the one that does move it, which is what
+	// says the comparison above is not comparing an endpoint that ignores its
+	// whole query string because nothing reaches the parser.
+	if full := get(t, h, base+"?briefRepresentation=false", admin).Body.String(); full == plain {
+		t.Errorf("CONTROL: briefRepresentation=false changed nothing: %s", full)
+	}
+}
+
+// TestTheTopLevelMemberOrganizationsGuardIsNotItsTwins is the pair of role sets
+// that no golden can see, because a golden has one caller.
+//
+// The distinguishing caller is `query-organizations` with a user-read role: 200
+// here and 403 on the org-scoped twin, on two routes that serve byte-identical
+// bodies. Every other row is a control: the two agree on all of them, so a
+// guard that had been copied from the twin passes eight rows and fails one.
+func TestTheTopLevelMemberOrganizationsGuardIsNotItsTwins(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	orgID, userID := orgMemberFixture(t, h, admin)
+	if w := addMember(t, h, admin, orgID, userID); w.Code != http.StatusCreated {
+		t.Fatalf("adding the member: %d %s", w.Code, w.Body)
+	}
+	top := "/admin/realms/master/organizations/members/" + userID + "/organizations"
+	scoped := "/admin/realms/master/organizations/" + orgID + "/members/" + userID + "/organizations"
+
+	for _, tc := range []struct {
+		name              string
+		roles             []string
+		wantTop, wantScop int
+	}{
+		{"vo+vu", []string{"view-organizations", "view-users"}, http.StatusOK, http.StatusOK},
+		{"mo+vu", []string{"manage-organizations", "view-users"}, http.StatusOK, http.StatusOK},
+		{"mr+vu", []string{"manage-realm", "view-users"}, http.StatusOK, http.StatusOK},
+		{"qo+vu", []string{"query-organizations", "view-users"}, http.StatusOK, http.StatusForbidden},
+		{"vo+qu", []string{"view-organizations", "query-users"}, http.StatusForbidden, http.StatusForbidden},
+		{"vo+vr", []string{"view-organizations", "view-realm"}, http.StatusForbidden, http.StatusForbidden},
+		{"vo", []string{"view-organizations"}, http.StatusForbidden, http.StatusForbidden},
+		{"vu", []string{"view-users"}, http.StatusForbidden, http.StatusForbidden},
+		{"none", nil, http.StatusForbidden, http.StatusForbidden},
+	} {
+		token := tokenForRoles(t, h, s, realm, tc.roles...)
+		if w := get(t, h, top, token); w.Code != tc.wantTop {
+			t.Errorf("%s on the top-level route: %d %s, want %d", tc.name, w.Code, w.Body, tc.wantTop)
+		}
+		if w := get(t, h, scoped, token); w.Code != tc.wantScop {
+			t.Errorf("%s on the org-scoped twin: %d %s, want %d", tc.name, w.Code, w.Body, tc.wantScop)
+		}
+	}
+}
+
+// TestTheFourSegmentDispatcherAnswersBothMeasured404s is the rest of what the
+// wildcard swallows, and the reason it is safe to swallow it.
+//
+// Before this cut these paths fell off the route table and answered the
+// unmatched-path 404 with **none** of the five security headers. Keycloak sends
+// all five and two different bodies, and which body depends on whether the
+// first segment resolves as an organization - which is exactly the distinction
+// the fallback cannot make and this dispatcher can.
+func TestTheFourSegmentDispatcherAnswersBothMeasured404s(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	orgID, _ := orgMemberFixture(t, h, admin)
+	base := "/admin/realms/master/organizations/"
+
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{base + orgID + "/bogus/thing", `{"error":"HTTP 404 Not Found"}`},
+		{base + "nosuchorg/bogus/thing", `{"errorMessage":"Organization not found."}`},
+		{base + "members/bogus/x", `{"errorMessage":"Organization not found."}`},
+	} {
+		w := get(t, h, tc.path, admin)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("%s: %d %s, want 404", tc.path, w.Code, w.Body)
+		}
+		if got := strings.TrimSpace(w.Body.String()); got != tc.want {
+			t.Errorf("%s: got %s, want %s", tc.path, got, tc.want)
+		}
+	}
+
+	// The organization is resolved **between** the two role checks, which is
+	// neither guardOrganizationAnd's order nor guardOrganization's. The
+	// distinguishing caller is query-organizations: 404 for an organization
+	// that does not exist and 403 for one that does. A guard that checked both
+	// roles first would answer 403 to both.
+	qo := tokenForRoles(t, h, s, realm, "query-organizations")
+	if w := get(t, h, base+"nosuchorg/bogus/thing", qo); w.Code != http.StatusNotFound {
+		t.Errorf("query-organizations on an unknown organization: %d %s, want 404", w.Code, w.Body)
+	}
+	if w := get(t, h, base+orgID+"/bogus/thing", qo); w.Code != http.StatusForbidden {
+		t.Errorf("query-organizations on a real organization: %d %s, want 403", w.Code, w.Body)
+	}
+	none := tokenForRoles(t, h, s, realm)
+	if w := get(t, h, base+orgID+"/bogus/thing", none); w.Code != http.StatusForbidden {
+		t.Errorf("a caller holding nothing: %d %s, want 403", w.Code, w.Body)
+	}
+}
+
+// TestTheFourSegmentDispatcherLeavesTheServedRoutesAlone is the other half of
+// the registration claim: the wildcard is a superset of the family's
+// four-segment patterns, so Go must still give each of them the win.
+//
+// It asserts the answers rather than the pattern strings, because what would
+// break is a request going to the dispatcher and getting a 404 where the
+// specific route serves a body.
+func TestTheFourSegmentDispatcherLeavesTheServedRoutesAlone(t *testing.T) {
+	h, _, _ := newServer(t)
+	admin := tokenFor(t, h, "admin", "admin")
+	orgID, userID := orgMemberFixture(t, h, admin)
+	if w := addMember(t, h, admin, orgID, userID); w.Code != http.StatusCreated {
+		t.Fatalf("adding the member: %d %s", w.Code, w.Body)
+	}
+	base := "/admin/realms/master/organizations/" + orgID
+
+	for _, tc := range []struct{ path, want string }{
+		{base + "/members/" + userID, `"username":"gloak-probe-alpha"`},
+		{base + "/members/count", `1`},
+		{base + "/identity-providers", `[]`},
+		{base + "/groups", `[]`},
+	} {
+		w := get(t, h, tc.path, admin)
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), tc.want) {
+			t.Errorf("%s: %d %s, want 200 containing %s", tc.path, w.Code, w.Body, tc.want)
+		}
+	}
+}
