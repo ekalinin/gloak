@@ -382,6 +382,92 @@ func TestBERToDERIsWhatMakesKeycloaksPKCS12Readable(t *testing.T) {
 	}
 }
 
+// TestBERToDERJoinsChunksOnlyUnderAContextTag pins the class test in the
+// chunked-string rule, which **every keystore in this repository leaves free**.
+//
+// The rule collapses an indefinite-length constructed node whose children are
+// all primitive OCTET STRINGs into one primitive value. Restricting that to
+// context-specific tags is what stops it eating a BER `SEQUENCE OF OCTET
+// STRING`: without the class test, `30 80 04 .. 04 .. 00 00` comes back as
+// `10 ..`, a primitive universal SEQUENCE, which is not a legal tag and has lost
+// both of its values. That shape is reachable - a PKCS12 attribute's
+// `attrValues SET OF ANY` around a `localKeyId` is `31 { 04 .. }`, and a writer
+// that streamed it would send it indefinite - but Keycloak's writer sends it
+// definite, so the corpus never contains it and the guard could be deleted with
+// every other test still green. It was, measured.
+//
+// So the vectors are hand-built bytes rather than a keystore, and there are two
+// of them on purpose:
+//
+//   - the SEQUENCE row is what the class test decides, and it is the only row
+//     that changes when the test is dropped;
+//   - the [0] row is the **control the class test does not change**. Without it
+//     this test would pass on an implementation that joined nothing at all, so
+//     it would pin the rewrite rather than the guard.
+//
+// The two inputs are asserted to differ in **exactly one byte, the tag**, which
+// is the whole claim: the class of the tag is the only variable between a node
+// that is rewritten and a node that is not.
+func TestBERToDERJoinsChunksOnlyUnderAContextTag(t *testing.T) {
+	// 04 01 41, 04 01 42: two one-byte OCTET STRINGs, "A" and "B".
+	const children = "\x04\x01A\x04\x01B"
+
+	sequence := []byte("\x30\x80" + children + "\x00\x00")
+	contextTag := []byte("\xa0\x80" + children + "\x00\x00")
+	if !bytes.Equal(sequence[1:], contextTag[1:]) {
+		t.Fatal("the two vectors must differ only in the tag byte, or this test " +
+			"is comparing two unrelated inputs rather than two tag classes")
+	}
+
+	for _, tc := range []struct {
+		name string
+		// classDecides declares whether the context-tag test in berValue is
+		// what chooses this row's answer. The table says so out loud because a
+		// row that nothing decides is a row that looks like coverage.
+		classDecides bool
+		in           []byte
+		want         []byte
+	}{
+		{
+			// A BER SEQUENCE OF OCTET STRING. Its length is rewritten and
+			// nothing else is: the two values survive as two values.
+			name:         "a universal SEQUENCE keeps its tag and its children",
+			classDecides: true,
+			in:           sequence,
+			want:         []byte("\x30\x06" + children),
+		},
+		{
+			// The control. An implicitly tagged chunked OCTET STRING, which is
+			// what encryptedContent arrives as, and the class test lets it
+			// through unchanged in either implementation.
+			name:         "a context tag is joined into a primitive of the same number",
+			classDecides: false,
+			in:           contextTag,
+			want:         []byte("\x80\x02AB"),
+		},
+		{
+			// The other half of the documented rule, and it is a control for a
+			// different mutation than the class test: a **definite** length is
+			// what says a writer knew the size, so an explicit [0] holding one
+			// primitive OCTET STRING is left alone.
+			name:         "a definite length is left alone whatever its children are",
+			classDecides: false,
+			in:           []byte("\xa0\x04\x04\x02AB"),
+			want:         []byte("\xa0\x04\x04\x02AB"),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := berToDER(tc.in)
+			if err != nil {
+				t.Fatalf("berToDER(% x): %v", tc.in, err)
+			}
+			if !bytes.Equal(got, tc.want) {
+				t.Errorf("berToDER(% x):\nwant % x\ngot  % x", tc.in, tc.want, got)
+			}
+		})
+	}
+}
+
 func TestBERToDERRefusesRubbish(t *testing.T) {
 	for _, tc := range []struct {
 		name string

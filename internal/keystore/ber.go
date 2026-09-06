@@ -35,7 +35,7 @@ import (
 //   - a constructed OCTET STRING, tag 0x24, becomes a primitive one holding its
 //     children's contents joined - always, because a constructed OCTET STRING is
 //     never valid DER whatever its length says;
-//   - an **indefinite-length** constructed context tag whose children are all
+//   - an **indefinite-length constructed context tag** whose children are all
 //     primitive OCTET STRINGs becomes a primitive value with the same tag
 //     number, holding those contents joined. That is an implicitly tagged
 //     string written in chunks, and `encryptedContentInfo.encryptedContent` is
@@ -50,6 +50,20 @@ import (
 // on the file: every explicit [0] in it holds a **constructed** OCTET STRING,
 // `A0 80 24 80 ...`, so the two shapes really are distinguishable in what
 // Keycloak sends.
+//
+// **"Context tag" is load-bearing and nothing in a keystore proves it.** Drop
+// the class test and the rule reads "any indefinite constructed node whose
+// children are all OCTET STRINGs", which collapses a BER
+// `SEQUENCE OF OCTET STRING` - `30 80 04 .. 04 .. 00 00` - into `10 ..`, a
+// primitive universal SEQUENCE, which is not a legal tag at all and has lost
+// both of its values. That shape is reachable: a PKCS12 attribute's
+// `attrValues SET OF ANY` around a `localKeyId` is `31 { 04 .. }`, and a writer
+// that streamed it would send `31 80 04 .. 00 00`. Keycloak's writer sends it
+// definite, so **no keystore in this repository distinguishes the two
+// readings** and the guard could be deleted with every corpus test still green
+// - measured, by deleting it.
+// TestBERToDERJoinsChunksOnlyUnderAContextTag is a hand-built byte slice rather
+// than a keystore for exactly that reason.
 //
 // A primitive value is copied byte for byte and a definite length is re-encoded
 // minimally, so a file that is already DER comes back **identical**, which is
@@ -133,6 +147,12 @@ func berValue(b []byte, depth int) (value, rest []byte, err error) {
 	}
 	// An implicitly tagged string written in chunks. See the ambiguity this
 	// resolves, and what resolves it, in berToDER's comment.
+	//
+	// `tag&0xc0 == 0x80` is the context-specific class and it is not
+	// defensiveness: without it a BER `SEQUENCE OF OCTET STRING` is rewritten
+	// into a primitive universal SEQUENCE and loses its contents. No keystore
+	// here distinguishes the two, so the vector that does is hand-built - see
+	// TestBERToDERJoinsChunksOnlyUnderAContextTag.
 	if indefinite && tag&0xc0 == 0x80 && allOctetStrings {
 		joined, err := berJoinOctetStrings(children)
 		if err != nil {
