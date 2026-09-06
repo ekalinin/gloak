@@ -124,6 +124,63 @@ func TestTheMetadataIsDerivedAndNotAConstant(t *testing.T) {
 	}
 }
 
+// TestMetadataCarriesTheGroupAndDropsTheSelector is here because a mutation
+// survived without it.
+//
+// `Group: a.Group` was replaced with the empty string and every test and every
+// golden still passed: **no realm a default install has puts an attribute in a
+// group**, so the one committed metadata golden cannot see the field, and none
+// of the tests above sent an attribute carrying one. The cell was measured -
+// `zzcustom` in a group came back with `"group":"user-metadata"` on a live
+// 26.7.1 - so this is a measurement that had not been written down rather than
+// a question, and the assertion is the fix.
+//
+// `selector` is asserted in the same test because it is the field beside it
+// that goes the **other** way: the profile carries it and the metadata drops
+// it. Asserting only the carried one would be satisfied by a render that copied
+// everything.
+func TestMetadataCarriesTheGroupAndDropsTheSelector(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := adminToken(t, h)
+	perms := `"permissions":{"view":["admin"],"edit":["admin"]}`
+	writeUserProfileDocument(t, s, realm.ID, `{"attributes":[`+
+		`{"name":"username",`+perms+`},`+
+		`{"name":"grouped",`+perms+`,"group":"g1","selector":{"scopes":["profile"]}}],`+
+		`"groups":[{"name":"g1","displayHeader":"H"}]}`)
+
+	body := get(t, h, metadataPath, admin).Body.String()
+	var out upMetadataProbe
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var grouped *upMetadataProbeAttribute
+	for i := range out.Attributes {
+		if out.Attributes[i].Name == "grouped" {
+			grouped = &out.Attributes[i]
+		}
+	}
+	if grouped == nil {
+		t.Fatalf("the attribute is missing:\n%s", body)
+	}
+	if got, want := grouped.Group, "g1"; got != want {
+		t.Errorf("group = %q, want %q:\n%s", got, want, body)
+	}
+	// The attribute that declares no group carries no `group` key at all,
+	// which is what makes the field omitempty rather than empty-string.
+	if strings.Contains(body, `"name":"username","displayName":"username","required":true,`+
+		`"readOnly":false,"validators":{"multivalued":{"max":"1"}},"group"`) {
+		t.Errorf("an attribute with no group gained the key:\n%s", body)
+	}
+	if strings.Contains(body, `"selector"`) {
+		t.Errorf("selector reached the metadata; it was measured dropped:\n%s", body)
+	}
+	// And the group really is declared, so the profile's own `groups` array is
+	// the control that says this is a copy and not an invention.
+	if !strings.Contains(body, `"groups":[{"name":"g1","displayHeader":"H"}]`) {
+		t.Errorf("the groups array is not the profile's:\n%s", body)
+	}
+}
+
 // TestMetadataRequiredIsUsernameAlwaysAndAdminOtherwise pins the rule that took
 // seven requests, because three readings fit fewer than seven.
 //
