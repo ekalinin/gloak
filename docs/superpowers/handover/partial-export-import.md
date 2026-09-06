@@ -686,6 +686,40 @@ exactly this and whose doc comment records the last time this bit somebody.
 
 ### The mutation pass
 
+Thirty-four mutations, one per claim, each naming the test that had to fail,
+against a `git clone --no-local` so that no revert could reach the worktree. The
+harness ran the named test on a clean tree **first** as a control, refused a
+selector that matched nothing, read `go test`'s exit code rather than its
+output, and checked every revert with `git diff --quiet`. It reported
+`CONTROL_FAILED`, `SELECTOR_MATCHED_NOTHING`, `NOT_APPLIED`, `BUILD_FAILED`,
+`SURVIVED` and `KILLED` as separate outcomes.
+
+**All thirty-four were killed, and three of them only after something was
+repaired** - which is what the extra outcomes are for.
+
+Two were `BUILD_FAILED` and the mutation was the thing at fault:
+
+- deleting the `clientScopeMappings` block left `mappings` declared and not
+  used. Replaced with a rename of the key, which is the same claim and compiles,
+  and is killed.
+- swapping `strings.EqualFold` for `strconv.ParseBool` needed an import the file
+  does not have. Replaced with `values[0] == "true"` - dropping the fold, which
+  is the mistake a reader would actually make - and it is killed by the `TRUE`
+  and `True` rows.
+
+**One `SURVIVED`, and the mutation was right: the assertion was weak.** Dropping
+`imp.rollback` from the conflict path left the half-imported user in the realm,
+and `TestPartialImportRollsBackOnAConflict` passed anyway, because it searched
+the listing for the substring `[]` - and a user representation carries
+`"disableableCredentialTypes":[]` and `"requiredActions":[]` in its own body. So
+the check was satisfied by the very row it was asserting was absent. The test
+now parses the listing and counts, with the user the fixture did create as a
+control, and the same mutation is killed. That is one commit of its own, made
+before the re-run, so the diff shows the assertion changing and not the claim.
+
+Four of the thirty-four are killed by conformance goldens and thirty by package
+tests.
+
 Two hand-written counts in `internal/admin/flows_test.go` moved, from 17 to 18
 flows and 48 to 49 execution rows on master, and 20 to 21 and 55 to 56 on a
 created realm. **They were not relaxed to make a failure go away**: they were
