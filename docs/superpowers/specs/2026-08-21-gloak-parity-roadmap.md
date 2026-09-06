@@ -241,11 +241,12 @@ operations is allocated below; none is left unassigned.
 | Scope evaluator | `evaluate-scopes`, **done 2026-09-03** | P5, F103 | `admin/clients` 23->28. Five of seven, and **the two refusals are boundary refusals**: `generate-example-userinfo` rests on `internal/oidc` and the SAML generator on a SAML path Gloak has not got. **F148 settled**: the example claim sets are built in `internal/token`, beside `Introspect`. The generators refuse **every single admin role there is** and need a conjunction | 5 ops |
 | Events family | `events`, `admin-events` and their config, **done 2026-09-04** | P14 | `admin/realms-admin` 33->39. **Not a second F157**: an Admin API write Gloak already serves does produce an admin event, measured. What refused emitting is the content - none of an event's four fields follows from its route, and `internal/admin` has 152 write routes. F162 carries the sweep | 6 ops |
 | F161 | What a golden can assert about a binary body, **done 2026-09-05** | P5 | `admin/client-attribute-certificate` 0->4. The answer is **nothing**, enforced by a ratchet rather than left as a paragraph. The entry's own description was wrong twice: five of seven answer JSON, and the three multipart operations are the **most** assertable of the seven | 4 ops |
+| Scattered remainder | Eight small families across three tags, **done 2026-09-06** | P2, P9, P14 | `admin/users` 20->26, `admin/clients` 28->30, `admin/realms-admin` 39->42. Eleven of twenty-seven taken; the email family is **a mail client, not four operations**, `impersonation` is F148's shape and stays `Pending`, and `partial-export` is 40 kB of realm. **A federated-identity link can exist and be invisible** | 11 ops |
 
 Denominator today: **413 Admin API operations plus 122 protocol behaviours, 535
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **487 of 541**
-after the events family and F161's ratchet, and **P2, P4 and P5 are complete** -
+surface is not counted and which the report says so about. Served: **498 of 541**
+after the scattered remainder, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -276,7 +277,45 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-05 (twentieth fold).** `make conformance` reports **487 of
+**Updated 2026-09-06 (twenty-first fold).** `make conformance` reports **498 of
+541**. Eleven of the twenty-seven scattered operations across three tags, with
+the other sixteen left carrying stated reasons.
+
+**The round's lesson is that a script answers the question it was written to
+answer, not the one the sentence beside it will claim.** Three days ago this
+document gained a table saying `text/plain` responses carry **none** of the five
+security headers. All seven of them carry **four**, omitting exactly
+`X-Frame-Options`. The script that produced the table counted the presence of
+*one* header and I wrote it up as a statement about five.
+
+Recounting properly over all 921 goldens did more than fix the row. **No golden
+carries a partial set except one missing exactly `X-Frame-Options`** - which
+means the "five security headers" were never one group:
+
+```
+four headers   Referrer-Policy, Strict-Transport-Security,
+               X-Content-Type-Options, X-Robots-Tag
+               on everything, except an unmatched path and the
+               unexplained Duplicate resource error family
+X-Frame-Options  additionally absent on text/plain, on
+               application/octet-stream, on an OPTIONS 200, and on a 204
+               whose REQUEST declared no application/* Content-Type
+```
+
+So the bullet that had been corrected six times, and had carried five exceptions,
+then four, now carries **two rules**. Both corrections that shrank it came from
+recounting rather than from measuring something new: the evidence had been in the
+tree the whole time and the sentence was reading it wrong.
+
+**And two more probes measured themselves**, in a round whose brief demanded a
+control for exactly that. `POST /testSMTPConnection` answers 500 to a working
+server as readily as to an unreachable one - because it mails the test to the
+caller and the bootstrap `admin` has no address - so every probe of it agreed
+until a mail catcher was put beside it. And a test written to *defend*
+`GET /users/profile` as an echo refuted it instead, because the 988-byte
+agreement on master is a coincidence.
+
+**Earlier on 2026-09-05 (twentieth fold).** `make conformance` reports **487 of
 541**. The events family landed six (`admin/realms-admin` 33 to 39) and F161's
 answer landed four (`admin/client-attribute-certificate` 0 to 4).
 
