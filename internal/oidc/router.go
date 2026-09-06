@@ -37,6 +37,10 @@ type handler struct {
 	// store.ClientRepo; only the token's identity is in memory, and
 	// internal/oidc/registrationstore.go says why and what it costs.
 	registrations *registrationStore
+	// proofs holds the jti of every DPoP proof spent recently, so that one
+	// cannot be replayed. In memory, F75's shape - Keycloak keeps it in
+	// Infinispan. See internal/oidc/dpop.go.
+	proofs *proofStore
 	// httpClient is the one place this package calls *out*, and it exists for
 	// back-channel logout alone. Nil means the default in
 	// backchannelClient, whose timeout is measured; a test stands up an
@@ -76,7 +80,7 @@ func NewRouter(s store.Store, k *keys.Manager, issuerBase string) http.Handler {
 func Register(mux *http.ServeMux, s store.Store, k *keys.Manager, issuerBase string) {
 	h := &handler{store: s, keys: k, issuerBase: issuerBase,
 		auth: newAuthStore(), device: newDeviceStore(), consents: newConsentStore(),
-		registrations: newRegistrationStore()}
+		registrations: newRegistrationStore(), proofs: newProofStore()}
 	h.register(mux)
 }
 

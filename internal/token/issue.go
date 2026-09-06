@@ -77,6 +77,10 @@ type Request struct {
 	IncludeIDToken bool
 	AuthTime       time.Time
 	Nonce          string
+	// Thumbprint is the DPoP proof's JWK thumbprint when the request carried
+	// one, and empty otherwise. It becomes cnf on the access and refresh
+	// tokens and never on the ID token - measured 2026-09-06.
+	Thumbprint string
 }
 
 // authTimeClaim is the auth_time value, or nil for the grants that omit the key
@@ -143,6 +147,7 @@ func (i *Issuer) accessClaims(r Request, iat, exp int64) any {
 			Typ:   TypeAccess,
 			Azp:   r.Client.ClientID,
 			Sid:   r.UserSession.ID,
+			Cnf:   confirmationClaim(r.Thumbprint),
 			Scope: r.Scope,
 		}
 	}
@@ -161,6 +166,7 @@ func (i *Issuer) accessClaims(r Request, iat, exp int64) any {
 		AllowedOrigins:    r.Client.WebOrigins,
 		RealmAccess:       realmAccessClaim(r.RealmRoles),
 		ResourceAccess:    resourceAccessClaim(r.ClientRoles),
+		Cnf:               confirmationClaim(r.Thumbprint),
 		Scope:             r.Scope,
 		EmailVerified:     r.User.EmailVerified,
 		PreferredUsername: r.UserSession.Username,
@@ -198,6 +204,7 @@ func (i *Issuer) refreshClaims(r Request, iat, exp int64) refreshClaims {
 		Typ:   TypeRefresh,
 		Azp:   r.Client.ClientID,
 		Sid:   r.UserSession.ID,
+		Cnf:   confirmationClaim(r.Thumbprint),
 		Scope: RefreshScope(r.Scope, r.Client),
 		AudX:  audienceClaim(Audience(r.Client.ClientID, r.ClientRoles)),
 		Prov:  "default",

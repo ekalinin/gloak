@@ -186,7 +186,7 @@ func (h *handler) deviceAuthorization(w http.ResponseWriter, r *http.Request) {
 // The six adjacencies below were each measured by driving two faults at once,
 // and four of them are not where they look. See the plan's section 1.2.
 func (h *handler) deviceCodeGrant(w http.ResponseWriter, r *http.Request,
-	realm *model.Realm, client *model.Client, k *keys.RealmKeys) {
+	realm *model.Realm, client *model.Client, k *keys.RealmKeys, jkt string) {
 	if !deviceGrantEnabled(client) {
 		httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_grant", descDeviceGrantOffAtToken)
 		return
@@ -237,7 +237,7 @@ func (h *handler) deviceCodeGrant(w http.ResponseWriter, r *http.Request,
 			deviceErrAuthorizationPending, descAuthorizationPending)
 		return
 	}
-	h.completeDeviceCode(w, r, realm, client, k, dc)
+	h.completeDeviceCode(w, r, realm, client, k, dc, jkt)
 }
 
 // completeDeviceCode exchanges an approved device code for a token set.
@@ -257,7 +257,7 @@ func (h *handler) deviceCodeGrant(w http.ResponseWriter, r *http.Request,
 // and unit-tested through deviceStore.approveDeviceCode so that cut B adds
 // pages rather than a grant.
 func (h *handler) completeDeviceCode(w http.ResponseWriter, r *http.Request,
-	realm *model.Realm, client *model.Client, k *keys.RealmKeys, dc *deviceCode) {
+	realm *model.Realm, client *model.Client, k *keys.RealmKeys, dc *deviceCode, jkt string) {
 	h.device.spendDeviceCode(dc)
 
 	ctx := r.Context()
@@ -280,7 +280,7 @@ func (h *handler) completeDeviceCode(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	h.writeTokens(w, r, realm, client, user, session, dc.Scope, k, false,
-		time.UnixMilli(session.StartedAt), "")
+		time.UnixMilli(session.StartedAt), "", jkt)
 }
 
 // deviceGrantEnabled reads the client attribute both endpoints gate on.

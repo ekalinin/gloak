@@ -31,16 +31,20 @@ var (
 // claim is a string when it names one client and an array when it names
 // several, and absent when it names none. Introspection has to compare against
 // it, so the three shapes cannot stay the caller's problem.
+// Thumbprint is cnf.jkt when the token was bound to a DPoP key and empty when
+// it was not. The refresh grant compares it against the proof on the request;
+// see internal/oidc/dpop.go.
 type Parsed struct {
-	Type      string
-	Subject   string
-	SessionID string
-	ClientID  string // azp
-	ID        string // jti
-	Audience  []string
-	Scope     string
-	IssuedAt  time.Time
-	ExpiresAt time.Time
+	Type       string
+	Subject    string
+	SessionID  string
+	ClientID   string // azp
+	ID         string // jti
+	Audience   []string
+	Scope      string
+	IssuedAt   time.Time
+	ExpiresAt  time.Time
+	Thumbprint string // cnf.jkt
 }
 
 // UnverifiedIssuer reads the iss claim **without checking the signature**, so
@@ -164,16 +168,25 @@ func check(claims *parsedClaims, issuer, wantType string, now time.Time) (*Parse
 		return nil, ErrExpiredToken
 	}
 	return &Parsed{
-		Type:      claims.Typ,
-		Subject:   claims.Sub,
-		SessionID: claims.Sid,
-		ClientID:  claims.Azp,
-		ID:        claims.Jti,
-		Audience:  parseAudience(claims.Aud),
-		Scope:     claims.Scope,
-		IssuedAt:  time.Unix(claims.Iat, 0),
-		ExpiresAt: expires,
+		Type:       claims.Typ,
+		Subject:    claims.Sub,
+		SessionID:  claims.Sid,
+		ClientID:   claims.Azp,
+		ID:         claims.Jti,
+		Audience:   parseAudience(claims.Aud),
+		Scope:      claims.Scope,
+		IssuedAt:   time.Unix(claims.Iat, 0),
+		ExpiresAt:  expires,
+		Thumbprint: thumbprint(claims.Cnf),
 	}, nil
+}
+
+// thumbprint is cnf.jkt, or empty for a token that carries no confirmation.
+func thumbprint(c *confirmation) string {
+	if c == nil {
+		return ""
+	}
+	return c.Jkt
 }
 
 // parseAudience flattens the aud claim's three shapes - absent, a string, an

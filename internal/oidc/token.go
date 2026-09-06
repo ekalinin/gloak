@@ -165,21 +165,36 @@ func (h *handler) token(w http.ResponseWriter, r *http.Request) {
 			authErrInvalidRequest, descDuplicatedParameter)
 		return
 	}
+	// The DPoP proof is verified **fifth**, and the two adjacencies either side
+	// of it are measured: a bad proof with an unknown client_id answers
+	// invalid_client, a bad proof with `zz` twice answers duplicated parameter,
+	// and a bad proof with a wrong password answers about the proof. It is one
+	// check for every grant rather than one per grant - the same bad header
+	// answers the same sentence on password, client_credentials, refresh_token,
+	// the device grant and CIBA - which is why it lives here and not in the
+	// five handlers below. See internal/oidc/dpop.go.
+	proof, dpopErr := h.verifyDPoP(r, requiresDPoP(client.Attributes),
+		h.realmBase(realm.Name)+"/protocol/openid-connect/token")
+	if dpopErr != nil {
+		dpopErr.write(w)
+		return
+	}
+	jkt := dpopThumbprint(proof)
 	k := h.realmKeys(w, r, realm)
 	if k == nil {
 		return
 	}
 	switch grantType {
 	case grantPassword:
-		h.passwordGrant(w, r, realm, client, k)
+		h.passwordGrant(w, r, realm, client, k, jkt)
 	case grantRefreshToken:
-		h.refreshTokenGrant(w, r, realm, client, k)
+		h.refreshTokenGrant(w, r, realm, client, k, jkt)
 	case grantClientCredentials:
-		h.clientCredentialsGrant(w, r, realm, client, k)
+		h.clientCredentialsGrant(w, r, realm, client, k, jkt)
 	case grantAuthorizationCode:
-		h.authorizationCodeGrant(w, r, realm, client, k)
+		h.authorizationCodeGrant(w, r, realm, client, k, jkt)
 	case grantDeviceCode:
-		h.deviceCodeGrant(w, r, realm, client, k)
+		h.deviceCodeGrant(w, r, realm, client, k, jkt)
 	case grantCIBA:
 		// No keys are needed: every answer a default deployment can give to
 		// this grant is a refusal. See internal/oidc/ciba.go.
@@ -205,7 +220,7 @@ func (h *handler) token(w http.ResponseWriter, r *http.Request) {
 // The one failure that does not spend it is client authentication, and that
 // falls out of it happening in token() above rather than being a special case.
 func (h *handler) authorizationCodeGrant(w http.ResponseWriter, r *http.Request,
-	realm *model.Realm, client *model.Client, k *keys.RealmKeys) {
+	realm *model.Realm, client *model.Client, k *keys.RealmKeys, jkt string) {
 	// Presence, not value. An empty code= answers "Code not valid" - it reaches
 	// the lookup - where an absent one answers about the parameter.
 	if _, present := r.PostForm["code"]; !present {
@@ -261,7 +276,7 @@ func (h *handler) authorizationCodeGrant(w http.ResponseWriter, r *http.Request,
 	// session started - measured as iat - auth_time == 6 on a login left six
 	// seconds before the exchange, so issuing time is the wrong value.
 	authTime := time.UnixMilli(session.StartedAt)
-	h.writeTokens(w, r, realm, client, user, session, code.Scope, k, false, authTime, code.Nonce)
+	h.writeTokens(w, r, realm, client, user, session, code.Scope, k, false, authTime, code.Nonce, jkt)
 }
 
 func writeCodeNotValid(w http.ResponseWriter) {
@@ -338,7 +353,7 @@ func codeChallengeFor(verifier, method string) string {
 // same way the browser flow's "Account is disabled, contact your administrator."
 // is - and Gloak answered "Invalid user credentials" for a disabled user until
 // this was measured, from a check that ran before the password.
-func (h *handler) passwordGrant(w http.ResponseWriter, r *http.Request, realm *model.Realm, client *model.Client, k *keys.RealmKeys) {
+func (h *handler) passwordGrant(w http.ResponseWriter, r *http.Request, realm *model.Realm, client *model.Client, k *keys.RealmKeys, jkt string) {
 	if !client.DirectAccessGrantsEnabled {
 		// Unmeasured: no bootstrapped client reaches this branch, since
 		// admin-cli is the only one with direct access grants and it has them
@@ -400,7 +415,7 @@ func (h *handler) passwordGrant(w http.ResponseWriter, r *http.Request, realm *m
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	h.writeTokens(w, r, realm, client, user, session, scope, k, false, time.Time{}, "")
+	h.writeTokens(w, r, realm, client, user, session, scope, k, false, time.Time{}, "", jkt)
 }
 
 // refreshTokenGrant exchanges a refresh token for a fresh set.
@@ -409,7 +424,7 @@ func (h *handler) passwordGrant(w http.ResponseWriter, r *http.Request, realm *m
 // one, a session that has since been revoked, a token minted for a different
 // client - answers the same measured 400 invalid_grant "Invalid refresh
 // token". See internal/conformance/testdata/golden/oidc/token/invalid-refresh-token.http.
-func (h *handler) refreshTokenGrant(w http.ResponseWriter, r *http.Request, realm *model.Realm, client *model.Client, k *keys.RealmKeys) {
+func (h *handler) refreshTokenGrant(w http.ResponseWriter, r *http.Request, realm *model.Realm, client *model.Client, k *keys.RealmKeys, jkt string) {
 	parsed, err := token.ParseRefresh(k, h.realmIssuer(realm.Name), r.PostForm.Get("refresh_token"), time.Now())
 	if err != nil {
 		writeInvalidRefreshToken(w)
@@ -417,6 +432,23 @@ func (h *handler) refreshTokenGrant(w http.ResponseWriter, r *http.Request, real
 	}
 	if parsed.ClientID != client.ClientID {
 		writeInvalidRefreshToken(w)
+		return
+	}
+	// A refresh token that carries a binding has to be presented with the key
+	// it was bound to. Both refusals are **invalid_grant**, where every other
+	// DPoP sentence on this endpoint is invalid_request, and they are two
+	// different sentences: no proof at all is descDPoPMissing and a proof from
+	// another key is descDPoPConfirmationMismatch. Measured on one bound
+	// refresh token refreshed three ways.
+	//
+	// It is checked here rather than in token() because the binding is on the
+	// **token**, which only this grant has parsed.
+	if parsed.Thumbprint != "" && parsed.Thumbprint != jkt {
+		description := descDPoPConfirmationMismatch
+		if jkt == "" {
+			description = descDPoPMissing
+		}
+		httpx.WriteOAuthError(w, http.StatusBadRequest, "invalid_grant", description)
 		return
 	}
 
@@ -466,7 +498,7 @@ func (h *handler) refreshTokenGrant(w http.ResponseWriter, r *http.Request, real
 	// the "Token endpoint response" section of the observed-behaviour document
 	// as the weakest of the unmasked duration values. The recorded golden
 	// agrees with the configured 1800 because the session is seconds old there.
-	h.writeTokens(w, r, realm, client, user, session, clientSession.Scope, k, false, time.Time{}, "")
+	h.writeTokens(w, r, realm, client, user, session, clientSession.Scope, k, false, time.Time{}, "", jkt)
 }
 
 func writeInvalidRefreshToken(w http.ResponseWriter) {
@@ -489,7 +521,7 @@ func writeSessionNotActive(w http.ResponseWriter) {
 // creatable: the response is three keys short of the other grants - no
 // refresh_token, no session_state, no id_token - while refresh_expires_in is
 // present and 0. See writeTokens, and the client-credentials-grant golden.
-func (h *handler) clientCredentialsGrant(w http.ResponseWriter, r *http.Request, realm *model.Realm, client *model.Client, k *keys.RealmKeys) {
+func (h *handler) clientCredentialsGrant(w http.ResponseWriter, r *http.Request, realm *model.Realm, client *model.Client, k *keys.RealmKeys, jkt string) {
 	if client.PublicClient || !client.ServiceAccountsEnabled {
 		httpx.WriteOAuthError(w, http.StatusBadRequest,
 			"unauthorized_client", "Client not enabled to retrieve service account")
@@ -506,7 +538,7 @@ func (h *handler) clientCredentialsGrant(w http.ResponseWriter, r *http.Request,
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	h.writeTokens(w, r, realm, client, user, session, scope, k, true, time.Time{}, "")
+	h.writeTokens(w, r, realm, client, user, session, scope, k, true, time.Time{}, "", jkt)
 }
 
 // serviceAccountUser returns the account a client acts as, creating it on
@@ -596,7 +628,7 @@ func (h *handler) startSession(ctx context.Context, realm *model.Realm, client *
 // password-grant session has none, so auth_time belongs to the user session and
 // Gloak has nowhere to keep it - model.UserSession is internal/model's. Filed
 // rather than guessed.
-func (h *handler) writeTokens(w http.ResponseWriter, r *http.Request, realm *model.Realm, client *model.Client, user *model.User, session *model.UserSession, scope string, k *keys.RealmKeys, serviceAccount bool, authTime time.Time, nonce string) {
+func (h *handler) writeTokens(w http.ResponseWriter, r *http.Request, realm *model.Realm, client *model.Client, user *model.User, session *model.UserSession, scope string, k *keys.RealmKeys, serviceAccount bool, authTime time.Time, nonce, jkt string) {
 	realmRoles, clientRoles, err := h.tokenRoles(r.Context(), realm, user)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
@@ -617,6 +649,7 @@ func (h *handler) writeTokens(w http.ResponseWriter, r *http.Request, realm *mod
 		IncludeIDToken: hasScope(scope, "openid"),
 		AuthTime:       authTime,
 		Nonce:          nonce,
+		Thumbprint:     jkt,
 	})
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
@@ -628,7 +661,10 @@ func (h *handler) writeTokens(w http.ResponseWriter, r *http.Request, realm *mod
 		ExpiresIn:        int64(accessLife.Seconds()),
 		RefreshExpiresIn: int64(realm.RefreshTokenLifespan.Seconds()),
 		RefreshToken:     set.RefreshToken,
-		TokenType:        "Bearer",
+		// token_type follows the **request's** proof rather than the client:
+		// admin-cli carries no dpop.bound.access.tokens attribute and answers
+		// DPoP when a proof is sent, Bearer when one is not.
+		TokenType:        tokenTypeFor(jkt),
 		IDToken:          set.IDToken,
 		NotBeforePolicy:  0,
 		SessionState:     session.ID,
