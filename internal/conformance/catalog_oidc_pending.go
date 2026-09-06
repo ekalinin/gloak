@@ -1151,8 +1151,20 @@ var oidcPending = []Case{
 		// an `iat` and is refused outside a window of tens of seconds, and its
 		// `jti` is single-use, so a literal could not be recorded and replayed
 		// even seconds later. The harness is the limit, not the container.
+		//
+		// **Re-checked 2026-09-06 and it holds, with one half it did not say.**
+		// The sentence explains why no *literal* proof works. What it leaves
+		// open is whether a fixture could compute one, and the answer is in
+		// fixture.go rather than in DPoP: a `Step` is a request, and all four
+		// capture forms - Capture, CaptureHeader, CaptureForm, CaptureQuery -
+		// read a value out of a **response**. The harness has no computed value
+		// of any kind, so there is nowhere to sign a proof even though a proof
+		// minted seconds before the case's request would be inside the window.
+		// That is a harness question with a harness answer, and it is the half
+		// worth writing down, because "the proof goes stale" reads as though a
+		// faster harness would fix it.
 		Reason:  "a DPoP proof carries a per-request iat and a single-use jti, so no literal proof can be recorded and replayed",
-		Fixture: "", // needs a proof JWT minted per request, which no Case.Request can express
+		Fixture: "", // needs a proof JWT minted per request, and no Step computes a value: every capture reads a response
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
@@ -1187,6 +1199,13 @@ var oidcPending = []Case{
 		// is still validated - so DPoP verification is **opportunistic**, not
 		// switched on per client. Gloak ignores the header and answers 200 with
 		// tokens, which is the divergence this case names.
+		//
+		// **Re-checked 2026-09-06 and it holds.** `grep -i dpop internal/` finds
+		// a client attribute the registration endpoint stores and echoes, the
+		// discovery document's `dpop_signing_alg_values_supported`, and a field
+		// on the client-description converter - and no proof verification
+		// anywhere. F135 says the omission is deliberate, so this stays
+		// Recorded: the contract is in the repository for whoever builds it.
 		Status:  Recorded,
 		Reason:  "DPoP is not implemented; Gloak ignores the header and issues an unbound token",
 		Fixture: "bootstrap",
