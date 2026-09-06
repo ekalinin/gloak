@@ -19446,4 +19446,523 @@ var adminCases = []Case{
 		AssertHeaders:       []string{"Content-Type"},
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
+
+	// ---- The Workflows tag, all nine operations ---------------------------
+	//
+	// Appended at the very end of the slice. Every value below was measured
+	// against a live 26.7.1 on 2026-09-06, container kc-wf on port 8177;
+	// docs/superpowers/plans/2026-09-06-f121-workflows.md carries the sweeps
+	// and docs/superpowers/handover/f121-workflows.md the entries AGENTS.md
+	// wants.
+	//
+	// **F121 said nine operations answer `application/yaml`. Two do.** The
+	// count came from the description's content lists, which name the media
+	// type on request bodies as well; read off the responses it is two YAML
+	// reads, one JSON read and six answers with no body at all. The first four
+	// cases here are the pair that says so - one route, two `Accept` headers,
+	// two media types, and `X-Frame-Options` present on one and absent on the
+	// other.
+	{
+		// The empty listing, which is the whole of what a fresh realm holds:
+		// **`--- []` and a trailing newline**, seven bytes. It is the first
+		// YAML body this repository has recorded, and it is also the first
+		// body whose trailing newline is contract - `writeJSON` trims one.
+		//
+		// The absent `X-Frame-Options` is the finding. A 200 with a body,
+		// reaching the filter chain, with four of the five security headers.
+		ID: "admin/workflows/list-empty",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: the listing of a realm that has none",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "workflow-empty",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-wf-empty/workflows",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Cache-Control"},
+	},
+	{
+		// The populated listing. Four things in seven lines: the `---`
+		// document marker on a line of its own once there is something under
+		// it, every scalar double-quoted, **`"on"` quoted where no other key
+		// is** - SnakeYAML is YAML 1.1 and would read a bare `on` back as a
+		// boolean - and the nested sequence's `-` sitting at its parent key's
+		// column rather than one level in.
+		//
+		// The last of those is the one gopkg.in/yaml.v3 has no option to
+		// produce, which is why internal/httpx emits this rather than a
+		// library. See that package's yaml.go.
+		ID: "admin/workflows/list",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: the listing of a realm holding one",
+			Retrieved: "2026-09-06",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/workflows",
+		Fixture:   "workflow-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-wf-read/workflows",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Cache-Control"},
+	},
+	{
+		// The single read, which is the listing's shape one indent level out
+		// - and that is what says the sequence indicator follows its parent
+		// key's column rather than a fixed offset. Two goldens, one rule.
+		ID: "admin/workflows/read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: read one workflow",
+			Retrieved: "2026-09-06",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/workflows/{id}",
+		Fixture:   "workflow-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-wf-read/workflows/1f100000-0000-4000-8000-000000000001",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Cache-Control"},
+	},
+	{
+		// **The same route answering JSON, and carrying `X-Frame-Options`.**
+		// This case and the one above it differ in an `Accept` header and in
+		// nothing else - same realm, same workflow, same caller, same 200 -
+		// and they disagree on that header. It is the sharpest available data
+		// point on AGENTS.md's security-header bullet, which records the
+		// media-type question as unsettled.
+		//
+		// It also pins the negotiation: JSON has to **outrank** YAML rather
+		// than merely be listed, which the case below shows from the other
+		// side.
+		ID: "admin/workflows/read-json",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: read one workflow as JSON",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "workflow-read",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/admin/realms/gloak-probe-wf-read/workflows/1f100000-0000-4000-8000-000000000001",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Accept":        "application/json",
+			},
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// `Accept: application/json, application/yaml` gets **YAML**, where
+		// `application/json` alone gets JSON. So a tie goes to the server's
+		// own preference rather than to the order the header lists, and the
+		// pair with the case above is what says so - either one alone would
+		// read as "the first listed type wins".
+		ID: "admin/workflows/read-accept-both",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: read one workflow accepting both media types",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "workflow-read",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/admin/realms/gloak-probe-wf-read/workflows/1f100000-0000-4000-8000-000000000001",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Accept":        "application/json, application/yaml",
+			},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Cache-Control"},
+	},
+	{
+		// `includeId=false` drops the id from the workflow **and from every
+		// step**, which is the one read on this tag whose body holds no
+		// server-minted value at all - so this golden is the only one here
+		// that would still be exact if nothing captured anything.
+		ID: "admin/workflows/read-without-id",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: read one workflow with includeId=false",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "workflow-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-wf-read/workflows/1f100000-0000-4000-8000-000000000001",
+			Query:   map[string]string{"includeId": "false"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Cache-Control"},
+	},
+	{
+		// **An id that resolves to nothing is 400, not 404**, and the message
+		// interpolates the caller's own value. It is deliberately not counted
+		// among AGENTS.md's spellings of not-found, for the reason that list
+		// already gives about `Requested audience not available`: a sentence
+		// carrying the request's value is a template rather than a spelling.
+		//
+		// The `Content-Type` is plain `application/json` with no charset,
+		// which is the admin API's error rule met on a chapter whose successes
+		// are not JSON at all.
+		ID: "admin/workflows/read-unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: read a workflow that does not exist",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "workflow-read",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-wf-read/workflows/gloak-probe-wf-nosuch",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The create: **201, no body, no `Content-Type` at all, and no
+		// `X-Frame-Options`** - because the request declared
+		// `application/yaml`, which is the media type that refutes the
+		// `application/` prefix the 204 rule was written as. The 201s obey the
+		// same rule as the 204s, measured on this endpoint with the two
+		// content types side by side.
+		//
+		// The `Location` is asserted whole and masks nothing, because the
+		// body named the id: `POST /workflows` honours it, which makes this
+		// the third endpoint measured doing so after `POST /clients` and
+		// `POST /client-scopes` - and the first where the id is not even a
+		// UUID.
+		ID: "admin/workflows/create",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: create one",
+			Retrieved: "2026-09-06",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/workflows",
+		Fixture:   "workflow-create",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-wf-create/workflows",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/yaml",
+			},
+			Body: []byte("id: 1f100000-0000-4000-8000-0000000000c1\n" +
+				"name: gloak-probe-wf-made\non: user-created\n" +
+				"steps:\n  - uses: disable-user\n    after: P5D\n"),
+		},
+		AssertHeaders:       []string{"Location"},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Type", "Cache-Control"},
+	},
+	{
+		// **A duplicate name is a 400, not a 409**, and it names the name. It
+		// is the reason this tag's fixtures cannot use `idempotentCreate` and
+		// the reason every mutating case here has a realm of its own.
+		ID: "admin/workflows/create-duplicate-name",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: create one whose name is taken",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "workflow-duplicate",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-wf-dup/workflows",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/yaml",
+			},
+			Body: []byte("name: gloak-probe-wf-taken\non: user-created\n" +
+				"steps:\n  - uses: disable-user\n    after: P5D\n"),
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The update: 204, and **no `X-Frame-Options`** because the request
+		// said `application/yaml`. Its pair is the create above, which sends
+		// the same content type; between them they are what
+		// httpx.WriteNoContent's corrected allow-list is for.
+		ID: "admin/workflows/update",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: update one",
+			Retrieved: "2026-09-06",
+		},
+		Status:    Implemented,
+		Operation: "PUT /admin/realms/{realm}/workflows/{id}",
+		Fixture:   "workflow-update",
+		Request: Request{
+			Method: http.MethodPut,
+			Path:   "/admin/realms/gloak-probe-wf-upd/workflows/1f100000-0000-4000-8000-000000000003",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/yaml",
+			},
+			Body: []byte("name: gloak-probe-wf-update\non: user-created\n" +
+				"steps:\n  - uses: notify-user\n    after: P9D\n"),
+		},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Type", "Cache-Control"},
+	},
+	{
+		// The delete: 204, no `Cache-Control`, and no `X-Frame-Options`
+		// because the request declares no `Content-Type` at all. **A second
+		// delete of the same id is a 400**, unlike almost every other delete
+		// in this API - which is why the handler resolves before it removes.
+		ID: "admin/workflows/delete",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: delete one",
+			Retrieved: "2026-09-06",
+		},
+		Status:    Implemented,
+		Operation: "DELETE /admin/realms/{realm}/workflows/{id}",
+		Fixture:   "workflow-delete",
+		Request: Request{
+			Method:  http.MethodDelete,
+			Path:    "/admin/realms/gloak-probe-wf-del/workflows/1f100000-0000-4000-8000-000000000004",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Type", "Cache-Control"},
+	},
+	{
+		// The migration. `from` and `to` are **step** ids, which is what the
+		// rejections say: `from=disable-user` answers
+		// `Not a valid workflow resource: disable-user`. Two real step ids
+		// answer 204 and move nothing observable.
+		ID: "admin/workflows/migrate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: migrate a step",
+			Retrieved: "2026-09-06",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/workflows/migrate",
+		Fixture:   "workflow-migrate",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-probe-wf-mig/workflows/migrate",
+			Query: map[string]string{
+				"from": "{{workflow_step_id}}",
+				"to":   "{{workflow_step_id}}",
+			},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Type", "Cache-Control"},
+	},
+	{
+		// **Both parameters or neither**: `from` alone and `to` alone answer
+		// the same sentence as sending neither, so the check is on the pair.
+		// It is an `errorMessage` body where the id rejection beside it is an
+		// `error` one - two error shapes on one tag, which is the split
+		// AGENTS.md's first bullet is about.
+		ID: "admin/workflows/migrate-missing-parameters",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: migrate with neither step id",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "workflow-migrate",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/gloak-probe-wf-mig/workflows/migrate",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The activation. `{type}` is an **enum**, upper case, and the case
+		// below is what says so.
+		ID: "admin/workflows/activate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: activate one against a user",
+			Retrieved: "2026-09-06",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/workflows/{id}/activate/{type}/{resourceId}",
+		Fixture:   "workflow-activate",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/gloak-probe-wf-act/workflows/" +
+				"1f100000-0000-4000-8000-000000000006/activate/USERS/" +
+				"{{workflow_subject_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Type", "Cache-Control"},
+	},
+	{
+		// **`users` in lower case is `{"error":"HTTP 404 Not Found"}`**, on a
+		// workflow that exists and to a caller that may use the route. That
+		// makes an unconvertible **path** parameter another producer of that
+		// body, beside the wrong method, the switched-off resource and the
+		// malformed integer query parameter AGENTS.md lists - and the first
+		// one on the path rather than on the query or the verb.
+		ID: "admin/workflows/activate-lowercase-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: activate naming the type in lower case",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "workflow-activate",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/gloak-probe-wf-act/workflows/" +
+				"1f100000-0000-4000-8000-000000000006/activate/users/" +
+				"{{workflow_subject_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The deactivation, on a resource its own fixture has activated. It
+		// answers 204 whether or not anything was scheduled - measured before
+		// any activation had run - so the 204 is not evidence that the
+		// schedule existed. The scheduled read is what pins the effect.
+		ID: "admin/workflows/deactivate",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: deactivate one against a user",
+			Retrieved: "2026-09-06",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/workflows/{id}/deactivate/{type}/{resourceId}",
+		Fixture:   "workflow-deactivate",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/gloak-probe-wf-deact/workflows/" +
+				"1f100000-0000-4000-8000-000000000007/deactivate/USERS/" +
+				"{{workflow_subject_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Type", "Cache-Control"},
+	},
+	{
+		// The scheduled read, on a resource the fixture activated.
+		//
+		// It is the one read on this tag that is **JSON only**, and it is
+		// where a step gains `scheduled-at` and `status` - between its `after`
+		// and its `id`, which is the description's declaration order and not
+		// where a reader would put them. `scheduled-at` is epoch
+		// milliseconds and is masked; everything else is asserted.
+		ID: "admin/workflows/scheduled",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: the steps scheduled against one resource",
+			Retrieved: "2026-09-06",
+		},
+		Status:    Implemented,
+		Operation: "GET /admin/realms/{realm}/workflows/scheduled/{resource-id}",
+		Fixture:   "workflow-scheduled",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-wf-sched/workflows/scheduled/" +
+				"{{workflow_subject_id}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		Volatile:            []string{"*/steps/*/scheduled-at"},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **A resource id that names nothing is 200 and `[]`**, not a 404. So
+		// the route resolves nothing at all, which is the same shape
+		// `attack-detection`'s status read has and the reason neither of them
+		// grew a lookup "to be safe".
+		ID: "admin/workflows/scheduled-unknown-resource",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: the schedule of a resource that does not exist",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "workflow-scheduled",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/gloak-probe-wf-sched/workflows/scheduled/gloak-probe-wf-nobody",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **`Accept: application/yaml` on the one JSON-only route is 406**,
+		// with `{"error":"HTTP 406 Not Acceptable"}` - a **sixth** body in the
+		// fallback family, which AGENTS.md records as five. The two YAML reads
+		// answer `Accept: text/html` and `text/plain` with a YAML 200 rather
+		// than a 406, so it is not that this API refuses an unmatched Accept;
+		// it is this route.
+		ID: "admin/workflows/scheduled-yaml-not-acceptable",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: the scheduled read refuses application/yaml",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "workflow-scheduled",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/gloak-probe-wf-sched/workflows/scheduled/" +
+				"{{workflow_subject_id}}",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Accept":        "application/yaml",
+			},
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **A caller holding six admin roles and not `admin` is 403.**
+		// manage-realm, view-realm, manage-users, view-users, manage-clients
+		// and view-clients together, each of which opens some other chapter,
+		// and none of them opens this one. The sweep behind it went further:
+		// all twenty-one master-realm roles plus create-realm - `admin`'s
+		// entire composite closure - are 403 too, and `admin` itself is 200.
+		//
+		// So the guard is on the role by name rather than on what it confers,
+		// which is a shape no other chapter in this repository has. An
+		// implementation expanding composites would open the tag to a caller
+		// Keycloak refuses, and this case is what would catch it.
+		ID: "admin/workflows/list-forbidden",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: a caller holding six admin roles and not admin",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "workflow-forbidden-caller",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/workflows",
+			Headers: map[string]string{"Authorization": "Bearer {{caller_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
 }

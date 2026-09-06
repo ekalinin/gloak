@@ -1489,6 +1489,35 @@ var Fixtures = map[string]Fixture{
 	// **The null-policy rule needs both conditions**, so its two cases need a
 	// resource each: one that does not exist, and this one, which does.
 	"partial-import-null-user": partialImportUserFixture("gloak-probe-pi-null-there"),
+
+	// The Workflows tag. **A realm per case, and that is not caution.** A
+	// duplicate workflow name is a 400 rather than a 409, so `idempotentCreate`
+	// cannot cover a fixture the recorder runs twice, and the activation cases
+	// consume the very state the scheduled read asserts - an `activate` and a
+	// `deactivate` sharing one resource would leave whichever ran second
+	// deciding what the third case sees.
+	"workflow-empty":  realmFixture(workflowEmptyRealm),
+	"workflow-read":   workflowFixture(workflowReadRealm, "gloak-probe-wf-read", workflowReadID),
+	"workflow-create": realmFixture(workflowCreateRealm),
+	"workflow-duplicate": workflowFixture(workflowDuplicateRealm,
+		"gloak-probe-wf-taken", workflowDuplicateID),
+	"workflow-update": workflowFixture(workflowUpdateRealm, "gloak-probe-wf-update", workflowUpdateID),
+	"workflow-delete": workflowFixture(workflowDeleteRealm, "gloak-probe-wf-delete", workflowDeleteID),
+	"workflow-migrate": workflowFixture(workflowMigrateRealm,
+		"gloak-probe-wf-migrate", workflowMigrateID),
+	"workflow-activate": workflowSubjectFixture(workflowActivateRealm,
+		"gloak-probe-wf-activate", workflowActivateID, false),
+	"workflow-deactivate": workflowSubjectFixture(workflowDeactivateRealm,
+		"gloak-probe-wf-deactivate", workflowDeactivateID, true),
+	"workflow-scheduled": workflowSubjectFixture(workflowScheduledRealm,
+		"gloak-probe-wf-scheduled", workflowScheduledID, true),
+
+	// A caller holding six admin roles and not `admin`. It is the fixture that
+	// makes the Workflows guard a measurement rather than a claim: every one of
+	// these opens some other chapter, and none of them opens this one.
+	"workflow-forbidden-caller": callerFixture("gloak-probe-caller-wf",
+		"manage-realm", "view-realm", "manage-users", "view-users",
+		"manage-clients", "view-clients"),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -7780,5 +7809,150 @@ func partialImportUserFixture(username string) Fixture {
 				},
 			},
 		},
+	}
+}
+
+// The Workflows tag's realms and workflow ids.
+//
+// **The ids are the caller's, not the server's**, which is measured:
+// `POST /workflows` honours an `id` in the body and puts it in `Location`
+// verbatim, and it need not even be a UUID. That is what lets these cases
+// assert a whole `Location` and a whole body with nothing masked, and it is the
+// device the client-scope and identity-provider-mapper fixtures already use for
+// the same reason.
+//
+// A **step's** id is not the caller's: the same create mints its own whatever
+// the body says. That is why workflowFixture reads the listing back as JSON and
+// captures it - ReplaceCaptured then covers it on both sides, and the YAML
+// goldens hold `{{workflow_step_id}}` where a mask could not reach.
+const (
+	workflowEmptyRealm      = "gloak-probe-wf-empty"
+	workflowReadRealm       = "gloak-probe-wf-read"
+	workflowCreateRealm     = "gloak-probe-wf-create"
+	workflowDuplicateRealm  = "gloak-probe-wf-dup"
+	workflowUpdateRealm     = "gloak-probe-wf-upd"
+	workflowDeleteRealm     = "gloak-probe-wf-del"
+	workflowMigrateRealm    = "gloak-probe-wf-mig"
+	workflowActivateRealm   = "gloak-probe-wf-act"
+	workflowDeactivateRealm = "gloak-probe-wf-deact"
+	workflowScheduledRealm  = "gloak-probe-wf-sched"
+
+	workflowReadID       = "1f100000-0000-4000-8000-000000000001"
+	workflowDuplicateID  = "1f100000-0000-4000-8000-000000000002"
+	workflowUpdateID     = "1f100000-0000-4000-8000-000000000003"
+	workflowDeleteID     = "1f100000-0000-4000-8000-000000000004"
+	workflowMigrateID    = "1f100000-0000-4000-8000-000000000005"
+	workflowActivateID   = "1f100000-0000-4000-8000-000000000006"
+	workflowDeactivateID = "1f100000-0000-4000-8000-000000000007"
+	workflowScheduledID  = "1f100000-0000-4000-8000-000000000008"
+)
+
+// workflowFixture creates a realm and one workflow in it, then reads the
+// listing back as JSON to capture the step's server-minted id.
+//
+// **The create's body is YAML**, which is the media type this tag consumes and
+// the one that decides the 201's `X-Frame-Options`. The capture step asks for
+// JSON instead, because Capture walks a JSON body and the value it wants is the
+// same either way - the two representations are the same object.
+func workflowFixture(realm, name, id string) Fixture {
+	f := realmFixture(realm)
+	f.Steps = append(f.Steps, workflowCreateStep(realm, name, id),
+		workflowCaptureStepIDStep(realm))
+	return f
+}
+
+// workflowSubjectFixture is workflowFixture with a user for the activation
+// routes to name, and optionally with the activation already done.
+//
+// **The user is created before the workflow, and the order is load-bearing.**
+// The workflow's `on` is `user-created`, and on a live 26.7.1 that event fires
+// when a user is added to the realm and schedules every step by itself. A
+// fixture that created the workflow first would record a schedule Gloak has no
+// event system to produce, and the case would fail for a reason that is not
+// about the route it is testing.
+//
+// **The user's id is captured rather than named, where the workflow's is
+// named.** `POST /users` ignores an `id` in the body and mints its own -
+// measured 2026-09-06, which is the third endpoint AGENTS.md's "the body's id
+// wins on two and loses on a third" bullet is about - so one create in this
+// fixture may choose an id and the other may not, and the difference is one
+// line apart.
+func workflowSubjectFixture(realm, name, id string, activate bool) Fixture {
+	f := realmFixture(realm)
+	f.Steps = append(f.Steps, Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/" + realm + "/users",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"username":"gloak-probe-wf-subject","enabled":true}`),
+		},
+		CaptureHeader: map[string]string{"workflow_subject_id": "Location"},
+		ExpectStatus:  idempotentCreate,
+	})
+	f.Steps = append(f.Steps, workflowCreateStep(realm, name, id),
+		workflowCaptureStepIDStep(realm))
+	if activate {
+		f.Steps = append(f.Steps, Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path: "/admin/realms/" + realm + "/workflows/" + id +
+					"/activate/USERS/{{workflow_subject_id}}",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+		})
+	}
+	return f
+}
+
+// workflowCreateStep posts one workflow as `application/yaml`.
+//
+// The body is the smallest one that is a 201. Every part of it is measured
+// necessary: a workflow with no `name` is 400, one with no `steps` is 400, a
+// `uses` outside the fifteen step providers is 400 and an `after` that is not
+// an ISO-8601 duration is 400. Only `on` is optional.
+//
+// It accepts a 400 as well as a 201 because the recorder shares one container
+// and a fixture named by more than one case runs its steps again - and this
+// family's duplicate is a **400** where every other create in this file answers
+// 409. The workflow the first run made is still there with the id the body
+// named, which is what makes the repeat harmless.
+func workflowCreateStep(realm, name, id string) Step {
+	return Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/" + realm + "/workflows",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/yaml",
+			},
+			Body: []byte("id: " + id + "\nname: " + name + "\non: user-created\n" +
+				"steps:\n  - uses: disable-user\n    after: P5D\n"),
+		},
+		ExpectStatus: workflowDuplicateNameIsA400,
+	}
+}
+
+// workflowDuplicateNameIsA400 is idempotentCreate for the one family whose
+// repeat is not a conflict. See workflowCreateStep.
+var workflowDuplicateNameIsA400 = []int{http.StatusCreated, http.StatusBadRequest}
+
+// workflowCaptureStepIDStep reads the listing as JSON purely to capture the
+// step id, which nothing else can reach: `GET /workflows` takes no `includeId`,
+// so a listing golden always carries one, and a YAML body is outside every mask
+// this harness has - Volatile walks JSON.
+func workflowCaptureStepIDStep(realm string) Step {
+	return Step{
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/admin/realms/" + realm + "/workflows",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Accept":        "application/json",
+			},
+		},
+		Capture: map[string]string{"workflow_step_id": "0/steps/0/id"},
 	}
 }
