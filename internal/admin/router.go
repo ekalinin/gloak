@@ -1130,19 +1130,35 @@ func (h *handler) register(mux *http.ServeMux) {
 		h.guardRejecting("manage-clients", deleteRotatedSecretRejection, h.deleteRotatedSecret))
 	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/service-account-user", h.guard("view-clients", h.readServiceAccountUser))
 
-	// The Client Attribute Certificate tag. Four of its seven operations; see
-	// F161 and internal/conformance's RefuseNonTextBody for why download and
-	// generate-and-download are not here, and the plan for why upload is not.
+	// The Client Attribute Certificate tag, all six of its operations under
+	// /clients; the seventh is the identity-provider upload below.
 	//
 	// The guards are measured one role at a time, with POST /clients alongside
-	// as a control known to differ: the read takes view-clients **or**
-	// manage-clients, and the two writes take manage-clients alone.
+	// as a control known to differ:
+	//
+	//	                        view-clients  manage-clients  view/manage-realm  query-clients
+	//	GET .../certificates/{attr}   200          200              403               403
+	//	POST .../generate             403          200              403               403
+	//	POST .../download             200          200              403               403
+	//	POST .../generate-and-download 403         200              403               403
+	//	POST .../upload               403          200              403               403
+	//	POST /clients (the control)   403          201              403               403
+	//
+	// **`download` is the first POST in this API measured opened by a read
+	// role**, and its own sibling is not. The verb does not decide; whether the
+	// operation writes does, and download writes nothing.
 	mux.HandleFunc("GET /admin/realms/{realm}/clients/{clientUUID}/certificates/{attr}",
 		h.guardAny(clientRolesReadRoles, h.readClientCertificate))
 	mux.HandleFunc("POST /admin/realms/{realm}/clients/{clientUUID}/certificates/{attr}/generate",
 		h.guard("manage-clients", h.generateClientCertificate))
 	mux.HandleFunc("POST /admin/realms/{realm}/clients/{clientUUID}/certificates/{attr}/upload-certificate",
 		h.guard("manage-clients", h.uploadClientCertificate))
+	mux.HandleFunc("POST /admin/realms/{realm}/clients/{clientUUID}/certificates/{attr}/download",
+		h.guardAny(clientRolesReadRoles, h.downloadClientKeystore))
+	mux.HandleFunc("POST /admin/realms/{realm}/clients/{clientUUID}/certificates/{attr}/generate-and-download",
+		h.guard("manage-clients", h.generateAndDownloadClientKeystore))
+	mux.HandleFunc("POST /admin/realms/{realm}/clients/{clientUUID}/certificates/{attr}/upload",
+		h.guard("manage-clients", h.uploadClientKeystore))
 
 	// The cluster-node writes. Both take manage-clients, and both resolve the
 	// client **before** checking it - which is why they are not h.guard, the

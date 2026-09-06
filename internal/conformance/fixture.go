@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -1604,6 +1605,21 @@ var Fixtures = map[string]Fixture{
 	// bootstrap administrator cannot satisfy. Both were reached while this cut
 	// was being measured and both cost a container. Master is never written.
 	"user-profile-write-realm": realmFixture(userProfileWriteRealm),
+
+	// Two clients of the certificate chapter's own, for the three keystore
+	// operations, and the second is not a habit.
+	//
+	// The recorder replays **one shared container in catalogue order**, so a
+	// case that writes and a case that needs the unwritten state cannot share a
+	// client: `upload` stores a pair, and `download`'s 404 for a client with no
+	// key pair would then never be reached however the two are ordered, because
+	// the ordering is a fact about the file rather than about either case. The
+	// verifier builds fresh state per case and would not have noticed either
+	// way, which is what makes this the recorder's problem alone.
+	"admin-token-keystore-client": certificateClientFixture(
+		probeKeystoreClientID, "gloak-probe-keystore"),
+	"admin-token-keystore-empty-client": certificateClientFixture(
+		probeKeystoreEmptyClientID, "gloak-probe-keystore-empty"),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -8316,5 +8332,115 @@ func emaillessUserFixture(username string) Fixture {
 				Capture: map[string]string{"user_id": "0/id"},
 			},
 		},
+	}
+}
+
+// The certificate chapter's keystore operations: `download`,
+// `generate-and-download` and `upload`. Appended at the end of this file for
+// F168's reason - an anchor defined by what is currently last is not an anchor,
+// and the end of a file is.
+//
+// The chapter's third and fourth fixed client ids. See the fixtures' own
+// comment for why the keystore cases need two rather than one.
+const (
+	probeKeystoreClientID      = "ce27f000-0000-4000-8000-000000000003"
+	probeKeystoreEmptyClientID = "ce27f000-0000-4000-8000-000000000004"
+)
+
+// The keystore fixtures are two files a live Keycloak 26.7.1 produced on
+// 2026-09-06, kept verbatim:
+//
+//	POST /admin/realms/master/clients/{uuid}/certificates/jwt.credential/download
+//	{"format":"JKS"|"PKCS12","keyAlias":"gloak",
+//	 "keyPassword":"gloakkey","storePassword":"gloakstore"}
+//
+// for a client whose pair had just been generated. **They are constants so that
+// the responses are**: `POST .../upload` answers the key and certificate it
+// found inside, so a fixed input makes a byte-exact golden with no mask at all -
+// the same bargain the three certificate uploads already make, and the reason
+// F161's "three take multipart/form-data" reads as a difficulty when those three
+// are the most assertable operations in the tag.
+//
+// The private key inside them went with the container that made it and protects
+// nothing.
+//
+// The same two files are under internal/keystore/testdata, where that package's
+// own tests hold its reader to them. They are copied rather than shared because
+// a package reaching into another package's testdata is a build-tag accident
+// waiting to happen, and because the two copies answer different questions:
+// there, that a reader reads Keycloak's bytes; here, that the endpoint answers
+// what a golden says it does.
+//
+// **The PKCS12 is the one that matters most.** It is indefinite-length BER with
+// its content octets in a constructed OCTET STRING, which is what BouncyCastle
+// writes and what `encoding/asn1` refuses outright; without a case sending it,
+// internal/keystore's BER normaliser is exercised by that package's own tests
+// and by nothing the harness runs.
+//
+//go:embed testdata/keystore/keycloak-26.7.1.jks
+var probeKeystoreJKS []byte
+
+//go:embed testdata/keystore/keycloak-26.7.1.p12
+var probeKeystorePKCS12 []byte
+
+// The passwords and alias the two fixture keystores were built with. They are
+// three different values on purpose: the two formats protect a key with
+// different passwords - JKS with the key password and PKCS12 with the store
+// password, measured - and a fixture using one value for all three could not
+// tell a handler that had them the wrong way round.
+const (
+	probeKeystoreAlias         = "gloak"
+	probeKeystoreKeyPassword   = "gloakkey"
+	probeKeystoreStorePassword = "gloakstore"
+)
+
+// keystoreUploadRequest builds the multipart request `POST .../upload` takes.
+//
+// It is certificateUploadRequest with three more fields and a **binary** file,
+// which is the only difference the harness needed: Request.Body has been []byte
+// since the field existed, so a keystore travels through it exactly as a PEM
+// block does. The parts are written by hand for certificateUploadRequest's
+// reason - the framing is part of what is sent, and these operations echo their
+// input.
+func keystoreUploadRequest(path string, fields map[string]string, file []byte) Request {
+	var b bytes.Buffer
+	part := func(disposition, value string) {
+		b.WriteString("--" + certificateUploadBoundary + "\r\n")
+		b.WriteString("Content-Disposition: form-data; " + disposition + "\r\n\r\n")
+		b.WriteString(value + "\r\n")
+	}
+	// The order is fixed rather than a map walk, because a map walk in Go is
+	// randomised and these bytes are the request.
+	for _, name := range []string{"keystoreFormat", "keyAlias", "keyPassword", "storePassword"} {
+		if value, ok := fields[name]; ok {
+			part(`name="`+name+`"`, value)
+		}
+	}
+	if file != nil {
+		b.WriteString("--" + certificateUploadBoundary + "\r\n")
+		b.WriteString(`Content-Disposition: form-data; name="file"; filename="keystore.bin"` + "\r\n\r\n")
+		b.Write(file)
+		b.WriteString("\r\n")
+	}
+	b.WriteString("--" + certificateUploadBoundary + "--\r\n")
+	return Request{
+		Method: http.MethodPost,
+		Path:   path,
+		Headers: map[string]string{
+			"Authorization": "Bearer {{access_token}}",
+			"Content-Type":  "multipart/form-data; boundary=" + certificateUploadBoundary,
+		},
+		Body: b.Bytes(),
+	}
+}
+
+// keystoreUploadFields is the four-field set every upload case starts from,
+// copied so a case can drop or change one without touching the others.
+func keystoreUploadFields(format string) map[string]string {
+	return map[string]string{
+		"keystoreFormat": format,
+		"keyAlias":       probeKeystoreAlias,
+		"keyPassword":    probeKeystoreKeyPassword,
+		"storePassword":  probeKeystoreStorePassword,
 	}
 }
