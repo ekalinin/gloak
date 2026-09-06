@@ -139,9 +139,15 @@ func TestMasterOmitsTheOrganizationFlows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListFlows: %v", err)
 	}
-	if len(stored) != 17 {
-		t.Errorf("master holds %d flows, want 17 (7 top-level, 10 sub) - "+
-			"a created realm holds 20 and the three it adds are the "+
+	// **18, not 17, and the extra one is `saml ecp`.** These counts came from
+	// GET .../flows, which serves seven top-level flows and hides that one; the
+	// partial-export body enumerates all of them and says master has eighteen
+	// and a created realm twenty-one, both marking `saml ecp` topLevel. The
+	// count moved because the bootstrap gained the flow, not because the
+	// assertion was relaxed. See samlECPFlowAlias.
+	if len(stored) != 18 {
+		t.Errorf("master holds %d flows, want 18 (8 top-level, 10 sub) - "+
+			"a created realm holds 21 and the three it adds are the "+
 			"organization family", len(stored))
 	}
 	for _, f := range stored {
@@ -162,8 +168,9 @@ func TestMasterOmitsTheOrganizationFlows(t *testing.T) {
 		}
 		total += len(rows)
 	}
-	if total != 48 {
-		t.Errorf("master holds %d execution rows, want 48", total)
+	if total != 49 {
+		t.Errorf("master holds %d execution rows, want 49 - `saml ecp` "+
+			"contributes the one row the export measured it carrying", total)
 	}
 	configs, err := s.AuthenticationFlows().ListConfigs(ctx, realm.ID)
 	if err != nil {
@@ -213,8 +220,8 @@ func TestCreatedRealmSeedsTheOrganizationFlows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListFlows: %v", err)
 	}
-	if len(stored) != 20 {
-		t.Errorf("a created realm holds %d flows, want 20 (7 top-level, 13 sub)", len(stored))
+	if len(stored) != 21 {
+		t.Errorf("a created realm holds %d flows, want 21 (8 top-level, 13 sub)", len(stored))
 	}
 	total := 0
 	for _, f := range stored {
@@ -224,8 +231,8 @@ func TestCreatedRealmSeedsTheOrganizationFlows(t *testing.T) {
 		}
 		total += len(rows)
 	}
-	if total != 55 {
-		t.Errorf("a created realm holds %d execution rows, want 55", total)
+	if total != 56 {
+		t.Errorf("a created realm holds %d execution rows, want 56", total)
 	}
 	configs, err := s.AuthenticationFlows().ListConfigs(ctx, realm.ID)
 	if err != nil {

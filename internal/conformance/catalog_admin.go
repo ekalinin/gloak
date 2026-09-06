@@ -18889,4 +18889,549 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 	},
+	// partial-export and partialImport, the last two operations of
+	// `Realms Admin`. Measured 2026-09-06; see
+	// docs/superpowers/plans/2026-09-06-partial-export-import.md.
+	//
+	// **The export is GET /admin/realms/{realm} with sixteen keys spliced into
+	// it**, and every key the two bodies share holds a byte-identical value -
+	// computed over the parsed bodies rather than asserted. Twelve of those
+	// keys are unconditional and the other four follow the two booleans.
+	{
+		// The no-parameter body: 118 keys, and the twelve export-only blocks.
+		//
+		// PristineRealm because it enumerates the whole realm - the fifteen
+		// client scopes, the eighteen authentication flows, the fifteen
+		// components - so anything a fixture had created first would be in it.
+		//
+		// **The response carries neither the charset nor a Cache-Control**,
+		// which is what AssertAbsentHeaders pins. AGENTS.md records this route
+		// as one of the charset rule's three counterexamples; the absent
+		// Cache-Control is measured here for the first time, against
+		// GET /admin/realms/master as the control, which carries both.
+		//
+		// The two Unordered masks are not this cut's findings: a client scope's
+		// protocol mappers came back differently on two container starts, and
+		// the component config's mapper-type list is declared unordered by
+		// admin/component/list already. A realm's `attributes` cannot be placed
+		// at all - four of its keys share bucket 0 - which is the retreat
+		// admin/realms/read makes for the same reason.
+		ID: "admin/realms-admin/partial-export",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: partial export of a realm",
+			Retrieved: "2026-09-06",
+		},
+		Status:        Implemented,
+		Operation:     "POST /admin/realms/{realm}/partial-export",
+		PristineRealm: true,
+		Fixture:       "admin-token",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/partial-export",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+		Volatile: []string{
+			"id",
+			"defaultRole/id", "defaultRole/containerId",
+			"clientScopes/*/id", "clientScopes/*/protocolMappers/*/id",
+			"components/*/*/id",
+			"authenticationFlows/*/id",
+			"authenticatorConfig/*/id",
+		},
+		Unordered: []string{
+			"clientScopes", "clientScopes/*/protocolMappers",
+			"components/*", "components/*/*/config/allowed-protocol-mapper-types",
+		},
+		UnorderedKeys: []string{"attributes"},
+	},
+	{
+		// exportGroupsAndRoles adds exactly `roles` and `groups`, at indexes 49
+		// and 50 of the 122-key body - between maxSecondaryAuthFailures and
+		// defaultRole, which is not where a key appended to a representation
+		// would land.
+		//
+		// **roles has no `client` half here**, and that is why this case sits
+		// beside the exportClients one: the half needs *both* booleans, so a
+		// body sending one flag pins nothing about it. See
+		// TestPartialExportParametersAddTheKeysTheyWereMeasuredAdding.
+		ID: "admin/realms-admin/partial-export-groups-and-roles",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: partial export with exportGroupsAndRoles",
+			Retrieved: "2026-09-06",
+		},
+		Status:        Implemented,
+		PristineRealm: true,
+		Fixture:       "admin-token",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/partial-export",
+			Query:   map[string]string{"exportGroupsAndRoles": "true"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+		Volatile: []string{
+			"id",
+			"defaultRole/id", "defaultRole/containerId",
+			"clientScopes/*/id", "clientScopes/*/protocolMappers/*/id",
+			"components/*/*/id",
+			"authenticationFlows/*/id",
+			"authenticatorConfig/*/id",
+			"roles/realm/*/id", "roles/realm/*/containerId",
+		},
+		Unordered: []string{
+			"clientScopes", "clientScopes/*/protocolMappers",
+			"components/*", "components/*/*/config/allowed-protocol-mapper-types",
+			"roles/realm",
+			"roles/realm/*/composites/realm",
+			"roles/realm/*/composites/client/*",
+		},
+		UnorderedKeys: []string{"attributes"},
+	},
+	{
+		// exportClients, and it is **Recorded rather than Implemented**.
+		//
+		// The reason is not this operation's. admin/clients/list-all is Recorded
+		// for exactly the same three differences, which are Gloak's bootstrap
+		// rather than its handlers, and this body carries the same six clients.
+		// Serving it as Implemented would mean either changing the bootstrap
+		// under a case that already declares the gap, or masking three real
+		// divergences - and a mask that hides a difference is what AGENTS.md's
+		// ratchet exists to stop.
+		//
+		// It is worth recording anyway, because the golden is where the third
+		// key this flag adds could become visible: `users` is present only when
+		// the realm holds a service account user, so master cannot show it and
+		// a reader has to be told that rather than infer it from an absence.
+		ID: "admin/realms-admin/partial-export-clients",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: partial export with exportClients",
+			Retrieved: "2026-09-06",
+		},
+		Status: Recorded,
+		Reason: "the body carries the six bootstrapped clients, and master-realm has no name, " +
+			"neither client-scope list and account-console's audience resolve serves a populated " +
+			"config - the three differences admin/clients/list-all is Recorded for",
+		PristineRealm: true,
+		Fixture:       "admin-token",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/partial-export",
+			Query:   map[string]string{"exportClients": "true"},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **manage-realm alone reaches the no-parameter body**, which is the
+		// base of the conjunction.
+		ID: "admin/realms-admin/partial-export-manage-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: partial export to a manage-realm caller",
+			Retrieved: "2026-09-06",
+		},
+		Status:        Implemented,
+		PristineRealm: true,
+		Fixture:       "partial-export-manage-realm",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/partial-export",
+			Headers: map[string]string{"Authorization": "Bearer {{caller_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+		Volatile: []string{
+			"id",
+			"defaultRole/id", "defaultRole/containerId",
+			"clientScopes/*/id", "clientScopes/*/protocolMappers/*/id",
+			"components/*/*/id",
+			"authenticationFlows/*/id",
+			"authenticatorConfig/*/id",
+		},
+		Unordered: []string{
+			"clientScopes", "clientScopes/*/protocolMappers",
+			"components/*", "components/*/*/config/allowed-protocol-mapper-types",
+		},
+		UnorderedKeys: []string{"attributes"},
+	},
+	{
+		// **and the same caller is 403 the moment a parameter is set.** The
+		// pair is what puts the conjunction in the goldens rather than only in
+		// a package test.
+		ID: "admin/realms-admin/partial-export-manage-realm-with-clients",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: partial export with exportClients, manage-realm alone",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "partial-export-manage-realm",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/partial-export",
+			Query:   map[string]string{"exportClients": "true"},
+			Headers: map[string]string{"Authorization": "Bearer {{caller_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **view-realm is refused outright**, which is the surprise: it opens
+		// the realm read, the key set, the default-groups listing and both
+		// client-policy reads, and it opens nothing here.
+		ID: "admin/realms-admin/partial-export-view-realm-refused",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: partial export to a view-realm caller",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "partial-export-view-realm",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/partial-export",
+			Headers: map[string]string{"Authorization": "Bearer {{caller_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The realm is resolved before the caller: one holding no admin role at
+		// all gets the 404 here and the 403 on a realm that exists.
+		ID: "admin/realms-admin/partial-export-unknown-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: partial export, unknown realm",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "no-role-caller",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/gloak-no-such-realm/partial-export",
+			Headers: map[string]string{"Authorization": "Bearer {{caller_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// partialImport's success, and **it carries the charset the export
+		// beside it does not** - two operations on one tag, opposite sides of
+		// the Admin API's rule.
+		//
+		// The answer is a per-resource result rather than a status: three
+		// counts and an array whose rows are
+		// `action, resourceType, resourceName, id`.
+		ID: "admin/realms-admin/partial-import-added",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: partial import, a resource that does not exist",
+			Retrieved: "2026-09-06",
+		},
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/partialImport",
+		Fixture:   "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/partialImport",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"ifResourceExists":"FAIL","users":[{"username":"gloak-probe-pi-added"}]}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+		Volatile:            []string{"results/*/id"},
+	},
+	{
+		// SKIP on a resource that exists: **the id is the existing resource's**,
+		// which is what separates it from the OVERWRITE below.
+		ID: "admin/realms-admin/partial-import-skipped",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: partial import, SKIP",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "partial-import-existing-user",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/partialImport",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"ifResourceExists":"SKIP","users":[{"username":"gloak-probe-pi-skip"}]}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+		Volatile:            []string{"results/*/id"},
+	},
+	{
+		// OVERWRITE on a resource that exists. **It mints a new id**, so it is a
+		// delete and a recreate rather than an update - measured on a user, a
+		// group and a client alike. A golden cannot say so on its own, which is
+		// why TestPartialImportPolicyOnAnExistingResource compares the two ids
+		// directly and this case only pins the counts and the action.
+		ID: "admin/realms-admin/partial-import-overwritten",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: partial import, OVERWRITE",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "partial-import-doomed-user",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/partialImport",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"ifResourceExists":"OVERWRITE","users":[{"username":"gloak-probe-pi-overwrite"}]}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+		Volatile:            []string{"results/*/id"},
+	},
+	{
+		// FAIL, which is also what a body naming no policy at all does. The
+		// message interpolates the username and **ends in a full stop**, where
+		// the group's and the client's do not - the punctuation split AGENTS.md
+		// tracks on the not-found list, met on a second verb.
+		ID: "admin/realms-admin/partial-import-conflict",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: partial import, FAIL on a resource that exists",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "partial-import-conflict-user",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/partialImport",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"ifResourceExists":"FAIL","users":[{"username":"gloak-probe-pi-conflict"}]}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// An unknown policy value. **500, not 400**, with the description
+		// fourteen other decoders in this package send with a 400.
+		ID: "admin/realms-admin/partial-import-unknown-policy",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: partial import, an unknown ifResourceExists",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/partialImport",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"ifResourceExists":"BOGUS","users":[{"username":"gloak-probe-pi-bogus"}]}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// An explicit null is **not** an unknown string and **not** an absent
+		// field, and it is a two-condition rule: this is the half where the
+		// resource does not exist, and it is a plain 200 `ADDED`, because the
+		// policy is never consulted.
+		//
+		// The first hand probe of this cell sent null only against a resource
+		// that already existed, wrote the 500 down as the whole answer, and was
+		// refuted by this golden. The pair is recorded rather than the
+		// interesting half alone, because a rule with two conditions needs both
+		// of them supplied to be pinned.
+		ID: "admin/realms-admin/partial-import-null-policy-new",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: partial import, ifResourceExists null on a new resource",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/partialImport",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"ifResourceExists":null,"users":[{"username":"gloak-probe-pi-null"}]}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+		Volatile:            []string{"results/*/id"},
+	},
+	{
+		// The other half: the same body once the resource exists. It binds to a
+		// Java null and is then dereferenced, so the description is the generic
+		// one rather than the parse one - and it is a **different answer from
+		// an absent field**, which is the 409 one case above.
+		//
+		// A Go *string cannot tell absent from null, which is why the handler
+		// reads the raw bytes for this field alone.
+		ID: "admin/realms-admin/partial-import-null-policy-existing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: partial import, ifResourceExists null on a resource that exists",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "partial-import-null-user",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/partialImport",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"ifResourceExists":null,"users":[{"username":"gloak-probe-pi-null-there"}]}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// A JSON **syntax** error, which answers `invalid_request` where the
+		// binding failure below answers `unknown_error`. One route, two codes,
+		// one description - and the pair is what F163 asked for.
+		ID: "admin/realms-admin/partial-import-syntax-error",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: partial import, a malformed body",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/partialImport",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The binding half: a body of the **right shape carrying a value of the
+		// wrong type**, which is the request F163 says would settle whether
+		// `Cannot parse the JSON` is about syntax or about binding. It answers
+		// `unknown_error` where the syntax error above answers
+		// `invalid_request`.
+		ID: "admin/realms-admin/partial-import-wrong-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: partial import, a value of the wrong type",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/partialImport",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"ifResourceExists":"SKIP","users":"nope"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **A group with no `path` is a 500**, on every policy value, and the
+		// realm keeps nothing. Keycloak's GroupsPartialImport creates the group
+		// and then looks it up by a path the representation never carried;
+		// findGroupModel returns null and getModelId dereferences it. Tidying
+		// that up here would be a divergence, so the defect is reproduced.
+		ID: "admin/realms-admin/partial-import-group-without-path",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: partial import, a group carrying no path",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/partialImport",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"ifResourceExists":"SKIP","groups":[{"name":"gloak-probe-pi-nopath"}]}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The import's guard does **not** follow its body: manage-realm alone
+		// answered 200 for a user, a client and a group, so this refusal is
+		// about the caller and nothing else.
+		ID: "admin/realms-admin/partial-import-view-realm-refused",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: partial import to a view-realm caller",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "partial-export-view-realm",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/partialImport",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{caller_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"ifResourceExists":"SKIP"}`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// The realm precedes the caller and the body alike: a weak caller
+		// sending a malformed body against a realm that does not exist gets the
+		// 404, not the 403 and not the 500.
+		ID: "admin/realms-admin/partial-import-unknown-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: partial import, unknown realm",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "no-role-caller",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/gloak-no-such-realm/partialImport",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{caller_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{`),
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
 }

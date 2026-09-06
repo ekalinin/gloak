@@ -1466,6 +1466,29 @@ var Fixtures = map[string]Fixture{
 	// docs/superpowers/handover/protocol-remainder.md.
 	"introspect-in-audience": introspectInAudienceFixture(),
 	"frontchannel-logout":    frontchannelLogoutFixture(),
+
+	// partial-export and partialImport.
+	//
+	// **The export's guard is a conjunction the query switches on**, so it
+	// needs two callers rather than one: manage-realm alone reaches the
+	// no-parameter body and neither parameterised one, and view-realm - which
+	// opens every other realm-shaped read in this API - reaches none of them.
+	// Measured 2026-09-06, one role at a time over all 22 realm-management
+	// roles and again with manage-realm plus each of the other 21.
+	"partial-export-manage-realm": callerFixture("gloak-probe-pe-manage", "manage-realm"),
+	"partial-export-view-realm":   callerFixture("gloak-probe-pe-view", "view-realm"),
+
+	// The import's own state. **A SKIP and an OVERWRITE need the resource to
+	// exist already**, and the import itself is what creates it, so the fixture
+	// runs one - which also makes the fixture idempotent across a re-record,
+	// because a repeat under SKIP answers 200 rather than the 409 a POST /users
+	// repeat would.
+	"partial-import-existing-user": partialImportUserFixture("gloak-probe-pi-skip"),
+	"partial-import-doomed-user":   partialImportUserFixture("gloak-probe-pi-overwrite"),
+	"partial-import-conflict-user": partialImportUserFixture("gloak-probe-pi-conflict"),
+	// **The null-policy rule needs both conditions**, so its two cases need a
+	// resource each: one that does not exist, and this one, which does.
+	"partial-import-null-user": partialImportUserFixture("gloak-probe-pi-null-there"),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -7728,4 +7751,34 @@ func frontchannelLogoutFixture() Fixture {
 		},
 		Capture: map[string]string{"id_token": "id_token"},
 	})}
+}
+
+// partialImportUserFixture imports one user through partialImport itself,
+// which is what the SKIP, OVERWRITE and FAIL cases need in front of them.
+//
+// **It imports rather than creating through POST /users**, for two reasons that
+// are both about the recorder running the whole catalogue against one
+// container. A repeated POST /users answers 409 and the fixture would have to
+// tolerate it; a repeated import under SKIP answers 200 and changes nothing, so
+// the fixture is idempotent by construction. And the resource the policy cases
+// address is then the one the import made, rather than one made another way
+// that happens to have the same username.
+func partialImportUserFixture(username string) Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method: http.MethodPost,
+					Path:   "/admin/realms/master/partialImport",
+					Headers: map[string]string{
+						"Authorization": "Bearer {{access_token}}",
+						"Content-Type":  "application/json",
+					},
+					Body: []byte(`{"ifResourceExists":"SKIP","users":[{"username":"` + username + `"}]}`),
+				},
+			},
+		},
+	}
 }

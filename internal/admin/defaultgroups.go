@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -148,14 +149,16 @@ func groupByPathSegments(path string) []string {
 // It walks rather than matching a stored path because a group's path is
 // derived: renaming a parent moves every descendant's path, so there is nothing
 // to match against. See groupPath.
-func (h *handler) groupAtPath(r *http.Request, realmID string, segments []string) (*model.Group, error) {
+// It takes a context rather than a request because partialImport resolves a
+// group by path too, and has no request to hand at that point.
+func (h *handler) groupAtPath(ctx context.Context, realmID string, segments []string) (*model.Group, error) {
 	if len(segments) == 0 {
 		return nil, store.ErrNotFound
 	}
 	parentID := ""
 	var found *model.Group
 	for _, name := range segments {
-		siblings, err := h.store.Groups().ListChildren(r.Context(), realmID, parentID)
+		siblings, err := h.store.Groups().ListChildren(ctx, realmID, parentID)
 		if err != nil {
 			return nil, err
 		}
