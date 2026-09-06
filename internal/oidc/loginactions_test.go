@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -894,6 +895,55 @@ func TestResponseModeFragmentSurvivesTheLogin(t *testing.T) {
 	loc := w.Header().Get("Location")
 	if !strings.HasPrefix(loc, probeRedirectURI+"#") {
 		t.Fatalf("response_mode=fragment: want the code in the fragment, got %q", loc)
+	}
+}
+
+// TestFormPostScriptFollowsTheSuccessfulLoginAlone is the other two cells of
+// the 2x2 measured on 2026-09-06. The rejections are in authorize_test.go; here
+// are the two successes, on one browser so that nothing but the endpoint moves
+// between them.
+//
+//	POST /login-actions/authenticate  success      SCRIPT
+//	GET  /auth                        SSO success  no SCRIPT
+//
+// Both answer 200 with the identical four inputs, so the script is the only
+// difference and a body assertion that stopped at the inputs would not see it.
+// The URL it scrubs to is **not** the action the form was posted to: it keeps
+// client_id, tab_id and client_data and drops the session_code and the
+// execution.
+func TestFormPostScriptFollowsTheSuccessfulLoginAlone(t *testing.T) {
+	b := newBrowser(t)
+	target, params := actionParams(t, b.login(map[string]string{"response_mode": "form_post"}))
+	w := b.do(http.MethodPost, target, credentials("admin", "admin"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("credential POST under form_post: status = %d, want 200", w.Code)
+	}
+	if got := formPostInputNames(w.Body.String()); !slices.Equal(got,
+		[]string{"code", "iss", "state", "session_state"}) {
+		t.Errorf("inputs = %v, want [code iss state session_state]", got)
+	}
+	wantScript := `<SCRIPT> if (typeof history.replaceState === 'function') {  ` +
+		`history.replaceState({}, "some title", ` +
+		`"http://localhost:8080/realms/master/login-actions/authenticate?client_id=probe` +
+		`&tab_id=` + url.QueryEscape(params.Get("tab_id")) +
+		`&client_data=` + url.QueryEscape(params.Get("client_data")) + `"); }</SCRIPT>`
+	if !strings.Contains(w.Body.String(), wantScript) {
+		t.Errorf("the replaceState script is not the measured one.\nwant %s\n got %s",
+			wantScript, w.Body.String())
+	}
+
+	// The same browser, now signed in, taking the SSO short circuit at /auth.
+	sso := b.do(http.MethodGet, "/realms/master/protocol/openid-connect/auth?"+
+		baseQuery(map[string]string{"response_mode": "form_post", "state": "sso999"}), nil)
+	if sso.Code != http.StatusOK {
+		t.Fatalf("SSO short circuit under form_post: status = %d, want 200", sso.Code)
+	}
+	if got := formPostInputNames(sso.Body.String()); !slices.Equal(got,
+		[]string{"code", "iss", "state", "session_state"}) {
+		t.Fatalf("SSO inputs = %v, want the same four", got)
+	}
+	if strings.Contains(sso.Body.String(), "<SCRIPT>") {
+		t.Errorf("GET /auth's form_post success carries a <SCRIPT> and the measured one does not")
 	}
 }
 

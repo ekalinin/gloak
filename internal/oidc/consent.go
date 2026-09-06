@@ -292,8 +292,15 @@ func (h *handler) denyConsent(w http.ResponseWriter, r *http.Request, realm *mod
 		httpx.WriteLoginActionRedirect(w, h.deviceStatusLocation(realm.Name, deviceErrAccessDenied))
 		return
 	}
-	httpx.WriteLoginActionRedirect(w, h.authorizationErrorLocation(realm.Name, tab.RedirectURI,
-		tab.ResponseMode, authErrAccessDenied, "", tab.State, tab.HasState))
+	// **This is the one call site of the four whose form_post cell is
+	// unmeasured**, and it goes through the same transport as the other three
+	// rather than staying a redirect, because the rule the other three measure
+	// is about the response mode and not about the endpoint. It is recorded as
+	// unmeasured rather than left to look measured: reaching it needs a
+	// consent-required client under response_mode=form_post, which is one
+	// fixture nothing else in the catalogue wants.
+	h.writeAuthorizationError(w, httpx.WriteLoginActionRedirect, realm.Name, tab.RedirectURI,
+		tab.ResponseMode, authErrAccessDenied, "", tab.State, tab.HasState)
 }
 
 // finishFlow is what a login that has cleared both the credentials and the

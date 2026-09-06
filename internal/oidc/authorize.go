@@ -109,28 +109,34 @@ var responseModes = map[string]bool{
 	"form_post.jwt": true,
 }
 
+// responseModeFormPost is the third transport, and the only one of the five
+// F51 recorded as unservable that Gloak now writes.
+const responseModeFormPost = "form_post"
+
 // servableResponseModes is the subset whose transport Gloak can produce today,
 // and the gap between it and responseModes is measured rather than assumed.
 //
-// The other five carry a **rejection** Gloak cannot write:
+// **`form_post` joined it on 2026-09-06 and the other four have not.** What is
+// left carries a **rejection** Gloak cannot write:
 //
-//	form_post, form_post.jwt   200, Content-Type text/html with no charset,
-//	                           an auto-submitting HTML form
+//	form_post.jwt              200 with the form, the parameters replaced by a
+//	                           signed JARM assertion
 //	jwt, query.jwt             302 whose query is response=<a signed JWT>
 //	fragment.jwt               the same in the fragment
 //
-// All five measured 2026-08-29 on a request with no response_type, so this is
-// the error path and not an extrapolation from the success one. The jwt
+// All five were measured 2026-08-29 on a request with no response_type, so this
+// is the error path and not an extrapolation from the success one. The jwt
 // spellings are real JARM: the parameters are gone and a signed assertion is in
 // their place.
 //
-// A request naming one of them answers the page family, which is what every
+// A request naming one of the four answers the page family, which is what every
 // branch Gloak cannot serve answers. Emitting the plain parameters instead
 // would hand a JARM client an unsigned error where it asked for a signed one,
 // which is worse than answering nothing.
 var servableResponseModes = map[string]bool{
-	"query":    true,
-	"fragment": true,
+	"query":              true,
+	"fragment":           true,
+	responseModeFormPost: true,
 }
 
 // authorize serves GET and POST /realms/{realm}/protocol/openid-connect/auth.
@@ -243,8 +249,8 @@ func (h *handler) authorize(w http.ResponseWriter, r *http.Request) {
 		state = stateValues[0]
 	}
 	reject := func(mode, code, description string) {
-		httpx.WriteAuthorizationRedirect(w,
-			h.authorizationErrorLocation(realm.Name, redirectURI, mode, code, description, state, hasState))
+		h.writeAuthorizationError(w, httpx.WriteAuthorizationRedirect,
+			realm.Name, redirectURI, mode, code, description, state, hasState)
 	}
 
 	// Step 4. Absent and present-but-unusable are two different answers, and
@@ -605,6 +611,64 @@ func defaultResponseMode(params url.Values, responseType string) string {
 // back with three keys.
 // url.Values.Encode sorts by key, which is not the measured order, so the
 // parameters are joined by hand instead.
+// writeAuthorizationError sends a rejection by whichever transport the response
+// mode names, which is the whole of why the mode is checked before any
+// rejection is written.
+//
+// redirect is a parameter because the two endpoints that reject this way send
+// different header sets on their 302 - `/auth` omits X-Frame-Options and the
+// Content-Security-Policy where `/login-actions/authenticate` sends both - and
+// httpx keeps them as two writers for that reason. The form_post branch has no
+// such split: measured 2026-09-06, both endpoints' form_post rejections carry
+// the identical header set and neither carries the <SCRIPT>.
+func (h *handler) writeAuthorizationError(w http.ResponseWriter,
+	redirect func(http.ResponseWriter, string),
+	realm, redirectURI, mode, code, description, state string, hasState bool) {
+	if mode == responseModeFormPost {
+		fields := map[string]string{
+			"error": code,
+			"iss":   h.realmIssuer(realm),
+		}
+		// Absent rather than empty, exactly as in the query: a rejection with
+		// no description sends three inputs, and dropping one moves the rest,
+		// because the order is a Java map's over whatever keys are there.
+		if description != "" {
+			fields["error_description"] = description
+		}
+		if hasState {
+			fields["state"] = state
+		}
+		httpx.WriteFormPost(w, redirectURI, fields, "")
+		return
+	}
+	redirect(w, h.authorizationErrorLocation(realm, redirectURI, mode, code, description, state, hasState))
+}
+
+// writeAuthorizationCode sends the code by whichever transport the tab's
+// response mode names.
+//
+// replaceState is the URL the form_post body's <SCRIPT> scrubs into the
+// browser's history, and it is empty for every caller but the successful
+// credential POST - measured as a 2x2 over {endpoint} x {success, rejection},
+// where that one cell is the only one carrying the script.
+func (h *handler) writeAuthorizationCode(w http.ResponseWriter,
+	redirect func(http.ResponseWriter, string),
+	realm string, tab *authTab, sessionState, code, replaceState string) {
+	if tab.ResponseMode == responseModeFormPost {
+		fields := map[string]string{
+			"code":          code,
+			"iss":           h.realmIssuer(realm),
+			"session_state": sessionState,
+		}
+		if tab.HasState {
+			fields["state"] = tab.State
+		}
+		httpx.WriteFormPost(w, tab.RedirectURI, fields, replaceState)
+		return
+	}
+	redirect(w, h.authorizationCodeLocation(realm, tab, sessionState, code))
+}
+
 func (h *handler) authorizationErrorLocation(realm, redirectURI, mode, code, description, state string, hasState bool) string {
 	parts := []string{"error=" + url.QueryEscape(code)}
 	if description != "" {

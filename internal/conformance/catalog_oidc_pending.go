@@ -503,15 +503,19 @@ var oidcPending = []Case{
 			Section:   "Grant types: implicit",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
-		Reason: "the implicit flow is out of P3's scope",
-		// Measured 2026-08-29 on a client with the implicit flow disabled,
-		// which is the default: 302 with the error in the **fragment**, not
-		// the query, without any response_mode being asked for - the default
-		// response mode follows the response type. A case for that belongs
-		// with whichever sub-project builds the implicit flow, and writing one
-		// here would claim surface P3 is not building.
-		Fixture: "",
+		Status: Implemented,
+		// **The Reason said "the implicit flow is out of P3's scope" until
+		// 2026-09-06, and it was a claim about a plan phase rather than about
+		// this response.** F94 filed exactly that. What the case measures is
+		// not the implicit flow: it is the **refusal** a client with the flow
+		// disabled gets, which is the default and which internal/oidc has
+		// served and unit-tested since P3 (F52's first half). Re-measured
+		// 2026-09-06 - 302 with the error in the **fragment**, not the query,
+		// with no response_mode asked for, because the default response mode
+		// follows the response type. `response_type=token` alone answers the
+		// same sentence and `response_type=code` answers the login page, which
+		// is the control that says the flag is what decided it.
+		Fixture: "browser-client",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/protocol/openid-connect/auth",
@@ -524,7 +528,15 @@ var oidcPending = []Case{
 				"nonce":         "abc123",
 			},
 		},
-		AssertHeaders: []string{"Location"},
+		AssertHeaders: []string{"Location", "Cache-Control"},
+		// The eighth measured member of "GET /auth's redirect back to the
+		// client is the one response in the browser flow that omits
+		// X-Frame-Options", and it omits Content-Security-Policy with it -
+		// where POST /login-actions/authenticate's error redirect, to the same
+		// URI with the same status, carries all six. Nothing asserted this on
+		// a rejection carrying no cookies until now, and AssertHeaders can
+		// never catch a header that should be missing.
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy", "Set-Cookie"},
 	},
 	{
 		ID: "oidc/authorization/response-mode-fragment",
@@ -569,30 +581,34 @@ var oidcPending = []Case{
 			Section:   "Authorization endpoint: response_mode=form_post",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
-		Reason: "Gloak answers this request the 400 page: form_post is in responseModes and not in " +
-			"servableResponseModes, so the transport does not exist. That is F51. The harness's own " +
-			"blocker is gone - this Reason said 'the harness cannot mask a per-request value inside an " +
-			"HTML body' until 2026-09-03, and the tab_id in the history.replaceState URL is exactly " +
-			"Case.VolatileHTMLQuery's shape now. What is still missing on the mask side is an INPUT " +
-			"VALUE frame for the form's own code and session_state, which no case in the catalogue " +
-			"consumes yet",
-		// Measured 2026-08-29 and recorded in the observed spec: form_post
-		// answers **200** with an auto-submitting form, not a redirect, and
-		// its Content-Type is text/html with no charset where the login page's
-		// is text/html;charset=utf-8. The parameter order inside the form is
-		// code, iss, state, session_state, which is not the query redirect's
-		// state, session_state, iss, code.
+		Status: Implemented,
+		// **Both halves of the Reason were live on 2026-09-06 and both were
+		// lifted.** It read: Gloak answers the 400 page because form_post is in
+		// responseModes and not in servableResponseModes (F51), and the mask
+		// side still wants an INPUT VALUE frame that no case consumes. The
+		// transport is served now, on all four cells of its own 2x2, and the
+		// frame is Case.VolatileHTMLInput with this case as its first consumer
+		// and three of F146's theme pages behind it.
 		//
-		// It is Pending rather than Recorded because the golden cannot be
-		// written yet. The body carries a live code, session_state, tab_id and
-		// client_data, all minted by this request. Case.Volatile addresses
-		// paths into a JSON document and there is no equivalent for HTML, so
-		// the golden would churn on every recording and could never match a
-		// served implementation. The mechanism is the next cut's; inventing it
-		// here to land one case is how a harness grows a feature nothing
-		// needs twice.
-		Fixture: "",
+		// (F38's mechanism was never this case's blocker in the shape a
+		// follow-up note suggested: `prefixMasksLeftInPlace` does not name this
+		// case and never did. Its two entries are the device authorization
+		// request and the client registration create, and both want a body-side
+		// VolatileTail, which is a different mechanism.)
+		//
+		// Measured 2026-08-29, re-measured in full 2026-09-06: **200** with an
+		// auto-submitting form rather than a redirect; Content-Type `text/html`
+		// with **no charset** where the login page's is
+		// `text/html;charset=utf-8`, and **no Content-Language** where every
+		// theme page has one. The inputs are code, iss, state, session_state -
+		// which is not the query redirect's state, session_state, iss, code, and
+		// is javamap.KeyOrder over the same four names.
+		//
+		// The <SCRIPT> is the part a reader would put on the wrong response. It
+		// is on **this** cell alone: /auth's form_post rejection, /auth's
+		// form_post SSO success and this endpoint's own form_post rejection all
+		// answer the same form without one.
+		Fixture: "browser-login-form",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "{{login_action}}",
@@ -602,8 +618,19 @@ var oidcPending = []Case{
 				"credentialId": "",
 			},
 		},
-		AssertHeaders:   []string{"Content-Type", "Cache-Control"},
-		VolatileHeaders: []string{"Set-Cookie"},
+		// Content-Language is asserted absent rather than left out: it is the
+		// one header a reader copying the login page's envelope would add, and
+		// AssertHeaders can never catch a header that should be missing.
+		AssertHeaders: []string{
+			"Content-Type", "Cache-Control", "Content-Security-Policy", "X-Frame-Options",
+		},
+		AssertAbsentHeaders: []string{"Content-Language"},
+		VolatileHeaders:     []string{"Set-Cookie"},
+		// The two values this request mints. Everything else in the body stays
+		// compared: the form's action, the iss, the state, the order of the four
+		// inputs, the NOSCRIPT block, and the replaceState URL - whose tab_id is
+		// the fixture's capture rather than a mask.
+		VolatileHTMLInput: []string{"code", "session_state"},
 	},
 	{
 		ID: "oidc/authorization/invalid-redirect-uri",
@@ -1020,9 +1047,11 @@ var oidcPending = []Case{
 		},
 		Status: Pending,
 		// The one of the five that is still unreachable, and it is the only one
-		// whose Reason survived this cut unchanged. The token endpoint
+		// whose Reason survived that cut unchanged. The token endpoint
 		// dispatches the grant; what is missing is an auth_req_id, and a default
-		// 26.7.1 mints none - see the CIBA block further down.
+		// 26.7.1 mints none - see the CIBA block further down. Re-measured
+		// 2026-09-06 with the authentication request answering 503, so the
+		// reason has now survived two cuts rather than one.
 		Reason:  "a default 26.7.1 has no CIBA authentication channel, so no auth_req_id can be obtained to redeem",
 		Fixture: "", // needs an auth_req_id, which needs an external authentication channel endpoint
 		Request: Request{
@@ -1122,8 +1151,20 @@ var oidcPending = []Case{
 		// an `iat` and is refused outside a window of tens of seconds, and its
 		// `jti` is single-use, so a literal could not be recorded and replayed
 		// even seconds later. The harness is the limit, not the container.
+		//
+		// **Re-checked 2026-09-06 and it holds, with one half it did not say.**
+		// The sentence explains why no *literal* proof works. What it leaves
+		// open is whether a fixture could compute one, and the answer is in
+		// fixture.go rather than in DPoP: a `Step` is a request, and all four
+		// capture forms - Capture, CaptureHeader, CaptureForm, CaptureQuery -
+		// read a value out of a **response**. The harness has no computed value
+		// of any kind, so there is nowhere to sign a proof even though a proof
+		// minted seconds before the case's request would be inside the window.
+		// That is a harness question with a harness answer, and it is the half
+		// worth writing down, because "the proof goes stale" reads as though a
+		// faster harness would fix it.
 		Reason:  "a DPoP proof carries a per-request iat and a single-use jti, so no literal proof can be recorded and replayed",
-		Fixture: "", // needs a proof JWT minted per request, which no Case.Request can express
+		Fixture: "", // needs a proof JWT minted per request, and no Step computes a value: every capture reads a response
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token",
@@ -1158,6 +1199,13 @@ var oidcPending = []Case{
 		// is still validated - so DPoP verification is **opportunistic**, not
 		// switched on per client. Gloak ignores the header and answers 200 with
 		// tokens, which is the divergence this case names.
+		//
+		// **Re-checked 2026-09-06 and it holds.** `grep -i dpop internal/` finds
+		// a client attribute the registration endpoint stores and echoes, the
+		// discovery document's `dpop_signing_alg_values_supported`, and a field
+		// on the client-description converter - and no proof verification
+		// anywhere. F135 says the omission is deliberate, so this stays
+		// Recorded: the contract is in the repository for whoever builds it.
 		Status:  Recorded,
 		Reason:  "DPoP is not implemented; Gloak ignores the header and issues an unbound token",
 		Fixture: "bootstrap",
@@ -2085,6 +2133,14 @@ var oidcPending = []Case{
 		// `POST /revoke` end sessions and call **nobody**, so hanging the
 		// notification off session removal fires on two paths Keycloak does
 		// not.
+		//
+		// **Re-read 2026-09-06 and it holds unchanged**, which is worth
+		// recording as re-read: the three things it says would have to exist
+		// still do not. `Step` is a request and every capture reads a response -
+		// Capture, CaptureHeader, CaptureForm, CaptureQuery - so the harness has
+		// no side for a second socket and no way to start a listener. Nothing
+		// this cut built moves it: Case.VolatileHTMLInput masks a value inside a
+		// response body, which is the wrong half of the problem.
 		Reason:  "the harness holds one request and one response, and this is a request Keycloak makes",
 		Fixture: "", // deliberately none: a Pending case's fixture never runs, and this one would need a listener the harness has no way to start
 		Request: Request{
@@ -2104,13 +2160,13 @@ var oidcPending = []Case{
 			Section:   "Logout endpoint: frontchannel logout",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
 		// **The old reason was wrong in its second half, and that half was the
 		// interesting one.** Front-channel logout makes no outbound call at
 		// all: Keycloak answers the browser with a page and the *browser*
 		// fetches the iframes. So this response is exactly the shape the
-		// harness records, and what keeps it Pending is only its body - the
-		// same "the login theme is P13" the five sibling page cases carry.
+		// harness records, and what kept it Pending was believed to be only its
+		// body - the same "the login theme is P13" the five sibling page cases
+		// carry.
 		//
 		// Measured 2026-08-31, and it is the seventh response shape of this
 		// endpoint rather than a variant of one of the six:
@@ -2137,17 +2193,66 @@ var oidcPending = []Case{
 		// The envelope is served now. internal/oidc's own tests are what assert
 		// it, because Gloak's placeholder body cannot carry the iframes and this
 		// golden would not compare equal until it can.
-		Reason:  "the login theme is P13, and this response is a theme page",
-		Fixture: "", // deliberately none while the case is Pending: a Pending case's fixture never runs, and a promoted one needs P13 first
+		//
+		// **Recorded rather than Pending as of 2026-09-06, and the Reason that
+		// kept it Pending has expired in its wording.** "The login theme is
+		// P13" was true when it was written; P13 closed on 2026-09-02 and this
+		// page is not one of the nine it enumerated - it is a tenth. What
+		// stopped it being recordable was believed to be the theme and is
+		// really two other things, both measured:
+		//
+		//  1. Gloak's body is themePageBody's placeholder. The measured page is
+		//     4348 bytes: the ordinary chrome, one <li> per client with a
+		//     hidden <iframe>, a readystatechange script and a Continue link.
+		//  2. **Gloak's gate is wrong, and no case could have seen it.** Gloak
+		//     serves the page whenever the session holds a front-channel
+		//     client; Keycloak also requires the **request** to identify a
+		//     browser session. Six cookie subsets, one login each, 2026-09-06:
+		//     no cookies 302; KEYCLOAK_IDENTITY of the hint's own session 200;
+		//     KEYCLOAK_IDENTITY of another live session 200; KEYCLOAK_SESSION
+		//     of the hint's own session 200; KEYCLOAK_SESSION of another 302;
+		//     AUTH_SESSION_ID alone 302.
+		//
+		// The p6 handover records the condition as the client's two settings
+		// and nothing else, because that sweep drove a cookie jar throughout
+		// and never sent the request without one - the same shape as the
+		// hintless-logout bullet in AGENTS.md, where the jar was the variable
+		// and the hint was not, in the opposite direction.
+		//
+		// Recorded is what the golden earns, and it needed one mask to earn it.
+		// The sid inside the iframe's src is the session the fixture's own login
+		// opened, which loginStep captures as {{session_state}}, and the
+		// /resources/<version>/ segment is ReplaceThemeResource's. **The tab_id
+		// in the chrome's restart URL is neither**: it is minted by this
+		// request, measured 2026-09-06, so it is VolatileHTMLQuery's.
+		//
+		// That was got wrong first. A probe said the page carried the login's
+		// tab and it was reading the page's own value twice; two `make record`
+		// runs disagreeing on that one substring is what refuted it.
+		Status: Recorded,
+		Reason: "Gloak serves themePageBody's placeholder here, and serves it to a request carrying no browser " +
+			"cookies where Keycloak answers a 302",
+		Fixture: "frontchannel-logout",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/protocol/openid-connect/logout",
 			Query: map[string]string{
-				"client_id":     "gloak-frontchannel-client",
-				"id_token_hint": "REPLACE-WITH-A-REAL-ID-TOKEN",
+				"id_token_hint":            "{{id_token}}",
+				"post_logout_redirect_uri": browserRedirectURI,
+				"state":                    "xyz123",
 			},
 		},
-		AssertHeaders: []string{"Content-Type"},
+		// Content-Security-Policy is the one header that tells this page from
+		// the confirmation page, which shares its title: it is computed from
+		// the session's clients rather than being the constant every other
+		// theme page sends.
+		AssertHeaders:   []string{"Content-Type", "Cache-Control", "Content-Language", "Content-Security-Policy"},
+		VolatileHeaders: []string{"Set-Cookie"},
+		// Masked rather than captured, and **unguarded until this case is
+		// promoted**: TestNoHTMLMaskVariesNothing reads Implemented cases only,
+		// so nothing here checks that these bytes move. What says they do is the
+		// two recordings that disagreed on them.
+		VolatileHTMLQuery: []string{"tab_id"},
 	},
 
 	// --- Introspection endpoint ---
@@ -2158,35 +2263,66 @@ var oidcPending = []Case{
 			Section:   "Introspection endpoint",
 			Retrieved: "2026-08-20",
 		},
-		Status: Pending,
-		Reason: "no fixture can put the introspecting client in an access token's audience",
-		// The confidential client that P1's note was waiting for now exists,
-		// and it is still not enough. Measured 2026-08-23: introspecting a
-		// freshly minted, unexpired access token answers 200
-		// {"active":false}, and the server log gives the reason - `reason=
-		// "Client 'gloak-confidential' is not in the token audience"`. An
-		// access token's aud holds the clients the *user* has roles on, never
-		// the issuing client, so a client cannot introspect its own token.
+		Status: Implemented,
+		// **The Reason read "no fixture can put the introspecting client in an
+		// access token's audience" from P1 until 2026-09-06, and it was a claim
+		// about the API where the evidence was about one client.** Everything
+		// it says about the rule is right: an access token's aud holds the
+		// clients the *user* has roles on **minus the issuing client**, so
+		// gloak-confidential introspecting its own token answers 200
+		// {"active":false} with `reason="Client 'gloak-confidential' is not in
+		// the token audience"` in the log. What does not follow is that no
+		// fixture can arrange it. One client cannot be both ends; **two can**.
 		//
-		// Reaching an active body therefore needs the caller inside that aud,
-		// which needs either a role on the caller assigned to the user - the
-		// Role Mapper tag, P2's second cut - or an audience protocol mapper,
-		// which is P5. Recording it now would put {"active":false} in a file
-		// named active-access-token, which is worse than leaving it Pending.
+		// Measured 2026-09-06: give the user a role on the introspecting client
+		// and mint the token at a *different* client, and the introspecting
+		// client is in aud - ["gloak-probe-aud-introspect","account"] with azp
+		// gloak-probe-aud-issuer - and the introspection answers 200
+		// "active":true with the same nineteen-key body a refresh token gets.
+		// The entry that wrote the reason down, F18, named both routes to it
+		// and called them P2's second cut and P5; the first of those landed on
+		// 2026-08-23 and nobody came back.
 		//
-		// The refusal itself is measured and recorded, as
-		// access-token-outside-audience below.
-		Fixture: "",
+		// The refusal is still measured and still recorded, as
+		// access-token-outside-audience below, which is the control that says
+		// the exclusion is real rather than this case being the general answer.
+		//
+		// **It is deliberately not PristineRealm**, where active-refresh-token
+		// is: that case's subject is the bootstrapped administrator, whose aud
+		// and resource_access enumerate every admin container in the realm, so
+		// every realm any fixture creates moves its golden. This one's subject
+		// holds two client roles and default-roles-master and enumerates
+		// nothing.
+		//
+		// **The body also pins the exclusion, which nothing in this catalogue
+		// did.** The user holds a role on the *issuing* client as well, so
+		// resource_access carries gloak-probe-aud-issuer and aud does not - and
+		// a mutation dropping the exclusion from token.Audience passed
+		// access-token-outside-audience, whose user holds no role on the client
+		// that mints its token. Two conditions, and the case that looked like it
+		// covered them supplied only one.
+		Fixture: "introspect-in-audience",
 		Request: Request{
 			Method: http.MethodPost,
 			Path:   "/realms/master/protocol/openid-connect/token/introspect",
 			Form: map[string]string{
-				"client_id":     "gloak-confidential",
-				"client_secret": "REPLACE-WITH-A-REAL-SECRET",
-				"token":         "REPLACE-WITH-AN-ACCESS-TOKEN-NAMING-THIS-CLIENT-IN-AUD",
+				"client_id":     "gloak-probe-aud-introspect",
+				"client_secret": "{{client_secret}}",
+				"token":         "{{access_token}}",
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
+		// **Four, not active-refresh-token's five.** That case masks `sub`
+		// because its subject is the bootstrapped administrator, whose id no
+		// fixture holds; here the fixture creates the user and captures its id,
+		// so ReplaceCaptured writes {{user_id}} and the golden asserts *which*
+		// user this token belongs to. Copying the sibling's list gave `sub` a
+		// mask over a value already captured, which is exactly what
+		// TestNoVolatileMaskCoversACapturedValue reported.
+		Volatile: []string{"exp", "iat", "jti", "sid"},
+		// Java sets, exactly as on active-refresh-token beside it.
+		Unordered:      []string{"aud", "realm_access/roles", "resource_access/*/roles"},
+		UnorderedWords: []string{"scope"},
 	},
 	{
 		// The refusal measured while trying to record active-access-token.
@@ -2936,6 +3072,15 @@ var oidcPending = []Case{
 		// block comment above oidc/ciba/authentication-request. Nothing in this
 		// project's container regime can record this case, and saying "not
 		// implemented" would read as a to-do somebody could close.
+		//
+		// **Re-measured 2026-09-06 and it holds.** A client carrying
+		// `oidc.ciba.grant.enabled` sending a valid authentication request to
+		// `/realms/master/protocol/openid-connect/ext/ciba/auth` answers 503
+		// {"error":"server_error","error_description":"Failed to send
+		// authentication request"}. `GET /admin/serverinfo` reports CIBA as
+		// `"type":"DEFAULT","enabled":true`, so the feature is on and the
+		// **channel** is what is missing - which is the distinction that keeps
+		// this from reading as a disabled preview.
 		Reason:  "a default 26.7.1 has no CIBA authentication channel, so no auth_req_id can be obtained to poll with",
 		Fixture: "", // needs an auth_req_id, which needs an external authentication channel endpoint
 		Request: Request{
@@ -2956,7 +3101,9 @@ var oidcPending = []Case{
 			Section:   "Grant types: client initiated backchannel authentication",
 			Retrieved: "2026-08-20",
 		},
-		Status:  Pending,
+		Status: Pending,
+		// The same 503, re-measured 2026-09-06 alongside poll-pending's. The
+		// reason holds and is now dated.
 		Reason:  "a default 26.7.1 has no CIBA authentication channel, so no auth_req_id can be obtained to approve",
 		Fixture: "", // needs an auth_req_id a second user approved, which needs that channel
 		Request: Request{

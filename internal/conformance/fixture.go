@@ -356,7 +356,7 @@ var Fixtures = map[string]Fixture{
 	"browser-login-s256":  browserFormFixture("gloak-probe-browser", "", pkceS256Query),
 	"browser-login-plain": browserFormFixture("gloak-probe-browser", "", pkcePlainQuery),
 	"browser-login-frag":  browserFormFixture("gloak-probe-browser", "", map[string]string{"response_mode": "fragment"}),
-	"browser-login-form":  browserFormFixture("gloak-probe-browser", "", map[string]string{"response_mode": "form_post"}),
+	"browser-login-form":  browserFormPostFixture("gloak-probe-browser"),
 	// The login page again, with its action's four per-request parameters taken
 	// one at a time rather than whole, so the case can send a wrong execution
 	// and get "Page has expired". See browserExpiredPageFixture.
@@ -1460,6 +1460,12 @@ var Fixtures = map[string]Fixture{
 	// exactly that, and it is what separates a refusal that precedes
 	// authorization from one that follows it.
 	"no-role-caller": callerFixture("gloak-probe-caller-none"),
+
+	// The two fixtures the protocol remainder needed, both of them lifting a
+	// Reason rather than adding surface. See
+	// docs/superpowers/handover/protocol-remainder.md.
+	"introspect-in-audience": introspectInAudienceFixture(),
+	"frontchannel-logout":    frontchannelLogoutFixture(),
 }
 
 // authzClientFixture creates one client with authorization services on and
@@ -2868,6 +2874,26 @@ func browserFormFixture(clientID, attributes string, authQuery map[string]string
 		State: "bootstrap",
 		Steps: append(browserClientSteps(clientID, attributes), authorizeStep(clientID, authQuery)),
 	}
+}
+
+// browserFormPostFixture is browserFormFixture under response_mode=form_post,
+// with the tab_id captured beside the action.
+//
+// The tab is the one per-request value in the response body that a fixture can
+// hold: the form_post success carries a <SCRIPT> whose replaceState URL names
+// client_id, tab_id and client_data, and the tab is minted by **this fixture's**
+// GET /auth. Capturing it rather than masking it leaves the value asserted to be
+// the tab the login actually used instead of merely present.
+//
+// client_data is neither captured nor masked, for browserClientData's reason one
+// mode along: it is a function of the request, both servers build it byte for
+// byte, and here it carries `"rm":"form_post"` where that constant does not.
+// The code and the session_state are the case's own request's and are
+// Case.VolatileHTMLInput's two consumers.
+func browserFormPostFixture(clientID string) Fixture {
+	step := authorizeStep(clientID, map[string]string{"response_mode": "form_post"})
+	step.CaptureForm = map[string]string{"login_action": "action", "tab_id": "query:tab_id"}
+	return Fixture{State: "bootstrap", Steps: append(browserClientSteps(clientID, ""), step)}
 }
 
 // browserExpiredPageFixture stops at the login page like browserFormFixture and
@@ -7429,4 +7455,277 @@ func clientNodeFixture(uuid, clientID, node string) Fixture {
 		},
 	})
 	return f
+}
+
+// The six objects introspect-in-audience creates. They are named here rather
+// than inline because eight steps refer to them and a typo in one would look
+// like a measurement.
+const (
+	audIntrospectClient = "gloak-probe-aud-introspect"
+	audIssuerClient     = "gloak-probe-aud-issuer"
+	audRole             = "gloak-probe-aud-role"
+	audIssuerRole       = "gloak-probe-aud-issuer-role"
+	audUser             = "gloak-probe-aud-user"
+	audPassword         = "gloak-probe-aud-password"
+)
+
+// introspectInAudienceFixture puts the introspecting client inside an access
+// token's audience, which the case it serves recorded as impossible.
+//
+// **The Reason it lifts said "no fixture can put the introspecting client in an
+// access token's audience", and that was a claim about the API rather than
+// about the harness.** An access token's `aud` holds the clients the *user*
+// holds roles on **minus the issuing client**, so one client cannot be both
+// ends of it - but two can. Measured 2026-09-06:
+//
+//	gloak-probe-aud-introspect   owns gloak-probe-aud-role and does the asking
+//	gloak-probe-aud-issuer       mints the token by the password grant
+//	gloak-probe-aud-user         holds gloak-probe-aud-role
+//
+//	aud   ["gloak-probe-aud-introspect","account"]
+//	azp   "gloak-probe-aud-issuer"
+//
+// and the introspection answers 200 `"active":true` with the nineteen-key body.
+//
+// It deliberately does **not** address `admin`. The bootstrapped administrator
+// holds `create-realm`, so its `aud` and `resource_access` enumerate every admin
+// container in the realm and every realm any fixture creates adds a key - which
+// is what put PristineRealm on active-refresh-token. A purpose-made user holding
+// one client role and `default-roles-master` enumerates nothing, so this case
+// needs no container of its own.
+//
+// The last step overwrites {{access_token}} with the subject's token, which is
+// confidentialClientFixture's device: nothing after it needs the admin's.
+func introspectInAudienceFixture() Fixture {
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body: []byte(`{"clientId":"` + audIntrospectClient + `","enabled":true,` +
+						`"publicClient":false,"standardFlowEnabled":false}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients",
+					Query:   map[string]string{"clientId": audIntrospectClient},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"client_uuid": "0/id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients/{{client_uuid}}/client-secret",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"client_secret": "value"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients/{{client_uuid}}/roles",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"name":"` + audRole + `"}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients/{{client_uuid}}/roles/" + audRole,
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"role_id": "id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					// **Neither scope list is named, and that is load-bearing.**
+					// A client inherits the realm's client scopes only when it
+					// names *neither*, so the obvious tidy-up -
+					// "defaultClientScopes":[] to keep the create explicit -
+					// takes the `roles` scope away, and with it the mappers
+					// that write `aud` and `resource_access`. Measured
+					// 2026-09-06 on two clients differing in that one field:
+					// the empty list answers `scope: openid` with **no aud and
+					// no resource_access at all**, where the omitted one
+					// answers `openid email profile` and
+					// aud ["gloak-probe-aud-introspect","account"]. The first
+					// recording of this case put {"active":false} in a file
+					// named active-access-token for exactly that reason.
+					Body: []byte(`{"clientId":"` + audIssuerClient + `","enabled":true,` +
+						`"publicClient":false,"directAccessGrantsEnabled":true}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients",
+					Query:   map[string]string{"clientId": audIssuerClient},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"issuer_uuid": "0/id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients/{{issuer_uuid}}/client-secret",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"issuer_secret": "value"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/users",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					// The inline credentials array rather than reset-password:
+					// it is one request instead of two and it is the route
+					// measured to store a usable password.
+					Body: []byte(`{"username":"` + audUser + `","enabled":true,` +
+						`"credentials":[{"type":"password","value":"` + audPassword + `","temporary":false}]}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/users",
+					Query:   map[string]string{"username": audUser},
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"user_id": "0/id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/clients/{{client_uuid}}",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`[{"id":"{{role_id}}","name":"` + audRole + `"}]`),
+				},
+				ExpectStatus: []int{http.StatusNoContent},
+			},
+			// **The user holds a role on the *issuing* client too, and that is
+			// the input no fixture in this catalogue had ever supplied.**
+			//
+			// Without it the issuer is simply absent from the role map, so
+			// `aud` excluding it and `aud` never containing it are the same
+			// bytes - and a mutation that dropped the exclusion from
+			// token.Audience passed oidc/introspection/access-token-outside-audience
+			// on 2026-09-06 for exactly that reason. Its user holds no role on
+			// gloak-confidential, so there was nothing to exclude.
+			//
+			// With it the two halves separate, and both are in this case's
+			// golden: `resource_access` carries three keys including
+			// gloak-probe-aud-issuer, and `aud` carries two and does not. That
+			// is AGENTS.md's measured sentence - "give the user a role on the
+			// requesting client and that client appears in resource_access and
+			// still not in aud" - asserted by a golden rather than only by
+			// internal/token's own test.
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/clients/{{issuer_uuid}}/roles",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`{"name":"` + audIssuerRole + `"}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+			{
+				Request: Request{
+					Method:  http.MethodGet,
+					Path:    "/admin/realms/master/clients/{{issuer_uuid}}/roles/" + audIssuerRole,
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+				},
+				Capture: map[string]string{"issuer_role_id": "id"},
+			},
+			{
+				Request: Request{
+					Method:  http.MethodPost,
+					Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/clients/{{issuer_uuid}}",
+					Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+					Body:    []byte(`[{"id":"{{issuer_role_id}}","name":"` + audIssuerRole + `"}]`),
+				},
+				ExpectStatus: []int{http.StatusNoContent},
+			},
+			{
+				Request: Request{
+					Method: http.MethodPost,
+					Path:   "/realms/master/protocol/openid-connect/token",
+					Form: map[string]string{
+						"grant_type":    "password",
+						"client_id":     audIssuerClient,
+						"client_secret": "{{issuer_secret}}",
+						"username":      audUser,
+						"password":      audPassword,
+						"scope":         "openid",
+					},
+				},
+				Capture: map[string]string{"access_token": "access_token"},
+			},
+		},
+	}
+}
+
+// frontchannelLogoutFixture signs a browser in at a client registered for
+// front-channel logout and leaves the jar behind, because the jar is what the
+// case's own request needs.
+//
+// **The cookies are not decoration and the p6 sweep did not isolate them.**
+// That cut recorded the condition as "a session holding a client with
+// `frontchannelLogout: true` and a `frontchannel.logout.url`", and measured
+// 2026-09-06 that is too narrow: with exactly that client and a live session, a
+// logout carrying no cookies answers the ordinary 302. Six cookie subsets, one
+// login each:
+//
+//	no cookies                                    302
+//	KEYCLOAK_IDENTITY of the hint's own session   200
+//	KEYCLOAK_IDENTITY of another live session     200
+//	KEYCLOAK_SESSION  of the hint's own session   200
+//	KEYCLOAK_SESSION  of another live session     302
+//	AUTH_SESSION_ID only                          302
+//
+// So the browser has to identify a session, and the login below is what puts
+// one in the jar. A direct grant would not: it makes the same server-side
+// session and hands back no cookies.
+func frontchannelLogoutFixture() Fixture {
+	const clientID = "gloak-probe-frontchannel"
+	attributes := `,"frontchannelLogout":true,"attributes":{` +
+		`"frontchannel.logout.url":"http://localhost:9998/frontlogout",` +
+		`"post.logout.redirect.uris":"` + browserRedirectURI + `"}`
+	// **The logout page's chrome carries a tab_id the logout request mints, not
+	// the login's**, measured 2026-09-06 - so no capture here can reach it and
+	// the case masks it with Case.VolatileHTMLQuery instead.
+	//
+	// The first probe of that question said the opposite. It grepped a whole
+	// script's output for `tab_id=`, and the only place that string occurs in
+	// that output is the logout page itself, so it compared the body with
+	// itself and reported a match. What refuted it was `make record`: the
+	// golden's tab moved between two runs while every other byte held still.
+	steps := append(browserClientSteps(clientID, attributes),
+		authorizeStep(clientID, nil), loginStep())
+	return Fixture{State: "bootstrap", Steps: append(steps, Step{
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token",
+			Form: map[string]string{
+				"grant_type":   "authorization_code",
+				"client_id":    clientID,
+				"redirect_uri": browserRedirectURI,
+				"code":         "{{code}}",
+			},
+		},
+		Capture: map[string]string{"id_token": "id_token"},
+	})}
 }

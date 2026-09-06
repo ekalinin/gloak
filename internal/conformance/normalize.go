@@ -240,6 +240,92 @@ func isIdentifierByte(b byte) bool {
 		(b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
+// htmlInputMatches is every place raw carries a form input named name, covering
+// that input's value attribute's value and nothing else.
+//
+// Two markup dialects reach this, and neither may be preferred: Keycloak's own
+// form_post response spells `<INPUT TYPE="HIDDEN" NAME="code" VALUE="..." />`
+// and the login theme's Freemarker output spells
+// `<input type="hidden" name="..." value="..."/>`. So the attribute spellings
+// fold and the input's name does not.
+//
+// The search runs from the name attribute forwards and stops at the element's
+// own `>`, which is what keeps a mask on an input carrying no value from
+// silently taking the *next* input's value instead. That case is an error, for
+// htmlCallMatches' reason: a mask that quietly covers something of another shape
+// is a measurement thrown away while looking like one that was checked.
+func htmlInputMatches(raw []byte, name string) ([]htmlMatch, error) {
+	needle := []byte(`name="` + name + `"`)
+	value := []byte(`value="`)
+	var out []htmlMatch
+	for i := 0; ; {
+		j := indexFoldASCII(raw[i:], needle)
+		if j < 0 {
+			return out, nil
+		}
+		at := i + j
+		i = at + len(needle)
+		// `name=` has to start an attribute, or a mask on `id` would fire on
+		// `data-id="..."` and on any other attribute ending in those bytes.
+		if at == 0 || !isHTMLAttributeBoundary(raw[at-1]) {
+			continue
+		}
+		tag := bytes.IndexByte(raw[i:], '>')
+		if tag < 0 {
+			return nil, fmt.Errorf("the input named %q is not inside a closed tag", name)
+		}
+		k := indexFoldASCII(raw[i:i+tag], value)
+		if k < 0 {
+			return nil, fmt.Errorf("the input named %q carries no value attribute", name)
+		}
+		start := i + k + len(value)
+		shut := bytes.IndexByte(raw[start:], '"')
+		if shut < 0 {
+			return nil, fmt.Errorf("the input named %q has an unterminated value", name)
+		}
+		out = append(out, htmlMatch{start: start, end: start + shut})
+		i = start + shut
+	}
+}
+
+// isHTMLAttributeBoundary reports whether b can precede an attribute name.
+func isHTMLAttributeBoundary(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\r' || b == '\n'
+}
+
+// indexFoldASCII is bytes.Index with ASCII case folded on both sides.
+//
+// It compares in place rather than lowering a copy, because bytes.ToLower can
+// change a body's length on non-ASCII input and every index this function
+// returns is used to slice the original.
+func indexFoldASCII(raw, needle []byte) int {
+	if len(needle) == 0 || len(needle) > len(raw) {
+		return -1
+	}
+	for i := 0; i+len(needle) <= len(raw); i++ {
+		if equalFoldASCII(raw[i:i+len(needle)], needle) {
+			return i
+		}
+	}
+	return -1
+}
+
+func equalFoldASCII(a, b []byte) bool {
+	for i := range a {
+		if lowerASCII(a[i]) != lowerASCII(b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func lowerASCII(b byte) byte {
+	if b >= 'A' && b <= 'Z' {
+		return b + 'a' - 'A'
+	}
+	return b
+}
+
 // HTMLMaskedValues returns the raw bytes every HTML mask on c covers, keyed by
 // the name that declared it.
 //
@@ -266,6 +352,13 @@ func HTMLMaskedValues(raw []byte, c Case) (map[string][][]byte, error) {
 		ms, err := htmlCallMatches(raw, name)
 		if err != nil {
 			return nil, fmt.Errorf("conformance: html call mask %q: %w", name, err)
+		}
+		collect(name, ms)
+	}
+	for _, name := range c.VolatileHTMLInput {
+		ms, err := htmlInputMatches(raw, name)
+		if err != nil {
+			return nil, fmt.Errorf("conformance: html input mask %q: %w", name, err)
 		}
 		collect(name, ms)
 	}
@@ -311,6 +404,15 @@ func ReplaceHTMLValues(raw []byte, c Case) ([]byte, error) {
 		ms, err := htmlCallMatches(raw, name)
 		if err != nil {
 			return nil, fmt.Errorf("conformance: html call mask %q: %w", name, err)
+		}
+		if err := add(name, ms); err != nil {
+			return nil, err
+		}
+	}
+	for _, name := range c.VolatileHTMLInput {
+		ms, err := htmlInputMatches(raw, name)
+		if err != nil {
+			return nil, fmt.Errorf("conformance: html input mask %q: %w", name, err)
 		}
 		if err := add(name, ms); err != nil {
 			return nil, err

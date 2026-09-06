@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -627,19 +629,20 @@ func TestAuthorizeResponseModeSet(t *testing.T) {
 	}
 }
 
-// TestAuthorizeUnservableResponseModesAnswerThePageFamily. Five of the seven
-// accepted modes carry a rejection Gloak cannot write - form_post and
-// form_post.jwt answer 200 with an HTML form, and the three other jwt spellings
-// answer with a signed JARM assertion in a `response` parameter. Every one of
-// those was measured on a request with **no response_type**, so this is the
-// error path.
+// TestAuthorizeUnservableResponseModesAnswerThePageFamily. **Four of the seven
+// accepted modes carry a rejection Gloak cannot write**, and there were five
+// until 2026-09-06: `form_post` is transported now and `form_post.jwt` is not,
+// because the jwt half replaces the parameters with a signed JARM assertion.
+// The three other jwt spellings answer with that assertion in a `response`
+// parameter. Every one of those was measured on a request with **no
+// response_type**, so this is the error path.
 //
 // Gloak answers the page family rather than emitting the plain parameters,
 // which would hand a JARM client an unsigned error where it asked for a signed
 // one. The test's job is to catch that fabrication reappearing.
 func TestAuthorizeUnservableResponseModesAnswerThePageFamily(t *testing.T) {
 	h := authServer(t)
-	for _, mode := range []string{"form_post", "form_post.jwt", "jwt", "query.jwt", "fragment.jwt"} {
+	for _, mode := range []string{"form_post.jwt", "jwt", "query.jwt", "fragment.jwt"} {
 		t.Run(mode, func(t *testing.T) {
 			w := authorize(t, h, baseQuery(map[string]string{
 				"response_mode": mode, "response_type": absent,
@@ -652,7 +655,7 @@ func TestAuthorizeUnservableResponseModesAnswerThePageFamily(t *testing.T) {
 			}
 		})
 	}
-	// The two Gloak can transport still redirect, so the gate above is not a
+	// The two redirecting modes still redirect, so the gate above is not a
 	// blanket refusal of every named mode.
 	for _, mode := range []string{"query", "fragment"} {
 		t.Run(mode+" still redirects", func(t *testing.T) {
@@ -665,6 +668,92 @@ func TestAuthorizeUnservableResponseModesAnswerThePageFamily(t *testing.T) {
 		})
 	}
 }
+
+// TestAuthorizeFormPostRejectionIsTheMeasuredForm pins the whole 694-byte body
+// Keycloak answered on 2026-09-06 to `response_mode=form_post` with no
+// `response_type`, rather than the status and a substring.
+//
+// The bytes are the assertion because every part of them has been got wrong by
+// somebody's first guess: the input order is a Java map's rather than the
+// query's, the Content-Type carries **no** charset where the login page's does,
+// the NOSCRIPT button spells `name` in lower case where the hidden inputs spell
+// `NAME`, and there is no <SCRIPT> here although the successful login's form
+// has one.
+func TestAuthorizeFormPostRejectionIsTheMeasuredForm(t *testing.T) {
+	h := authServer(t)
+	w := authorize(t, h, baseQuery(map[string]string{
+		"response_mode": "form_post", "response_type": absent,
+	}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if got := w.Header().Get("Content-Type"); got != "text/html" {
+		t.Errorf("Content-Type = %q, want text/html with no charset", got)
+	}
+	if got := w.Header().Get("Content-Language"); got != "" {
+		t.Errorf("Content-Language = %q, want none - this is not a theme page", got)
+	}
+	want := `<HTML>  <HEAD>    <TITLE>OIDC Form_Post Response</TITLE>  </HEAD>  ` +
+		`<BODY Onload="document.forms[0].submit()">    ` +
+		`<FORM METHOD="POST" ACTION="http://localhost:9999/callback">` +
+		`  <INPUT TYPE="HIDDEN" NAME="error_description" VALUE="Missing parameter: response_type" />` +
+		`  <INPUT TYPE="HIDDEN" NAME="iss" VALUE="http://localhost:8080/realms/master" />` +
+		`  <INPUT TYPE="HIDDEN" NAME="state" VALUE="xyz123" />` +
+		`  <INPUT TYPE="HIDDEN" NAME="error" VALUE="invalid_request" />` +
+		`      <NOSCRIPT>        <P>JavaScript is disabled. We strongly recommend to enable it. ` +
+		`Click the button below to continue .</P>        <INPUT name="continue" TYPE="SUBMIT" ` +
+		`VALUE="CONTINUE" />      </NOSCRIPT>    </FORM>  </BODY></HTML>`
+	if got := w.Body.String(); got != want {
+		t.Errorf("body:\n got %s\nwant %s", got, want)
+	}
+}
+
+// TestAuthorizeFormPostDropsAnAbsentParameterAndReordersTheRest is the
+// measurement that makes the Java map order a rule rather than one coincidence.
+//
+// Dropping `state` and dropping `error_description` each move the remaining
+// inputs, and they move to what javamap.KeyOrder says over the smaller key set.
+// A hard-coded four-name order passes the test above and fails both of these.
+func TestAuthorizeFormPostDropsAnAbsentParameterAndReordersTheRest(t *testing.T) {
+	h := authServer(t)
+	for _, tc := range []struct {
+		name  string
+		query map[string]string
+		want  []string
+	}{
+		{"no state", map[string]string{
+			"response_mode": "form_post", "response_type": absent, "state": absent,
+		}, []string{"error_description", "iss", "error"}},
+		// unsupported_response_type carries no error_description at all.
+		{"no description", map[string]string{
+			"response_mode": "form_post", "response_type": "bogus",
+		}, []string{"iss", "state", "error"}},
+		{"neither", map[string]string{
+			"response_mode": "form_post", "response_type": "bogus", "state": absent,
+		}, []string{"iss", "error"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := authorize(t, h, baseQuery(tc.query))
+			got := formPostInputNames(w.Body.String())
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("inputs = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// formPostInputNames reads the hidden inputs' names in the order the body
+// carries them. It matches `NAME=` in upper case on purpose, which is what
+// leaves the NOSCRIPT button's lower-case `name` out.
+func formPostInputNames(body string) []string {
+	var out []string
+	for _, m := range formPostInputPattern.FindAllStringSubmatch(body, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+var formPostInputPattern = regexp.MustCompile(`NAME="([a-z_]+)"`)
 
 // TestAuthorizeDuplicateAppliesToEveryParameter, including ones the endpoint
 // never reads.

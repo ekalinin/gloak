@@ -440,7 +440,11 @@ func (h *handler) writeSSOCode(w http.ResponseWriter, r *http.Request, realm *mo
 	// response omits X-Frame-Options and Content-Security-Policy the way every
 	// other /auth redirect does, where POST /login-actions/authenticate's
 	// carries both.
-	httpx.WriteAuthorizationRedirect(w, h.authorizationCodeLocation(realm.Name, tab, sess.Session.ID, code))
+	// Under form_post it is a 200 with the form and **no** <SCRIPT>, measured
+	// 2026-09-06 against the credential POST's, which carries one on the same
+	// four inputs - so the script follows the endpoint's own URL being one a
+	// browser should not keep, not the code being handed over.
+	h.writeAuthorizationCode(w, httpx.WriteAuthorizationRedirect, realm.Name, tab, sess.Session.ID, code, "")
 	return nil
 }
 

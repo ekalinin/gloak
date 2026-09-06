@@ -1,0 +1,12 @@
+# POST /realms/master/protocol/openid-connect/token/introspect
+HTTP/1.1 200 OK
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Content-Type: application/json
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+{"exp":"{{number}}","iat":"{{number}}","jti":"{{string}}","iss":"{{issuer}}/realms/master","aud":["account","gloak-probe-aud-introspect"],"sub":"{{user_id}}","typ":"Bearer","azp":"gloak-probe-aud-issuer","sid":"{{string}}","acr":"1","realm_access":{"roles":["default-roles-master","offline_access","uma_authorization"]},"resource_access":{"gloak-probe-aud-introspect":{"roles":["gloak-probe-aud-role"]},"gloak-probe-aud-issuer":{"roles":["gloak-probe-aud-issuer-role"]},"account":{"roles":["manage-account","manage-account-links","view-profile"]}},"scope":"email openid profile","email_verified":false,"preferred_username":"gloak-probe-aud-user","client_id":"gloak-probe-aud-issuer","username":"gloak-probe-aud-user","token_type":"Bearer","active":true}
