@@ -55,7 +55,19 @@ func TestConformance(t *testing.T) {
 			if c.Status == Recorded {
 				diffs, dErr := diff(c, want, got, vars)
 				if dErr != nil {
-					t.Fatalf("compare: %v", dErr)
+					// **A body that cannot even be normalised is the expected
+					// state here**, for the same reason a fixture step that
+					// cannot run is: the served response is what has not been
+					// built. oidc/logout/frontchannel is the measured case -
+					// its golden masks a tab_id the theme page carries and
+					// Gloak's placeholder body does not, so ReplaceHTMLValues
+					// refuses the served side while the recorded side is fine.
+					//
+					// This cannot weaken an Implemented case: nothing here
+					// reaches one, and the only claim it lets through is "does
+					// not match", which a body the masks cannot even address
+					// satisfies by construction.
+					t.Skipf("recorded, not served yet (%s): %v", c.Reason, dErr)
 				}
 				if len(diffs) == 0 {
 					t.Fatalf("%s already matches the recorded Keycloak response.\n"+

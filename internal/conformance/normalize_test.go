@@ -593,6 +593,14 @@ func TestThemeResourceAppearsOnlyInTheThemePages(t *testing.T) {
 		"oidc/authorization/login-actions-restart-cookie-missing": 7,
 		"oidc/authorization/login-actions-unknown-client":         7,
 		"oidc/authorization/required-action-invalid-client-data":  7,
+		// The eleventh theme page and the first one this suite holds that Gloak
+		// does not serve: the front-channel logout page, Recorded on 2026-09-06.
+		// **Seven**, and that is the interesting half of the number - this page
+		// is rendered from *outside* the authentication flow, so it has no
+		// checkAuthSession block, although the request that produces it is a
+		// browser carrying a live session. The block follows the flow the render
+		// happens in and not whether the browser is signed in.
+		"oidc/logout/frontchannel": 7,
 	}
 	seen := map[string]bool{}
 	for _, c := range Catalog {

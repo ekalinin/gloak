@@ -2303,7 +2303,14 @@ var oidcPending = []Case{
 			},
 		},
 		AssertHeaders: []string{"Content-Type"},
-		Volatile:      []string{"exp", "iat", "jti", "sub", "sid"},
+		// **Four, not active-refresh-token's five.** That case masks `sub`
+		// because its subject is the bootstrapped administrator, whose id no
+		// fixture holds; here the fixture creates the user and captures its id,
+		// so ReplaceCaptured writes {{user_id}} and the golden asserts *which*
+		// user this token belongs to. Copying the sibling's list gave `sub` a
+		// mask over a value already captured, which is exactly what
+		// TestNoVolatileMaskCoversACapturedValue reported.
+		Volatile: []string{"exp", "iat", "jti", "sid"},
 		// Java sets, exactly as on active-refresh-token beside it.
 		Unordered:      []string{"aud", "realm_access/roles", "resource_access/*/roles"},
 		UnorderedWords: []string{"scope"},
