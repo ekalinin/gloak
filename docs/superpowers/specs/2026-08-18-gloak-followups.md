@@ -4666,7 +4666,20 @@ and rejected in writing rather than taken.
 The user half is separate and belongs to `internal/oidc`: three admin writes that
 might plausibly write a user event wrote none, and two password grants wrote two.
 
-## F163: the "cannot parse the JSON" code may be per binding rather than per shape
+## F163: the "cannot parse the JSON" code separates syntax from binding (answered 2026-09-06)
+
+**Answered by `POST .../partialImport`, which produces both codes on one route
+from one description.** `{"users":"nope"}` - the right shape for that endpoint
+with the wrong type inside it - is `unknown_error`; a bare `{` is
+`invalid_request`. Both 500.
+
+So the variable is **syntax against binding**, not the body's shape, and
+AGENTS.md is corrected. `writeCannotParseJSON` was deliberately left unchanged:
+a rule about a code four families produce should not be rewritten from a fifth,
+and what this settles is the *description*, not the implementation.
+
+What the finding said, kept for the record:
+
 
 AGENTS.md records that the code is per body **shape**.
 `PUT .../events/config` with `{"eventsEnabled":"yes"}` refutes that as it stands:
@@ -4706,3 +4719,37 @@ it: a caller holding one unrelated admin role sending `?first=abc` to each route
 with a well-formed control. It should also settle whether `guardAuthz`'s
 `authorizationServicesEnabled` gate sits before or after the bound - a third
 stage the other families do not have.
+
+## F165: front-channel logout needs the browser's cookies, and Gloak serves a page where Keycloak redirects
+
+`oidc/logout/frontchannel` was `Pending` on the grounds that "the login theme is
+P13, and this response is a theme page". P13 built the theme on 2026-09-01, so
+that reason expired - and re-measuring found a **second blocker that had never
+been measured**: the response depends on the browser's cookies, not only on the
+client's two front-channel settings.
+
+The sweep that produced the original reason drove a cookie jar throughout, so it
+could not have isolated the dependency. That is the shape this project keeps
+meeting: a probe whose fixed input supplies a condition the claim needs.
+
+**Gloak serves the page where Keycloak sends a 302.** Measured, filed, and not
+fixed - the case is `Recorded` with that as its reason, which moves the recorded
+column rather than the total, and is the honest reading.
+
+## F166: `admin/clients/evaluate-scope-mappings-not-granted` was polluted by the recorder (fixed 2026-09-06)
+
+Two independent cuts on the same day reported this golden moving under
+`make record`: the committed bytes hold **five** realm roles and every recording
+produced **twenty-one**. Both reverted it by hand rather than commit it, and
+neither could fix it - it lives in a file the other stream owned.
+
+The cause is F40's shape. The body enumerates the realm's roles; the recorder
+reaches this case long after the fixtures that create them, where the verifier
+builds a fresh handler per case and sees only this fixture's own. The committed
+bytes were always the pristine answer, so **`PristineRealm: true` changes nothing
+the verifier does and stops the recorder churning.**
+
+Worth keeping for the pattern rather than the fix: **two cuts reverted the same
+file by hand on the same day and neither could report it as a defect**, because
+each was inside a boundary that made it somebody else's. A recurring hand-revert
+is a defect report that nobody has anywhere to file.

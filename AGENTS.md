@@ -2142,6 +2142,42 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   for a bogus realm, 401 with no token. That is the first of the five gate shapes
   met on a second family.
 
+- **`partial-export` is `GET /admin/realms/{realm}` with sixteen keys spliced
+  in, and no shared key's value ever differs.** So it is a splice rather than a
+  122-field transcription, and `realmrep.go` stays the one truth. Twelve of the
+  spliced blocks are export-only and ten of the twelve are populated on a
+  default realm. `exportClients` adds **three** keys, not two, and `roles.client`
+  needs **both** booleans - one flag at a time pins nothing about it.
+- **`view-realm` is refused by `partial-export`**, alone among the realm-shaped
+  reads, while `partialImport` next door takes `manage-realm` for any body. One
+  tag, two operations, opposite guard shapes.
+- **`saml ecp` is `topLevel: true` and `GET .../authentication/flows` does not
+  list it.** The export is the first body that enumerates every flow, which is
+  what made it visible - a listing and an export disagreeing about what exists.
+- **`partialImport`'s `results` array has no reproducible order at all** - five
+  runs of one body against identical state gave five orders.
+- **The "cannot parse the JSON" code separates syntax from binding, not shapes.**
+  On `POST .../partialImport`, `{"users":"nope"}` - the right shape with the
+  wrong type - is `unknown_error`, and `{` is `invalid_request`. Same route,
+  same description, both 500. This file recorded the split as per body *shape*
+  until 2026-09-06. See F163.
+- **A DPoP proof cannot be replayed and the harness has no computed value at
+  all.** A proof carries a per-request `iat` and a single-use `jti`, so no
+  literal one survives; and a `Step` sends bytes rather than evaluating
+  anything, so the fixture cannot mint one either. That is the reason
+  `oidc/token/dpop-bound-token` stays `Pending`, and the second half of it is
+  about this harness rather than about DPoP.
+- **Front-channel logout needs the browser's cookies, not just the client's two
+  settings.** A sweep that drove a cookie jar throughout never isolated it, and
+  Gloak serves the page where Keycloak sends a 302 - measured and filed rather
+  than fixed.
+- **An access token's `aud` cannot be exercised with one client.** The issuing
+  client is excluded, so a case wanting an audience needs a **second** client
+  whose role the subject holds. A mutation keeping the issuing client survived
+  the whole catalogue until a fixture supplied that second condition, because
+  the subject held no role on the issuing client and there was nothing to
+  exclude.
+
 ## Boundaries
 
 | Package | Owns | Must not |

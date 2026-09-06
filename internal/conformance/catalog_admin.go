@@ -17304,6 +17304,18 @@ var adminCases = []Case{
 		Status:    Implemented,
 		Operation: "GET /admin/realms/{realm}/clients/{client-uuid}/evaluate-scopes/scope-mappings/{roleContainerId}/not-granted",
 		Fixture:   "evaluate-scopes",
+		// **This body enumerates the realm's roles, so it needs a container of
+		// its own.** Two independent cuts on 2026-09-06 reported it moving
+		// under `make record` - the committed golden holds five realm roles and
+		// every recording produced twenty-one - and both reverted it by hand
+		// rather than commit it. The recorder reaches this case long after the
+		// fixtures that create roles, where the verifier builds a fresh handler
+		// per case and sees only this fixture's own; that gap is F40's shape
+		// exactly, and PristineRealm is what closes it.
+		//
+		// The committed bytes are already the pristine answer, so this flag
+		// changes nothing the verifier does and stops the recorder churning.
+		PristineRealm: true,
 		Request: Request{
 			Method:  http.MethodGet,
 			Path:    "/admin/realms/master/clients/{{client_uuid}}/evaluate-scopes/scope-mappings/master/not-granted",
