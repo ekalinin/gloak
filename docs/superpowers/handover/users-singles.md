@@ -635,12 +635,109 @@ bodies plus the 204 are recorded in §1.7 for the cut that stores it.
 **A new follow-up: `annotations` needs a third `javamap` constructor.** §1.3 has
 the nine vectors and the model that fits them. It cannot be added from here.
 
-## 4. Parity, before and after
+## 4. The mutation pass, and the two survivors
+
+Twenty-six mutations, a different one per claim, each reverted and each revert
+checked against the file's bytes and against `git status`. The harness refuses
+to run on a dirty tree, refuses a mutation that changes no byte, refuses one
+that does not compile, and **reads `go test`'s exit code before it looks at the
+log**. A control known **not** to differ - a comment-only edit - ran first in
+each of the three rounds and survived all three, so the harness was never
+reporting `killed` for everything.
+
+| # | mutation | test | result |
+|---|---|---|---|
+| 0 | a comment only | any | SURVIVED, as required, three times |
+| 1 | the metadata is a constant | `TestTheMetadataIsDerivedAndNotAConstant` | killed |
+| 2 | `username` is not special-cased | `TestMetadataRequiredIsUsernameAlwaysAndAdminOtherwise` | killed |
+| 3 | `readOnly` follows `view` | `TestMetadataReadOnlyAndVisibilityFollowThePermissions` | killed |
+| 4 | the `multivalued` validator is unconditional | `TestTheMultivaluedValidatorIsSynthesisedForSingleValuedAttributesOnly` | killed |
+| 5 | a config is sized on what is served | `TestMetadataValidatorKeyOrderIsTwoJavaMaps` | killed |
+| 6 | the validators object is the sized constructor | `TestTheMetadataIsByteExactOnMaster` | killed |
+| 7 | the metadata read reuses `userReadRoles` | `TestTheMetadataTakesTheSameFiveRolesAsTheProfileRead` | killed |
+| 8 | the write stores the request | `TestThePutUserProfileRoundTripsWithTheReadAndTheStore` | killed |
+| 9 | the write answers with the charset | `TestThePutUserProfileSendsNoCharsetAndTheReadDoes` | killed |
+| 10 | a bodyless write leaves the row | `TestAProfilePutWithNoBodyDeletesTheRow` | killed |
+| 11 | an absent `attributes` is an empty one | `TestAProfilePutWithAnEmptyObjectIsNotTheReset` | killed |
+| 12 | `firstName` joins the undeletable set | `TestThePutUserProfileValidators` | killed |
+| 13 | the validator set loses `not-blank` | `TestTheValidatorSetIsTheThirtyProvidersAndNotTheCatalogue` | killed |
+| 14 | `length` reports one hint, not both | `TestFourValidatorsRequireConfiguration` | killed |
+| 15 | the strict decoder reports the fragment's column | `TestTheProfileStrictDecoderNamesThreeClasses` | killed |
+| 16 | the profile write takes the read's five | `TestThePutUserProfileGuardIsManageRealmAlone` | killed |
+| 17 | the email check runs after the client | `TestTheEmailRejectionOrder` | killed |
+| 18 | `reset-password-email` answers the verify sentence | `TestResetPasswordEmailAnswersExecuteActionsEmailsSentence` | killed |
+| 19 | every email route declares a JSON `@Consumes` | `TestOnlyExecuteActionsEmailReadsABody` | killed |
+| 20 | `reset-password-email` reads `lifespan` | `TestResetPasswordEmailIgnoresLifespanAndItsNeighboursDoNot` | killed |
+| 21 | the email writes take the read pair | `TestTheEmailWritesTakeManageUsersAlone` | killed |
+| 22 | `[` answers the object's code | `TestExecuteActionsEmailBodyShapes` | killed |
+| 23 | the required actions are never checked | `TestTheEmailRejectionOrder` | killed |
+| 24 | an attribute loses its `group` | `TestMetadataCarriesTheGroupAndDropsTheSelector` | **survived**, then killed |
+| 25 | `selector` goes into the annotations slot | `TestMetadataCarriesAnnotations` | **survived**, then killed |
+| 26 | the metadata drops `annotations` | `TestMetadataCarriesAnnotations` | killed |
+
+**Both survivors are the same shape and neither is an unmeasured cell.** `group`
+and `annotations` were both measured on a live 26.7.1 - an attribute in a group
+comes back with `"group":"user-metadata"`, and one carrying
+`{"inputType":"text"}` comes back with it - and neither had been written into a
+test. Nothing could catch them: **no realm a default install has puts an
+attribute in a group or gives one an annotation**, so the committed metadata
+goldens cannot see either field, and none of the earlier tests sent an
+attribute that carried one.
+
+That is the difference AGENTS.md asks to be stated. A survivor whose cell is
+unmeasured is an unasked question and should be left alive; these two were
+measurements somebody had taken and nobody had written down, so the fix is the
+assertion. `TestMetadataCarriesTheGroupAndDropsTheSelector` and
+`TestMetadataCarriesAnnotations` exist because of these two mutations and say so
+in their own doc comments.
+
+Two things about the pass itself are worth recording, because both are the
+harness measuring itself rather than the code:
+
+- **Mutation 13 was never applied** on the first run: its anchor had been
+  reflowed by `gofmt` after it was written, so the harness reported
+  `NOT-APPLIED` rather than a verdict. A harness that had silently skipped it
+  would have reported twenty-six killed and one of them would have been a lie.
+  Counting `NOT-APPLIED` as its own outcome is what caught it.
+- **Mutation 18 was written badly** - `_ = verifyEmailFailure` changes no
+  behaviour - and survived because it was not a mutation. The harness's
+  no-byte-changed check does not catch that one, because bytes did change; only
+  reading the mutation caught it. It was replaced with one that really swaps the
+  two sentences and that one is killed.
+
+Two cells are **left unmeasured on purpose** and no mutation was written for
+either, because killing one would turn a question into a contract:
+
+- the `annotations` key **order** - §1.3 has nine vectors and a model that fits
+  them, and the model needs a constructor `internal/javamap` does not export and
+  this branch may not add;
+- the six-validator key set the outer map places wrong - it is a bucket
+  collision chaining in insertion order, which `javamap` says it cannot resolve,
+  and no default realm reaches it. `TestTheSixValidatorKeySetIsTheKnownMiss`
+  records which way round Gloak comes out so a later fix shows in a diff.
+
+## 5. Parity, before and after
 
 | chapter | before | after |
 |---|---|---|
 | `admin/users` | 26 / 34 | 31 / 34 |
-| total | see below | see below |
+| total | 498 / 541 | 503 / 541 |
+
+Measured with `cmd/parity` against the merge base `087053c`, which is where this
+branch was cut. `main` moved to `74db295` while it was open and brought the
+`Workflows` tag with it; no operation is claimed by both cuts and the
+per-chapter row is unaffected, so the merged branch's increment is the same +5.
+
+**One recorder artefact, not committed.** `make record` on this branch produced
+a diff to `admin/clients/evaluate-scope-mappings-not-granted.http` that gained
+sixteen `gloak-probe-*` realm roles other fixtures create. Nothing in this cut
+creates a realm role, so the shift is in the recorder rather than in the
+catalogue: that case reads a realm-wide listing and is not `PristineRealm`, so
+what it holds depends on how much state the shared container has when it runs.
+It was reverted and the verifier then passed against the committed bytes.
+`scattered-remainder.md` reported the identical artefact on the identical case
+and filed it; **this is the second cut to meet it**, which is the argument for
+marking that case `PristineRealm` rather than for filing it a third time.
 
 Five operations of the eight. **The three left are the consents pair and the
 impersonation**, and none of them is left for want of effort: each names a
