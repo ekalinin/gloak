@@ -825,8 +825,34 @@ func WriteNoContent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// WriteEmptyStatus writes any status with no body, deciding X-Frame-Options
+// the way WriteNoContent does for the 204.
+//
+// The rule is not the 204's: it is every empty-bodied response's. Measured
+// 2026-09-01 on `GET .../authz/resource-server/scope/{unknown}`, whose 404
+// carries the header when the request declared `application/json` and omits it
+// for `text/plain` and for no Content-Type at all, and on that family's other
+// empty answers, which agree. **The 201s on this API agree too**, measured
+// 2026-09-06 on `POST /workflows`: the same create with a
+// `Content-Type: application/yaml` and with `application/json` differs on this
+// one header and on nothing else.
+//
+// It lived in internal/admin as `writeEmptyStatus` until 2026-09-06 - F133 -
+// with a doc comment saying it belonged here and that moving it was a rename.
+// It is here now, and the move is what put its media-type test and
+// WriteNoContent's in one place: both were the `application/` prefix that
+// `application/yaml` refutes.
+func WriteEmptyStatus(w http.ResponseWriter, r *http.Request, status int) {
+	suppressDate(w)
+	if !framedRequestMediaTypes[requestMediaType(r)] {
+		w.Header().Del("X-Frame-Options")
+	}
+	w.WriteHeader(status)
+}
+
 // framedRequestMediaTypes is the measured allow-list above: the three request
-// media types a 204 carries X-Frame-Options for. See WriteNoContent.
+// media types an empty-bodied response carries X-Frame-Options for. See
+// WriteNoContent.
 var framedRequestMediaTypes = map[string]bool{
 	"application/json":                  true,
 	"application/xml":                   true,
