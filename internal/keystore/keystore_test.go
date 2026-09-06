@@ -150,6 +150,15 @@ func TestTheJKSPasswordsAreNotInterchangeable(t *testing.T) {
 	if _, err := UnlockJKSKey(e.ProtectedKey, "neither"); !errors.Is(err, ErrPasswordVerification) {
 		t.Errorf("a wrong password opened the key: %v", err)
 	}
+	// **The positive control, and this test survived a mutation without it.**
+	// The three assertions above are all refusals, so a key protector that
+	// refused *every* password would satisfy every one of them: dropping the
+	// password from the check digest left this test green and was caught only
+	// by TestReadJKSMatchesWhatKeycloakReports. A test that asserts one
+	// direction of a two-direction rule pins half of it.
+	if _, err := UnlockJKSKey(e.ProtectedKey, fixtureKeyPassword); err != nil {
+		t.Errorf("the key password did not open the key, so the three refusals above say nothing: %v", err)
+	}
 }
 
 // An empty store password skips the integrity check, which is the format's rule
