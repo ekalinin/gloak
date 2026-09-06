@@ -320,14 +320,18 @@ answer and not the recorder's, which is F40's shape: the case wants
 Baseline is `main` at 087053c; head is this branch.
 
 ```
-chapter                before          after
-oidc/authorization     25 of 27        27 of 27
-oidc/ciba              10 of 12        10 of 12
-oidc/introspection      4 of 5          5 of 5
-oidc/logout            12 of 14        12 of 14, one Recorded
-oidc/token             19 of 22        19 of 22, one Recorded
-total                 498 of 541      501 of 541
+chapter               served  recorded  documented      served  recorded  documented
+                            before                              after
+oidc/authorization        25         0          27          27         0          27
+oidc/ciba                 10         0          12          10         0          12
+oidc/introspection         4         0           5           5         0           5
+oidc/logout               12         0          14          12         1          14
+oidc/token                19         1          22          19         1          22
+total                    498                   541         501                   541
 ```
+
+`oidc/token`'s recorded case is `dpop-header-invalid`, which was already
+`Recorded` before this cut; the one that moved is `oidc/logout`'s.
 
 A protocol chapter's numerator is `Implemented` and its denominator is
 `Implemented + Recorded + Pending`, so promoting `oidc/logout/frontchannel` from
@@ -359,11 +363,27 @@ and the revert checked with `git status`.
 | the introspection audience guard inverted | `TestConformance/oidc/introspection/active-access-token` | killed |
 | `token.Audience` keeps the issuing client | `TestConformance/oidc/introspection/access-token-outside-audience` | **survived**, and is why the fixture grew a role on the issuing client |
 | `token.Audience` keeps the issuing client | `TestConformance/oidc/introspection/active-access-token` | killed, after the fixture change |
-| `WriteFormPost` sorts its names instead of bucketing them | `TestAuthorizeFormPostDropsAnAbsentParameterAndReordersTheRest` | killed |
+| `WriteFormPost` uses `javamap.SizedKeyOrder` instead of `KeyOrder` | `TestAuthorizeFormPostDropsAnAbsentParameterAndReordersTheRest` | killed, on all three shorter key sets |
 | the form_post `Content-Type` gains a charset | `TestConformance/oidc/authorization/response-mode-form-post` | killed |
 | the SSO short circuit passes a replaceState URL | `TestFormPostScriptFollowsTheSuccessfulLoginAlone` | killed |
-| `htmlInputMatches` drops its tag boundary | `TestHTMLInputMaskRefusesAnInputWithNoValue` | killed |
-| `WriteAuthorizationRedirect` sets `X-Frame-Options` | `TestConformance/oidc/authorization/implicit-flow` | killed |
+| `htmlInputMatches` searches past its element's `>` | `TestHTMLInputMaskRefusesAnInputWithNoValue` | killed |
+| `WriteAuthorizationRedirect` stops deleting `X-Frame-Options` | `TestConformance/oidc/authorization/implicit-flow` | killed |
+| `escapeFormPostValue` becomes `escapeThemeTitle` | `TestWriteFormPostEscapesItsOwnWay` | killed |
+
+**Three attempts were bad mutations rather than results, and they are here
+because reading a red run as a kill is the failure mode this list exists to
+avoid.** Two did not compile - deleting the audience guard left `slices` unused,
+and replacing `javamap.KeyOrder(names)` with a bare `names` left the import
+unused - and `go test` reported `[build failed]`, which is not a test failing.
+The third changed no behaviour: setting `X-Frame-Options` at the top of
+`WriteAuthorizationRedirect` is undone three lines later by the `Del` that
+function exists for, so it "survived" a test that was working perfectly. It was
+replaced by removing the `Del`.
+
+**No mutation is offered for `oidc/logout/frontchannel`.** A `Recorded` case's
+only assertion is that it does *not* match, and the mutation that would test it
+is Gloak serving the page - which is the work the case is `Recorded` for. The
+alarm is the guard here, and it is the one that fires by itself.
 
 ## 6. What surprised me
 
