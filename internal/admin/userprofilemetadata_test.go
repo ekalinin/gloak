@@ -181,6 +181,35 @@ func TestMetadataCarriesTheGroupAndDropsTheSelector(t *testing.T) {
 	}
 }
 
+// TestMetadataCarriesAnnotations is the second field the first mutation pass
+// found unpinned, and it was found the same way: a mutation that put `selector`
+// into the `annotations` slot survived, because nothing asserted what reaches
+// that slot.
+//
+// The attribute carrying no annotations is the control, and it is the half that
+// says the key is omitempty rather than emitted empty.
+func TestMetadataCarriesAnnotations(t *testing.T) {
+	h, s, realm := newServer(t)
+	admin := adminToken(t, h)
+	perms := `"permissions":{"view":["admin"],"edit":["admin"]}`
+	writeUserProfileDocument(t, s, realm.ID, `{"attributes":[`+
+		`{"name":"username",`+perms+`},`+
+		`{"name":"noted",`+perms+`,"annotations":{"inputType":"text"},`+
+		`"selector":{"scopes":["profile"]}}],"groups":[]}`)
+
+	body := get(t, h, metadataPath, admin).Body.String()
+	if !strings.Contains(body, `"annotations":{"inputType":"text"}`) {
+		t.Errorf("the annotations did not reach the metadata:\n%s", body)
+	}
+	if strings.Contains(body, `"scopes"`) {
+		t.Errorf("the selector's contents reached the metadata:\n%s", body)
+	}
+	if n := strings.Count(body, `"annotations"`); n != 1 {
+		t.Errorf("%d annotations keys, want exactly the one attribute that declares one:\n%s",
+			n, body)
+	}
+}
+
 // TestMetadataRequiredIsUsernameAlwaysAndAdminOtherwise pins the rule that took
 // seven requests, because three readings fit fewer than seven.
 //
