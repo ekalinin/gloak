@@ -18250,14 +18250,24 @@ var adminCases = []Case{
 		// not have, to assert a key `read-after-upload` already pins byte for
 		// byte.
 		//
-		// Measured and not reproduced, so the next cut does not re-measure it:
-		// the 200 is `application/octet-stream` with `Cache-Control: no-cache`,
-		// **no `Content-Disposition` at all**, and **four** of the five
-		// security headers - `X-Frame-Options` is missing. The accepted format
-		// set is the server's own: `[BCFKS, PKCS12, JKS]`, case-sensitive, with
-		// anything else a 406. And the guard is `view-clients` **or**
-		// `manage-clients`, which makes it the first POST in this API opened by
-		// a view role.
+		// **Served since 2026-09-06 and still Pending, which is the whole of
+		// the tension F161 left.** The handler is in internal/admin and its
+		// contract is asserted by TestKeystoreDownloadHeaders there - the 200,
+		// the `application/octet-stream`, the `Cache-Control: no-cache`, the
+		// four security headers, the absent `X-Frame-Options` and the absent
+		// `Content-Disposition` - because a golden can hold none of it. A case
+		// shape that recorded the headers and skipped the body was considered
+		// and refused: it would move this chapter by **two** on the strength of
+		// an assertion about no byte of either response, which is F46's
+		// whole-value mask one level worse. So the operation is served and the
+		// number does not move, and that is the honest reading rather than a
+		// gap.
+		//
+		// The format set spelled here was **wrong in the 2026-09-05 handover**
+		// and is corrected: it is `[PKCS12, JKS, BCFKS]`, ten requests on one
+		// container and one more after a restart. It was prose that nothing
+		// compared, which is exactly how it drifted; the case below now holds
+		// it in a golden.
 		ID: "admin/client-attribute-certificate/download",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -18265,9 +18275,11 @@ var adminCases = []Case{
 			Retrieved: "2026-09-05",
 		},
 		Status: Pending,
-		Reason: "the body is a binary keystore whose bytes differ on every request and " +
-			"whose length differs once the key is regenerated, so no golden can hold it " +
-			"and no golden could assert anything about it - see RefuseNonTextBody and F161",
+		Reason: "served, and uncounted: the body is a binary keystore whose bytes differ " +
+			"on every request and whose length differs once the key is regenerated, so no " +
+			"golden can hold it and none could assert anything about it - the status, the " +
+			"media type and the six headers are asserted by internal/admin's " +
+			"TestKeystoreDownloadHeaders instead; see RefuseNonTextBody and F161",
 		Fixture: "admin-token-certificate-client",
 		Request: Request{
 			Method: http.MethodPost,
@@ -18281,10 +18293,17 @@ var adminCases = []Case{
 		},
 	},
 	{
-		// The sibling, and the one whose length moves as well. Same reason,
-		// and one difference worth recording: this needs `manage-clients`
-		// where `download` takes `view-clients`, so the verb does not decide
-		// the guard on these two - whether the operation writes does.
+		// The sibling, and the one whose length moves as well. Served and
+		// uncounted for the same reason, and with two differences worth
+		// recording. It needs `manage-clients` where `download` takes
+		// `view-clients`, so the verb does not decide the guard on these two -
+		// whether the operation writes does. And **it deletes the private key**:
+		// it mints a pair, gives the whole of it away inside the keystore and
+		// keeps only the certificate, which is the same deletion
+		// upload-certificate performs from the other direction. That half is
+		// asserted where it can be, by internal/admin's
+		// TestGenerateAndDownloadKeepsOnlyTheCertificate, because it is a fact
+		// about the store rather than about the response.
 		ID: "admin/client-attribute-certificate/generate-and-download",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -18292,9 +18311,10 @@ var adminCases = []Case{
 			Retrieved: "2026-09-05",
 		},
 		Status: Pending,
-		Reason: "the body is a binary keystore whose bytes and length both differ on every " +
-			"request - twelve requests gave twelve bodies and four lengths - so no golden " +
-			"can hold it and none could assert a length either; see RefuseNonTextBody and F161",
+		Reason: "served, and uncounted: the body is a binary keystore whose bytes and " +
+			"length both differ on every request - twelve requests gave twelve bodies and " +
+			"four lengths - so no golden can hold it and none could assert a length " +
+			"either; see RefuseNonTextBody and F161",
 		Fixture: "admin-token-certificate-client",
 		Request: Request{
 			Method: http.MethodPost,
@@ -18308,38 +18328,35 @@ var adminCases = []Case{
 		},
 	},
 	{
-		// The one multipart operation not taken, and the reason is production
-		// code rather than the harness. Serving it means reading a JKS or a
-		// PKCS12 in Go: x/crypto/pkcs12 decodes only the legacy PBE algorithms
-		// and there is no JKS reader in the standard library or in x/. That is
-		// the same missing parser the decoded-projection shape was declined
-		// for, which is why the two decisions are recorded together.
+		// **The operation this cut moves, and the golden carries no mask at
+		// all.** It answers the private key and certificate it found inside the
+		// keystore it was given, so a constant file makes a byte-exact
+		// recording - which is what makes the three multipart operations the
+		// most assertable in this tag rather than the least, the reading F161's
+		// own entry had upside down.
 		//
-		// Measured so the next cut does not have to: it accepts a real JKS
-		// **and** a real PKCS12, answers `{privateKey,certificate}` read out of
-		// the store with no Cache-Control, and answers 500 for
-		// `Certificate PEM` and `Public Key PEM` and
-		// `400 {"error":"error loading keystore"}` for a file that does not
-		// match the format it was given.
+		// What it needed was not a harness change but a reader: the endpoint
+		// hands back the **decrypted** private key, measured byte-identical to
+		// what the generate had answered for the client the file came from, so
+		// extracting one certificate was never going to be enough. See
+		// internal/keystore, and the plan for why the obvious dependency does
+		// not close it - Keycloak writes indefinite-length BER and every Go
+		// PKCS12 reader is built on encoding/asn1.
 		ID: "admin/client-attribute-certificate/upload",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Client Attribute Certificate: upload certificate and eventually private key",
-			Retrieved: "2026-09-05",
+			Retrieved: "2026-09-06",
 		},
-		Status: Pending,
-		Reason: "serving it means reading a JKS or PKCS12 keystore in Go, which needs a " +
-			"parser the standard library and x/crypto do not have; the response is " +
-			"ordinary JSON and would carry a byte-exact golden once it can be served",
-		Fixture: "admin-token-certificate-client",
-		// The request is written out although nothing runs it, because the
-		// keystore it would carry is the thing this case is waiting on: there
-		// is no constant to send until something can read one back.
-		Request: Request{
-			Method: http.MethodPost,
-			Path: "/admin/realms/master/clients/" + probeCertificateClientID +
+		Status:    Implemented,
+		Operation: "POST /admin/realms/{realm}/clients/{client-uuid}/certificates/{attr}/upload",
+		Fixture:   "admin-token-keystore-client",
+		Request: keystoreUploadRequest(
+			"/admin/realms/master/clients/"+probeKeystoreClientID+
 				"/certificates/jwt.credential/upload",
-		},
+			keystoreUploadFields("JKS"), probeKeystoreJKS),
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 
 	// The scattered remainder: eleven operations from three tags that share no
@@ -20588,5 +20605,213 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type"},
+	},
+	// ---------------------------------------------------------------------
+	// The certificate chapter's keystore cases, appended at the very end of
+	// this file. They are not filed beside their four siblings above for
+	// F168's reason: an anchor defined by what is currently last is not an
+	// anchor, and the end of a file is.
+	//
+	// **Order matters here in a way it does not elsewhere**, because the
+	// recorder replays one shared container in catalogue order while the
+	// verifier builds fresh state per case. The two download refusals address
+	// a client no case ever writes to; the uploads address a different one.
+	// Sharing one would have made `download-no-keypair` unrecordable and left
+	// the verifier passing, which is the failure this arrangement avoids
+	// rather than one it fixes.
+	{
+		// The second `upload` case, and it is the one that pins the BER
+		// normaliser. Keycloak writes its PKCS12 with BouncyCastle:
+		// indefinite lengths throughout and the content octets in a
+		// constructed OCTET STRING chunked at 1000 bytes, which
+		// `encoding/asn1` refuses on the first byte - measured, and measured
+		// again through x/crypto/pkcs12, which is already a dependency of this
+		// module and fails identically. Without this case that normaliser is
+		// exercised by internal/keystore's own tests and by nothing the
+		// harness runs.
+		//
+		// The body is the same pair as the JKS case above, because the two
+		// fixture keystores were downloaded for the same client in one
+		// session. That agreement is the assertion: two formats, two
+		// protection schemes - a JKS key opens with the key password and a
+		// PKCS12 key with the store password, measured on two different values
+		// on purpose - and one answer.
+		ID: "admin/client-attribute-certificate/upload-pkcs12",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: upload certificate and eventually private key",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-keystore-client",
+		Request: keystoreUploadRequest(
+			"/admin/realms/master/clients/"+probeKeystoreClientID+
+				"/certificates/jwt.credential/upload",
+			keystoreUploadFields("PKCS12"), probeKeystorePKCS12),
+		AssertHeaders:       []string{"Content-Type", "X-Frame-Options"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// An alias the store does not hold. **The first two-key error body in
+		// this tag** - a code in `error` and prose in `error_description` -
+		// where every other refusal here is the bare-message shape.
+		//
+		// It is also the last check of the upload: the store is loaded first,
+		// so the same request with a wrong store password answers about the
+		// password instead. That ordering is asserted in internal/admin, where
+		// a table can send the pair.
+		ID: "admin/client-attribute-certificate/upload-unknown-alias",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: upload certificate and eventually private key",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-keystore-client",
+		Request: func() Request {
+			fields := keystoreUploadFields("JKS")
+			fields["keyAlias"] = "nothing-in-this-store-is-called-this"
+			return keystoreUploadRequest(
+				"/admin/realms/master/clients/"+probeKeystoreClientID+
+					"/certificates/jwt.credential/upload",
+				fields, probeKeystoreJKS)
+		}(),
+		AssertHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// **The two formats spell a wrong store password differently**, and
+		// that is the whole reason both of these cases exist: `Password
+		// verification failed` for a JKS and `PKCS12 key store mac invalid`
+		// for a PKCS12. Two spellings this repository did not have, on one
+		// operation, decided by a field of the request. A handler with one
+		// message passes whichever of the two is written first.
+		ID: "admin/client-attribute-certificate/upload-wrong-store-password",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: upload certificate and eventually private key",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-keystore-client",
+		Request: func() Request {
+			fields := keystoreUploadFields("JKS")
+			fields["storePassword"] = "not the store password"
+			return keystoreUploadRequest(
+				"/admin/realms/master/clients/"+probeKeystoreClientID+
+					"/certificates/jwt.credential/upload",
+				fields, probeKeystoreJKS)
+		}(),
+		AssertHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// The other half of the pair above.
+		ID: "admin/client-attribute-certificate/upload-pkcs12-wrong-store-password",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: upload certificate and eventually private key",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-keystore-client",
+		Request: func() Request {
+			fields := keystoreUploadFields("PKCS12")
+			fields["storePassword"] = "not the store password"
+			return keystoreUploadRequest(
+				"/admin/realms/master/clients/"+probeKeystoreClientID+
+					"/certificates/jwt.credential/upload",
+				fields, probeKeystorePKCS12)
+		}(),
+		AssertHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// **The 406, and it is the only assertable thing either download
+		// says.** The body names the three formats the server supports, in
+		// Keycloak's own order - which the 2026-09-05 handover recorded as
+		// `[BCFKS, PKCS12, JKS]` and which is `[PKCS12, JKS, BCFKS]`, ten
+		// requests on one container and one more after a restart. A value in
+		// prose beside no golden is a value that will drift, and this one did
+		// inside a day; this case is where it stops.
+		//
+		// The format check runs **before** the client's state, which is what
+		// lets this address a client that has never generated anything: the
+		// same request with a real format answers the 404 below.
+		ID: "admin/client-attribute-certificate/download-unsupported-format",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: get a keystore file for the client",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-keystore-empty-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/clients/" + probeKeystoreEmptyClientID +
+				"/certificates/jwt.credential/download",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"format":"bogus","keyAlias":"gloak",` +
+				`"keyPassword":"gloakkey","storePassword":"gloakstore"}`),
+		},
+		AssertHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// A client that has never generated anything: **404 `keypair not
+		// generated for client`**, a thirty-sixth spelling of not-found for
+		// AGENTS.md's list. It is decided by the **certificate**, not the key -
+		// a client holding a certificate alone, which is what
+		// upload-certificate and generate-and-download both leave behind, is
+		// served.
+		//
+		// It addresses a client of its own for the reason the block comment
+		// above gives, and it is the case that would have gone silently wrong
+		// had it shared one.
+		ID: "admin/client-attribute-certificate/download-no-keypair",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: get a keystore file for the client",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-keystore-empty-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/clients/" + probeKeystoreEmptyClientID +
+				"/certificates/jwt.credential/download",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"format":"JKS","keyAlias":"gloak",` +
+				`"keyPassword":"gloakkey","storePassword":"gloakstore"}`),
+		},
+		AssertHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		// The media-type refusal, which is a spelling this repository already
+		// has and an endpoint that answers it where its neighbours do not: a
+		// request with **no Content-Type at all** is a 415 here, where
+		// requireJSONBody elsewhere in internal/admin accepts one. Same
+		// sentence, different predicate, and the difference is measured.
+		ID: "admin/client-attribute-certificate/download-wrong-media-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Client Attribute Certificate: get a keystore file for the client",
+			Retrieved: "2026-09-06",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token-keystore-empty-client",
+		Request: Request{
+			Method: http.MethodPost,
+			Path: "/admin/realms/master/clients/" + probeKeystoreEmptyClientID +
+				"/certificates/jwt.credential/download",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/x-www-form-urlencoded",
+			},
+			Body: []byte(`format=JKS&keyAlias=gloak&keyPassword=gloakkey&storePassword=gloakstore`),
+		},
+		AssertHeaders: []string{"Content-Type", "X-Frame-Options"},
 	},
 }
