@@ -114,31 +114,51 @@ type linkedAccountRepresentation struct {
 	Social        bool   `json:"social"`
 }
 
-// socialProviderIDs is the set of identity provider ids the account API marks
-// `"social": true`. Measured by creating one instance of each of the seventeen
-// providers a default 26.7.1 registers, in one realm, and reading the listing:
-// eleven came back social, four came back not, and two were absent from the
-// listing altogether (see listedProviderID).
+// socialProviderNames is the set of identity provider ids the account API
+// marks `"social": true`, and the display name each of them carries when the
+// provider itself has none.
 //
-// **It is a table rather than a predicate, because no predicate fits.** The
-// obvious one - "the provider has no `types`" - is refuted by `oauth2` and
-// `jwt-authorization-grant`, which have none and are not social. AGENTS.md
-// records "the eleven social providers" from the `types` derivation and this
-// is the same eleven, arrived at from the other side; that agreement is why
-// the number is worth writing down rather than the membership being guessed
-// from it.
-var socialProviderIDs = map[string]bool{
-	"bitbucket":               true,
-	"facebook":                true,
-	"github":                  true,
-	"gitlab":                  true,
-	"google":                  true,
-	"linkedin-openid-connect": true,
-	"microsoft":               true,
-	"openshift-v4":            true,
-	"paypal":                  true,
-	"stackoverflow":           true,
-	"twitter":                 true,
+// **The two facts are one fact and that is measured, not assumed.** Fifteen
+// providers were created in one realm with no `displayName` at all and the
+// listing read back: the eleven below came back `"social": true` **and**
+// carrying one of these names, and `oidc`, `saml` and `keycloak-oidc` came back
+// `"social": false` and carrying their **alias**. So a social provider has a
+// declared name and a non-social one has none, and one table answers both
+// questions rather than a set and a second lookup that could disagree.
+//
+// **No rule generates these names**, which is why they are transcribed rather
+// than derived. Seven of the eleven defeat any case transformation:
+//
+//	bitbucket                BitBucket        a capital in the middle
+//	github                   GitHub
+//	gitlab                   GitLab
+//	linkedin-openid-connect  LinkedIn         the suffix is dropped entirely
+//	openshift-v4             Openshift v4     lower-case v, and **not** OpenShift
+//	paypal                   PayPal
+//	stackoverflow            StackOverflow
+//
+// A title-caser gets all seven wrong and the other four right, which is the
+// shape a small sample hides: `Facebook`, `Google`, `Microsoft` and `Twitter`
+// are exactly what capitalising the id gives.
+//
+// The eleven are also AGENTS.md's "eleven social providers", counted there from
+// the `types` derivation on the Admin API. Two independent readings, one
+// membership. That agreement is worth recording and is **not** a substitute for
+// this table: `types` is `[]` for `oauth2` and `jwt-authorization-grant` too, so
+// the predicate a reader would take from that sentence admits two providers this
+// API does not call social.
+var socialProviderNames = map[string]string{
+	"bitbucket":               "BitBucket",
+	"facebook":                "Facebook",
+	"github":                  "GitHub",
+	"gitlab":                  "GitLab",
+	"google":                  "Google",
+	"linkedin-openid-connect": "LinkedIn",
+	"microsoft":               "Microsoft",
+	"openshift-v4":            "Openshift v4",
+	"paypal":                  "PayPal",
+	"stackoverflow":           "StackOverflow",
+	"twitter":                 "Twitter",
 }
 
 // unlistedProviderIDs are the two provider ids the linked-accounts listing
@@ -169,10 +189,14 @@ var unlistedProviderIDs = map[string]bool{
 //   - **A disabled provider is absent and a link-only one is present.** So the
 //     filter is `enabled` and not "can a user reach it from the login page",
 //     which `linkOnly` would also answer.
-//   - **`displayName` falls back to the alias**, so the key is never empty.
-//     Omitting it when the provider has none is what a struct tag with
-//     omitempty would do and it is wrong on every provider that has none,
-//     which is most of them.
+//   - **`displayName` falls back to the provider's own name and only then to
+//     the alias**, so the key is never empty. A `google` provider created with
+//     no display name comes back `"Google"`, and an `oidc` one comes back
+//     carrying its alias - see socialProviderNames. This was **wrong here
+//     until the golden refuted it**: the first version fell back to the alias
+//     for everything, which is right on the four non-social providers and
+//     wrong on all eleven social ones, and every hand probe of this route had
+//     used an `oidc` provider.
 //
 // It sends **no `Cache-Control` at all**, where the groups read one route away
 // sends `no-cache`. Two neighbouring reads on one API, opposite answers, which
@@ -206,8 +230,15 @@ func (h *handler) linkedAccounts(w http.ResponseWriter, r *http.Request) {
 		if p.Alias != nil {
 			alias = *p.Alias
 		}
+		socialName, social := socialProviderNames[p.ProviderID]
+		// The provider's own display name wins over both - measured, a `google`
+		// provider carrying "A Display" serves that and not "Google".
 		display := p.DisplayName
-		if display == "" {
+		switch {
+		case display != "":
+		case socialName != "":
+			display = socialName
+		default:
 			display = alias
 		}
 		out = append(out, linkedAccountRepresentation{
@@ -220,7 +251,7 @@ func (h *handler) linkedAccounts(w http.ResponseWriter, r *http.Request) {
 			ProviderAlias: alias,
 			ProviderName:  alias,
 			DisplayName:   display,
-			Social:        socialProviderIDs[p.ProviderID],
+			Social:        social,
 		})
 	}
 	// IdentityProviderRepo.List already sorts by alias and the admin API's own

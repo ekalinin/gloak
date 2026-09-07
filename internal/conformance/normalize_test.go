@@ -761,6 +761,28 @@ func TestThemeResourceAppearsOnlyInTheThemePages(t *testing.T) {
 		"saml/idp-initiated/unclaimed-name":                  7,
 		"saml/idp-initiated/client-id-is-not-the-name":       7,
 		"saml/idp-initiated/claimed-name":                    7,
+		// The account console, and it is **not** a theme page in the sense the
+		// eleven above are: it is not the login theme's error template, it
+		// carries no chrome, no message and no form, and its whole body is a
+		// loader plus an importmap. It is here because this guard is not about
+		// templates - it is about which goldens ReplaceThemeResource reaches,
+		// and this one it reaches.
+		//
+		// **Seven, and the seven are not the login theme's seven.** Five of them
+		// are the importmap's vendored module URLs under
+		// /resources/<version>/common/keycloak/vendor/, and the other two are
+		// the favicon and the `resourceUrl` inside the page's own JSON
+		// environment block. So the number agrees with eleven pages it has
+		// nothing in common with, which is a coincidence worth naming rather
+		// than a pattern: nothing here makes it seven and nothing would notice
+		// if the console's vendor list grew.
+		//
+		// Both entries are the **same 4222 bytes**: the console is a client-side
+		// router, so a path no route serves answers the identical page. That is
+		// the measurement account/console/unknown-subpath exists for, and it is
+		// why the two counts must stay equal.
+		"account/console/accept-html":     7,
+		"account/console/unknown-subpath": 7,
 	}
 	seen := map[string]bool{}
 	for _, c := range Catalog {

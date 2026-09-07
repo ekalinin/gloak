@@ -241,7 +241,13 @@ func accountBrokerStep(alias, providerID, displayName string, enabled bool) Step
 	if displayName != "" {
 		body += `"displayName":"` + displayName + `",`
 	}
-	body += `"config":{"clientId":"gloak-probe","clientSecret":"gloak-probe",` +
+	// The two `clientId`s here are the broker's credentials **at the remote
+	// provider** and create no object on this server at all - but
+	// TestEveryCreatedObjectCarriesTheProbePrefix reads one object per JSON
+	// object and cannot tell the two meanings of the key apart. Naming them
+	// inside the convention is a smaller answer than an exemption, and it costs
+	// nothing: no golden holds an identity provider's config.
+	body += `"config":{"clientId":"gloak-probe-broker-client","clientSecret":"gloak-probe-broker-secret",` +
 		`"authorizationUrl":"http://localhost:1/auth","tokenUrl":"http://localhost:1/token"}}`
 	return Step{
 		Request: Request{

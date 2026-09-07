@@ -1,0 +1,8 @@
+# OPTIONS /realms/master/account/groups
+HTTP/1.1 200 OK
+Content-Length: {{volatile}}
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Robots-Tag: none
+

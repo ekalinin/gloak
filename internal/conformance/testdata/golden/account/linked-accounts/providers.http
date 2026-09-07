@@ -1,0 +1,11 @@
+# GET /realms/gloak-probe-account-brokers/account/linked-accounts
+HTTP/1.1 200 OK
+Content-Length: {{volatile}}
+Content-Type: application/json;charset=UTF-8
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Frame-Options: SAMEORIGIN
+X-Robots-Tag: none
+
+[{"connected":false,"providerAlias":"gloak-probe-oidc","providerName":"gloak-probe-oidc","displayName":"gloak-probe-oidc","social":false},{"connected":false,"providerAlias":"gloak-probe-social","providerName":"gloak-probe-social","displayName":"Google","social":true},{"connected":false,"providerAlias":"zzz-probe-broker","providerName":"zzz-probe-broker","displayName":"AAA First","social":false}]
