@@ -118,28 +118,47 @@ func TestTheTwoServedReadsTakeDifferentRoleSets(t *testing.T) {
 }
 
 // TestBearerTokenFoldsTheSchemeAndRefusesOthers pins the account API's own
-// reading of the Authorization header.
+// reading of the Authorization header, one vector per measured spelling.
 //
-// The lower-case spelling is measured succeeding here, and internal/admin's
-// bearerToken cuts the exact prefix "Bearer ". The two disagree on purpose and
-// this is where the disagreement is written down.
+// **Two of these vectors were the other way round until they were measured.**
+// The first version of this test asserted `Bearer   abc  ` yields `abc` and
+// `Bearer a b` yields `a b` - what a `TrimSpace` over the remainder gives - and
+// a live 26.7.1 answers 401 to both. The separator is exactly one space; what
+// surrounds the *whole* value is ignored. See bearerToken for all sixteen rows
+// and the requests behind them.
 func TestBearerTokenFoldsTheSchemeAndRefusesOthers(t *testing.T) {
 	cases := map[string]string{
-		"Bearer abc":        "abc",
-		"bearer abc":        "abc",
-		"BEARER abc":        "abc",
-		"BeArEr abc":        "abc",
-		"Bearer   abc  ":    "abc",
-		"Basic YWRtaW4=":    "",
-		"abc":               "",
-		"":                  "",
-		"Bearerabc":         "",
-		"Negotiate abc":     "",
-		"DPoP abc":          "",
-		"Bearer":            "",
-		"Bearer ":           "",
-		"Bearer a b":        "a b",
-		"  Bearer   spaced": "",
+		// The scheme folds case - measured 200 on all four.
+		"Bearer abc": "abc",
+		"bearer abc": "abc",
+		"BEARER abc": "abc",
+		"BeArEr abc": "abc",
+		// Exactly one space separates the two. Measured 401 on all three, and
+		// these are the rows a trimming implementation gets wrong.
+		"Bearer  abc":  "",
+		"Bearer   abc": "",
+		"Bearer\tabc":  "",
+		// Whitespace around the whole value is ignored. Measured 200 on all five.
+		"Bearer abc ":   "abc",
+		"Bearer abc  ":  "abc",
+		"Bearer abc\t":  "abc",
+		" Bearer abc":   "abc",
+		"  Bearer abc":  "abc",
+		// A third word is refused, which is what stops "ignore the surroundings"
+		// being read as "take everything after the first space". Measured 401.
+		"Bearer abc extra": "",
+		// The scheme is compared whole, so a trailing comma is not the scheme.
+		"Bearer, abc": "",
+		// No separator, no token, another scheme, no header.
+		"Bearerabc":      "",
+		"Bearer":         "",
+		"Bearer ":        "",
+		"abc":            "",
+		"":               "",
+		"Basic YWRtaW4=": "",
+		"Negotiate abc":  "",
+		"DPoP abc":       "",
+		"Token abc":      "",
 	}
 	for header, want := range cases {
 		r := httptest.NewRequest(http.MethodGet, "/realms/master/account/groups", nil)

@@ -254,19 +254,49 @@ func (h *handler) accountGrants(ctx context.Context, realm *model.Realm, effecti
 
 // bearerToken reads the access token out of the Authorization header.
 //
-// **The scheme folds case here and does not on the admin API.** `bearer <t>`
-// in lower case was measured succeeding on /realms/master/account where
-// internal/admin's own bearerToken cuts the exact prefix `Bearer `. Whether
-// the admin API folds it too is unmeasured, so this is written as measured on
-// the API it belongs to rather than made to agree with its neighbour; the
-// handover files the question.
+// **The scheme folds case.** `bearer <t>`, `BEARER <t>` and `BeArEr <t>` were
+// all measured answering 200 on /realms/master/account/groups with a token that
+// answers 200 as `Bearer <t>`. The admin API folds it too - measured on
+// /admin/realms/master with an administrator's token - which internal/admin's
+// own bearerToken does not do; that is its divergence and not this one's, and
+// the handover files it.
+//
+// **Exactly one space separates the scheme from the token, and whitespace
+// around the whole value is ignored.** Sixteen spellings were measured on one
+// path with one token, and the two halves of that sentence are separate
+// findings:
+//
+//	Bearer <t>                200      the ordinary spelling
+//	bearer <t> BEARER <t>     200      the scheme folds case
+//	Bearer  <t>               401      two spaces
+//	Bearer   <t>              401      three spaces
+//	Bearer\t<t>               401      a tab is not the separator
+//	Bearer <t><space>         200      trailing whitespace is ignored
+//	Bearer <t><space><space>  200
+//	Bearer <t>\t              200
+//	<space>Bearer <t>         200      leading whitespace is ignored
+//	<space><space>Bearer <t>  200
+//	Bearer<t>                 401      no separator at all
+//	Bearer <t> extra          401      a third token is refused
+//	Bearer, <t>               401      the scheme is compared whole
+//	Bearer / "Bearer "        401      no token
+//	Basic <creds>             401
+//	Negotiate <t> DPoP <t>    401      a valid token under another scheme
+//
+// **A version that trimmed the remainder passed all of this except the three
+// refusals in the middle**, and that is how it was found: `strings.TrimSpace`
+// over the part after the first space turns `Bearer  <t>` into a 200 where
+// Keycloak answers 401. Trimming the whole value first and then refusing a
+// remainder that still holds a space is what fits all sixteen rows.
+// account/gate/double-space-scheme and account/gate/leading-space-scheme are
+// the two cases that hold the ends of it.
 func bearerToken(r *http.Request) string {
-	value := r.Header.Get("Authorization")
+	value := strings.TrimSpace(r.Header.Get("Authorization"))
 	scheme, rest, ok := strings.Cut(value, " ")
-	if !ok || !strings.EqualFold(scheme, "Bearer") {
+	if !ok || !strings.EqualFold(scheme, "Bearer") || strings.Contains(rest, " ") {
 		return ""
 	}
-	return strings.TrimSpace(rest)
+	return rest
 }
 
 // writeUnauthorized emits the measured 401. It is the fallback family's shape

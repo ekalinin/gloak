@@ -118,13 +118,23 @@ type linkedAccountRepresentation struct {
 // marks `"social": true`, and the display name each of them carries when the
 // provider itself has none.
 //
-// **The two facts are one fact and that is measured, not assumed.** Fifteen
-// providers were created in one realm with no `displayName` at all and the
-// listing read back: the eleven below came back `"social": true` **and**
-// carrying one of these names, and `oidc`, `saml` and `keycloak-oidc` came back
-// `"social": false` and carrying their **alias**. So a social provider has a
-// declared name and a non-social one has none, and one table answers both
-// questions rather than a set and a second lookup that could disagree.
+// **The two facts are one fact and that is measured, not assumed.** All
+// seventeen provider ids a default 26.7.1 registers were created in one realm
+// with no `displayName` at all and the listing read back: fifteen of them
+// appear, the eleven below came back `"social": true` **and** carrying one of
+// these names, and the remaining four - `keycloak-oidc`, `oauth2`, `oidc` and
+// `saml` - came back `"social": false` and carrying their **alias**. So a
+// social provider has a declared name and a non-social one has none, and one
+// table answers both questions rather than a set and a second lookup that could
+// disagree. The other two of the seventeen are unlistedProviderIDs.
+//
+// **Four, not three.** An earlier reading of this measurement named only
+// `oidc`, `saml` and `keycloak-oidc` as the non-social ones and left `oauth2`
+// out, which made the fifteen listed rows fail to add up. `oauth2` needs a
+// `userInfoUrl` in its config before a create is accepted, and a sweep that
+// posts one config to every provider id loses it to a 400 and reads the gap as
+// an absence - which is the same mistake that would have put it in
+// unlistedProviderIDs.
 //
 // **No rule generates these names**, which is why they are transcribed rather
 // than derived. Seven of the eleven defeat any case transformation:
@@ -170,8 +180,10 @@ var socialProviderNames = map[string]string{
 // default - and the pair itself refutes it, because a
 // `jwt-authorization-grant` create sets nothing and is absent too. Both were
 // confirmed present and `enabled: true` in the realm's own identity provider
-// listing while absent from this one, so the filter is not `enabled` either.
-// The table records what was measured; F193 is the entry that asks why.
+// listing while absent from this one, so the filter is not `enabled` either:
+// seventeen instances in the admin listing, fifteen rows here, and these two
+// are the difference. The table records what was measured; F190 is the entry
+// that asks why.
 var unlistedProviderIDs = map[string]bool{
 	"jwt-authorization-grant": true,
 	"kubernetes":              true,
