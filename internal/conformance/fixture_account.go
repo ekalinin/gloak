@@ -277,7 +277,16 @@ func accountBrokerFixture() Fixture {
 				Method:  http.MethodPost,
 				Path:    "/admin/realms",
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
-				Body:    []byte(`{"realm":"` + accountBrokerRealm + `","enabled":true}`),
+				// The four locales are **deliberately unsorted and the flag is
+				// deliberately off**. GET .../account/supportedLocales answers
+				// this list in stored order whether internationalizationEnabled
+				// is set or not, measured both ways, so a realm carrying
+				// `de, en, fr` with the flag on could not tell a sorted answer
+				// from a stored one and a realm with the flag off could not tell
+				// a gated answer from an ungated one. This body separates both.
+				Body: []byte(`{"realm":"` + accountBrokerRealm + `","enabled":true,` +
+					`"internationalizationEnabled":false,` +
+					`"supportedLocales":["zz","de","en","fr"]}`),
 			},
 			ExpectStatus: idempotentCreate,
 		},
