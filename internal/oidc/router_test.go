@@ -162,6 +162,54 @@ func TestASecondTrailingSlashIsNotStripped(t *testing.T) {
 	}
 }
 
+// TestTheRootPathIsNotStrippedToNothing pins the one guard the strip needs
+// that the measurements do not name: "/" is a trailing slash and stripping it
+// leaves an empty path, which is not a request any router can be asked about.
+//
+// Keycloak answers "/" with a 302 to /admin/ and four of the five security
+// headers. Gloak does not, and that divergence is filed rather than fixed here
+// - what this asserts is only that the strip leaves the path alone, so the
+// answer is whatever the route table says and never a panic or a 400.
+func TestTheRootPathIsNotStrippedToNothing(t *testing.T) {
+	w := get(t, newServer(t), "/")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d (body %.80s)", w.Code, w.Body.String())
+	}
+	if got, want := w.Body.String(),
+		`{"error":"Unable to find matching target resource method"}`; got != want {
+		t.Fatalf("want body %s, got %s", want, got)
+	}
+}
+
+// TestAnEscapedPathKeepsItsEscapesAcrossTheStrip is the half of the strip that
+// no measurement against Keycloak reaches and that Go's URL type makes easy to
+// get wrong. url.URL carries the path twice - decoded in Path and raw in
+// RawPath - and a copy that trims one without the other leaves EscapedPath
+// silently ignoring the raw form.
+//
+// The realm here is spelled with an escaped "s", so the two fields differ, and
+// the request has to route to the same handler with and without the slash.
+func TestAnEscapedPathKeepsItsEscapesAcrossTheStrip(t *testing.T) {
+	h := newServer(t)
+	bare := get(t, h, "/realms/ma%73ter/protocol/openid-connect/certs")
+	slashed := get(t, h, "/realms/ma%73ter/protocol/openid-connect/certs/")
+	if bare.Code != http.StatusOK {
+		t.Fatalf("the escaped path does not route at all: %d", bare.Code)
+	}
+	if slashed.Code != bare.Code {
+		t.Fatalf("status %d bare, %d slashed", bare.Code, slashed.Code)
+	}
+	if got := slashed.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("want application/json, got %q", got)
+	}
+	req := httptest.NewRequest(http.MethodGet,
+		"/realms/ma%73ter/protocol/openid-connect/certs/", nil)
+	if got, want := req.URL.RawPath,
+		"/realms/ma%73ter/protocol/openid-connect/certs/"; got != want {
+		t.Fatalf("the fixture no longer separates Path from RawPath: RawPath %q", got)
+	}
+}
+
 // TestAPathThatIsNotNormalisedIsRefused pins the whole response, because every
 // part of it is measured and two parts are what a reader would get wrong: the
 // Content-Type spells its parameter with a space where nothing else in this

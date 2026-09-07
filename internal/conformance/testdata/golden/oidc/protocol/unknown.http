@@ -1,5 +1,5 @@
-# POST /admin/realms/master/clients/ce27f000-0000-4000-8000-000000000004/certificates/jwt.credential/download
-HTTP/1.1 406 Not Acceptable
+# GET /realms/master/protocol/nosuchproto
+HTTP/1.1 404 Not Found
 Content-Length: {{volatile}}
 Content-Type: application/json
 Referrer-Policy: no-referrer
@@ -8,4 +8,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-{"error":"Not supported keystore format. Supported keystore formats: [BCFKS, JKS, PKCS12]"}
+{"error":"Protocol not found"}
