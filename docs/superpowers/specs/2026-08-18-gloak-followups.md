@@ -316,7 +316,33 @@ a second replica exits at startup.
   that the two drivers agree, and it runs only when someone remembers to run it.
   The design spec's Docker image is undelivered.
 
-## F11: non-clean paths escape `withKeycloakFallbacks` into net/http's own body
+## F11: non-clean paths escape `withKeycloakFallbacks` into net/http's own body (fixed 2026-09-07)
+
+**The measurement this entry asked for, and it was right to ask.** It guessed the
+answer "may well not be a 307 with an HTML body at all", and it is not: a live
+26.7.1 answers a doubled slash, a `.` segment or a `..` segment with
+
+```
+400 {"error":"missingNormalization","error_description":"Request path not normalized"}
+```
+
+with **none** of the five security headers and a `Content-Type` of
+`application/json; charset=UTF-8` - **with a space**, a third spelling of that
+parameter in this server. The check reads the **decoded** path, so `%2e` and
+`%2e%2e` fire it, and it runs **before** the route table: `/nosuchthing//` gets
+it too, where a path matching no route otherwise gets the unmatched-path 404.
+
+Measured on raw sockets and with `curl --path-as-is`, because **curl normalises
+a path before sending it** - a probe of a malformed path written without that
+flag measures curl rather than Keycloak.
+
+`WithKeycloakFallbacks` now refuses these paths itself, ahead of the
+`mux.Handler` probe, which is exactly the fix this entry proposed. And the fix
+had to be a guard rather than a `ServeMux` subtree per endpoint: registering one
+would make `net/http` 301-redirect the bare path, which is this entry's own
+failure mode returning through F177's fix.
+
+## F11 (original): the entry as filed on 2026-08-20
 
 Reproduced 2026-08-20 while reviewing the conformance harness slice: `GET
 //realms/master` and `GET /realms/master/../master` both return **307** with
@@ -5114,7 +5140,7 @@ risk to measure first is what it does to paths *under* a real protocol:
 `/protocol/openid-connect/nosuchsub` answers `HTTP 404 Not Found`, not `Protocol
 not found`, so the dispatcher has to know which protocols exist and stop there.
 
-## F179: a committed golden holds a Java set order that is a coin flip
+## F179: a committed golden holds a Java set order that is a coin flip (answered and masked 2026-09-07)
 
 `make record` on the SAML cut moved exactly one golden outside it:
 
@@ -5146,6 +5172,31 @@ is that **a recording that disagrees with a golden is not evidence that the
 golden was wrong** - it is evidence that one of the two is unstable, and telling
 them apart needs a third draw. Nothing about the sample size gave this away; a
 third draw taken for an unrelated reason did.
+
+**Answered on 2026-09-07, and it is not a `HashSet` of literals** - the doubt
+about that was right. One container, one image, one database, **seven `docker
+restart`s gave three orders**, each stable across the three requests inside its
+own run; with the three earlier recordings that is **four of the six
+permutations**, and 26.7.2 does the same. Under
+`-XX:+UnlockExperimentalVMOptions -XX:hashCode=2`, which makes HotSpot's
+identity hash a constant, it **stops moving** over four starts. So the set is
+keyed on values whose `hashCode` is `Object.hashCode()`, redrawn per JVM - what a
+`HashSet` of enum constants gives.
+
+**`internal/javamap` cannot reach it, and that is arithmetic rather than a run:**
+both its functions are pure functions of a key set, this key set never changes,
+and the value takes four values.
+
+**The runs of repeats are why it looked settled.** Three consecutive starts gave
+one order and the next three another, which is why the number held for a day at a
+time and why the 09-06 recording was written up as a correction it was not.
+
+Fixed with `Case.UnorderedBracketed`, which sorts inside the `[...]` and leaves
+every byte outside compared. `Volatile` over the message was rejected because it
+would have **silently retired F171's assertion** that the refusal lists BCFKS -
+that golden is the only thing in the tree asserting the name appears at all.
+`Pending` was rejected because it gives up the case. Exactly one golden in the
+tree carries such a run, grepped rather than assumed.
 
 The list is a Java set's iteration order inside a **JSON string**, so `Unordered`
 cannot reach it - no mask here reaches inside a string value, which is the wall
@@ -5192,3 +5243,122 @@ golden it cited. A rule making every omission a declaration would put the tally
 in the catalogue instead of in a paragraph - which is what
 `TestTheDuplicateResourceErrorSplitIsNotDecidedByTheVerb` already does for one
 family.
+
+## F182: the request target `//` is a 400 with no body, and Gloak answers a body
+
+`GET //` on a live 26.7.1 is **400 with `content-length: 0` and no
+`Content-Type` at all**, where `GET ///` and `GET //a` are the ordinary
+`missingNormalization` 82 bytes. Read off a socket on 2026-09-07, because curl
+rewrites the target.
+
+It is a **different producer**: `//` alone is an authority-form request target,
+and the HTTP layer refuses the request line before the application sees a path.
+Gloak's guard answers `missingNormalization`.
+
+One cell, one path, and reproducing it means a special case for a literal path in
+`WithKeycloakFallbacks` - which is why it is filed rather than done. What is
+**not** measured is whether Go's own `http.Server` even delivers that target to a
+handler or rejects it first: `httptest.NewRequest` accepts it, and a real socket
+has not been tried.
+
+## F183: `GET /` is a 302 to `/admin/` with four of the five security headers
+
+```
+GET /   302  Location: <base>/admin/
+        Referrer-Policy, Strict-Transport-Security, X-Content-Type-Options,
+        X-Robots-Tag       - and no X-Frame-Options
+        content-length: 0
+```
+
+Gloak answers the unmatched-path 404. It is a sixth media-type-free response
+missing `X-Frame-Options` for that rule's tally, and the **first redirect** in
+this project measured missing it outside `/auth`'s.
+
+It matters beyond one path. `TestTheRootPathIsNotStrippedToNothing` has to build
+its own mux today, because against the real route table the trailing-slash
+strip's `len(p) > 1` guard is an **equivalent mutation** - Gloak serves nothing
+at `/`, so nothing can tell the guard's presence from its absence. Serving `/`
+makes that guard carry a real request.
+
+## F184: the realm resource's own 404 is the unmatched-path body, everywhere but `/protocol`
+
+```
+GET /realms/master/nosuchthing          404 {"error":"HTTP 404 Not Found"}    5 of 5
+GET /realms/master/nosuchthing/deeper   404 {"error":"HTTP 404 Not Found"}    5 of 5
+GET /realms/nosuchrealm/nosuchthing     404 {"error":"Realm does not exist"}  5 of 5
+GET /realms                             404 Unable to find matching…          0 of 5
+GET /realms/                            404 Unable to find matching…          0 of 5
+```
+
+So **everything under `/realms/{realm}/` that no route serves reaches the filter
+chain**, resolves the realm and answers the generic 404 with all five headers,
+while `/realms` itself falls off the route table entirely. Gloak answers the
+header-less unmatched-path body for all of the first three.
+
+The dispatch cut fixed this shape for `/protocol` and **deliberately went no
+further**: the same catch-all one level up would need the realm resolved for
+every unmatched path in the tree, and would swallow `/realms/{realm}/account`,
+`/device` and the login-action paths on the way. It is the **third family of this
+shape**, after `/organizations` and the group tree, and the pattern is now clear
+enough to be worth doing once rather than three more times.
+
+## F185: nothing counts the spellings of `application/json`
+
+There are now **three**: the protocol side's bare `application/json`, the Admin
+API's `application/json;charset=UTF-8`, and Quarkus's
+`application/json; charset=UTF-8` with a space.
+
+AGENTS.md's charset bullet has been wrong six times, twice refuted by the very
+golden it cited, and it is prose. The tally it needs is the one
+`TestTheDuplicateResourceErrorSplitIsNotDecidedByTheVerb` already does for one
+family: computed from the goldens rather than maintained by hand.
+
+## F186: `UnorderedBracketed` has one refusal it cannot check
+
+The mask requires exactly one `[...]` run and splits it on `", "`. A run whose
+items are joined some other way - a Java `Arrays.toString` of an empty-element
+array, or a collection whose elements contain `", "` - is split wrongly and
+**sorted anyway, with no error**.
+
+The two shapes it does refuse, no run and two runs, are the ones a wrong *path*
+produces. This one is a wrong *separator*, and the only defence today is that the
+single consumer's separator is measured. It becomes worth building when a second
+consumer arrives; until then this entry is what stops the next cut assuming the
+mask is safe on any bracketed string.
+
+## F187: `registeredProtocols` is a constant and the docker feature has no model
+
+`docker-v2` is `Protocol not found` on a default container and would be a real
+protocol on one started with `--features=docker`. Gloak has no feature-flag model
+at all - `CLIENT_TYPES`, `CLIENT_SECRET_ROTATION` and `ORGANIZATION` are each
+handled as a constant at their own call site - so this is the **fourth
+feature-shaped constant** rather than a new problem. Filing it names the place a
+feature model would have to reach if one is ever built.
+
+## F188: nothing sweeps the goldens for a second undecidable Java collection
+
+F179 turned out to be a `HashSet` of values hashed by **identity**, which no
+amount of `javamap` can compute. The sweep that would find the next one is: every
+golden carrying a `[a, b, c]` run inside a string, or a JSON array whose order
+comes from a Java `Set`, checked against a container **restarted** rather than
+against a second container.
+
+The first half returns exactly one file today, which is how the dispatch cut
+knows its mask has one consumer. **The second half has never been run.** This
+project has one recorded instance of "restart the same container" as a technique
+- F23's theme-resource investigation - and it found the previous claim wrong too.
+
+## F189: no case sends a second verb to the protocol dispatcher
+
+`Protocol not found` is byte-identical on GET, POST, PUT, DELETE, OPTIONS and
+HEAD, measured. Only the GET has a golden, because a golden per verb would report
+one behaviour six times in a chapter whose denominator is its case count.
+`internal/oidc`'s `TestProtocolNotFoundAnswersEveryVerb` carries the other five -
+a package test comparing against what this project believes rather than against a
+recording, which is `TestKeystoreDownloadHeaders`' bargain met a second time.
+
+What would close it properly is a way for the catalogue to say **"the same
+behaviour, another verb"** the way `Case.SecondRealm` says "another realm": kept
+out of the denominator, with the golden still recorded and compared. That is a
+harness change with one consumer today and F180's `HEAD` problem behind it, so it
+is filed rather than built.
