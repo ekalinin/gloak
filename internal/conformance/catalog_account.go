@@ -628,8 +628,29 @@ var accountCases = []Case{
 			Section:   "Account REST API: GET /realms/{realm}/account/linked-accounts",
 			Retrieved: "2026-09-07",
 		},
-		Status:  Implemented,
-		Fixture: "account-user",
+		Status: Implemented,
+		// **This listing enumerates the realm's identity providers, so it needs a
+		// realm nothing else has touched.** Recorded against the shared
+		// container it answered sixteen rows - every `gloak-probe-idp*`,
+		// `gloak-probe-map-broker-*` and `gloak-probe-mt-broker-*` the admin
+		// chapter's fixtures create in master before the account cases run - and
+		// the `[]` this golden used to hold could only have come from a run that
+		// recorded the account chapter alone.
+		//
+		// The hazard was known and defended on the wrong half of the pair.
+		// accountBrokerFixture builds a realm of its own precisely "because four
+		// identity providers in master would appear in every golden that
+		// enumerates the realm's own"; the case that *creates* providers was
+		// protected and the case that asserts there are **none** was left
+		// addressing master. That is the shape this repository keeps meeting -
+		// a rule right on one family and inverted on its neighbour - inside one
+		// pair of sibling cases.
+		//
+		// The pollution guard could not see it: an identity provider is named by
+		// `alias`, and createdKeys watches clientId, username, realm and name.
+		// See F195.
+		PristineRealm: true,
+		Fixture:       "account-user",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/account/linked-accounts",
