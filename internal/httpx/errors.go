@@ -747,6 +747,45 @@ func WriteAdminError(w http.ResponseWriter, status int, message string) {
 	WriteJSON(w, status, map[string]string{"errorMessage": message})
 }
 
+// WriteNotNormalized writes the 400 a request path carrying a doubled slash, a
+// "." segment or a ".." segment is refused with, ahead of any routing at all.
+//
+// Measured 2026-09-07 on a live 26.7.1 with raw sockets and `curl
+// --path-as-is`, because curl normalises a path before sending it and a probe
+// written without that flag measures curl:
+//
+//	/realms/master/protocol/openid-connect/certs//   400, 82 bytes
+//	/realms/master/protocol/saml/descriptor///       the same 82 bytes
+//	//realms/master                                  the same 82 bytes
+//	/realms/master/%2e/protocol                      the same 82 bytes
+//	/realms/master/%2e%2e/master                     the same 82 bytes
+//	/nosuchthing//                                   the same 82 bytes
+//
+// The last two say the check runs on the **decoded** path, which is what
+// r.URL.Path already holds, and the last says it runs before the route table:
+// a path no route could ever match answers this rather than the unmatched-path
+// 404. It carries **none** of the five security headers and no Cache-Control,
+// which is that rule's "never reached the filter chain" exception rather than a
+// new one.
+//
+// Its Content-Type is a **third** spelling: "application/json; charset=UTF-8",
+// with a space after the semicolon, where the Admin API sends
+// "application/json;charset=UTF-8" without one and the protocol side sends a
+// bare "application/json". That is why this does not go through WriteJSON or
+// WriteJSONCharset. The response is Quarkus's rather than Keycloak's, which is
+// the likeliest reason it spells the parameter the way the rest of the server
+// does not - and the spelling is the contract either way.
+//
+// This closes F11, which asked for exactly this measurement before a fix:
+// net/http's ServeMux answers these paths with its own 307 and an HTML body,
+// which is a response internal/httpx never produced.
+func WriteNotNormalized(w http.ResponseWriter) {
+	writeJSON(w, http.StatusBadRequest, "application/json; charset=UTF-8", map[string]string{
+		"error":             "missingNormalization",
+		"error_description": "Request path not normalized",
+	})
+}
+
 // SetUserinfoSecurityHeaders leaves userinfo with the four security headers it
 // was measured sending. It omits X-Frame-Options, which is the second
 // exception to the five reaching every response - and unlike the first (a path

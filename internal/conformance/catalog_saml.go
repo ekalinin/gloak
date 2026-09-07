@@ -183,23 +183,24 @@ var samlCases = []Case{
 		AssertAbsentHeaders: []string{"Cache-Control"},
 	},
 	{
+		// `Protocol not found` for any protocol Keycloak has not registered.
+		// **Not a SAML behaviour** - /protocol/nosuchproto/certs and a bare
+		// /protocol/nosuchproto answer the same sentence - which is why the
+		// dispatcher that serves it lives in internal/oidc's router and why
+		// oidc/protocol holds the rest of its cells. This one stays here
+		// because this is the sweep that found it, and because the descriptor
+		// path is the cell that proves the dispatch beats a route Gloak
+		// really serves one segment along.
+		//
+		// Implemented since 2026-09-07 by handler.protocolDispatch.
 		ID: "saml/descriptor/unknown-protocol",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/securing-apps/saml/index",
 			Section:   "IDP metadata descriptor: an unregistered login protocol",
 			Retrieved: "2026-09-07",
 		},
-		Status:  Recorded,
+		Status:  Implemented,
 		Fixture: "bootstrap",
-		Reason: "Keycloak answers 404 {\"error\":\"Protocol not found\"} for any protocol " +
-			"that is not registered, and Gloak has no protocol dispatcher to answer it " +
-			"from: a path under /realms/{realm}/protocol/ that no route matches reaches " +
-			"WithKeycloakFallbacks and gets the unmatched-path body with no security " +
-			"headers. Measured 2026-09-07, and it is **not a SAML behaviour** - " +
-			"/protocol/nosuchproto/certs and /protocol/nosuchproto answer the same " +
-			"sentence - so it belongs to whoever builds the dispatcher rather than to " +
-			"this chapter. It is here because this is the sweep that found it, and " +
-			"because a spelling nothing records is a spelling the next cut re-measures.",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/protocol/nosuchproto/descriptor",
@@ -255,8 +256,9 @@ var samlCases = []Case{
 		},
 		Status:  Recorded,
 		Fixture: "bootstrap",
-		Reason: "Gloak has no route under /realms/{realm}/protocol/saml, so this reaches " +
-			"the unmatched-path fallback. The page is not the missing half - its bytes " +
+		Reason: "Gloak serves nothing under /realms/{realm}/protocol/saml, so this reaches " +
+			"the protocol dispatcher and answers its `HTTP 404 Not Found`. The page is " +
+			"not the missing half - its bytes " +
 			"are here and it is reachable - the missing half is the ladder beside it: " +
 			"this same endpoint answers three other sentences depending on the Issuer, " +
 			"and the fifth rung is a login page.",
@@ -327,7 +329,8 @@ var samlCases = []Case{
 			"below prove nothing. A well-formed AuthnRequest whose Issuer names no " +
 			"client answers the **same 3572 bytes** an empty request does, so the " +
 			"endpoint's answers split on which client resolved rather than on whether a " +
-			"message was read. Gloak has no route here.",
+			"message was read. Gloak serves nothing here and answers the protocol " +
+			"dispatcher's `HTTP 404 Not Found`.",
 		Request: Request{
 			Method:   http.MethodGet,
 			Path:     "/realms/master/protocol/saml",
@@ -355,7 +358,7 @@ var samlCases = []Case{
 		Reason: "The ladder's second rung: an Issuer naming a registered **openid-connect** " +
 			"client is `Wrong client protocol.`, 3579 bytes, where an unregistered one is " +
 			"3572 and a saml one is 3604. It uses the bootstrapped `account` client, so " +
-			"the input needs no fixture and cannot drift. Gloak has no route here, and " +
+			"the input needs no fixture and cannot drift. Gloak serves nothing here, and " +
 			"would need a SAML message reader and the client's protocol to answer it. " +
 			"Note the direction: the scope evaluator serves **both** protocols on one " +
 			"route and refusing the mismatch there is wrong on four operations, while " +
@@ -440,21 +443,24 @@ var samlCases = []Case{
 		},
 	},
 	{
+		// The realm is resolved before the request is read: an unknown realm
+		// answers 404 {"error":"Realm does not exist"} **with** the five
+		// security headers, where the same path on master answers a page with
+		// none of them. Two rejections on one path produced at different
+		// depths of one request, and the deeper one is the one that loses the
+		// headers.
+		//
+		// Implemented since 2026-09-07 by handler.protocolDispatch, which
+		// resolves the realm first for exactly this reason. It is the case
+		// that fails if that order is ever swapped.
 		ID: "saml/endpoint/unknown-realm",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/securing-apps/saml/index",
 			Section:   "SAML endpoint: an unknown realm",
 			Retrieved: "2026-09-07",
 		},
-		Status:  Recorded,
+		Status:  Implemented,
 		Fixture: "bootstrap",
-		Reason: "The realm is resolved before the request is read: an unknown realm answers " +
-			"404 {\"error\":\"Realm does not exist\"} **with** the five security headers, " +
-			"where the same path on master answers a page with none of them. Two " +
-			"rejections on one path produced at different depths of one request, and the " +
-			"deeper one is the one that loses the headers. Gloak has no route here, so " +
-			"this reaches the unmatched-path fallback and answers the wrong body with no " +
-			"headers at all.",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/nosuchrealm/protocol/saml",
@@ -469,23 +475,28 @@ var samlCases = []Case{
 		},
 	},
 	{
+		// The discriminator this whole enumeration rests on, kept as a case so
+		// it is checkable rather than asserted in a comment. A path under
+		// /protocol/saml/ that no route serves answers
+		// {"error":"HTTP 404 Not Found"} with **all five** security headers,
+		// where a path outside the realm tree answers
+		// {"error":"Unable to find matching target resource method"} with none
+		// - so the router reached its resource and found nothing to run. It is
+		// the shape AGENTS.md records under /organizations, met on a second
+		// family.
+		//
+		// Implemented since 2026-09-07 by handler.protocolDispatch. It is the
+		// case that fails if the dispatcher ever stops distinguishing a
+		// registered protocol from an unregistered one, because this path
+		// would then answer `Protocol not found`.
 		ID: "saml/endpoint/unknown-subpath",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/securing-apps/saml/index",
 			Section:   "A path under /protocol/saml that no route serves",
 			Retrieved: "2026-09-07",
 		},
-		Status:  Recorded,
+		Status:  Implemented,
 		Fixture: "bootstrap",
-		Reason: "The discriminator this whole enumeration rests on, kept as a case so it is " +
-			"checkable rather than asserted in a comment. A path under /protocol/saml/ " +
-			"that no route serves answers {\"error\":\"HTTP 404 Not Found\"} with **all " +
-			"five** security headers, where a path outside the realm tree answers " +
-			"{\"error\":\"Unable to find matching target resource method\"} with none - " +
-			"so the router reached its resource and found nothing to run. Gloak answers " +
-			"the second body, which is the divergence and the reason this is Recorded. " +
-			"It is the shape AGENTS.md records under /organizations, met on a second " +
-			"family.",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/protocol/saml/nosuchsubpath",
@@ -545,7 +556,7 @@ var samlCases = []Case{
 		},
 		Status:  Recorded,
 		Fixture: "bootstrap",
-		Reason: "Gloak has no route under /realms/{realm}/protocol/saml/clients/. The page " +
+		Reason: "Gloak serves nothing under /realms/{realm}/protocol/saml/clients/. The page " +
 			"is `Client not found.`, 3574 bytes, with **all six** headers - the five " +
 			"security ones and a Content-Security-Policy - where the 400 page on " +
 			"/protocol/saml one segment up carries none of them. Same status, same " +
@@ -581,7 +592,7 @@ var samlCases = []Case{
 			"its id. Without this row the case above and the one below are both satisfied " +
 			"by a handler that looks clients up by clientId: it would answer the " +
 			"unclaimed name correctly by accident and this one wrongly with nothing to " +
-			"say so. Gloak has no route here either way.",
+			"say so. Gloak serves nothing here either way.",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/protocol/saml/clients/gloak-probe-saml-sp",
@@ -679,7 +690,7 @@ var samlCases = []Case{
 			"is 500 {\"error\":\"unknown_error\",...} with all five security headers and " +
 			"nothing per-request in it. It is here so the endpoint is not represented in " +
 			"the catalogue by an unrecordable case alone - a chapter whose only evidence " +
-			"is a Reason string is a chapter nobody can check. Gloak has no route here.",
+			"is a Reason string is a chapter nobody can check. Gloak serves nothing here.",
 		Request: Request{
 			Method:  http.MethodPost,
 			Path:    "/realms/master/protocol/saml/resolve",

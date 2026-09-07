@@ -9,6 +9,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/ekalinin/gloak/internal/httpx"
 	"github.com/ekalinin/gloak/internal/keys"
@@ -174,6 +176,23 @@ func (h *handler) register(mux *http.ServeMux) {
 	// the one SAML response that is a pure function of the realm and needs
 	// neither an assertion builder nor a browser.
 	mux.HandleFunc("GET /realms/{realm}/protocol/saml/descriptor", h.samlDescriptorEndpoint)
+	// The protocol dispatcher. Three patterns and one handler, covering
+	// everything under /realms/{realm}/protocol that no route above serves.
+	// See protocolDispatch for what each of them answers and why.
+	//
+	// All methods, deliberately: `Protocol not found` was measured on GET,
+	// POST, PUT, DELETE, OPTIONS and HEAD and is byte-identical on all six,
+	// which no other route in this file can say.
+	//
+	// **{rest...} needs no sibling for the trailing-slash case.**
+	// /protocol/x/ and /protocol/x/a/ reach WithKeycloakFallbacks first, which
+	// strips the one trailing slash Keycloak strips, so they arrive here as
+	// /protocol/x and /protocol/x/a. That is the order the two rules compose
+	// in on a live 26.7.1 - normalise, then route - and it is the reason the
+	// bare /realms/{realm}/protocol pattern below covers /protocol/ too.
+	mux.HandleFunc("/realms/{realm}/protocol", h.protocolDispatch)
+	mux.HandleFunc("/realms/{realm}/protocol/{protocol}", h.protocolDispatch)
+	mux.HandleFunc("/realms/{realm}/protocol/{protocol}/{rest...}", h.protocolDispatch)
 	// Dynamic client registration, the `openid-connect` provider.
 	//
 	// **Only that one provider is registered.** A default 26.7.1 serves four -
@@ -198,22 +217,111 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /realms/{realm}", h.realmInfo)
 }
 
+// registeredProtocols is the set of login protocols a default Keycloak 26.7.1
+// has registered, and it is a **contract rather than a list of what Gloak
+// serves**: `saml` is in it although Gloak serves one SAML endpoint, because
+// what decides the answer below is whether Keycloak's protocol map has the
+// key, not whether anything is mounted under it.
+//
+// Measured 2026-09-07 by sweeping /realms/master/protocol/{name}. Two are
+// registered; everything else answers `Protocol not found`, including
+// `docker-v2` - the Docker registry protocol exists in Keycloak and its
+// feature is off on a default start-dev, which is `CLIENT_TYPES`' situation
+// and the same reason the constant is the contract. The comparison is
+// **case-sensitive**: `SAML` and `OPENID-CONNECT` both answer
+// `Protocol not found`, so a fold here would serve the wrong body for two
+// spellings a caller really sends.
+var registeredProtocols = map[string]bool{
+	"openid-connect": true,
+	"saml":           true,
+}
+
+// protocolDispatch answers every path under /realms/{realm}/protocol that no
+// route above serves. It exists because Keycloak's answer there is decided by
+// its protocol map and not by its route table, so the fallback cannot produce
+// it: an unmatched path gets `Unable to find matching target resource method`
+// with none of the five security headers, and every cell below carries all
+// five.
+//
+// Measured 2026-09-07 on a live 26.7.1, all with the five security headers and
+// no Cache-Control:
+//
+//	/realms/nosuchrealm/protocol/anything   404 {"error":"Realm does not exist"}
+//	/realms/master/protocol                 404 {"error":"HTTP 404 Not Found"}
+//	/realms/master/protocol/openid-connect  404 {"error":"HTTP 404 Not Found"}
+//	/realms/master/protocol/oidc/certs      404 {"error":"Protocol not found"}
+//	/realms/master/protocol/x/a/b/c/d       404 {"error":"Protocol not found"}
+//
+// Three things in that table are each one probe away from an implementation
+// that looks right:
+//
+//   - **The realm is resolved first.** An unknown realm answers about the realm
+//     even when the protocol is unknown too, so a dispatcher that checks the
+//     protocol first is wrong on every request that gets both wrong.
+//   - **A registered protocol stops the dispatch.**
+//     /protocol/openid-connect/nosuchsub answers `HTTP 404 Not Found`, not
+//     `Protocol not found`, at any depth - so the map is load-bearing and a
+//     catch-all that answered one sentence everywhere would be wrong on every
+//     mistyped OIDC path there is.
+//   - **The bare /protocol segment is not a protocol.** It answers
+//     `HTTP 404 Not Found` rather than `Protocol not found` for the empty name,
+//     which is why the empty string is handled here and not by leaving it out
+//     of registeredProtocols.
+func (h *handler) protocolDispatch(w http.ResponseWriter, r *http.Request) {
+	realm := h.resolveRealm(w, r)
+	if realm == nil {
+		return
+	}
+	protocol := r.PathValue("protocol")
+	if protocol == "" || registeredProtocols[protocol] {
+		httpx.WriteMessageError(w, http.StatusNotFound, "HTTP 404 Not Found")
+		return
+	}
+	httpx.WriteMessageError(w, http.StatusNotFound, "Protocol not found")
+}
+
 // WithKeycloakFallbacks routes requests that match no registered route, or
 // match a route's path with the wrong method, through package httpx instead
 // of falling through to net/http's own "404 page not found" and "Method Not
 // Allowed" plain-text bodies - shapes no Keycloak client expects and which
 // package httpx does not otherwise produce.
 //
-// This does not cover every path net/http answers on its own. mux.Handler
-// reports a non-empty pattern - the redirect handler's - for a request whose
-// path is not "clean" in ServeMux's sense: a doubled slash (//realms/master)
-// or a "." or ".." element (/realms/master/../master). The guard below only
-// distinguishes "no route" from "route, wrong method"; it treats a non-clean
-// path the same as a route match and hands it to mux.ServeHTTP, which
-// answers with net/http's own 307 and an HTML body, never reaching httpx.
-// See follow-up F11 in docs/superpowers/specs/2026-08-18-gloak-followups.md
-// - what Keycloak 26.7.1 itself answers for these paths has not been
-// measured yet.
+// Two path rules run ahead of the route table, in this order, because that is
+// the order a live 26.7.1 applies them - normalise, then route.
+//
+// **A path that is not normalised never reaches a route.** A doubled slash, a
+// "." segment or a ".." segment is a 400 that says so; see
+// httpx.WriteNotNormalized for the measurement. That closes follow-up F11,
+// which recorded that mux.Handler reports a non-empty pattern - the redirect
+// handler's - for exactly these paths, so the guard below handed them to
+// mux.ServeHTTP and net/http answered its own 307 with an HTML body. The
+// guard now never sees them.
+//
+// **Exactly one trailing slash is stripped.** Measured 2026-09-07 across the
+// whole server, which is F177's second question answered: it is not a protocol
+// rule at all.
+//
+//	/realms/master/protocol/openid-connect/certs/   the endpoint's own 200
+//	/realms/master/protocol/saml/descriptor/        the endpoint's own 200
+//	/realms/master/protocol/openid-connect/auth/    auth's own 400 page
+//	/realms/master/                                 the realm info 200
+//	/realms/master/.well-known/openid-configuration/  discovery's own 200
+//	/admin/realms/                                  the realm listing's 200
+//	/admin/realms/master/clients/                   the client listing's 200
+//	/admin/serverinfo/                              serverinfo's 200
+//	/nosuchpath/                                    the unmatched-path 404
+//	POST /realms/master/.well-known/openid-configuration/   the wrong-method 404
+//
+// The last two are what make this a strip rather than a route: the two
+// fallback shapes answer a slashed path exactly as they answer the bare one,
+// so nothing downstream needs to know the slash was there. **Two** trailing
+// slashes are the 400 above rather than a second strip, which is why this
+// trims one and never loops.
+//
+// It is done here rather than with a ServeMux subtree pattern per route
+// because a subtree pattern changes what the *unslashed* path matches as well,
+// and because net/http would then redirect the bare path with a 301 that
+// Keycloak does not send.
 //
 // Both bodies are measured, recorded in
 // internal/conformance/testdata/golden/http/fallback/ and written up in the
@@ -233,6 +341,13 @@ func (h *handler) register(mux *http.ServeMux) {
 // point that distinguishes the two, rather than in package httpx.
 func WithKeycloakFallbacks(mux *http.ServeMux) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if notNormalized(r.URL.Path) {
+			httpx.WriteNotNormalized(w)
+			return
+		}
+		if p := r.URL.Path; len(p) > 1 && strings.HasSuffix(p, "/") {
+			r = withPath(r, strings.TrimSuffix(p, "/"))
+		}
 		if _, pattern := mux.Handler(r); pattern == "" {
 			// mux.Handler returns an empty pattern both when no route
 			// matches the path and when a route matches the path but not
@@ -255,6 +370,44 @@ func WithKeycloakFallbacks(mux *http.ServeMux) http.Handler {
 		httpx.SetSecurityHeaders(w)
 		mux.ServeHTTP(w, r)
 	})
+}
+
+// notNormalized reports whether Keycloak refuses to route p at all: a doubled
+// slash, or a "." or ".." segment. It reads the **decoded** path, which is what
+// r.URL.Path holds, because the check on a live 26.7.1 fires for %2e and
+// %2e%2e as well as for the literal characters.
+//
+// The root "/" is not a doubled slash and is deliberately not caught: Keycloak
+// answers it a 302 to /admin/, which is a divergence this cut leaves alone
+// rather than one this predicate should hide.
+func notNormalized(p string) bool {
+	if strings.Contains(p, "//") {
+		return true
+	}
+	for _, segment := range strings.Split(p, "/") {
+		if segment == "." || segment == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// withPath returns a shallow copy of r whose URL path is p, so the stripped
+// path is what the mux routes on and what handlers reading r.URL.Path see.
+//
+// It copies rather than mutating for http.StripPrefix's reason: the caller
+// still owns r. RawPath is trimmed alongside Path so EscapedPath keeps using
+// it - a trailing "/" is never a percent-escape, so trimming both leaves the
+// two consistent, and clearing RawPath instead would re-escape a path that
+// arrived with an escape in it.
+func withPath(r *http.Request, p string) *http.Request {
+	r2 := new(http.Request)
+	*r2 = *r
+	r2.URL = new(url.URL)
+	*r2.URL = *r.URL
+	r2.URL.Path = p
+	r2.URL.RawPath = strings.TrimSuffix(r.URL.RawPath, "/")
+	return r2
 }
 
 // fallbackProbe is a throwaway http.ResponseWriter used to learn whether
