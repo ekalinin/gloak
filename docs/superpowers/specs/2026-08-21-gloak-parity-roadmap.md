@@ -250,11 +250,11 @@ operations is allocated below; none is left unassigned.
 | Partial export | `partial-export` and `partialImport`, **done 2026-09-06** | P14 | `admin/realms-admin` 42->44. The export is `GET /admin/realms/{realm}` **spliced**, not transcribed, so `realmrep.go` stays the one truth. Answers F163: the parse code separates **syntax from binding**, not shapes | 2 ops |
 | Certificate remainder | The `Client Attribute Certificate` tag's last three, **done 2026-09-06** | F161, F38 | `admin/client-attribute-certificate` 4->5, and **+1 counted, +3 served**: `download` and `generate-and-download` are built and uncounted, because no golden can hold a keystore. The dependency question **inverted** - `x/crypto/pkcs12` is already direct and cannot read Keycloak's BouncyCastle BER, so `internal/keystore` was written and no module added. BCFKS is a deliberate divergence, F171 | 1 op |
 
-Denominator today: **413 Admin API operations plus 167 protocol behaviours, 580
-enumerated**, plus three chapters (P13, and parts of P6 and P14) whose surface is
-not counted and which the report says so about - P11 left that list on
-2026-09-07. Served: **549 of 580** after the protocol dispatch rules, and **P2,
-P4 and P5 are complete** -
+Denominator today: **413 Admin API operations plus 207 protocol and account
+behaviours, 620 enumerated**, plus **two** chapters (parts of P13 and P14) whose
+surface is not counted and which the report says so about - P11 left that list on
+2026-09-07 and the account API on 2026-09-08. Served: **567 of 620** after the
+account chapter, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -285,7 +285,66 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-07 (twenty-eighth fold).** `make conformance` reports **549 of
+**Updated 2026-09-08 (twenty-ninth fold).** `make conformance` reports **567 of
+620**, and the unenumerated chapters fall again, three to **two**. The account
+REST API is enumerated - **40 cases over eleven chapters** - and 18 are served:
+the gate and the two reads derived from it.
+
+**The round took three sessions, two of which were interrupted**, and the
+handover it produced is the first here written by somebody who inherited a branch
+rather than started one. That shaped the result: every inherited claim was
+re-checked, and the count was **39, not the 36 a commit subject claimed** - a
+heading said 41 and a paragraph said seventeen paths where the list held sixteen.
+It is 40 now and pinned by a test rather than by a sentence.
+
+**The SAML cut's enumeration method does not transfer, and that is the
+finding.** The two-404 discriminator - unmatched path with no headers, known path
+with all five - **does not work under `/realms/{realm}/`**: a path that exists
+and one that does not both answer `HTTP 404 Not Found` with all five, and the
+unmatched body is unreachable there. What replaced it is weaker and is now
+stated as weaker: a route exists when at least one verb answers outside the
+generic fallback family, with **`OPTIONS` excluded**, because `OPTIONS` answers
+200 on every path including ones that do not exist.
+
+**A whole API hides behind `Accept`.** Every path under `/account` answers 200
+with the console's markup to a request that did not ask for JSON, including paths
+no route serves - so a sweep written without that header measures an infinite
+surface. The REST resource is reached exactly when the accept list holds
+`application/json` **with no parameters**: `application/json;q=1` gets the
+console, although `q=1` is the default and changes nothing about the request.
+
+**The red test this cut inherited was a written argument that was true and
+addressed nothing.** The pollution guard named a fixture for the `account`
+client's built-in `view-profile`; the author had foreseen a ratchet and proved,
+correctly, that the name could reach no realm-role listing's window. No realm-role
+listing was ever involved - the collision was with a **client** role, inside a
+scope-evaluator golden. **The two families were neighbours only inside a
+string.** The guard now reads Gloak's own bootstrap through the handler the
+verifier serves, which is the oracle the question is actually about. And the
+precedent that argument copied, `manage-realm`, turns out never to have been
+exercised: no golden holds it.
+
+**Reading the `make record` diff found a second polluted golden**, which is the
+third round running that reading the diff was worth more than the recording.
+`account/linked-accounts/none` moved from `[]` to sixteen identity providers, and
+the guard was blind because an identity provider is named by `alias` - the
+fifth-family blind spot AGENTS.md had documented in the abstract, hit for real.
+Closing it is F195 and was measured rather than assumed: seventeen flow aliases
+outside the convention, a bootstrapped alias, and an inverted key precedence on
+organizations. Too big for an account cut, and fixed structurally here instead.
+
+**A `Recorded` golden that is wrong is invisible**, and the sessions golden
+carried its pre-fix shape through two commits proving it. F113's hole from the
+other side: the case must *not* match, so a golden recorded against the wrong
+fixture fails to match either way.
+
+**The mutation pass refused six first attempts before their results were read** -
+five did not compile and one matched no bytes - and each would have read as a
+kill. My own review then reproduced that failure from the other end: a mutation I
+called a survivor was killed by a test my `-run` filter had excluded. Naming the
+test is not a formality.
+
+**Earlier on 2026-09-07 (twenty-eighth fold).** `make conformance` reports **549 of
 580**, +11 served on +8 enumerated - and unusually for this project, **none of it
 is a chapter**. Both rules are things Gloak got wrong on *every* protocol path it
 serves, found by a sweep that was measuring something else.
