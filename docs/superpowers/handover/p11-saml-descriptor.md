@@ -492,6 +492,7 @@ proves the refusal fires.
 | M1 | the two binding lists become one | killed by `TestTheTwoBindingListsDisagree` |
 | M1b | the same, asked of the golden | killed by `TestConformance/saml/descriptor/master` |
 | M2 | certificate in base64url | killed by `TestTheCertificateIsStandardBase64OfTheDER` |
+| K1b | the two binding lists made identical, asked of the layout test alone | **survived** - a review's mutation, reproduced here; the test's name overclaimed and is renamed |
 | M2b | the same, asked of the golden | **survived by design** - the certificate is masked, which is what M2's test exists for |
 | M3 | drop the unused `xmlns:saml` | killed by the golden |
 | M4 | `Cache-Control: no-store` | killed by the golden |
@@ -588,6 +589,28 @@ true claims is still a set of true claims. Killing that needs the mirror rule -
 and **that rule fires on the existing tree**, because 87 committed goldens omit
 `X-Frame-Options` for the media-type reasons AGENTS.md records and none of them
 declares it. It is a sweep of its own and is F177.
+
+### K1b - a test name that promised a byte comparison it did not make
+
+Found by the review's mutation pass and reproduced here: making the two binding
+lists identical and running **only**
+`TestDescriptorIsBytewiseWhatKeycloakSends` passes. The test is seven substring
+checks and four structural ones, and none of them mentions the sign-on list's
+order.
+
+It is not a coverage hole - `TestTheTwoBindingListsDisagree` beside it and
+`TestConformance/saml/descriptor/master` above both kill the same mutation, and
+both did in this cut's own pass as M1 and M1b. It is a **name that reads as a
+guarantee**, in a repository whose recurring failure is a sentence that reads as
+coverage; and the giveaway is that the sibling test's comment already described
+this one correctly, as the shape "no assertion over membership, and no count"
+would catch. Only the name disagreed.
+
+Renamed to `TestDescriptorCarriesTheLayoutRulesThatLookWrong`, with the doc
+comment now saying which assertion is the bytewise one. The lesson generalises
+past this file: a unit test beside a golden names the rules, and the golden is
+the contract - so a name claiming otherwise sends the next reader to the wrong
+one of the two.
 
 ### A fourth false-pass shape, found in my own harness
 
@@ -761,8 +784,17 @@ against the base URL, would unlock the endpoint's whole success half.
 **It would not make the login page recordable** - that page carries a
 per-request `tab_id`, F113 - so the first thing it unlocks is a `Pending` case
 becoming a *sendable* `Pending` case, plus every rejection past the `Destination`
-check. Whether that is worth a `Fixture` field is a real question and this entry
-does not answer it.
+check.
+
+**Deferred to the cut that would use it, not declined.** `Fixture.Proofs` earned
+its field by having three consumers on the day it landed; this would have one,
+and behind the five-deep ladder in 1.6 - the success path needs
+`saml.client.signature` off **and** an AuthnRequest naming the server's own
+`Destination`. That is the shape of P11's second cut, the SSO flow, and the
+field belongs there, where it will have consumers. Building it now would be a
+mechanism with one caller and a `Pending` case still `Pending` at the end of it,
+which is the argument `Case.VolatileHTMLInput`'s own doc comment makes for
+having waited.
 
 ### F172 - `Case.VolatileXMLAttribute`, deliberately not built
 
@@ -775,6 +807,32 @@ It is filed rather than forgotten because the argument is contingent. If a body
 ever carries a volatile attribute and **nothing else** volatile, the frame
 becomes the difference between a contract and a `Pending`, and the shape is
 twenty lines beside `xmlTextMatches`.
+
+### F173 and F174 are one cut, and it needs naming rather than an owner
+
+Both are general rules of the protocol surface that Gloak gets wrong on **every**
+path it serves, and both were found by this sweep without being SAML's. They want
+their own diff: the fix and its recording are one change to
+`internal/oidc/router.go` and its fallbacks, and the goldens that move will be
+OIDC's rather than SAML's.
+
+**The cut is "the protocol surface's two dispatch rules", and it is not
+"whoever next touches `router.go`."** An anchor defined by who happens to arrive
+is F168 in another dress - the entry gets read by somebody doing something else,
+who is the person least placed to judge whether the sweep is complete. Naming it
+as a cut is what makes it schedulable.
+
+Its scope, measured here:
+
+- every protocol endpoint answers a trailing slash as its own 200 or its own
+  page, and Gloak answers the unmatched-path 404 with no security headers;
+- every unregistered protocol answers `Protocol not found`, and Gloak answers the
+  same header-less 404;
+- and the two interact, because a dispatcher registered as a catch-all decides
+  what a trailing slash matches.
+
+Two things it must measure first and this cut did not: whether JAX-RS strips one
+trailing slash or many, and whether the rule reaches the Admin API.
 
 ### F173 - the trailing slash, across the whole protocol surface
 
@@ -832,6 +890,30 @@ admin/client-attribute-certificate/download-unsupported-format
 recording would have turned the tree red; and AGENTS.md's rule that two
 recordings agreeing is not evidence of stability has an obverse - two recordings
 *disagreeing* is evidence of instability, and this is it.
+
+**There are three recordings, and the middle one was written down as a
+correction.** Supplied by the review, which had folded the second an hour before
+this cut found the third:
+
+```
+2026-09-05   [BCFKS, PKCS12, JKS]     reported as wrong
+2026-09-06   [PKCS12, JKS, BCFKS]     recorded as the correction, and committed
+2026-09-07   [BCFKS, PKCS12, JKS]     this cut
+```
+
+So the 09-06 recording was **never a correction; it was a second draw**, and the
+fold that landed it wrote that putting the order in a golden was the fix that
+stops a number drifting. Two draws from a coin, and the second was read as
+settling the first - which is precisely the inference AGENTS.md's "two
+recordings agreeing is never evidence of stability" bullet forbids, arrived at
+from the one direction that bullet does not name. Nothing about the sample size
+gave it away; what gave it away was a third draw taken for another reason
+entirely.
+
+That is the part worth keeping when this entry is closed. The measurement is
+cheap to redo and the reasoning error is not: **a recording that disagrees with
+a golden is not evidence that the golden was wrong.** It is evidence that one of
+them is unstable, and telling the two apart needs a third.
 
 The list is a Java set's iteration order inside an error string, so `Unordered`
 cannot reach it: no mask in this harness reaches inside a JSON string, which is
@@ -901,6 +983,9 @@ entityID and eight service `Location`s. A handler answering with the literal
   input was found that could separate them. That is a gap in this enumeration and
   it is named rather than papered over: **the count of 72 does not include a
   single `SAMLResponse` or `LogoutRequest` that names a registered client.**
+- **The protocol surface's two dispatch rules**, F173 and F174, named as a cut of
+  their own above. They are not SAML's and not this branch's, and the goldens that
+  move when they land will be OIDC's.
 - The ECP flow. `saml.allow.ecp.flow` is `"false"` on every created SAML client
   and `saml ecp` is a `topLevel` authentication flow that
   `GET /authentication/flows` does not list, which AGENTS.md already records.

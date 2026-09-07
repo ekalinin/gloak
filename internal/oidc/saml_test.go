@@ -86,11 +86,26 @@ func TestEncodingXMLCannotEmitTheDescriptor(t *testing.T) {
 	}
 }
 
-// TestDescriptorIsBytewiseWhatKeycloakSends pins the layout against the shape
-// measured on 2026-09-07. The conformance golden is the contract; this test is
-// what says which part of the document each rule is about, so a failure names
-// the rule rather than dumping 3422 bytes.
-func TestDescriptorIsBytewiseWhatKeycloakSends(t *testing.T) {
+// TestDescriptorCarriesTheLayoutRulesThatLookWrong names the six spellings a
+// reader would tidy, so that a failure says which rule broke rather than
+// dumping 3422 bytes.
+//
+// **The golden is the bytewise contract and this test is not.** It is seven
+// substring checks and four structural ones, so it pins the presence of each
+// rule and not the document - and the gap is real rather than theoretical:
+// making the two binding lists identical leaves every assertion here passing,
+// because nothing below mentions the sign-on list's order. What catches that is
+// TestTheTwoBindingListsDisagree beside it and
+// TestConformance/saml/descriptor/master above both, which compares every byte
+// outside the two masked element texts.
+//
+// The name said "IsBytewise" until a review's mutation showed it was not. In a
+// repository whose recurring failure is a sentence that reads as coverage, a
+// test name promising a byte comparison it does not make is the same failure
+// one layer down - and the comment on the sibling test already said so, calling
+// this shape "no assertion over membership, and no count". Only the name
+// disagreed.
+func TestDescriptorCarriesTheLayoutRulesThatLookWrong(t *testing.T) {
 	k := descriptorKeys(t)
 	got := string(samlDescriptor("http://localhost:8080/realms/master", k))
 
