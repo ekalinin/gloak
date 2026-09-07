@@ -374,6 +374,145 @@ var oidcCore = []Case{
 		},
 	},
 	{
+		// F177. **Exactly one trailing slash is stripped, ahead of the route
+		// table and across the whole server.** This is the cell the follow-up
+		// named, and it is the positive control the two refusals below need: a
+		// server that answered every slashed path a 404 satisfies both of them
+		// and fails here.
+		//
+		// It duplicates oidc/certs/master's body on purpose. The behaviour
+		// being pinned is the routing rule, and the only way a golden can say
+		// "the slashed path reached this endpoint" is to hold what that
+		// endpoint answers.
+		ID: "http/fallback/trailing-slash-protocol",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Keycloak server OIDC endpoints: a path with one trailing slash",
+			Retrieved: "2026-09-07",
+		},
+		Status:  Implemented,
+		Fixture: "bootstrap",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/certs/",
+		},
+		AssertHeaders: []string{
+			"Cache-Control",
+			"Content-Type",
+			"Referrer-Policy",
+			"Strict-Transport-Security",
+			"X-Content-Type-Options",
+			"X-Frame-Options",
+			"X-Robots-Tag",
+		},
+		Volatile: []string{
+			"keys/*/kid",
+			"keys/*/n",
+			"keys/*/x5c",
+			"keys/*/x5t",
+			"keys/*/x5t#S256",
+		},
+		Unordered: []string{"keys"},
+	},
+	{
+		// F177's second question: **the rule reaches the Admin API.** That is
+		// what makes it one strip ahead of the mux rather than a route per
+		// protocol endpoint, and it is why this cut's change is in
+		// WithKeycloakFallbacks and not in the protocol router.
+		//
+		// The endpoint is chosen for two properties this case rests on. Its
+		// body is a pure function of nothing - a user id resolving to nothing
+		// answers the same seven-key zero record a real user gets, which is
+		// admin/attack-detection/brute-force-status-unknown-user's finding - so
+		// the golden cannot drift with the container's state. And it carries
+		// the Admin API's `;charset=UTF-8`, where the protocol side sends a
+		// bare `application/json`, so the Content-Type alone says which of the
+		// two surfaces served it.
+		ID: "http/fallback/trailing-slash-admin",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Attack Detection: a path with one trailing slash",
+			Retrieved: "2026-09-07",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/attack-detection/brute-force/users/" +
+				"gloak-probe-no-such-user/",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
+		// The half of F177's rule that says it is a **strip** and not a route.
+		// The unmatched-path 404 answers a slashed path exactly as it answers
+		// the bare one, headers included - so nothing downstream of the strip
+		// has to know the slash was there, and the two measured fallback
+		// bodies stay two.
+		//
+		// It keeps the absent-header declaration its unslashed sibling carries
+		// rather than deferring to it: the interesting claim is that a request
+		// which was rewritten before routing still misses the filter chain.
+		ID: "http/fallback/trailing-slash-unknown-path",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Keycloak server OIDC endpoints: an unmatched path with a trailing slash",
+			Retrieved: "2026-09-07",
+		},
+		Status:        Implemented,
+		Fixture:       "bootstrap",
+		Request:       Request{Method: http.MethodGet, Path: "/nosuchpath/"},
+		AssertHeaders: []string{"Content-Type"},
+		AssertAbsentHeaders: []string{
+			"Referrer-Policy",
+			"Strict-Transport-Security",
+			"X-Content-Type-Options",
+			"X-Frame-Options",
+			"X-Robots-Tag",
+		},
+	},
+	{
+		// The boundary of F177's rule, and the case that kills the
+		// implementation the three above would all pass: **a second trailing
+		// slash is not a second strip.** A path carrying a doubled slash, a
+		// "." segment or a ".." segment never reaches a route at all.
+		//
+		// Three things here are measured and none of them is what a reader
+		// guesses. It is a **400**, not a 404. Its Content-Type spells the
+		// parameter `application/json; charset=UTF-8`, **with a space**, which
+		// is a third spelling in this server - the Admin API writes
+		// `application/json;charset=UTF-8` and the protocol side a bare
+		// `application/json`. And it carries **none** of the five security
+		// headers, which is the "never reached the filter chain" exception met
+		// on a request that is refused rather than unrouted.
+		//
+		// Measured with raw sockets and `curl --path-as-is` on 2026-09-07,
+		// because curl normalises a path before sending it and a probe written
+		// without that flag measures curl. This closes F11.
+		ID: "http/fallback/path-not-normalized",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Keycloak server OIDC endpoints: a path that is not normalized",
+			Retrieved: "2026-09-07",
+		},
+		Status:  Implemented,
+		Fixture: "bootstrap",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/certs//",
+		},
+		AssertHeaders: []string{"Content-Type"},
+		AssertAbsentHeaders: []string{
+			"Cache-Control",
+			"Referrer-Policy",
+			"Strict-Transport-Security",
+			"X-Content-Type-Options",
+			"X-Frame-Options",
+			"X-Robots-Tag",
+		},
+	},
+	{
 		ID: "http/fallback/method-not-allowed",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
@@ -386,6 +525,122 @@ var oidcCore = []Case{
 		// A known path hit with the wrong method still reaches the filter
 		// chain a matched resource sits behind, so the five security headers
 		// are present, unlike the unmatched-path case above.
+		AssertHeaders: []string{
+			"Content-Type",
+			"Referrer-Policy",
+			"Strict-Transport-Security",
+			"X-Content-Type-Options",
+			"X-Frame-Options",
+			"X-Robots-Tag",
+		},
+	},
+
+	// --- The protocol dispatcher, F178 ---
+	//
+	// `/realms/{realm}/protocol/{name}` is decided by Keycloak's **protocol
+	// map** rather than by its route table, which is why none of these four
+	// can be produced by a fallback: an unmatched path answers
+	// `Unable to find matching target resource method` with none of the five
+	// security headers, and every cell here carries all five.
+	//
+	// Four cases because the dispatcher has three decisions in it and each of
+	// them is one probe away from an implementation that looks right - the
+	// realm before the protocol, a registered protocol stopping the dispatch,
+	// and the bare `/protocol` segment not being a protocol name. Sent as GET
+	// only: `Protocol not found` was measured byte-identical on GET, POST,
+	// PUT, DELETE, OPTIONS and HEAD, and a golden per verb would report one
+	// behaviour six times. internal/oidc's TestProtocolNotFoundAnswersEveryVerb
+	// carries that half.
+	{
+		// The sentence itself, on the shape the follow-up leads with.
+		ID: "oidc/protocol/unknown",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Keycloak server OIDC endpoints: an unregistered login protocol",
+			Retrieved: "2026-09-07",
+		},
+		Status:  Implemented,
+		Fixture: "bootstrap",
+		Request: Request{Method: http.MethodGet, Path: "/realms/master/protocol/nosuchproto"},
+		AssertHeaders: []string{
+			"Content-Type",
+			"Referrer-Policy",
+			"Strict-Transport-Security",
+			"X-Content-Type-Options",
+			"X-Frame-Options",
+			"X-Robots-Tag",
+		},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		// **The discriminating case.** A dispatcher that answered
+		// `Protocol not found` for everything under `/protocol/` passes the
+		// case above and fails here: a path under a protocol Keycloak *has*
+		// registered answers the router's own generic 404 instead, so the map
+		// is load-bearing.
+		//
+		// It is the OIDC half of saml/endpoint/unknown-subpath, kept because
+		// the two protocols are the two entries in that map and a fold or a
+		// typo in either would show on one of them alone.
+		ID: "oidc/protocol/unknown-under-registered",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Keycloak server OIDC endpoints: an unserved path under a registered protocol",
+			Retrieved: "2026-09-07",
+		},
+		Status:  Implemented,
+		Fixture: "bootstrap",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/nosuchsub",
+		},
+		AssertHeaders: []string{
+			"Content-Type",
+			"Referrer-Policy",
+			"Strict-Transport-Security",
+			"X-Content-Type-Options",
+			"X-Frame-Options",
+			"X-Robots-Tag",
+		},
+	},
+	{
+		// The bare segment. **`/protocol` is not a protocol**: it answers
+		// `HTTP 404 Not Found` where a one-character name answers
+		// `Protocol not found`, so the empty name is a third answer rather
+		// than the unregistered case with nothing in it.
+		ID: "oidc/protocol/bare",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Keycloak server OIDC endpoints: the bare protocol segment",
+			Retrieved: "2026-09-07",
+		},
+		Status:  Implemented,
+		Fixture: "bootstrap",
+		Request: Request{Method: http.MethodGet, Path: "/realms/master/protocol"},
+		AssertHeaders: []string{
+			"Content-Type",
+			"Referrer-Policy",
+			"Strict-Transport-Security",
+			"X-Content-Type-Options",
+			"X-Frame-Options",
+			"X-Robots-Tag",
+		},
+	},
+	{
+		// The order. An unknown realm answers about the **realm** even when
+		// the protocol is unknown too, so a dispatcher reading its map first
+		// is wrong on every request that gets both wrong - and right on every
+		// request that gets only one wrong, which is every probe a reader
+		// writes first.
+		ID: "oidc/protocol/unknown-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Keycloak server OIDC endpoints: an unregistered protocol in a realm that does not exist",
+			Retrieved: "2026-09-07",
+		},
+		Status:  Implemented,
+		Fixture: "bootstrap",
+		Request: Request{Method: http.MethodGet, Path: "/realms/nosuchrealm/protocol/nosuchproto"},
 		AssertHeaders: []string{
 			"Content-Type",
 			"Referrer-Policy",

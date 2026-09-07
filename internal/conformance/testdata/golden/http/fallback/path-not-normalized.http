@@ -1,0 +1,6 @@
+# GET /realms/master/protocol/openid-connect/certs//
+HTTP/1.1 400 Bad Request
+Content-Length: {{volatile}}
+Content-Type: application/json; charset=UTF-8
+
+{"error":"missingNormalization","error_description":"Request path not normalized"}

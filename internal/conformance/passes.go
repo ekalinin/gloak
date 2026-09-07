@@ -41,6 +41,15 @@ package conformance
 // matter - a JSON path cannot address a markup body and a markup mask cannot
 // address a JSON one, so the two groups can never see each other's edits.
 //
+// SortUnorderedBracketed runs beside SortUnorderedWords and after it. The
+// order of those two is free rather than load-bearing, and it is worth saying
+// why: they are the two masks that reach inside a string, and both refuse a
+// value that is not one, so a path naming a string can carry either - but no
+// case declares both, and if one ever did, the words pass would have joined the
+// brackets to their neighbouring items and the bracket pass would then find a
+// string with no run left to sort. They are kept adjacent so that reading the
+// pair as "the string masks" is what a reader does.
+//
 // It lives in its own file, called from both record_test.go and
 // conformance_test.go, because a pass added to one side and not the other is
 // a divergence no test can see: both sides would simply agree on the wrong
@@ -66,6 +75,10 @@ func normalisePasses(body []byte, base string, c Case, vars map[string]string) (
 		return nil, err
 	}
 	body, err = SortUnorderedWords(body, c.UnorderedWords)
+	if err != nil {
+		return nil, err
+	}
+	body, err = SortUnorderedBracketed(body, c.UnorderedBracketed)
 	if err != nil {
 		return nil, err
 	}
