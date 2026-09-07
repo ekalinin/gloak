@@ -1620,6 +1620,75 @@ var Fixtures = map[string]Fixture{
 		probeKeystoreClientID, "gloak-probe-keystore"),
 	"admin-token-keystore-empty-client": certificateClientFixture(
 		probeKeystoreEmptyClientID, "gloak-probe-keystore-empty"),
+
+	// A SAML service provider, and the attribute that makes it reachable from
+	// /realms/{realm}/protocol/saml/clients/{name}.
+	//
+	// **The path segment there is not a clientId.** Measured on 2026-09-07: a
+	// SAML client created with `protocol: saml` and a registered redirect URI
+	// answers `Client not found.` when addressed by its clientId, and the same
+	// container answers `Invalid redirect uri` for the value of its
+	// `saml_idp_initiated_sso_url_name` attribute. So the client is created
+	// carrying both, and the two spellings are two cases: one fixture, and the
+	// distinguishing input is in the case's own request rather than in the
+	// setup. Without the attribute the whole family collapses onto one answer
+	// and a handler looking clients up by clientId would pass.
+	"saml-service-provider": samlServiceProviderFixture("gloak-probe-saml-sp",
+		"gloak-probe-sso", true),
+
+	// The same client with `saml.client.signature` off, which is the one
+	// attribute between a refused AuthnRequest and a login page.
+	//
+	// It is named by a Pending case and therefore never run, and it is here
+	// anyway because the alternative is a Reason that describes a state nobody
+	// can reach. saml/endpoint/login-page says the success path is one attribute
+	// away and this is the attribute; the day the harness can mint an
+	// AuthnRequest naming its own server, the fixture the case needs is already
+	// written and already says which flag it turns off.
+	"saml-service-provider-unsigned": samlServiceProviderFixture("gloak-probe-saml-unsigned",
+		"gloak-probe-sso-unsigned", false),
+}
+
+// samlServiceProviderFixture creates one SAML client carrying the attribute the
+// IdP-initiated route resolves on, and optionally the signature requirement.
+//
+// It captures nothing and is `idempotentCreate`, so the cases naming one client
+// can share it on the recorder's shared container. There is nothing to capture:
+// the IdP-initiated route addresses the client by an attribute the fixture
+// chose rather than by a server-minted id, which is the one thing that makes
+// this family cheaper to set up than every other client family here.
+//
+// `requireSignature` is spelled out rather than left to the default because the
+// default is the measurement: `POST /clients` with `protocol: saml` and no
+// attributes at all produces a client carrying `saml.client.signature: "true"`,
+// which is why an unsigned AuthnRequest from it answers `Invalid requester`.
+// Writing "true" here changes nothing and says which state the cases are in.
+func samlServiceProviderFixture(clientID, ssoName string, requireSignature bool) Fixture {
+	signature := "false"
+	if requireSignature {
+		signature = "true"
+	}
+	return Fixture{
+		State: "bootstrap",
+		Steps: []Step{
+			adminTokenStep(),
+			{
+				Request: Request{
+					Method: http.MethodPost,
+					Path:   "/admin/realms/master/clients",
+					Headers: map[string]string{
+						"Authorization": "Bearer {{access_token}}",
+						"Content-Type":  "application/json",
+					},
+					Body: []byte(`{"clientId":"` + clientID + `","protocol":"saml",` +
+						`"enabled":true,"redirectUris":["http://localhost:9999/*"],` +
+						`"attributes":{"saml_idp_initiated_sso_url_name":"` + ssoName + `",` +
+						`"saml.client.signature":"` + signature + `"}}`),
+				},
+				ExpectStatus: idempotentCreate,
+			},
+		},
+	}
 }
 
 // authzClientFixture creates one client with authorization services on and

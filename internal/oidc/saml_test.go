@@ -1,6 +1,7 @@
 package oidc
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/xml"
 	"strings"
@@ -124,6 +125,59 @@ func TestDescriptorIsBytewiseWhatKeycloakSends(t *testing.T) {
 	// Empty elements are spelled long, never self-closed.
 	if strings.Contains(got, "/>") {
 		t.Error("descriptor self-closes an element; Keycloak spells every one <md:X></md:X>")
+	}
+}
+
+// TestTheCertificateIsStandardBase64OfTheDER closes the one hole the conformance
+// golden cannot see.
+//
+// `saml/descriptor/master` masks <ds:X509Certificate>, because the certificate is
+// minted with the database - so **the golden asserts that the element is there
+// and says nothing about what is in it**. Switch the emitter to base64url, or to
+// PEM with its armour, or to the encryption key's certificate instead of the
+// signing one, and the golden still matches. That is the honest cost of the mask
+// and this is where it is paid back.
+//
+// The check does not repeat the emitter's expression, which is what makes it a
+// second opinion rather than a copy: it decodes the element's text with the
+// standard alphabet and requires the bytes to be the realm's signing DER. A
+// base64url emitter fails at the decode on any key whose DER produces a `+` or a
+// `/`, and at the comparison on the rest.
+func TestTheCertificateIsStandardBase64OfTheDER(t *testing.T) {
+	k := descriptorKeys(t)
+	got := string(samlDescriptor("http://localhost:8080/realms/master", k))
+
+	const open, shut = "<ds:X509Certificate>", "</ds:X509Certificate>"
+	i := strings.Index(got, open)
+	j := strings.Index(got, shut)
+	if i < 0 || j < i {
+		t.Fatal("the descriptor carries no X509Certificate element")
+	}
+	text := got[i+len(open) : j]
+
+	der, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		t.Fatalf("the certificate is not standard base64: %v", err)
+	}
+	if !bytes.Equal(der, k.CertificateDER()) {
+		t.Fatalf("the certificate is %d bytes and the realm's signing DER is %d",
+			len(der), len(k.CertificateDER()))
+	}
+	// No PEM armour and no line breaks: Keycloak sends one unbroken run.
+	if strings.ContainsAny(text, "\n\r -") {
+		t.Errorf("the certificate carries whitespace or PEM armour: %.40q", text)
+	}
+
+	// The same for the key id, which is masked for the same reason and is the
+	// JWKS's kid rather than anything computed here.
+	const kOpen, kShut = "<ds:KeyName>", "</ds:KeyName>"
+	a := strings.Index(got, kOpen)
+	b := strings.Index(got, kShut)
+	if a < 0 || b < a {
+		t.Fatal("the descriptor carries no KeyName element")
+	}
+	if name := got[a+len(kOpen) : b]; name != k.RSAKeyID {
+		t.Errorf("KeyName is %q, want the realm's RSA kid %q", name, k.RSAKeyID)
 	}
 }
 

@@ -276,8 +276,24 @@ func TestCoverageWritesAReportWhenAsked(t *testing.T) {
 		sumServed += served
 		sumDocumented += documented
 	}
-	if unenumerated == 0 {
-		t.Fatal("no unenumerated chapter in the report; the catalogue has four")
+	// Counted from Chapters rather than written down. The sentence here said
+	// "the catalogue has four" until P11 enumerated the SAML surface and made it
+	// three, which is the drift AGENTS.md keeps recording: a count in prose
+	// beside the list it counts is a count that will be wrong. The list is the
+	// answer, and asserting the number rather than only "more than nothing"
+	// also catches a chapter losing its Reason and quietly joining the total.
+	want := 0
+	for _, ch := range Chapters {
+		if !ch.Enumerated {
+			want++
+		}
+	}
+	if want == 0 {
+		t.Fatal("every chapter is enumerated now, so this half of the report has " +
+			"no consumer; drop the Enumerated field rather than leaving a branch nothing takes")
+	}
+	if unenumerated != want {
+		t.Fatalf("%d unenumerated chapters in the report, %d in Chapters", unenumerated, want)
 	}
 
 	if got := fmt.Sprint(sumServed); got != fields[1] {

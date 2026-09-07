@@ -7,5 +7,6 @@ var Catalog = func() []Case {
 	all = append(all, oidcCore...)
 	all = append(all, oidcPending...)
 	all = append(all, adminCases...)
+	all = append(all, samlCases...)
 	return all
 }()

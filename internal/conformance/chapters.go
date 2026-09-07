@@ -53,6 +53,30 @@ var Chapters = []Chapter{
 	{Name: "oidc/userinfo", Enumerated: true},
 	{Name: "realm/info", Enumerated: true},
 
+	// SAML 2.0, enumerated by hand on 2026-09-07 and no longer a "?" row.
+	//
+	// There is no machine-readable description for this surface - the vendored
+	// Admin API document does not describe it - so the denominator is the
+	// catalogue's own case count, the same weak kind the OIDC chapters use.
+	// What it rests on is a **sweep**: five route shapes under
+	// /realms/{realm}/protocol/saml crossed with seven verbs, plus the request
+	// families the message-reading paths distinguish and the realm and protocol
+	// variations, is 72 request/response pairs measured against a live 26.7.1.
+	// Twenty-two of the 35 verb cells are the generic fallback family -
+	// seventeen 405s and five `HTTP 404 Not Found` - which http/fallback already
+	// counts once for the whole API and which are **not** counted again here;
+	// counting them per path would report the same two behaviours twenty-two
+	// times. The rest collapse to the cases in catalog_saml.go. See
+	// docs/superpowers/handover/p11-saml-descriptor.md for the table.
+	//
+	// One chapter per route shape, which is how the OIDC side is split, and it
+	// is worth being explicit that a chapter is not an endpoint: saml/endpoint
+	// is one path with six distinct answers over two verbs.
+	{Name: "saml/descriptor", Enumerated: true},
+	{Name: "saml/endpoint", Enumerated: true},
+	{Name: "saml/idp-initiated", Enumerated: true},
+	{Name: "saml/artifact-resolution", Enumerated: true},
+
 	// Admin REST API. One chapter per tag, so every operation in the
 	// description is counted exactly once. An operation is counted under the
 	// sub-project that builds the resource, which is not always the one that
@@ -84,10 +108,6 @@ var Chapters = []Chapter{
 
 	// Surface with no machine-readable description, not counted by hand
 	// either. Listed so the report can say how much it is not measuring.
-	{
-		Name:   "saml",
-		Reason: "no machine-readable description; the SAML endpoints have not been enumerated by hand",
-	},
 	{
 		Name:   "account",
 		Reason: "the account REST API is not described by the Admin API document and has not been enumerated",

@@ -115,11 +115,26 @@ func TestCatalogIsWellFormed(t *testing.T) {
 				t.Errorf("%q: HTML mask %q is not a placeholder-safe name", c.ID, name)
 			}
 		}
+		// An XML mask's name is a **qualified element name**, so it may carry
+		// one colon where an HTML mask may not: the descriptor spells its two
+		// volatile elements ds:KeyName and ds:X509Certificate, and the mask has
+		// to name the element the document actually spells. One colon and not
+		// two, because that is what a QName is - a wider alphabet here would let
+		// a mask name something no element can be called and fail at the
+		// document rather than at the declaration.
+		for _, name := range c.VolatileXMLText {
+			if !xmlMaskName.MatchString(name) {
+				t.Errorf("%q: XML mask %q is not a qualified element name", c.ID, name)
+			}
+		}
 	}
 }
 
 // htmlMaskName is what may go inside an HTML mask's {{...}}.
 var htmlMaskName = regexp.MustCompile(`^[A-Za-z_0-9]+$`)
+
+// xmlMaskName is htmlMaskName plus the one colon a QName's prefix needs.
+var xmlMaskName = regexp.MustCompile(`^[A-Za-z_0-9]+(:[A-Za-z_0-9]+)?$`)
 
 // TestRecordedCaseRules pins the two rules that make Recorded different from
 // Pending: the golden is mandatory, and the case must say why it is not
@@ -174,6 +189,13 @@ var unservedEndpointPhrases = map[string]string{
 	"the introspection endpoint is not implemented":              "/realms/master/protocol/openid-connect/token/introspect",
 	"the revocation endpoint is not implemented":                 "/realms/master/protocol/openid-connect/revoke",
 	"the logout endpoint is not implemented":                     "/realms/master/protocol/openid-connect/logout",
+	// Added by P11, and it is a ratchet against the exact sentence that cut had
+	// to correct. `admin/clients/evaluate-example-saml-response` carried "Gloak
+	// serves no SAML at all" as the first of three reasons, and it stopped being
+	// true the moment the descriptor was served - while the case stayed Pending,
+	// correctly, on the other two. A reason that is right for the wrong sentence
+	// is the hardest kind to notice, because nothing about it fails.
+	"Gloak serves no SAML at all": "/realms/master/protocol/saml/descriptor",
 }
 
 // staleReasonsOwnedElsewhere are the cases whose Reason this guard finds false
