@@ -601,6 +601,34 @@ func TestThemeResourceAppearsOnlyInTheThemePages(t *testing.T) {
 		// browser carrying a live session. The block follows the flow the render
 		// happens in and not whether the browser is signed in.
 		"oidc/logout/frontchannel": 7,
+		// The SAML surface's nine pages, all **seven**, all Recorded. They are
+		// theme pages that nothing in their path says are theme pages, which is
+		// what this guard is for: /realms/{realm}/protocol/saml answers the
+		// login theme's error template, and so does the IdP-initiated route one
+		// segment down.
+		//
+		// Seven puts them in the "rendered from outside the authentication flow"
+		// group with oidc/logout/frontchannel and the four /login-actions pages
+		// - no checkAuthSession block - and that is consistent with the rest of
+		// what they carry: measured on 2026-09-07, none of the three distinct
+		// SAML pages holds a tab_id, a session_code or an execution, and two
+		// fetches a second apart are byte-identical. That is why nine SAML cases
+		// can be Recorded where F146's nine theme pages cannot.
+		//
+		// The six on /protocol/saml are one template with three instructions -
+		// Invalid Request, Wrong client protocol., Invalid requester - and the
+		// three under /clients/ are the same template with two more. The
+		// /resources/ count does not move with the instruction, because it is a
+		// property of the head.
+		"saml/endpoint/no-parameters":                        7,
+		"saml/endpoint/post-no-parameters":                   7,
+		"saml/endpoint/redirect-binding-unregistered-issuer": 7,
+		"saml/endpoint/redirect-binding-wrong-protocol":      7,
+		"saml/endpoint/redirect-binding-saml-client":         7,
+		"saml/endpoint/post-binding-saml-client":             7,
+		"saml/idp-initiated/unclaimed-name":                  7,
+		"saml/idp-initiated/client-id-is-not-the-name":       7,
+		"saml/idp-initiated/claimed-name":                    7,
 	}
 	seen := map[string]bool{}
 	for _, c := range Catalog {

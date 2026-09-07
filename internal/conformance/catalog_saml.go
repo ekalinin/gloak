@@ -82,9 +82,13 @@ var samlCases = []Case{
 			Section:   "IDP metadata descriptor: GET /realms/{realm}/protocol/saml/descriptor",
 			Retrieved: "2026-09-07",
 		},
-		Status:    Implemented,
-		Fixture:   "bootstrap",
-		Operation: "GET /realms/{realm}/protocol/saml/descriptor",
+		Status:  Implemented,
+		Fixture: "bootstrap",
+		// No Operation, and that is a rule rather than an omission: the SAML
+		// chapters count **cases**, because the vendored description says
+		// nothing about this surface, and naming an operation would suggest an
+		// external denominator that does not exist.
+		// TestProtocolCasesNameNoOperation refuses one.
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/protocol/saml/descriptor",
@@ -126,7 +130,6 @@ var samlCases = []Case{
 		Status:      Implemented,
 		SecondRealm: true,
 		Fixture:     "second-realm",
-		Operation:   "GET /realms/{realm}/protocol/saml/descriptor",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/gloak-probe-second/protocol/saml/descriptor",

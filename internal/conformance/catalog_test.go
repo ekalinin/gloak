@@ -1512,6 +1512,10 @@ func TestInertMaskGuardSeesEveryKind(t *testing.T) {
 			"it addresses no JSON path, so MaskedValues cannot read what it covers",
 		"VolatileHTMLCall":  "the same, one frame along",
 		"VolatileHTMLInput": "the same, two frames along",
+		"VolatileXMLText": "the same, three frames along and in another dialect: an XML body " +
+			"mask, watched by TestNoHTMLMaskVariesNothing through XMLMaskedValues. " +
+			"MaskedValues cannot read what it covers for the same reason as the three " +
+			"above - it walks a JSON document and a SAML descriptor is not one",
 	}
 	watched := map[string]bool{}
 	for _, m := range bodyMasks {

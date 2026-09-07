@@ -1,0 +1,9 @@
+# OPTIONS /realms/master/protocol/saml/descriptor
+HTTP/1.1 200 OK
+Allow: HEAD, POST, GET, OPTIONS
+Content-Length: {{volatile}}
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Robots-Tag: none
+
