@@ -276,24 +276,22 @@ func TestCoverageWritesAReportWhenAsked(t *testing.T) {
 		sumServed += served
 		sumDocumented += documented
 	}
-	// Counted from Chapters rather than written down. The sentence here said
-	// "the catalogue has four" until P11 enumerated the SAML surface and made it
-	// three, which is the drift AGENTS.md keeps recording: a count in prose
-	// beside the list it counts is a count that will be wrong. The list is the
-	// answer, and asserting the number rather than only "more than nothing"
-	// also catches a chapter losing its Reason and quietly joining the total.
-	want := 0
-	for _, ch := range Chapters {
-		if !ch.Enumerated {
-			want++
-		}
-	}
-	if want == 0 {
-		t.Fatal("every chapter is enumerated now, so this half of the report has " +
+	// The number is deliberately not written here. This said "the catalogue has
+	// four" until P11 enumerated the SAML surface and made it three, which is
+	// the drift AGENTS.md keeps recording: a count in prose beside the list it
+	// counts is a count that will be wrong.
+	//
+	// **Counting Chapters again and comparing would be a tautology**, and that
+	// was written first and caught by a mutation: `unenumerated` is already
+	// counted from Chapters, twenty lines up, so a second count of the same
+	// slice can only ever agree with it. What actually pins the column is the
+	// `fields[3]` comparison below, between the meter's own number and the one
+	// it wrote, and what pins the Reason rule is
+	// TestEveryUnenumeratedChapterSaysWhy in openapi_test.go. This branch has
+	// one job left: refusing a report where the whole feature has gone.
+	if unenumerated == 0 {
+		t.Fatal("no unenumerated chapter in the report, so this half of the format has " +
 			"no consumer; drop the Enumerated field rather than leaving a branch nothing takes")
-	}
-	if unenumerated != want {
-		t.Fatalf("%d unenumerated chapters in the report, %d in Chapters", unenumerated, want)
 	}
 
 	if got := fmt.Sprint(sumServed); got != fields[1] {

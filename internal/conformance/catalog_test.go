@@ -1691,9 +1691,44 @@ func TestNoHTMLMaskVariesNothing(t *testing.T) {
 		t.Fatal("no Implemented case declares an HTML mask, so this test has stopped checking " +
 			"anything; F38's mechanism has no consumer and both it and this guard should go")
 	}
+
+	// **The scope above is a hand-written sum of four fields, and nothing
+	// checked it.** A mutation dropping VolatileXMLText from it made this test
+	// skip every SAML case and the whole package stayed green - so the day a
+	// fifth markup frame arrives and its author forgets this line, the frame
+	// ships with no varies ratchet at all and no test says so.
+	//
+	// This is the independent half, and it reads the committed bytes rather
+	// than the predicate. An XML mask writes `{{prefix:name}}` into a golden,
+	// and a colon is a spelling nothing else in this harness can produce:
+	// ReplaceIssuer writes `{{issuer}}`, ReplaceThemeResource
+	// `{{theme_resource}}`, Normalize a JSON type name, and a fixture capture
+	// matches capturedValue's `[a-z_0-9]+`. So a golden holding one on an
+	// Implemented case this test did not visit is a mask outside the ratchet's
+	// reach, found without asking the predicate what its reach is.
+	for _, c := range Catalog {
+		if c.Status != Implemented || visited[c.ID] {
+			continue
+		}
+		raw, err := os.ReadFile(GoldenPath(goldenDir, c.ID))
+		if err != nil {
+			continue // a missing golden is TestConformance's business
+		}
+		if m := qualifiedPlaceholder.Find(raw); m != nil {
+			t.Errorf("%q's golden holds %s and this test did not visit the case - "+
+				"a markup mask is being applied that the varies ratchet's scope does not name",
+				c.ID, m)
+		}
+	}
+
 	reportStale(t, "htmlMasksLeftInPlace", "moves between two servings now",
 		htmlMasksLeftInPlace, matched, visited)
 }
+
+// qualifiedPlaceholder matches `{{prefix:name}}`, which only an XML text mask
+// writes. Every other placeholder this harness produces is a single unqualified
+// word, so the colon is what makes the search specific rather than a guess.
+var qualifiedPlaceholder = regexp.MustCompile(`\{\{[A-Za-z_0-9]+:[A-Za-z_0-9]+\}\}`)
 
 // TestHTMLMaskVariesGuardCanFail proves the guard above can fail, which matters
 // more here than for the three older ratchets: those are green with findings
