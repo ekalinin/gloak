@@ -2571,6 +2571,58 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   gets wrong everywhere, and fixing either inside a SAML branch would be a change
   reaching every OIDC path for one instance of a rule. See F177 and F178.
 
+- **The account API's gate is two stages with two statuses, and the second is per
+  route.** A token granting no role on the realm's `account` client is **401**; a
+  caller past that stage holding the wrong account role is **403**. A single-stage
+  gate is wrong on every request of one of the two kinds. The role sets do not
+  follow the route's name - **`manage-account-links` is refused by
+  `/linked-accounts`**, the one route whose name matches it.
+- **The two-404 discriminator does not work under `/realms/{realm}/`**, which is
+  what makes a surface there unenumerable by the method the SAML cut used. A path
+  that exists and a path that does not **both** answer `HTTP 404 Not Found` with
+  all five security headers; the unmatched-path body is reachable only outside
+  `/realms/`. What enumerates such a surface is weaker and has to be said out
+  loud: a route exists when at least one verb answers outside the generic
+  fallback family, with **`OPTIONS` excluded**, because `OPTIONS` answers 200 on
+  every path including ones that do not exist. See F184 for the shape.
+- **A whole API can hide behind `Accept`.** Every path under
+  `/realms/{realm}/account` answers **200 with the console's markup** to a request
+  that did not ask for JSON, including paths no route serves. The REST resource is
+  reached exactly when the parsed accept list holds `application/json` **with no
+  parameters** - `application/json;q=1` gets the console, although `q=1` is the
+  default and changes nothing about the request's meaning. **A sweep written
+  without that header measures an infinite surface.**
+- **The pollution guard reports a name and claims an object, and bootstrap is the
+  third source it never had.** A golden may hold what bootstrap, the case's own
+  fixture and its own request produced; the guard implemented the second and the
+  third and assumed the first could never collide. Matching a created object's
+  name against a golden's bytes cannot tell a fixture's object from one the
+  product ships, and on 2026-09-07 it named a fixture for the `account` client's
+  built-in `view-profile`. It reads Gloak's own bootstrap now, through the handler
+  the verifier serves, because that is the oracle the question is about.
+  **Two entries in `namedOutsideTheConvention` take a product name and only one
+  has ever been exercised**: no golden holds `"name":"manage-realm"`, so that
+  entry is lucky rather than safe.
+- **A `Recorded` golden that is wrong is invisible**, for the reason F113 gives
+  about `Pending` ones: the case is required *not* to match, so a golden recorded
+  against the wrong fixture fails to match either way and nothing fails. The
+  account sessions golden carried its pre-fix shape through two commits on exactly
+  that. When a fixture changes under a `Recorded` case, **the re-record is the
+  only thing that can be checked, and nothing checks that it happened.**
+- **A case whose two sides agree for different reasons is measuring the harness.**
+  A leading space in `Authorization` is optional whitespace: a real socket strips
+  it before the server sees it and an in-process handler does not, so a golden for
+  it would compare 200 against 200 with neither side exercising the rule. Before
+  adding a case for a header's whitespace, check whether the transport removes it.
+- **A repeated identity provider create is not always a 409, and which check fires
+  first decides.** A second `kubernetes` create under a name the realm already
+  holds answers `400 Issuer URL already used for IDP '<alias>'`, because the
+  issuer-uniqueness check runs **before** the alias check and that provider's
+  issuer is the server-filled constant
+  `https://kubernetes.default.svc.cluster.local`. So `idempotentCreate` does not
+  cover every create, and widening a step to accept the 400 would also accept
+  `Issuer is required` - a fixture that passes while creating nothing.
+
 ## Boundaries
 
 | Package | Owns | Must not |

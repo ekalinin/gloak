@@ -5362,3 +5362,103 @@ behaviour, another verb"** the way `Case.SecondRealm` says "another realm": kept
 out of the denominator, with the golden still recorded and compared. That is a
 harness change with one consumer today and F180's `HEAD` problem behind it, so it
 is filed rather than built.
+
+## F190: why does the linked-accounts listing omit two enabled providers?
+
+`GET /realms/{realm}/account/linked-accounts` lists fifteen of the realm's
+seventeen identity provider types. `kubernetes` and `jwt-authorization-grant` are
+absent while present and `enabled: true` in the realm's own admin listing.
+
+`hideOnLogin` is the obvious hypothesis and the pair refutes it: a `kubernetes`
+create sets it true by default and a `jwt-authorization-grant` create sets
+nothing. `enabled` is not the filter either - both were confirmed enabled.
+`unlistedProviderIDs` in `internal/account/reads.go` records the measurement and
+encodes no hypothesis, which is deliberate. The entry asks for the mechanism.
+
+## F191: the harness cannot express a header rule the transport erases
+
+A leading or trailing space in a header value is stripped by any conformant
+receiver, so the recorder's Keycloak never sees one; the verifier hands the
+handler an `http.Request` directly, so Gloak does. A conformance case for such a
+rule passes with both sides doing different things.
+
+This is a general limit rather than one header's oddity - it applies to any
+request-side rule the transport normalises, which includes header folding, case
+in header **names**, and the request line's own whitespace. Nothing in the
+harness detects it. A `Case` that declared "this exercises a byte the transport
+removes" and failed would be the checkable form; today the only defence is
+somebody noticing, and this session noticed only because the two cases were
+written as a pair and one of them looked too easy.
+
+## F192: Gloak ignores `fullScopeAllowed` when issuing tokens
+
+`account/gate/scope-filtered-token` is `Recorded` for this and it is a divergence
+rather than an unserved behaviour. A public client with `fullScopeAllowed: false`
+and no scope mappings should yield a token whose granted roles are filtered;
+Gloak's token path does not implement the filter at all, so the account roles the
+user really holds reach the gate and Gloak answers 200 where Keycloak answers
+401.
+
+The case is in this chapter because this is the request that exposes it, but the
+defect is in `internal/oidc` and the fix belongs there. Note the pairing that
+makes it visible at all: `admin-cli`'s token also carries no `aud` claim and *is*
+accepted, so the two fixtures together say the gate reads the granted roles
+rather than the claim. Neither alone would have found this.
+
+## F193: does `internal/admin`'s `bearerToken` diverge on the scheme's case?
+
+`internal/account`'s `bearerToken` folds the scheme's case, measured. A comment
+added in the unreviewed checkpoint `d8a74f0` claims the **Admin API** folds it
+too and that `internal/admin`'s own `bearerToken` does not - which would make it
+a divergence in a chapter this cut does not touch.
+
+That claim is inherited and was **not** re-measured here, because it is about a
+different package and a different surface and acting on it inside an account cut
+is how a one-line fix reaches every admin route. The entry is the request to
+send: `bearer <t>` and `BEARER <t>` against `/admin/realms/master` with an
+administrator's token, and `internal/admin`'s parser read beside the answer.
+
+## F194: the account chapter's refusals are eleven cuts, not one
+
+Twenty-three of the forty cases are `Recorded`, and they do not share a blocker.
+Four need session-model state Gloak does not hold (`sessions`, `applications`),
+two need the `userProfileMetadata` derivation, three need credential provider
+metadata, one needs realm-stored locales, six are the dispatch and console
+shapes, and one is F192. Sequencing them as one "serve the account API" cut would
+mean opening the session model, the user-profile serialiser and a media-type
+parser in one branch. The entry is to record that the chapter's remaining parity
+is **not** a single unit of work, before somebody plans it as one.
+
+## F195: the pollution guard's fifth family is identity providers, and closing it is a cut
+
+AGENTS.md already says the guard "watches four resource families ... A fixture
+creating a fifth kind of object named by some other key is invisible to it until
+that key joins `createdKeys`". **That blind spot was hit for real by this
+chapter**: `account/linked-accounts/none` recorded sixteen identity providers
+that other fixtures created, and `TestNoGoldenHoldsAnObjectItDidNotCreate` was
+silent, because an identity provider is named by `alias`.
+
+Adding `alias` to `createdKeys` was **measured rather than assumed**, and it is a
+cut of its own. With it applied, the tree reports:
+
+- **seventeen authentication-flow aliases outside the naming convention** -
+  `f103-gamma`, `f103-twiglet`, `f103-doomed` and the rest - each needing a
+  rename or a `namedOutsideTheConvention` entry;
+- **the bootstrapped alias `browser`**, which
+  `admin/authentication-management/create-duplicate-alias` POSTs on purpose to
+  measure a 409. It creates nothing, and it is reported as polluting four
+  `partial-export` goldens and `authentication-management/list`. Note that
+  `namesBootstrapShips` does **not** filter it, because `bootstrapListings` does
+  not read `/authentication/flows` - so closing this family means extending that
+  reader too;
+- **an inverted key precedence on organizations**, which carry both `name` and
+  `alias`. Putting `alias` before `name` changes which key an organization is
+  recorded under and breaks the ownership match on four `admin/organizations`
+  goldens. It has to go **after** `name`, and that ordering is the kind of thing
+  that needs its own test.
+
+None of this belongs in an account cut - it reaches the authentication-management
+and organizations chapters for one instance of a rule, which is the mistake
+AGENTS.md names about fixing a general rule inside a family branch. The account
+case is fixed structurally instead, with `PristineRealm`.
+
