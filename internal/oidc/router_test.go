@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/ekalinin/gloak/internal/oidc"
 )
 
 // securityHeaders is the five Keycloak attaches to a response that reached its
@@ -162,51 +164,61 @@ func TestASecondTrailingSlashIsNotStripped(t *testing.T) {
 	}
 }
 
-// TestTheRootPathIsNotStrippedToNothing pins the one guard the strip needs
-// that the measurements do not name: "/" is a trailing slash and stripping it
-// leaves an empty path, which is not a request any router can be asked about.
+// TestTheRootPathIsNotStrippedToNothing pins the one guard on the strip that
+// no measurement against Keycloak names: "/" ends in a slash, and stripping it
+// leaves the empty path, which is not a request any router can be asked about.
 //
-// Keycloak answers "/" with a 302 to /admin/ and four of the five security
-// headers. Gloak does not, and that divergence is filed rather than fixed here
-// - what this asserts is only that the strip leaves the path alone, so the
-// answer is whatever the route table says and never a panic or a 400.
+// It builds its own mux because **Gloak serves nothing at "/" today**, and
+// against the real route table the guard is an equivalent mutation - removing
+// it turns "/" into "", ServeMux matches neither, and both spellings answer the
+// same unmatched-path 404. That was a surviving mutation until this test was
+// written the way it is now. Keycloak answers "/" with a 302 to /admin/ and
+// four of the five security headers; the day Gloak serves that, the guard
+// carries the request, and this test is what says so in the meantime.
+//
+// WithKeycloakFallbacks takes any mux, so a mux built here is the wrapper's
+// real input rather than a stand-in for it.
 func TestTheRootPathIsNotStrippedToNothing(t *testing.T) {
-	w := get(t, newServer(t), "/")
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("want 404, got %d (body %.80s)", w.Code, w.Body.String())
-	}
-	if got, want := w.Body.String(),
-		`{"error":"Unable to find matching target resource method"}`; got != want {
-		t.Fatalf("want body %s, got %s", want, got)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("root"))
+	})
+	w := httptest.NewRecorder()
+	oidc.WithKeycloakFallbacks(mux).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if got, want := w.Body.String(), "root"; got != want {
+		t.Fatalf("the root path did not reach its own route: %d %q", w.Code, got)
 	}
 }
 
 // TestAnEscapedPathKeepsItsEscapesAcrossTheStrip is the half of the strip that
 // no measurement against Keycloak reaches and that Go's URL type makes easy to
 // get wrong. url.URL carries the path twice - decoded in Path and raw in
-// RawPath - and a copy that trims one without the other leaves EscapedPath
-// silently ignoring the raw form.
+// RawPath - and a copy that trims one and not the other leaves the two
+// disagreeing, at which point EscapedPath quietly discards the raw form and
+// re-escapes the decoded one. Nothing about the status or the body moves, which
+// is why this asserts EscapedPath directly: the assertion a reader writes first
+// leaves the mutation alive.
 //
-// The realm here is spelled with an escaped "s", so the two fields differ, and
-// the request has to route to the same handler with and without the slash.
+// The realm is spelled with an escaped "s" so that Path and RawPath differ at
+// all, which httptest.NewRequest is checked for below - the fixture stops
+// separating them the moment the escape is dropped from the literal.
 func TestAnEscapedPathKeepsItsEscapesAcrossTheStrip(t *testing.T) {
-	h := newServer(t)
-	bare := get(t, h, "/realms/ma%73ter/protocol/openid-connect/certs")
-	slashed := get(t, h, "/realms/ma%73ter/protocol/openid-connect/certs/")
-	if bare.Code != http.StatusOK {
-		t.Fatalf("the escaped path does not route at all: %d", bare.Code)
-	}
-	if slashed.Code != bare.Code {
-		t.Fatalf("status %d bare, %d slashed", bare.Code, slashed.Code)
-	}
-	if got := slashed.Header().Get("Content-Type"); got != "application/json" {
-		t.Fatalf("want application/json, got %q", got)
-	}
-	req := httptest.NewRequest(http.MethodGet,
-		"/realms/ma%73ter/protocol/openid-connect/certs/", nil)
-	if got, want := req.URL.RawPath,
-		"/realms/ma%73ter/protocol/openid-connect/certs/"; got != want {
+	const escaped = "/realms/ma%73ter/probe"
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /realms/{realm}/probe", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.URL.EscapedPath()))
+	})
+	h := oidc.WithKeycloakFallbacks(mux)
+
+	req := httptest.NewRequest(http.MethodGet, escaped+"/", nil)
+	if got, want := req.URL.RawPath, escaped+"/"; got != want {
 		t.Fatalf("the fixture no longer separates Path from RawPath: RawPath %q", got)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if got := w.Body.String(); got != escaped {
+		t.Fatalf("EscapedPath after the strip is %q, want %q", got, escaped)
 	}
 }
 
