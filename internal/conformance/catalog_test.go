@@ -349,6 +349,7 @@ type createdObject struct {
 // this test would fail on a correct golden.
 func TestPristineRealmGoldensAreNotPolluted(t *testing.T) {
 	created := createdObjects()
+	shipped := namesBootstrapShips(t, created)
 	byKey := map[string]int{}
 	for _, o := range created {
 		byKey[o.key]++
@@ -369,7 +370,7 @@ func TestPristineRealmGoldensAreNotPolluted(t *testing.T) {
 			t.Errorf("%q: %v", c.ID, err)
 			continue
 		}
-		for _, o := range pollution(raw, created, c.Fixture, c.ID) {
+		for _, o := range pollution(raw, created, shipped, c.Fixture, c.ID) {
 			t.Errorf("%q: golden holds %s %q, which %q created - "+
 				"this case has to be recorded against a realm nothing else has touched",
 				c.ID, o.key, o.name, o.creator)
@@ -401,6 +402,7 @@ func TestPristineRealmGoldensAreNotPolluted(t *testing.T) {
 // verifier cannot reproduce it.
 func TestNoGoldenHoldsAnObjectItDidNotCreate(t *testing.T) {
 	created := createdObjects()
+	shipped := namesBootstrapShips(t, created)
 	for _, c := range Catalog {
 		if c.PristineRealm {
 			continue // covered above, with a sharper message
@@ -409,13 +411,124 @@ func TestNoGoldenHoldsAnObjectItDidNotCreate(t *testing.T) {
 		if err != nil {
 			continue // Pending cases have no golden, and that is not a failure here
 		}
-		for _, o := range pollution(raw, created, c.Fixture, c.ID) {
+		for _, o := range pollution(raw, created, shipped, c.Fixture, c.ID) {
 			t.Errorf("%q: golden holds %s %q, which %q created - "+
 				"neither this case's fixture nor its own request makes it, so the "+
 				"verifier cannot reproduce this body",
 				c.ID, o.key, o.name, o.creator)
 		}
 	}
+}
+
+// bootstrapListings is the bytes a handler that has run nothing but bootstrap
+// answers for every family createdKeys names.
+//
+// It is the third of the invariant's three sources, and the one the pollution
+// guard never had. A golden may hold what **bootstrap**, the case's own fixture
+// and its own request produced; the guard implemented the second and the third
+// and simply assumed the first could never collide with a fixture's names.
+//
+// The oracle is Gloak's own bootstrap rather than a hand-written list, and that
+// is the right oracle rather than a convenient one: the question the guard asks
+// is "can the verifier reproduce these bytes", and the verifier serves exactly
+// this handler. A list copied out of internal/bootstrap would answer a
+// different question and would drift from it, which is the failure this
+// repository names in every duplicated count it has had to correct.
+//
+// The client roles need the clients first, so the two are read in order and the
+// second read is per client. That is six extra requests on a store already in
+// memory, and it is what makes the account client's eight role names reachable.
+func bootstrapListings(t *testing.T) [][]byte {
+	t.Helper()
+	h := newFixture(t, "bootstrap")
+	do := func(req *http.Request) (*http.Response, error) {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w.Result(), nil
+	}
+	vars, err := RunFixture(Fixture{Steps: []Step{adminTokenStep()}}, testIssuer, do)
+	if err != nil {
+		t.Fatalf("bootstrap admin token: %v", err)
+	}
+	get := func(path string) []byte {
+		req, err := buildRequest(testIssuer, Request{
+			Method:  http.MethodGet,
+			Path:    path,
+			Headers: map[string]string{"Authorization": "Bearer " + vars["access_token"]},
+		})
+		if err != nil {
+			t.Fatalf("build %s: %v", path, err)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s: want 200, got %d: %s", path, w.Code, w.Body.Bytes())
+		}
+		return w.Body.Bytes()
+	}
+
+	const realm = "/admin/realms/" + bootstrapRealm
+	clients := get(realm + "/clients")
+	out := [][]byte{
+		get("/admin/realms"),
+		clients,
+		get(realm + "/roles"),
+		get(realm + "/users"),
+		get(realm + "/groups"),
+		get(realm + "/client-scopes"),
+	}
+	var rows []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(clients, &rows); err != nil {
+		t.Fatalf("client listing: %v", err)
+	}
+	if len(rows) == 0 {
+		t.Fatal("bootstrap answered no clients, so no client role name is being read")
+	}
+	for _, r := range rows {
+		out = append(out, get(realm+"/clients/"+r.ID+"/roles"))
+	}
+	return out
+}
+
+// bootstrapRealm is the realm bootstrapListings reads. It is master because
+// that is the realm every shared-container fixture writes into.
+const bootstrapRealm = "master"
+
+// namesBootstrapShips is the subset of created whose "<key>":"<name>" pair a
+// bootstrap-only server already answers.
+//
+// The match is deliberately the same byte comparison pollution makes, rather
+// than a family-aware one. That symmetry is the whole argument: if a listing
+// bootstrap produces on its own contains the exact bytes the guard would report,
+// then those bytes are not evidence that a fixture's object leaked into the
+// golden, because the verifier reproduces bootstrap before it runs anything.
+//
+// It does not make such a name safe - it makes it *unjudgeable here*. What
+// judges it is TestEveryCreatedObjectCarriesTheProbePrefix, which forces any
+// created object bearing a product name to be declared in
+// namedOutsideTheConvention with the argument for why it stands. The two
+// ratchets compose: this one stops reporting a collision it cannot resolve, and
+// that one stops the collision being introduced without an argument.
+func namesBootstrapShips(t *testing.T, created []createdObject) map[createdObject]bool {
+	t.Helper()
+	bodies := bootstrapListings(t)
+	out := map[createdObject]bool{}
+	for _, o := range created {
+		key := createdObject{key: o.key, name: o.name}
+		if out[key] {
+			continue
+		}
+		needle := []byte(`"` + o.key + `":"` + o.name + `"`)
+		for _, b := range bodies {
+			if bytes.Contains(b, needle) {
+				out[key] = true
+				break
+			}
+		}
+	}
+	return out
 }
 
 // pollution is every object in created that raw mentions and that something
@@ -427,6 +540,23 @@ func TestNoGoldenHoldsAnObjectItDidNotCreate(t *testing.T) {
 // "gloak-probe-group-mapped" a sibling fixture creates, and would report a
 // group that is not there.
 //
+// shipped is what bootstrap answers on its own, and a name in it is skipped.
+// Without that the guard reports a **name** where it claims to report an
+// **object**: on 2026-09-07 it failed on admin/clients/evaluate-scope-mappings-granted,
+// whose golden holds the `account` client's built-in `view-profile` role -
+// recorded in 77529c7, months before any fixture created a realm role of that
+// name - and named a fixture that had created a different object entirely. The
+// message it printed, "the verifier cannot reproduce this body", was false of a
+// case TestConformance serves green. See F190.
+//
+// createdObjects' own doc comment had already foreseen exactly this: it refuses
+// to read a POST whose body is a JSON array because doing so "would put six
+// bootstrapped admin role names into the set and make this test fail on any
+// golden that legitimately lists one". That is this failure, and the array rule
+// closed only the route by which a bootstrapped name could arrive **without
+// being created**. A fixture that deliberately creates an object under a name
+// the product already ships is the other route, and it was not foreseen.
+//
 // One entry per creator, so a name two of them create is reported twice -
 // gloak-probe-role is made by a fixture and again by admin/roles/create-duplicate,
 // and both are places to look.
@@ -435,7 +565,7 @@ func TestNoGoldenHoldsAnObjectItDidNotCreate(t *testing.T) {
 // TestPollutionGuardSeesEveryCreatedFamily can feed it a body known to be
 // polluted. A guard nothing can make fail is the failure mode this whole file
 // exists to prevent.
-func pollution(raw []byte, created []createdObject, owners ...string) []createdObject {
+func pollution(raw []byte, created []createdObject, shipped map[createdObject]bool, owners ...string) []createdObject {
 	mine := map[createdObject]bool{}
 	for _, o := range created {
 		if slices.Contains(owners, o.creator) {
@@ -444,7 +574,8 @@ func pollution(raw []byte, created []createdObject, owners ...string) []createdO
 	}
 	var out []createdObject
 	for _, o := range created {
-		if mine[createdObject{key: o.key, name: o.name}] {
+		key := createdObject{key: o.key, name: o.name}
+		if mine[key] || shipped[key] {
 			continue
 		}
 		if bytes.Contains(raw, []byte(`"`+o.key+`":"`+o.name+`"`)) {
@@ -476,15 +607,75 @@ func TestPollutionGuardSeesEveryCreatedFamily(t *testing.T) {
 			t.Fatalf("nothing in the recording creates an object named by %q", key)
 		}
 
+		// shipped is nil here on purpose: this test is about the matcher's
+		// reach across the four families, and a victim that bootstrap happens
+		// to ship would otherwise make it green for the wrong reason.
 		polluted := []byte(`[{"id":"x","` + victim.key + `":"` + victim.name + `","enabled":true}]`)
-		if got := pollution(polluted, created); len(got) == 0 {
+		if got := pollution(polluted, created, nil); len(got) == 0 {
 			t.Errorf("%s: a golden holding %q went unreported", key, victim.name)
 		}
 		// The same body is clean for the case that owns the creator.
-		if got := pollution(polluted, created, victim.creator); len(got) != 0 {
+		if got := pollution(polluted, created, nil, victim.creator); len(got) != 0 {
 			t.Errorf("%s: %q is the case's own and was reported anyway: %v",
 				key, victim.name, got)
 		}
+	}
+}
+
+// TestPollutionGuardIgnoresNamesBootstrapShips proves the third source of the
+// invariant is wired, and that it is load-bearing rather than decorative.
+//
+// Three claims, because each can fail on its own:
+//
+//   - bootstrap's listings really are being read - a name every install has must
+//     come back, and `view-profile` is one of the `account` client's eight;
+//   - the filter really is reached from a created object - some fixture creates
+//     an object under a name bootstrap ships, so the set is non-empty. If that
+//     stops being true this test fails rather than going quiet, which is the
+//     same ratchet namedOutsideTheConvention carries;
+//   - and the filter does not swallow an ordinary probe name, which is what
+//     would turn the whole guard off without any test noticing.
+//
+// The middle claim is the one that would rot. It is true today because
+// accountRealmRoleCollisionFixture creates a realm role called `view-profile` on
+// purpose, and the day that fixture changes shape this test says so.
+func TestPollutionGuardIgnoresNamesBootstrapShips(t *testing.T) {
+	created := createdObjects()
+	shipped := namesBootstrapShips(t, created)
+
+	if len(shipped) == 0 {
+		t.Fatal("nothing a fixture creates carries a name bootstrap ships, so the " +
+			"bootstrap filter is never reached and this guard has stopped being tested")
+	}
+	if !shipped[createdObject{key: "name", name: "view-profile"}] {
+		t.Errorf("bootstrap's listings do not report the account client's %q role; "+
+			"either a listing stopped being read or bootstrap stopped creating it",
+			"view-profile")
+	}
+
+	// A body holding the built-in role exactly as the scope evaluator serves it.
+	// This is the shape that failed on 2026-09-07.
+	builtIn := []byte(`[{"id":"x","name":"view-profile","clientRole":true}]`)
+	if got := pollution(builtIn, created, shipped); len(got) != 0 {
+		t.Errorf("a golden holding a role bootstrap ships was reported as pollution: %v", got)
+	}
+
+	// And an ordinary probe name is still reported, so the filter is a scalpel
+	// rather than an off switch.
+	var probe createdObject
+	for _, o := range created {
+		if strings.HasPrefix(o.name, probePrefix) && !shipped[createdObject{key: o.key, name: o.name}] {
+			probe = o
+			break
+		}
+	}
+	if probe.name == "" {
+		t.Fatal("no created object is both inside the convention and unshipped, " +
+			"so this test cannot check that the filter is narrow")
+	}
+	polluted := []byte(`[{"id":"x","` + probe.key + `":"` + probe.name + `"}]`)
+	if got := pollution(polluted, created, shipped); len(got) == 0 {
+		t.Errorf("the bootstrap filter swallowed %q, which nothing bootstraps", probe.name)
 	}
 }
 
@@ -562,13 +753,25 @@ var namedOutsideTheConvention = map[string]string{
 	// Renaming it to gloak-probe-view-profile builds a fixture that measures
 	// nothing, because the account API would not recognise the name either way.
 	//
-	// It cannot reach a golden's window. The only realm role listing recorded
-	// against the shared container is admin/roles/list-realm-page-no-search,
-	// which sends first=1&max=2 on a sorted listing whose first three names are
-	// admin, create-realm and default-roles-master; `view-profile` sorts after
-	// all three and outside the window. admin/roles/list-realm is PristineRealm
-	// and is recorded against a realm this fixture never touches, and the
-	// account cases are last in the catalogue besides.
+	// **The argument that stood here until 2026-09-07 was about windows, and
+	// windows are not what this name threatens.** It read: the only realm-role
+	// listing on the shared container is admin/roles/list-realm-page-no-search,
+	// which sends first=1&max=2, and `view-profile` sorts outside it. Every
+	// clause of that is true - checked again on 2026-09-07, and the stronger
+	// statement holds too: all six goldens that enumerate a realm's realm roles
+	// are PristineRealm, so each is recorded against a container this fixture
+	// never touches. It was an argument about the wrong family. `view-profile`
+	// is one of the eight roles Keycloak bootstraps on the **account client**,
+	// and the golden it actually broke - admin/clients/evaluate-scope-mappings-granted,
+	// recorded in 77529c7 months earlier - lists those eight with
+	// "clientRole":true. No realm-role listing was involved at any point.
+	//
+	// So what makes this name safe is not a sort order. It is that the object
+	// the golden holds is a **different object of the same name**, and that the
+	// verifier reproduces it from bootstrap. pollution now reads bootstrap's own
+	// listings and declines to judge a name it finds there; see F190 and
+	// namesBootstrapShips. This entry is the argument for the *collision* being
+	// deliberate, and the guard is what handles its consequences.
 	"name view-profile": "account-user-realm-role-collision: a realm role deliberately named after an account role",
 }
 
