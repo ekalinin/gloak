@@ -139,11 +139,11 @@ func TestBearerTokenFoldsTheSchemeAndRefusesOthers(t *testing.T) {
 		"Bearer   abc": "",
 		"Bearer\tabc":  "",
 		// Whitespace around the whole value is ignored. Measured 200 on all five.
-		"Bearer abc ":   "abc",
-		"Bearer abc  ":  "abc",
-		"Bearer abc\t":  "abc",
-		" Bearer abc":   "abc",
-		"  Bearer abc":  "abc",
+		"Bearer abc ":  "abc",
+		"Bearer abc  ": "abc",
+		"Bearer abc\t": "abc",
+		" Bearer abc":  "abc",
+		"  Bearer abc": "abc",
 		// A third word is refused, which is what stops "ignore the surroundings"
 		// being read as "take everything after the first space". Measured 401.
 		"Bearer abc extra": "",

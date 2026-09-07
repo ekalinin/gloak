@@ -37,6 +37,9 @@ seven commits, two of them explicitly unreviewed checkpoints.
 | `POST .../applications/{id}/consent` is 415 `No supported MessageBodyReader found` | inherited | **re-measured**, confirmed |
 | The sessions golden is order-dependent | checkpoint note | **confirmed**, and the stated fix was wrong - section 3 |
 | Two catalogue cases cited by `bearerToken` | checkpoint `d8a74f0` | **did not exist**; one now does, one cannot - section 5 |
+| `account/linked-accounts/none` answers `[]` | inherited golden | **refuted by `make record`** - sixteen rows on the shared container, section 8 |
+| The `unlistedProviderIDs` table | inherited | **re-measured**, confirmed, and given the input that makes it falsifiable |
+| `make lint` is clean | implied | **was red**: `account_test.go` was unformatted |
 
 Everything in section 2 came from `quay.io/keycloak/keycloak:26.7.1 start-dev`
 on 2026-09-07, on a container started clean for this session. The previous
@@ -431,25 +434,210 @@ shape, and its "seven cases" count was wrong by a factor of three.
 
 **`d8a74f0`** changed `bearerToken`, rewrote its test table and corrected two
 comments in `reads.go`. The behaviour change is **correct and confirmed by
-re-measurement** - see section 5. Its two defects: the dangling case citations,
-and a comment claiming a divergence in `internal/admin`'s own `bearerToken`
-(that the admin API folds the scheme's case and `internal/admin` does not). That
-last claim is **inherited and not re-measured here** - it is about a different
-package and a different chapter, and it is filed as F193 rather than acted on.
+re-measurement** - see section 5. Its three defects: the dangling case citations;
+a comment claiming a divergence in `internal/admin`'s own `bearerToken` (that the
+admin API folds the scheme's case and `internal/admin` does not), which is
+**inherited and not re-measured here** because it is about a different package
+and a different chapter and is filed as F193 rather than acted on; and it left
+`internal/account/account_test.go` **unformatted**, so `make lint` was red on the
+branch independently of the failing test. AGENTS.md records `gofmt` reaching
+`main` once before "found by somebody reading a diff, since no step existed that
+could have caught it" - a step exists now, and this is the first time it has
+caught something.
 
-## 8. The mutation pass
+**Neither checkpoint's own claim about itself was reliable.** `bbbf3e3` said it
+was checkpointing the sessions fixture and committed a golden that contradicted
+the fixture it had just written; `d8a74f0` said "the sessions-fixture problem the
+previous checkpoint names is still open as far as anything here shows", which was
+true and is the only self-assessment in either that held. When reading a
+checkpoint, the commit message is the least reliable part of it.
+
+## 8. `make record`, and what reading the diff found
+
+Four full recordings were run. The instruction to **read the diff** paid for
+itself on the first one.
+
+**Run 1** moved three files, all inside this chapter. Two were expected:
+`sessions/list` collapsed from twelve rows to one, and
+`gate/double-space-scheme` was new. The third was not.
+
+**`account/linked-accounts/none` moved from `[]` to sixteen rows** - every
+`gloak-probe-idp*`, `gloak-probe-map-broker-*` and `gloak-probe-mt-broker-*` the
+admin chapter's fixtures create in master before the account cases run. The `[]`
+it had held could only have come from a run that recorded the account chapter
+alone, so it was a golden that held while the *recording's scope* held, which is
+a weaker thing even than holding while the catalogue's order does.
+
+The hazard was known and defended on the wrong half of a pair.
+`accountBrokerFixture` builds a realm of its own precisely "because four identity
+providers in master would appear in every golden that enumerates the realm's
+own"; the case that **creates** providers was protected and the case that asserts
+there are **none** was left addressing master. That is the same "right on one
+family, inverted on its neighbour" shape as section 6, this time between two
+sibling cases forty lines apart.
+
+Fixed with `PristineRealm`. The pollution guard could not have caught it - see
+F195.
+
+**Run 2**, after that fix, moved nothing.
+
+**Run 3** *failed*, and the failure was the issuer collision described in section
+9. Nothing was recorded.
+
+**Run 4**, after splitting the broker fixture, moved nothing. That is the run the
+branch carries: `make record` is clean, and **no golden outside this chapter has
+moved at any point**.
+
+## 9. The mutation pass
 
 Run over the whole cut, not only over what this session added, with a harness
 that reads `go test`'s exit code before its output and refuses a mutation whose
 diff is empty or which fails to build. Both have produced false passes here.
 
-<!-- MUTATION RESULTS -->
+Twenty mutations, each applied, confirmed to make the **named** test fail,
+reverted, and the revert verified. `TestConformance/account` runs in ten seconds,
+which is what makes a pass at this granularity affordable.
 
-## 9. Parity
+**The harness earned its refusals.** Six of the twenty first attempts were
+rejected before their result was read: five did not compile - four of them
+because removing a condition left a variable unused, which is Go turning a
+behavioural mutation into a build error - and one matched no bytes because its
+indentation was wrong. Every one of those would have looked like a failing test
+and therefore like a killed mutation. All six were reformulated so that they
+compile and change behaviour, and re-run.
 
-<!-- PARITY RESULTS -->
+Killed, with the case that killed each:
 
-## 10. What belongs in AGENTS.md
+```
+M1b  scheme compared case-sensitively      gate/lowercase-scheme
+M2   a space inside the value allowed      gate/double-space-scheme
+M3   the !user.Enabled check removed       gate/disabled-user
+M4b  grants not reduced by container       gate/realm-role-of-the-same-name
+M5   no grants is not a 401                gate/no-account-roles, gate/realm-role-of-the-same-name
+M6b  any non-empty scheme accepted         gate/wrong-scheme, gate/double-space-scheme
+M7   the groups guard opened               gate/wrong-role-groups
+M8   manage-account dropped from it        gate/lowercase-scheme, groups/none, groups/member
+M9   the linked-accounts guard opened      gate/wrong-role-linked-accounts, gate/links-role-opens-nothing
+M10b that guard reads manage-account-links gate/links-role-opens-nothing
+M11  the `enabled` filter removed          linked-accounts/providers
+M13  sorted by display name, not alias     linked-accounts/providers
+M14b the social display-name fallback cut  linked-accounts/providers
+M15d `social` always false                 linked-accounts/providers
+M16  groupPath's separator changed         groups/member, groups/child-only
+M17  subGroups nil instead of []           groups/member, groups/child-only
+M18  pollution ignores bootstrap's names   TestPollutionGuardIgnoresNamesBootstrapShips
+M19  the account chapter's count unpinned  TestAccountChapterCountIsThePinnedNumber
+```
+
+M4b is the one that justifies the whole `view-profile` collision: it makes
+`accountGrants` stop reducing by the role's container, and only
+`gate/realm-role-of-the-same-name` notices. Without that fixture the gate would
+hand the account API to anybody who can mint a realm role, and nothing would say
+so.
+
+### One survivor, and the input that kills it
+
+**M12 - deleting the `unlistedProviderIDs` filter - survived the entire
+chapter.** Every provider the broker fixture created was one the listing shows,
+so removing the filter changed no byte of any golden. That is AGENTS.md's second
+named shape exactly: *a set of inputs an incorrect implementation satisfies
+entirely*, a corpus with no discriminating case.
+
+It was not left as a survivor. The two provider types the listing omits were
+measured creatable and measured absent:
+
+```
+POST .../identity-provider/instances  kubernetes                201
+POST .../identity-provider/instances  jwt-authorization-grant   201  (needs an issuer)
+admin identity provider listing:      all three present
+account linked-accounts:              only the oidc one
+```
+
+`accountBrokerFixture` now creates both. They add **no row** to the golden -
+which is what they are there to assert, and `make record` confirmed it by moving
+nothing - and there is one per entry in the table. Re-run after the fixture
+change, all three forms are killed by `linked-accounts/providers`:
+
+```
+M12b  the whole filter deleted            KILLED
+M12c  only the kubernetes entry deleted   KILLED
+M12d  only the jwt-grant entry deleted    KILLED
+```
+
+**No survivors.**
+
+### The fixture change found a behaviour of its own
+
+Adding the two providers made `make record` fail, which is the useful kind of
+failure:
+
+```
+POST .../identity-provider/instances  -> 400
+{"errorMessage":"Issuer URL already used for IDP 'gloak-probe-k8s', Issuer must
+be unique if the idp supports JWT Authorization Grant or Federated Client
+Authentication"}
+```
+
+**A repeated `kubernetes` create is a 400 about the issuer, not the 409 about the
+alias that every other create in this fixture answers.** A kubernetes provider's
+issuer is server-filled and constant -
+`https://kubernetes.default.svc.cluster.local` when the create names no config -
+and the **issuer-uniqueness check runs before the alias check**, so the repeat
+collides with itself. `idempotentCreate` does not cover it.
+
+Widening the step's `ExpectStatus` to accept 400 was the smaller diff and is the
+wrong one: `Issuer is required` is a 400 on the same route, so a step that
+accepted it would pass while creating nothing, and the mutation these two rows
+exist to kill would survive again with the fixture looking green. That is a false
+pass built deliberately. Instead the pair lives in
+`account-user-brokers-unlisted`, a fixture named by **exactly one case**, so the
+create happens once and the 400 is never reached. Both broker fixtures build the
+same realm and the same four brokers idempotently, so either may run first.
+
+## 10. Parity
+
+Base, on `main` at `f252858`:
+
+```
+549 of 580 enumerated behaviours served; 3 chapters not enumerated
+```
+
+Head:
+
+```
+567 of 620 enumerated behaviours served; 2 chapters not enumerated
+```
+
+**+18 served, +40 denominator, and one fewer unenumerated chapter.** The
+denominator moves by exactly the chapter's 40 cases and the numerator by its 18
+`Implemented` ones, so the two numbers are the same fact counted twice - which is
+the check worth doing, because a numerator that moved by anything else would mean
+a case outside this chapter had changed status.
+
+The remaining two unenumerated chapters are `themes` and `management`, and
+neither is this cut's.
+
+Per chapter:
+
+```
+account/gate                13 of 14
+account/groups               3 of 3
+account/linked-accounts      2 of 3
+account/supported-locales    0 of 2
+account/profile              0 of 2
+account/credentials          0 of 3
+account/sessions             0 of 2
+account/applications         0 of 4
+account/resources            0 of 2
+account/console              0 of 2
+account/dispatch             0 of 3
+```
+
+The gate is the chapter: thirteen of the eighteen served behaviours are it, which
+is the shape a reader should expect from an API whose interesting part is who may
+call it. **The parity total does not fall.**
+
+## 11. What belongs in AGENTS.md
 
 Phrased as it would be folded.
 
@@ -500,7 +688,16 @@ Phrased as it would be folded.
   rule. Before adding a case for a header's whitespace, check whether the
   transport removes it.
 
-## 11. Follow-ups
+- **A repeated identity provider create is not always a 409, and which check
+  fires first decides.** A second `kubernetes` create under a name the realm
+  already holds answers `400 Issuer URL already used for IDP '<alias>'`, because
+  the issuer-uniqueness check runs **before** the alias check and that provider's
+  issuer is the server-filled constant
+  `https://kubernetes.default.svc.cluster.local`. So `idempotentCreate` does not
+  cover every create, and widening a step to accept the 400 would also accept
+  `Issuer is required` - a fixture that passes while creating nothing.
+
+## 12. Follow-ups
 
 Numbered from F190. F171-F189 are taken.
 
@@ -558,6 +755,39 @@ different package and a different surface and acting on it inside an account cut
 is how a one-line fix reaches every admin route. The entry is the request to
 send: `bearer <t>` and `BEARER <t>` against `/admin/realms/master` with an
 administrator's token, and `internal/admin`'s parser read beside the answer.
+
+### F195: the pollution guard's fifth family is identity providers, and closing it is a cut
+
+AGENTS.md already says the guard "watches four resource families ... A fixture
+creating a fifth kind of object named by some other key is invisible to it until
+that key joins `createdKeys`". **That blind spot was hit for real by this
+chapter**: `account/linked-accounts/none` recorded sixteen identity providers
+that other fixtures created, and `TestNoGoldenHoldsAnObjectItDidNotCreate` was
+silent, because an identity provider is named by `alias`.
+
+Adding `alias` to `createdKeys` was **measured rather than assumed**, and it is a
+cut of its own. With it applied, the tree reports:
+
+- **seventeen authentication-flow aliases outside the naming convention** -
+  `f103-gamma`, `f103-twiglet`, `f103-doomed` and the rest - each needing a
+  rename or a `namedOutsideTheConvention` entry;
+- **the bootstrapped alias `browser`**, which
+  `admin/authentication-management/create-duplicate-alias` POSTs on purpose to
+  measure a 409. It creates nothing, and it is reported as polluting four
+  `partial-export` goldens and `authentication-management/list`. Note that
+  `namesBootstrapShips` does **not** filter it, because `bootstrapListings` does
+  not read `/authentication/flows` - so closing this family means extending that
+  reader too;
+- **an inverted key precedence on organizations**, which carry both `name` and
+  `alias`. Putting `alias` before `name` changes which key an organization is
+  recorded under and breaks the ownership match on four `admin/organizations`
+  goldens. It has to go **after** `name`, and that ordering is the kind of thing
+  that needs its own test.
+
+None of this belongs in an account cut - it reaches the authentication-management
+and organizations chapters for one instance of a rule, which is the mistake
+AGENTS.md names about fixing a general rule inside a family branch. The account
+case is fixed structurally instead, with `PristineRealm`.
 
 ### F194: the account chapter's refusals are eleven cuts, not one
 

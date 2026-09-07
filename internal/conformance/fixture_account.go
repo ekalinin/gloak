@@ -332,6 +332,34 @@ func accountGroupFixture(username string, child bool) Fixture {
 	return Fixture{State: "bootstrap", Steps: append(steps, accountLoginStep("master", username))}
 }
 
+// accountUnlistedBrokerStep registers one of the two provider types the
+// linked-accounts listing leaves out even when the provider is enabled.
+//
+// It exists because the mutation that deletes the unlistedProviderIDs filter
+// **survived the whole chapter**: every provider the broker fixture created was
+// one the listing shows, so removing the filter changed no byte of any golden.
+// That is AGENTS.md's "a set of inputs an incorrect implementation satisfies
+// entirely", and two rows are the answer to it - one per entry in the table, so
+// that deleting either entry alone is caught rather than only deleting both.
+//
+// Both are measured creatable and measured absent: `POST` answers 201, the
+// realm's own identity provider listing shows all three, and this listing shows
+// only the `oidc` one. `jwt-authorization-grant` needs an `issuer` or the create
+// is a 400 `Issuer is required`, which is why the config is a parameter here and
+// fixed in accountBrokerStep.
+func accountUnlistedBrokerStep(alias, providerID, config string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/" + accountBrokerRealm + "/identity-provider/instances",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body: []byte(`{"alias":"` + alias + `","providerId":"` + providerID +
+				`","enabled":true,"config":{` + config + `}}`),
+		},
+		ExpectStatus: idempotentCreate,
+	}
+}
+
 // accountBrokerStep registers one identity provider in accountBrokerRealm.
 func accountBrokerStep(alias, providerID, displayName string, enabled bool) Step {
 	body := `{"alias":"` + alias + `","providerId":"` + providerID + `","enabled":` +
@@ -367,14 +395,38 @@ func accountBrokerStep(alias, providerID, displayName string, enabled bool) Step
 //	gloak-probe-oidc    oidc, no displayName           the alias fallback
 //	gloak-probe-off     oidc, disabled                 absent from the listing
 //
+//	gloak-probe-k8s       kubernetes               enabled and never listed
+//	gloak-probe-jwt-grant jwt-authorization-grant  enabled and never listed
+//
 // A listing sorted by display name puts the first row last, one that omits an
 // empty display name loses a key on the third, one that reads `social` off
-// anything but the provider id gets the second wrong, and one that does not
-// filter on `enabled` gains a fourth row. Four providers, four separate
-// refutations, one body.
-func accountBrokerFixture() Fixture {
+// anything but the provider id gets the second wrong, one that does not filter
+// on `enabled` gains a fourth row, and one that drops unlistedProviderIDs gains
+// two more. Six providers, six separate refutations, one body.
+//
+// The last two were added on 2026-09-08 because the mutation deleting the
+// unlisted filter survived without them, and there is one per entry in that
+// table so that deleting either entry alone is caught. They contribute **no
+// row** to the golden, which is exactly what they are there to assert.
+//
+// **They are behind a flag because their create is not idempotent and the
+// others are.** A second POST creating `kubernetes` under a name the realm
+// already holds answers `400 {"errorMessage":"Issuer URL already used for IDP
+// '<alias>'"}` rather than the 409 every other create here answers: a
+// kubernetes provider's issuer is a server-filled constant,
+// `https://kubernetes.default.svc.cluster.local`, and the **issuer-uniqueness
+// check runs before the alias check**, so the repeat collides with itself.
+//
+// Widening the step's ExpectStatus to accept 400 was the smaller diff and is
+// the wrong one: `Issuer is required` is a 400 too, so a step that accepted it
+// would pass while creating nothing, and the mutation these two rows exist to
+// kill would survive again with the fixture looking green. Instead the pair
+// lives in a fixture named by **exactly one case**, so it is created once and
+// the 400 is never reached. If a second case ever names it, that case's own
+// recording is where this comment will be needed.
+func accountBrokerFixture(unlisted bool) Fixture {
 	const username = "gloak-probe-account-broker-user"
-	return Fixture{State: "bootstrap", Steps: []Step{
+	steps := []Step{
 		adminTokenStep(),
 		{
 			Request: Request{
@@ -411,8 +463,18 @@ func accountBrokerFixture() Fixture {
 		accountBrokerStep("gloak-probe-social", "google", "", true),
 		accountBrokerStep("gloak-probe-oidc", "oidc", "", true),
 		accountBrokerStep("gloak-probe-off", "oidc", "", false),
-		accountLoginStep(accountBrokerRealm, username),
-	}}
+	}
+	if unlisted {
+		// The two the listing omits although they are enabled. They add no row
+		// to the golden - that is the measurement - and they are what makes the
+		// omission falsifiable.
+		steps = append(steps,
+			accountUnlistedBrokerStep("gloak-probe-k8s", "kubernetes", ""),
+			accountUnlistedBrokerStep("gloak-probe-jwt-grant", "jwt-authorization-grant",
+				`"issuer":"http://localhost:1/"`),
+		)
+	}
+	return Fixture{State: "bootstrap", Steps: append(steps, accountLoginStep(accountBrokerRealm, username))}
 }
 
 // accountScopeFilteredFixture logs a fully-privileged user in through a client

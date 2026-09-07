@@ -1708,7 +1708,16 @@ var Fixtures = map[string]Fixture{
 	// The linked-accounts listing needs providers, and it needs them in a
 	// realm of its own: four identity providers in master would join every
 	// PristineRealm golden that enumerates the realm's brokers.
-	"account-user-brokers": accountBrokerFixture(),
+	"account-user-brokers": accountBrokerFixture(false),
+
+	// The same realm plus the two provider types the linked-accounts listing
+	// omits. **Named by exactly one case on purpose** - see
+	// accountBrokerFixture: the kubernetes create is not idempotent, because
+	// its issuer is a server-filled constant and the issuer check runs before
+	// the alias check, so a second run of these two steps is a 400 rather than
+	// a 409. Both fixtures build the same realm and the same four brokers
+	// idempotently, so either may run first.
+	"account-user-brokers-unlisted": accountBrokerFixture(true),
 
 	// A user holding every account role whose token still cannot reach the
 	// API, because its client filters the account roles out of the token's

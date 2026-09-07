@@ -682,7 +682,7 @@ var accountCases = []Case{
 			Retrieved: "2026-09-07",
 		},
 		Status:  Implemented,
-		Fixture: "account-user-brokers",
+		Fixture: "account-user-brokers-unlisted",
 		// Four providers, four separate refutations in one body - see
 		// accountBrokerFixture. The disabled one is absent, the `google` one is
 		// the only `"social": true`, the one with no display name falls back to
