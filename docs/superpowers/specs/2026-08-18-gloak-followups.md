@@ -4632,7 +4632,44 @@ together - the token is `internal/admin`'s and the registration endpoint is
 This is the second finding of that shape after F122's back-channel logout: a
 boundary decision wearing the clothes of a bug.
 
-## F161: `client-attribute-certificate` needs a harness decision before it needs handlers (answered 2026-09-05)
+## F161: `client-attribute-certificate` needs a harness decision before it needs handlers (answered 2026-09-05, chapter finished 2026-09-06)
+
+**The remaining three operations are served, and the dependency half of this
+entry goes the other way.** Its three replacement entries are answered two and a
+half:
+
+1. *"`POST .../upload` needs a keystore reader ... this is a dependency question
+   and not a harness one."* Answered, and **inverted**. `x/crypto/pkcs12` is
+   already a direct dependency, so it was never a tenth - and it **cannot read
+   the bytes this endpoint receives**, because Keycloak writes BouncyCastle BER
+   with indefinite lengths and a constructed OCTET STRING chunked at 1000 bytes.
+   Every Go PKCS12 reader is built on `encoding/asn1` and fails on the same byte.
+   What closed it is `internal/keystore` - a JKS codec and a ~150-line BER-to-DER
+   normaliser in front of the decoder that was already here. **No new module.**
+2. *"`download` and `generate-and-download` ... cannot be `Implemented` while
+   `RefuseNonTextBody` stands."* **Not reopened, and now with both operations
+   served rather than absent.** The `Case` field that would have counted them -
+   a golden holding the status line and the headers, body skipped - was designed
+   and then refused: it moves the chapter by **two** on the strength of an
+   assertion about **no byte** of either response, which is F46's whole-value
+   mask one level worse. What was built instead is `TestKeystoreDownloadHeaders`
+   - forty lines, no harness change, cannot inflate the meter, and it makes
+   AGENTS.md's `application/octet-stream` rule checkable from the tree for the
+   first time.
+3. *"`generate`'s golden masks both of its two values."* Unchanged.
+
+`RefuseNonTextBody` is untouched, neither download carries a golden, and
+`parkedGoldens` is unaffected.
+
+**Served, `Pending` and honest is a combination new to this repository.** Every
+other `Pending` case here is unbuilt; these two are built, exercised by
+`internal/admin`'s tests, and counted by nothing - so their `Reason` reads
+"served, and uncounted". The chapter is 5 of 7 and the two missing are not
+missing. F113's rule is what keeps them there: a response carrying a per-request
+value cannot be `Recorded` whatever else is true of it, and a keystore is a
+per-request value all the way down.
+
+## F161 (original): the harness decision (answered 2026-09-05)
 
 **The answer is that a golden over a binary body asserts nothing, and the
 harness now enforces it.** `RefuseNonTextBody` refuses one at the moment of
@@ -4883,3 +4920,117 @@ Gloak reproduces the window and not the 500, which is a deliberate divergence of
 the same class as F131's: reproducing a server error for one second of a forty
 second window is a tidy-up that buys nothing and costs a branch nobody can read.
 Filed so the next person meets the decision rather than the symptom.
+
+## F171: BCFKS is unserved on purpose, and the refusal lists it anyway
+
+**Gloak serves two of the three keystore formats.** `download`,
+`generate-and-download` and `upload` answer JKS and PKCS12; `BCFKS` answers the
+500 that `jks` answers, where Keycloak answers a keystore.
+
+The 406's body is **not** edited to match. It is a measured contract that lists
+BCFKS as supported, and a server that removed it would be wrong about Keycloak
+in a golden as well as in the handler - so
+`admin/client-attribute-certificate/download-unsupported-format` still says
+`[PKCS12, JKS, BCFKS]`.
+
+The reason is specific rather than a shrug. A BCFKS store is PBKDF2-HMAC-SHA512
+at 51200 iterations over **AES-256-CCM** (`2.16.840.1.101.3.4.1.47`, 12-byte
+nonce, 8-byte ICV), wrapped in an `ObjectStore` schema published nowhere but
+BouncyCastle's source. Go's standard library and `x/crypto` have no CCM
+anywhere. Writing an AEAD by hand to reach a format whose only consumers are two
+operations no golden can cover is F38's machinery-with-no-consumer **and** a
+security risk. Those identifiers were read off a real BCFKS the container
+produced, so whoever picks this up starts from a measurement.
+
+`TestBCFKSIsRefusedAndTheRefusalListsItAnyway` is where the divergence is stated,
+so closing it removes a test rather than being noticed by nobody.
+
+## F172: `upload-certificate` stores an empty certificate and Gloak refuses one
+
+**`POST .../certificates/{attr}/upload-certificate` with a file part that is
+present and empty answers `200 {"certificate":""}`**, measured 2026-09-06, and
+stores the empty string. Gloak answers `400 file cannot be empty`.
+
+Found while measuring the difference between an absent file part and an empty
+one on an operation this cut did not set out to touch. The two upload families
+disagree about the same input - `.../upload` answers `400 error loading
+keystore` - so it is a per-endpoint rule and not one `certificateUpload` can
+share.
+
+It is filed rather than fixed because the fix is not one line:
+`certificateRepresentation` has `omitempty` on every field for four other
+measured shapes, and a body carrying a **present and empty** `certificate` needs
+one of them to stop being. The operation is `Implemented` and its golden is
+unaffected - that case sends a real certificate.
+
+## F173: the keystore writer's only real check was made by hand, once
+
+Nothing in `go test ./...` compares either download's body, and nothing can.
+`TestKeystoreDownloadHeaders` reads the headers;
+`TestTheDownloadedKeystoreCarriesTheRealmCertificate` reads the store back
+through this repository's own reader, which is self-consistency rather than
+conformance.
+
+The one real check on the writer was to hand what Gloak produces to a live
+Keycloak's own `upload` endpoint, with the keystore Keycloak wrote as the control
+in the same run. Both formats round-tripped and both wrong-password controls
+refused; the table is in
+`docs/superpowers/handover/certificate-remainder.md` section 1.6. **Nothing
+re-runs it.**
+
+A `docker`-tagged test that posts Gloak's keystore to a reference container's
+`upload` would close this, and it is the obvious next thing in this chapter.
+
+Four cells are unprobed rather than pinned, and each is written down at the line
+it belongs to:
+
+- a PKCS12 whose MAC is SHA-256 - a modern `keytool`'s default - is
+  `error loading keystore` here, because the decoder behind `ReadPKCS12` supports
+  SHA-1 only and the key bags would be PBES2 besides. Keycloak reads one. No
+  probe sent a JDK-written keystore, so what Keycloak answers for one is not
+  recorded either;
+- a PKCS12 whose key bag uses a password other than the store's is not reachable
+  through this reader. Keycloak's own writer never produces one;
+- the upload's `keyAlias`-absent 500 and its `Certificate PEM` 500 are the same
+  body, so no measurement here can say which check ran first;
+- `berToDER`'s corpus is three real keystores and one hand-built vector. F169's
+  sibling finding - the M19 survivor - is what showed the corpus alone cannot
+  decide the tag-class question, and the same is true of everything else the
+  normaliser does that BouncyCastle's writer never produces: high-tag-number
+  forms are refused outright, and a constructed OCTET STRING with a **definite**
+  length is joined on a rule no measurement here exercises.
+
+## F174: a test whose inputs an incorrect implementation satisfies entirely
+
+F161's mutation pass named the assertion-side shape: **a set of assertions a
+wrong implementation satisfies entirely.** M2 in the certificate cut was that
+again - `TestTheJKSPasswordsAreNotInterchangeable` held three assertions and all
+three were **refusals**, so a key protector that refused every password passed.
+The fix is a **positive control**, not a fourth refusal.
+
+M19 is the same shape with the corpus playing the missing part: **a set of
+inputs a wrong implementation satisfies entirely.** Dropping the tag-class guard
+from `berToDER`'s chunked-string join left `./internal/keystore/` and
+`./internal/admin/` both `ok`, because the corpus is three real keystores and
+none contains the discriminating shape.
+
+Neither is fixed by adding a fourth of the same kind, and M19's is not fixable by
+one at all. When the corpus cannot produce the distinguishing input, hand-build a
+vector and check **which row kills which mutation**:
+
+```
+                                    SEQUENCE row   context-tag row (the control)
+M19  the class guard dropped            FAIL            PASS
+M20  the join branch disabled           PASS            FAIL
+```
+
+Each row is the sole killer of its own mutation, which is what says the test pins
+the **guard** and not merely the rewrite. The two inputs differ in exactly one
+byte - the tag - and the test asserts that, so the pair cannot drift into two
+unrelated cases.
+
+**A process note.** The first attempt at that fix was made with `ber.go`'s
+documentation edited and **not committed**, and the mutation harness's
+`git checkout --` reverted it along with the mutation. "Commit before any edit a
+mutation pass will revert" is not advice about tidiness: a harness that reverts
+to HEAD silently eats the work that explains why the mutation matters.

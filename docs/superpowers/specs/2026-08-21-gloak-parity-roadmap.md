@@ -248,11 +248,12 @@ operations is allocated below; none is left unassigned.
 | DPoP | RFC 9449, **done 2026-09-06** | P1, P3 | `oidc/token` 19->34 and its `Recorded` column emptied. The reason for not building it was **true about the 200 and wrong as a reason**: eight of twelve refusals never reach the `iat` window, and the window is forty seconds wide. `Fixture.Proofs` is one field with three consumers. **CIBA refused**, and its 503 is an artefact of a startup option rather than a missing feature | 15 cases |
 | Clients singles | Three singles across three tags, **done 2026-09-06** | P2, P12, F153 | `admin/client-registration-policy` and `admin/organizations` **complete**. **F153 is refuted on its own shape**: every four-segment `GET` under `/organizations` carries all five security headers, and Gloak answered six of them wrongly until this cut | 3 ops |
 | Partial export | `partial-export` and `partialImport`, **done 2026-09-06** | P14 | `admin/realms-admin` 42->44. The export is `GET /admin/realms/{realm}` **spliced**, not transcribed, so `realmrep.go` stays the one truth. Answers F163: the parse code separates **syntax from binding**, not shapes | 2 ops |
+| Certificate remainder | The `Client Attribute Certificate` tag's last three, **done 2026-09-06** | F161, F38 | `admin/client-attribute-certificate` 4->5, and **+1 counted, +3 served**: `download` and `generate-and-download` are built and uncounted, because no golden can hold a keystore. The dependency question **inverted** - `x/crypto/pkcs12` is already direct and cannot read Keycloak's BouncyCastle BER, so `internal/keystore` was written and no module added. BCFKS is a deliberate divergence, F171 | 1 op |
 
-Denominator today: **413 Admin API operations plus 122 protocol behaviours, 535
+Denominator today: **413 Admin API operations plus 141 protocol behaviours, 554
 enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **535 of 554**
-after DPoP, and **P2, P4 and P5 are complete** -
+surface is not counted and which the report says so about. Served: **536 of 554**
+after the certificate remainder, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -283,7 +284,51 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-06 (twenty-fifth fold).** `make conformance` reports **535 of
+**Updated 2026-09-06 (twenty-sixth fold).** `make conformance` reports **536 of
+554**. `admin/client-attribute-certificate` went 4 to 5, and the tag is finished
+in every sense except the meter's.
+
+**+1 counted, +3 served, and the gap is the round's whole shape.** `POST
+.../download` and `POST .../generate-and-download` are built, exercised and
+uncounted, because their body is a keystore and no golden here holds one. The
+`Case` field that would have counted them - a golden holding the status line and
+the headers, body skipped - was **designed and then refused**: it moves the
+chapter by two on the strength of an assertion about **no byte** of either
+response, which is F46's whole-value mask one level worse. What went in instead
+is `TestKeystoreDownloadHeaders`, forty lines and no harness change, which also
+makes AGENTS.md's `application/octet-stream` rule checkable from the tree for the
+first time - weaker than a golden, stronger than the prose it replaces, and the
+difference is stated where it is claimed. **Served, `Pending` and honest** is a
+combination this repository had not had; every other `Pending` case here is
+unbuilt.
+
+**The dependency question inverted.** F161 filed it as "a dependency question and
+not a harness one", and the measurement went the other way twice over:
+`x/crypto/pkcs12` is **already a direct dependency**, so it was never a tenth,
+and it **cannot read the bytes the endpoint receives** - Keycloak writes
+BouncyCastle BER with indefinite lengths and a constructed OCTET STRING chunked
+at 1000 bytes, and every Go PKCS12 reader is built on `encoding/asn1`. A
+~150-line BER-to-DER normaliser closed it and no module was added. The brief's
+guess that `upload` "maybe needs only a certificate" was refuted directly: it
+needs the whole keystore with the key decrypted.
+
+**A writer with no golden was given an oracle anyway** - hand what Gloak produces
+to the live Keycloak's own `upload`, with Keycloak's own keystore as the control
+in the same run. Both formats round-tripped and both wrong-password controls
+refused. **Nothing re-runs that table**, and F173 says so rather than letting it
+read as coverage.
+
+**Two mutations survived, and together they name a pair.** M2 was a set of
+**assertions** an incorrect implementation satisfies entirely - three refusals
+and no positive control, so a key protector refusing every password passed. M19,
+found on review after CI was green, was a set of **inputs** one satisfies
+entirely - three real keystores, none containing the discriminating shape.
+Neither is fixed by a fourth of the same kind, and M19's is not fixable by one at
+all: the test is a hand-built vector whose two rows were checked to kill
+different mutations, so it pins the guard rather than the rewrite. F174 carries
+the pair.
+
+**Earlier on 2026-09-06 (twenty-fifth fold).** `make conformance` reports **535 of
 554**. `oidc/token` went 19 to 34 and its `Recorded` column emptied; the
 denominator moved to 554 because thirteen DPoP behaviours nobody had catalogued
 became cases.

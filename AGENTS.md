@@ -41,6 +41,13 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   holding prose, `{"errorMessage"}`, and the RFC 6749 shape on the admin API. They do
   not split along the protocol/admin boundary. `userinfo` with a bad token is its own
   case: 401, `text/plain`, empty body, error in `WWW-Authenticate`.
+  Two spellings of one refusal are decided by a **field of the request** rather
+  than by the endpoint: `POST .../certificates/{attr}/upload` answers
+  `Password verification failed` for a JKS whose store password is wrong and
+  `PKCS12 key store mac invalid` for a PKCS12's. One operation, two messages, and
+  a handler carrying one of them passes whichever case is written first - pinned
+  by `admin/client-attribute-certificate/upload-wrong-store-password` and its
+  `-pkcs12-` sibling.
 - **An unknown client returns `invalid_client`, a wrong secret returns
   `unauthorized_client`** with identical descriptions.
 - **"Realm not found." has a trailing period on the admin API and none on the
@@ -143,8 +150,16 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 
   **`X-Frame-Options` is additionally absent** on `text/plain` (all seven
   goldens), on `application/octet-stream` (measured, no golden can hold one -
-  see F161), on an `OPTIONS` 200 (measured on four endpoints, no golden records
-  it), and on a **204 whose *request* declared no `application/*`
+  see F161, and since 2026-09-06 **a test can fail on it**: the two certificate
+  downloads are served, and `internal/admin`'s `TestKeystoreDownloadHeaders`
+  asserts the whole set - the status, the media type, `Cache-Control: no-cache`,
+  the four headers present, and `X-Frame-Options` and `Content-Disposition` both
+  absent. That is strictly weaker than a golden and strictly stronger than the
+  prose it replaces: a package test compares against what this project believes,
+  where a golden compares against a recording. The recording is in
+  `docs/superpowers/handover/certificate-remainder.md` and nothing re-checks it
+  on a fresh container), on an `OPTIONS` 200 (measured on four endpoints, no
+  golden records it), and on a **204 whose *request* declared no `application/*`
   `Content-Type`** - measured across seven Content-Type values on one endpoint,
   which is what `httpx.WriteNoContent` decides. `userinfo` was recorded as an
   endpoint exception for a fortnight and is none: its rejections are
@@ -176,7 +191,11 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   does not, and neither does `DELETE /organizations/{id}` or its `PUT`. The split
   reaches **201s** as well: the two organization group creates are both 201s with
   bodies, one path segment apart, and `POST .../groups` sends no `Cache-Control`
-  where `POST .../groups/{g}/children` sends `no-cache`. This bullet said "on a
+  where `POST .../groups/{g}/children` sends `no-cache`. The certificate tag is
+  the same split, **four to three, on seven operations under one path prefix**:
+  the read, `generate` and the two downloads send `no-cache`; the three uploads
+  send none. Measured 2026-09-05 on four of them and confirmed on the remaining
+  three on 2026-09-06 without moving. This bullet said "on a
   204" until 2026-09-03; "pinned per endpoint" survived that and everything
   else, which is now the third time it is the only part to survive.
   (This bullet ended "no `PUT` carries it" until 2026-08-29, when one cut added
@@ -368,6 +387,13 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   re-measured alongside as the control, so the difference is per endpoint and
   not a change of version. Gloak served `invalid_request` on the composites
   until this was swept, because one helper decodes for both families.
+  **A third family agrees with F163's syntax-against-binding reading.** On
+  `POST .../certificates/{attr}/download`, `{` is `invalid_request` and `[]` and
+  `"x"` are both `unknown_error`, all three at 400 - so the split is a malformed
+  document against a well-formed one of the wrong type. `writeCannotParseJSON`
+  splits on a leading `[` instead, which is right on `[]` and wrong on `"x"`, so
+  this family writes its own predicate: a rule about a code four families produce
+  should not be rewritten from a fifth, and neither should a fifth borrow it.
 - **A credential list carries no secret**, so `view-users` is enough to read
   it. `credentialData` inside it is a **JSON string**, not a nested object, and
   the `additionalParameters` inside *that* are a Java map in hash order which
@@ -505,7 +531,7 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **Role listings have no stable order across container starts.** Every one of
   them is a bare array at the root of the body, which is why `Case.Unordered`
   learned the root path spelling `"."`.
-- **Thirty-five spellings of not-found in the admin API now**, including four for
+- **Thirty-six spellings of not-found in the admin API now**, including four for
   one resource, **four** for a missing group, and three *pairs* that differ only
   in a full stop. Counted from the list, not incremented: (1) `Could not find client`, (2) `Client not found`,
   (3) `User not found`, (4) `Realm not found.` with its full stop,
@@ -546,7 +572,19 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   path answered by two verbs**: `GET /flows/{alias}/executions` capitalises it
   and the `PUT` on the identical path does not. One path, two verbs, one
   letter. The scope evaluator adds (34) **`Role Container not found`**, with a
-  capital C in the middle and no full stop, and (35) `No user found`.
+  capital C in the middle and no full stop, and (35) `No user found`. The
+  certificate downloads add (36) **`keypair not generated for client`**, from
+  `POST .../certificates/{attr}/download` on a client that has never generated
+  one - and it is decided by the **certificate** and not by the key, so a client
+  holding a certificate alone, which is what `upload-certificate` and
+  `generate-and-download` both leave behind, is served. Pinned by
+  `admin/client-attribute-certificate/download-no-keypair`.
+  `POST .../certificates/{attr}/upload` adds none - an unknown client is
+  `Could not find client`, already (1) - but it does add a **two-key error body
+  outside the RFC 6749 shape**: `{"error":"certificate-not-found",
+  "error_description":"Certificate or key with given alias not found in the
+  keystore"}`, a code in `error` and prose in `error_description`, the ordinary
+  way round, in a family whose every other refusal is the bare-message shape.
   **`Requested audience not available: <name>` is deliberately not on this
   list**: it interpolates the request's own value, which nothing else here does,
   so it is a sentence template rather than a spelling. The same family also
@@ -2126,6 +2164,63 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   the only operation in that tag not under `/clients/{uuid}/certificates/` -
   a fourth instance of the description's tag failing to predict the guard, and
   the first where the route is not even in the tag's path family.
+  Confirmed on 2026-09-06 with `upload` measured alongside, one role at a time
+  against `GET .../certificates` and `POST /clients` as controls known to
+  differ: `upload` takes the manage role, and `download` writes nothing -
+  measured on the stored pair before and after.
+- **One membership test folds case and the code behind it does not.** On the two
+  certificate downloads, `format` is checked against `[PKCS12, JKS, BCFKS]`
+  case-insensitively and used case-sensitively, so `bogus` is a **406** and
+  `jks` is a **500** - and so are `pkcs12` and `bcfks`. Nothing is trimmed
+  either, so `" JKS"` and `"JKS "` are 406s. Fifteen spellings were sent to
+  establish it, because a single case-sensitive membership test answers 406 for
+  every unrecognised one and is wrong on three. The first handler written here
+  had exactly that test; the mutation pass named it M9. The list's order is
+  `[PKCS12, JKS, BCFKS]` and it lives in
+  `admin/client-attribute-certificate/download-unsupported-format` rather than
+  in a sentence, because as prose it drifted inside a day.
+- **An unrecognised keystore format has three answers in one tag.** The two
+  downloads answer **406** for a spelling that is not a format and **500** for a
+  real format spelled wrongly; `POST .../upload` answers **400 `error loading
+  keystore`** for both. One tag, two families, three answers.
+- **`generate-and-download` deletes the private key.** It mints a pair, gives
+  the whole of it away inside the keystore and keeps only the certificate:
+  afterwards the client's attributes hold `<attr>.certificate` and no
+  `<attr>.private.key`. That is the same deletion `upload-certificate` performs
+  from the other direction, and an implementation that stored the pair passes
+  every other case in the chapter.
+- **The downloaded keystore holds two entries and the second is the realm's.**
+  The client's pair under the caller's alias, and the **realm's own certificate
+  under the realm's name** as a trusted certificate - `master` in master,
+  `certprobe` in a realm called `certprobe`, measured on both. A store holding
+  only the client's pair is a keystore a client could use and not the one
+  Keycloak sends.
+- **The two formats protect the key with different passwords**, measured with
+  `keyPassword` and `storePassword` set to two different values on purpose,
+  because a probe using one for both cannot tell them apart:
+
+  ```
+  JKS      the key by keyPassword     the store MAC by storePassword
+  PKCS12   the key by storePassword   the MAC by storePassword; keyPassword unused
+  ```
+
+  On a JKS a wrong or absent key password **degrades** - 200 with `{certificate}`
+  alone and the key silently dropped - where a PKCS12 ignores `keyPassword`
+  entirely. A **PKCS12 file declared `JKS` is a 200** answering `{certificate}`
+  alone, because the JDK's JKS keystore is dual-format and reads a PKCS12, after
+  which the key password fails and the same fallback keeps the certificate.
+- **Keycloak writes its PKCS12 in BER, so no Go PKCS12 reader can read it.**
+  The outer `SEQUENCE`, the `[0]` and the content `OCTET STRING` all carry the
+  indefinite length `0x80`, and the content octets are a **constructed** OCTET
+  STRING chunked at 1000 bytes. `x/crypto/pkcs12` - already a direct dependency,
+  so never a tenth - and `software.sslmate.com/src/go-pkcs12` both read DER
+  through `encoding/asn1` and fail on the same byte. **A dependency does not
+  close this gap**; `internal/keystore/ber.go` does, in about 150 lines. That
+  measurement is the reason the JKS codec is hand-written too.
+- **The `password-missing` description says `jks` whatever format was asked
+  for**, measured on all three, and its two spellings differ only in their last
+  words - `for jks download` and `for jks generation and download`. Keycloak's
+  own defect, reproduced.
 
 - **A federated-identity link can exist and be invisible.** `POST
   .../users/{id}/federated-identity/{alias}` naming an alias no provider carries
