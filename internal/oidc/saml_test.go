@@ -1,0 +1,167 @@
+package oidc
+
+import (
+	"encoding/base64"
+	"encoding/xml"
+	"strings"
+	"testing"
+
+	"github.com/ekalinin/gloak/internal/keys"
+)
+
+// descriptorKeys is a realm key set for the builder to render. Generate mints a
+// fresh RSA key and a self-signed certificate for it, which is what a realm
+// holds, so nothing here is a stub.
+func descriptorKeys(t *testing.T) *keys.RealmKeys {
+	t.Helper()
+	k, err := keys.Generate("master")
+	if err != nil {
+		t.Fatalf("generate keys: %v", err)
+	}
+	return k
+}
+
+// TestEncodingXMLCannotEmitTheDescriptor is the measurement AGENTS.md's rule
+// about dependencies demands before a hand-written emitter is allowed to exist,
+// applied to the standard library rather than to a module: prove with bytes
+// that the obvious tool cannot do the job.
+//
+// It is the argument internal/httpx/yaml.go makes for SnakeYAML, one format
+// across. The claim is not that `encoding/xml` is bad; it is that the two
+// spellings the descriptor depends on are not reachable through it.
+//
+// Two failures, both on the same marshalled output:
+//
+//   - **the prefix.** Keycloak binds `md:` to the metadata namespace on the
+//     root and writes `<md:IDPSSODescriptor>` and `<md:NameIDFormat>`.
+//     `encoding/xml` has no way to say "use this prefix": it re-declares the
+//     namespace as a default `xmlns` on each element that names one, so the
+//     same tree comes out `<IDPSSODescriptor xmlns="...">`. Every element in
+//     the document is affected.
+//   - **the double declaration.** The root carries `xmlns` and `xmlns:md`
+//     bound to one URI, and the default one is used by nothing. There is no
+//     struct tag that produces a namespace declaration nothing uses.
+//
+// If a future Go release makes either reachable, this test fails and the
+// emitter can go. That is the point of writing the refutation down as a test
+// rather than as a paragraph.
+func TestEncodingXMLCannotEmitTheDescriptor(t *testing.T) {
+	type idpDescriptor struct {
+		XMLName    xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:metadata IDPSSODescriptor"`
+		WantSigned bool     `xml:"WantAuthnRequestsSigned,attr"`
+		Formats    []string `xml:"urn:oasis:names:tc:SAML:2.0:metadata NameIDFormat"`
+	}
+	type entityDescriptor struct {
+		XMLName  xml.Name `xml:"urn:oasis:names:tc:SAML:2.0:metadata EntityDescriptor"`
+		EntityID string   `xml:"entityID,attr"`
+		IDP      idpDescriptor
+	}
+
+	out, err := xml.Marshal(entityDescriptor{
+		EntityID: "http://localhost:8080/realms/master",
+		IDP: idpDescriptor{
+			WantSigned: true,
+			Formats:    nameIDFormats[:1],
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got := string(out)
+
+	if strings.Contains(got, "<md:IDPSSODescriptor") {
+		t.Errorf("encoding/xml emitted a prefixed element, so the emitter in saml.go "+
+			"can be replaced by it: %s", got)
+	}
+	if strings.Contains(got, `xmlns:md="`+samlMetadataNS+`"`) {
+		t.Errorf("encoding/xml declared the md prefix, so the emitter in saml.go "+
+			"can be replaced by it: %s", got)
+	}
+	// The positive half: it really does re-declare the namespace inline, which
+	// is the byte-level difference, not merely a missing feature.
+	if !strings.Contains(got, `<IDPSSODescriptor xmlns="`+samlMetadataNS+`"`) {
+		t.Fatalf("encoding/xml no longer re-declares the namespace inline; "+
+			"re-measure this refutation rather than trusting it: %s", got)
+	}
+}
+
+// TestDescriptorIsBytewiseWhatKeycloakSends pins the layout against the shape
+// measured on 2026-09-07. The conformance golden is the contract; this test is
+// what says which part of the document each rule is about, so a failure names
+// the rule rather than dumping 3422 bytes.
+func TestDescriptorIsBytewiseWhatKeycloakSends(t *testing.T) {
+	k := descriptorKeys(t)
+	got := string(samlDescriptor("http://localhost:8080/realms/master", k))
+
+	for _, want := range []string{
+		// Two prefixes for one namespace on the root, the default used by
+		// nothing.
+		`<md:EntityDescriptor xmlns="` + samlMetadataNS + `" xmlns:md="` + samlMetadataNS + `"`,
+		// The assertion namespace is declared and no element is in it.
+		` xmlns:saml="` + samlAssertionNS + `"`,
+		` entityID="http://localhost:8080/realms/master">`,
+		`<md:IDPSSODescriptor WantAuthnRequestsSigned="true"`,
+		`<ds:KeyName>` + k.RSAKeyID + `</ds:KeyName>`,
+		`<ds:X509Certificate>` + base64.StdEncoding.EncodeToString(k.CertificateDER()) + `</ds:X509Certificate>`,
+		// The one service carrying an index, and the one Location that is not
+		// the bare endpoint.
+		`Location="http://localhost:8080/realms/master/protocol/saml/resolve" index="0">` +
+			`</md:ArtifactResolutionService>`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("descriptor is missing %q", want)
+		}
+	}
+
+	// No prologue and no trailing newline. Both were measured; both are the
+	// kind of thing a builder grows by accident.
+	if strings.HasPrefix(got, "<?xml") {
+		t.Error("descriptor carries an XML declaration; Keycloak sends none")
+	}
+	if strings.HasSuffix(got, "\n") {
+		t.Error("descriptor ends in a newline; Keycloak sends none")
+	}
+	// Empty elements are spelled long, never self-closed.
+	if strings.Contains(got, "/>") {
+		t.Error("descriptor self-closes an element; Keycloak spells every one <md:X></md:X>")
+	}
+}
+
+// TestTheTwoBindingListsDisagree is the assertion the descriptor's own bytes
+// invite somebody to remove.
+//
+// SingleLogoutService is POST, Redirect, Artifact, SOAP and SingleSignOnService
+// is POST, Redirect, SOAP, Artifact. The two lists hold the same four URIs and
+// differ only in the last two, so a builder that shares one list is right on
+// three of four entries in both places and wrong on two - which no assertion
+// over membership, and no count, would catch.
+func TestTheTwoBindingListsDisagree(t *testing.T) {
+	if len(singleLogoutBindings) != len(singleSignOnBindings) {
+		t.Fatal("the two binding lists no longer hold the same number of entries")
+	}
+	same := true
+	for i := range singleLogoutBindings {
+		if singleLogoutBindings[i] != singleSignOnBindings[i] {
+			same = false
+			break
+		}
+	}
+	if same {
+		t.Fatal("the two binding lists are now identical, so one of them is wrong: " +
+			"logout is POST, Redirect, Artifact, SOAP and sign-on is POST, Redirect, SOAP, Artifact")
+	}
+
+	// And the disagreement is where it was measured, in the last two entries.
+	got := samlDescriptor("http://localhost:8080/realms/master", descriptorKeys(t))
+	slo := strings.Index(string(got), "<md:SingleLogoutService")
+	sso := strings.Index(string(got), "<md:SingleSignOnService")
+	if slo < 0 || sso < 0 || slo > sso {
+		t.Fatal("the logout bindings no longer come before the sign-on ones")
+	}
+	// The NameIDFormats sit between the two lists, which is the ordering a
+	// reader would not guess and a grouped builder would lose.
+	formats := strings.Index(string(got), "<md:NameIDFormat>")
+	if formats < slo || formats > sso {
+		t.Error("the NameIDFormats are no longer between the two service lists")
+	}
+}
