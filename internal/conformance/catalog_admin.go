@@ -17513,25 +17513,41 @@ var adminCases = []Case{
 		// generators with token-shaped bodies. The protocol decides the
 		// content and never whether the route answers.
 		//
-		// Three reasons it is Pending, any one sufficient:
+		// Three reasons it is Pending, any one sufficient. **Reason 1 was
+		// rewritten by P11 and narrowed; 2 and 3 are untouched and are what
+		// actually keep this case Pending.**
 		//
-		//  1. Gloak serves no SAML at all - no assertion builder, no
-		//     saml-protocol issuance path. Writing one inside internal/admin
-		//     is a whole protocol in the admin package.
+		//  1. Gloak has no SAML **assertion** builder and no saml-protocol
+		//     issuance path. It is no longer true that it "serves no SAML at
+		//     all": GET /realms/{realm}/protocol/saml/descriptor is served, and
+		//     it is deliberately the one SAML response that needs neither - it
+		//     is a pure function of the realm and its signing key. Nothing in
+		//     the descriptor is reusable here; an assertion needs a subject, a
+		//     session, an XML signature and the scope evaluator's role
+		//     resolution, and writing that inside internal/admin is a whole
+		//     protocol in the admin package.
 		//  2. No golden can hold it. The body is a JSON **string** holding
 		//     XML, and no mask in this harness reaches inside a JSON string;
 		//     masking the whole value asserts its type and nothing else, which
 		//     is the retreat AGENTS.md records under "a mask is a path". No
 		//     committed golden has a root-level JSON string body.
+		//     P11's VolatileXMLText does **not** change this: it addresses an
+		//     XML document, and this body is JSON whose one value happens to
+		//     contain XML, so the mask would have to run inside a JSON string
+		//     it has no way to find.
 		//  3. It cannot be Recorded either: two ID_<uuid> attributes, four
 		//     timestamps - two of them two milliseconds apart inside one
 		//     response - and a Java set's role order move between two
 		//     identical requests, and a response carrying a per-request value
 		//     cannot be Recorded whatever else is true of it.
 		//
-		// The same three sentences describe
-		// GET .../identity-provider/instances/{alias}/export's SAML branch,
-		// which this project already declines for reason 3 alone.
+		// Reasons 2 and 3 describe
+		// GET .../identity-provider/instances/{alias}/export's SAML branch too,
+		// which this project already declines for reason 3 alone - and P11
+		// measured a third body of the same kind,
+		// POST /realms/{realm}/protocol/saml/resolve, which carries an
+		// ID_<uuid> and a millisecond IssueInstant and is Pending for reason 3
+		// as well. Three responses, one rule.
 		ID: "admin/clients/evaluate-example-saml-response",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -17539,9 +17555,10 @@ var adminCases = []Case{
 			Retrieved: "2026-09-05",
 		},
 		Status: Pending,
-		Reason: "Gloak serves no SAML, and the body is a JSON string holding XML whose two " +
-			"ID_<uuid> attributes and four timestamps move per request - no mask reaches " +
-			"inside a JSON string, so it can be neither Implemented nor Recorded",
+		Reason: "Gloak has no SAML assertion builder - the descriptor it does serve needs " +
+			"none - and the body is a JSON string holding XML whose two ID_<uuid> " +
+			"attributes and four timestamps move per request; no mask reaches inside a " +
+			"JSON string, so it can be neither Implemented nor Recorded",
 		Fixture: "evaluate-scopes",
 		Request: Request{
 			Method:  http.MethodGet,

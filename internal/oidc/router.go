@@ -167,6 +167,13 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/userinfo", h.userinfo)
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/token/introspect", h.introspect)
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/revoke", h.revoke)
+	// The SAML IdP metadata descriptor, and the only SAML behaviour Gloak
+	// serves. The rest of the surface under /protocol/saml is enumerated and
+	// measured in the catalogue's `saml/*` chapters and deliberately not built:
+	// see docs/superpowers/handover/p11-saml-descriptor.md. The descriptor is
+	// the one SAML response that is a pure function of the realm and needs
+	// neither an assertion builder nor a browser.
+	mux.HandleFunc("GET /realms/{realm}/protocol/saml/descriptor", h.samlDescriptorEndpoint)
 	// Dynamic client registration, the `openid-connect` provider.
 	//
 	// **Only that one provider is registered.** A default 26.7.1 serves four -

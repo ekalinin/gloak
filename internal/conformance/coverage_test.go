@@ -276,8 +276,22 @@ func TestCoverageWritesAReportWhenAsked(t *testing.T) {
 		sumServed += served
 		sumDocumented += documented
 	}
+	// The number is deliberately not written here. This said "the catalogue has
+	// four" until P11 enumerated the SAML surface and made it three, which is
+	// the drift AGENTS.md keeps recording: a count in prose beside the list it
+	// counts is a count that will be wrong.
+	//
+	// **Counting Chapters again and comparing would be a tautology**, and that
+	// was written first and caught by a mutation: `unenumerated` is already
+	// counted from Chapters, twenty lines up, so a second count of the same
+	// slice can only ever agree with it. What actually pins the column is the
+	// `fields[3]` comparison below, between the meter's own number and the one
+	// it wrote, and what pins the Reason rule is
+	// TestEveryUnenumeratedChapterSaysWhy in openapi_test.go. This branch has
+	// one job left: refusing a report where the whole feature has gone.
 	if unenumerated == 0 {
-		t.Fatal("no unenumerated chapter in the report; the catalogue has four")
+		t.Fatal("no unenumerated chapter in the report, so this half of the format has " +
+			"no consumer; drop the Enumerated field rather than leaving a branch nothing takes")
 	}
 
 	if got := fmt.Sprint(sumServed); got != fields[1] {

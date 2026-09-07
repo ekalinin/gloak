@@ -154,7 +154,8 @@ func ReplaceThemeResource(raw []byte) []byte {
 // JavaScript string - both spellings appear on one measured page.
 const htmlValueTerminators = "&\"'<> \t\r\n"
 
-// htmlMatch is the byte range one HTML mask covers.
+// htmlMatch is the byte range one markup mask covers - the three HTML frames
+// and the XML one below all yield these.
 type htmlMatch struct{ start, end int }
 
 // htmlQueryMatches is every place a URL in raw carries `name=<value>`.
@@ -293,6 +294,107 @@ func isHTMLAttributeBoundary(b byte) bool {
 	return b == ' ' || b == '\t' || b == '\r' || b == '\n'
 }
 
+// The XML body mask, and why it is a fourth frame rather than any of the seven
+// passes above.
+//
+// A SAML descriptor is XML. Case.Volatile and its three siblings hand the body
+// to editPaths, which builds a json.NewDecoder over it, so with any path
+// declared they return a decode error rather than a mask - the same wall the
+// three HTML frames were built against. The HTML frames themselves do not
+// reach it either: the two volatile values in a descriptor are a key id and a
+// certificate, and neither is a query parameter, a JavaScript call argument or
+// a form input's value attribute.
+//
+// **The two values are per database, not per request**, which is what makes a
+// mask the right answer here rather than a refusal. Measured on 2026-09-07:
+// GET /realms/master/protocol/saml/descriptor is byte-identical across five
+// requests to one container, and across two containers from one image it moves
+// in exactly two places - the <ds:KeyName> and the <ds:X509Certificate>, both
+// derived from the realm's RSA key, which is minted with the database.
+// oidc/certs/master already masks the same two facts on the JSON side with
+// Volatile over keys/*/kid and keys/*/x5c, and is Implemented. The descriptor
+// carries **no ID attribute at all**, so F113 - a body carrying a per-request
+// value cannot be Recorded - does not reach it. The artifact resolution
+// response one path segment away does carry one, and is Pending for exactly
+// that reason.
+//
+// It covers the element's **text** and never its frame, which is
+// VolatileHTMLQuery's bargain in a third dialect. A descriptor declaring
+// ds:KeyName and ds:X509Certificate still asserts the entityID, all four
+// namespace declarations, WantAuthnRequestsSigned, protocolSupportEnumeration,
+// use="signing", the four SingleLogoutService bindings and their order, the
+// four NameIDFormats and theirs, the four SingleSignOnService bindings,
+// ArtifactResolutionService's index="0", and Keycloak's habit of spelling an
+// empty element <md:X></md:X> rather than <md:X/>. Masking the whole body
+// instead would assert its media type and nothing else, which AGENTS.md
+// records as F46's retreat.
+//
+// **Text only, and no attribute frame is built**, because none has a consumer.
+// The one measured per-request XML attribute in this project is the identity
+// provider export's ID="ID_<uuid>", and that case cannot be Recorded whatever
+// a mask does, so building a frame for it would be a mask nothing could use.
+// VolatileHTMLInput's doc comment records the same rule being followed in the
+// other direction.
+
+// xmlTextMatches is every place raw carries an element named name, covering
+// that element's text content and nothing else.
+//
+// Three shapes are refused rather than masked, all for MaskURLTail's reason -
+// a mask that quietly covers something of another shape is a measurement
+// thrown away while looking like one that was checked:
+//
+//   - an element that is not closed, where the search would otherwise run to
+//     the end of the document;
+//   - an element written empty, `<a/>` or `<a></a>`, which has no bytes to
+//     mask, so a mask on it would assert nothing and hide that it does;
+//   - an element whose content holds markup. Masking <ds:KeyInfo> would
+//     swallow the X509Data element, its child and the whole shape of the key
+//     block, which is the retreat this frame exists to avoid. A text mask
+//     covers text.
+//
+// The name is matched whole. Without the boundary check a mask on `md:Key`
+// would fire on `md:KeyDescriptor`, and a mask that reaches further than it
+// says is the failure this file's other doc comments keep naming.
+func xmlTextMatches(raw []byte, name string) ([]htmlMatch, error) {
+	open := []byte("<" + name)
+	shut := []byte("</" + name + ">")
+	var out []htmlMatch
+	for i := 0; ; {
+		j := bytes.Index(raw[i:], open)
+		if j < 0 {
+			return out, nil
+		}
+		at := i + j
+		i = at + len(open)
+		if i >= len(raw) || !isXMLNameBoundary(raw[i]) {
+			continue
+		}
+		tag := bytes.IndexByte(raw[i:], '>')
+		if tag < 0 {
+			return nil, fmt.Errorf("the element %q is not inside a closed tag", name)
+		}
+		if raw[i+tag-1] == '/' {
+			return nil, fmt.Errorf("the element %q is self-closing, so it carries no text", name)
+		}
+		start := i + tag + 1
+		end := bytes.Index(raw[start:], shut)
+		if end < 0 {
+			return nil, fmt.Errorf("the element %q is never closed", name)
+		}
+		if bytes.IndexByte(raw[start:start+end], '<') >= 0 {
+			return nil, fmt.Errorf("the element %q holds markup rather than text, "+
+				"and a text mask over it would swallow the structure inside it", name)
+		}
+		out = append(out, htmlMatch{start: start, end: start + end})
+		i = start + end
+	}
+}
+
+// isXMLNameBoundary reports whether b can end an element name.
+func isXMLNameBoundary(b byte) bool {
+	return b == '>' || b == '/' || b == ' ' || b == '\t' || b == '\r' || b == '\n'
+}
+
 // indexFoldASCII is bytes.Index with ASCII case folded on both sides.
 //
 // It compares in place rather than lowering a copy, because bytes.ToLower can
@@ -365,6 +467,28 @@ func HTMLMaskedValues(raw []byte, c Case) (map[string][][]byte, error) {
 	return out, nil
 }
 
+// XMLMaskedValues returns the raw bytes every XML mask on c covers, keyed by the
+// element name that declared it.
+//
+// It is HTMLMaskedValues for the fourth frame and exists for the same reason:
+// so the varies-nothing ratchet can ask what a mask actually covers, through the
+// same finder the masker splices with rather than a second one written in a test.
+func XMLMaskedValues(raw []byte, c Case) (map[string][][]byte, error) {
+	out := map[string][][]byte{}
+	for _, name := range c.VolatileXMLText {
+		ms, err := xmlTextMatches(raw, name)
+		if err != nil {
+			return nil, fmt.Errorf("conformance: xml text mask %q: %w", name, err)
+		}
+		values := make([][]byte, 0, len(ms))
+		for _, m := range ms {
+			values = append(values, raw[m.start:m.end])
+		}
+		out[name] = values
+	}
+	return out, nil
+}
+
 // ReplaceHTMLValues masks every value c's HTML masks name, writing `{{name}}`
 // where the value was and leaving every other byte of the page alone.
 //
@@ -416,6 +540,41 @@ func ReplaceHTMLValues(raw []byte, c Case) ([]byte, error) {
 		}
 		if err := add(name, ms); err != nil {
 			return nil, err
+		}
+	}
+	return applyEdits(raw, edits), nil
+}
+
+// ReplaceXMLValues masks every element text c's XML masks name, writing
+// `{{name}}` where the text was and leaving every other byte of the document
+// alone.
+//
+// The two refusals are ReplaceHTMLValues': a declared name the body does not
+// carry is an error on both sides, and so is one covering an empty value. The
+// reasoning is identical and worth not restating - the golden would hold the
+// placeholder, the served body would hold the raw value, and the diff would
+// blame the document rather than the declaration.
+//
+// It is called from normalisePasses and from nowhere else, for the reason
+// passes.go gives: a pass on the replay side alone lets the two sides agree on
+// the wrong bytes.
+func ReplaceXMLValues(raw []byte, c Case) ([]byte, error) {
+	var edits []edit
+	for _, name := range c.VolatileXMLText {
+		ms, err := xmlTextMatches(raw, name)
+		if err != nil {
+			return nil, fmt.Errorf("conformance: xml text mask %q: %w", name, err)
+		}
+		if len(ms) == 0 {
+			return nil, fmt.Errorf("conformance: xml text mask %q covers nothing in this body - "+
+				"drop the mask, or name the element the document actually carries", name)
+		}
+		for _, m := range ms {
+			if m.end <= m.start {
+				return nil, fmt.Errorf("conformance: xml text mask %q covers an empty value - "+
+					"a mask over no bytes asserts nothing and hides that it does", name)
+			}
+			edits = append(edits, edit{start: m.start, end: m.end, repl: []byte("{{" + name + "}}")})
 		}
 	}
 	return applyEdits(raw, edits), nil

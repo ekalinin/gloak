@@ -367,6 +367,44 @@ type Case struct {
 	// name whose values never move is TestNoHTMLMaskVariesNothing's failure -
 	// the same three rules the two frames beside it follow.
 	VolatileHTMLInput []string
+
+	// VolatileXMLText names XML elements whose text content is minted with the
+	// database rather than written into the contract. The text is replaced with
+	// {{<name>}}; the tag, its attributes, its position among its siblings and
+	// every other element stay compared.
+	//
+	// It is the fourth frame of the three above, in a third dialect, and it is
+	// built here because P11 gave it a consumer. A SAML descriptor is XML, so
+	// Case.Volatile cannot address it - Normalize builds a json.NewDecoder over
+	// the body - and none of the three HTML frames reaches a key id or a
+	// certificate either.
+	//
+	// **The values it covers are per database, not per request**, which is what
+	// separates it from F113 rather than running into it. Measured on
+	// 2026-09-07: the descriptor is byte-identical across five requests to one
+	// container, and across two containers from one image it moves in exactly
+	// two places, <ds:KeyName> and <ds:X509Certificate>, both derived from the
+	// realm's RSA key. oidc/certs/master masks the same two facts on the JSON
+	// side with Volatile over keys/*/kid and keys/*/x5c and is Implemented; this
+	// is that case's declaration in the dialect the descriptor is written in.
+	// The descriptor carries no ID attribute at all, which is why F113's rule -
+	// a body carrying a per-request value cannot be Recorded - does not reach
+	// it, and why saml/artifact-resolution/request-denied, one path segment
+	// away, is Pending for exactly that rule.
+	//
+	// The three refusals are xmlTextMatches': an element that is never closed,
+	// one written empty, and one whose content is markup rather than text -
+	// masking <ds:KeyInfo> would swallow the whole key block, which is F46's
+	// retreat in a new place. A name the body does not carry is an error, an
+	// empty value is an error, and a name whose values never move is
+	// TestNoHTMLMaskVariesNothing's failure, which is the same three rules again.
+	//
+	// **No attribute frame is built**, deliberately. The one measured
+	// per-request XML attribute in this project is the identity provider
+	// export's ID="ID_<uuid>", and that response cannot be Recorded whatever a
+	// mask does, so the frame would have no consumer - which is the test
+	// VolatileHTMLInput's own doc comment records being applied.
+	VolatileXMLText []string
 }
 
 // buildRequest turns a Case's Request into an *http.Request aimed at base.

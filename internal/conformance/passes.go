@@ -33,6 +33,14 @@ package conformance
 // value that does not move - which is what TestNoHTMLMaskVariesNothing reports.
 // Running it before ReplaceCaptured would hide exactly that.
 //
+// ReplaceXMLValues runs beside ReplaceHTMLValues and after it. The order of
+// those two is free rather than load-bearing, and for a sharper reason than the
+// one above: no case declares both, because no body is HTML and XML at once.
+// They are kept adjacent so that every markup mask sits between the
+// unconditional passes and the four JSON ones, which is the property that does
+// matter - a JSON path cannot address a markup body and a markup mask cannot
+// address a JSON one, so the two groups can never see each other's edits.
+//
 // It lives in its own file, called from both record_test.go and
 // conformance_test.go, because a pass added to one side and not the other is
 // a divergence no test can see: both sides would simply agree on the wrong
@@ -42,6 +50,10 @@ func normalisePasses(body []byte, base string, c Case, vars map[string]string) (
 	body = ReplaceIssuer(body, base)
 	body = ReplaceThemeResource(body)
 	body, err := ReplaceHTMLValues(body, c)
+	if err != nil {
+		return nil, err
+	}
+	body, err = ReplaceXMLValues(body, c)
 	if err != nil {
 		return nil, err
 	}

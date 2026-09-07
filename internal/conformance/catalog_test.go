@@ -115,11 +115,26 @@ func TestCatalogIsWellFormed(t *testing.T) {
 				t.Errorf("%q: HTML mask %q is not a placeholder-safe name", c.ID, name)
 			}
 		}
+		// An XML mask's name is a **qualified element name**, so it may carry
+		// one colon where an HTML mask may not: the descriptor spells its two
+		// volatile elements ds:KeyName and ds:X509Certificate, and the mask has
+		// to name the element the document actually spells. One colon and not
+		// two, because that is what a QName is - a wider alphabet here would let
+		// a mask name something no element can be called and fail at the
+		// document rather than at the declaration.
+		for _, name := range c.VolatileXMLText {
+			if !xmlMaskName.MatchString(name) {
+				t.Errorf("%q: XML mask %q is not a qualified element name", c.ID, name)
+			}
+		}
 	}
 }
 
 // htmlMaskName is what may go inside an HTML mask's {{...}}.
 var htmlMaskName = regexp.MustCompile(`^[A-Za-z_0-9]+$`)
+
+// xmlMaskName is htmlMaskName plus the one colon a QName's prefix needs.
+var xmlMaskName = regexp.MustCompile(`^[A-Za-z_0-9]+(:[A-Za-z_0-9]+)?$`)
 
 // TestRecordedCaseRules pins the two rules that make Recorded different from
 // Pending: the golden is mandatory, and the case must say why it is not
@@ -174,6 +189,13 @@ var unservedEndpointPhrases = map[string]string{
 	"the introspection endpoint is not implemented":              "/realms/master/protocol/openid-connect/token/introspect",
 	"the revocation endpoint is not implemented":                 "/realms/master/protocol/openid-connect/revoke",
 	"the logout endpoint is not implemented":                     "/realms/master/protocol/openid-connect/logout",
+	// Added by P11, and it is a ratchet against the exact sentence that cut had
+	// to correct. `admin/clients/evaluate-example-saml-response` carried "Gloak
+	// serves no SAML at all" as the first of three reasons, and it stopped being
+	// true the moment the descriptor was served - while the case stayed Pending,
+	// correctly, on the other two. A reason that is right for the wrong sentence
+	// is the hardest kind to notice, because nothing about it fails.
+	"Gloak serves no SAML at all": "/realms/master/protocol/saml/descriptor",
 }
 
 // staleReasonsOwnedElsewhere are the cases whose Reason this guard finds false
@@ -1490,6 +1512,10 @@ func TestInertMaskGuardSeesEveryKind(t *testing.T) {
 			"it addresses no JSON path, so MaskedValues cannot read what it covers",
 		"VolatileHTMLCall":  "the same, one frame along",
 		"VolatileHTMLInput": "the same, two frames along",
+		"VolatileXMLText": "the same, three frames along and in another dialect: an XML body " +
+			"mask, watched by TestNoHTMLMaskVariesNothing through XMLMaskedValues. " +
+			"MaskedValues cannot read what it covers for the same reason as the three " +
+			"above - it walks a JSON document and a SAML descriptor is not one",
 	}
 	watched := map[string]bool{}
 	for _, m := range bodyMasks {
@@ -1529,7 +1555,26 @@ func htmlMaskedOnce(t *testing.T, c Case) (map[string][][]byte, error) {
 		return nil, fmt.Errorf("serve: %w", err)
 	}
 	body := ReplaceIssuer(ReplaceCaptured(got.Body.Bytes(), vars), testIssuer)
-	return HTMLMaskedValues(body, c)
+	out, err := HTMLMaskedValues(body, c)
+	if err != nil {
+		return nil, err
+	}
+	// The XML frame goes through the same ratchet, and it earns its place there
+	// rather than inheriting it. Its values are per **database** rather than per
+	// request - the descriptor's key id and certificate - and the verifier mints
+	// a fresh database for every serve, so two servings do move them. What that
+	// catches is the mistake this frame invites: a mask pointed at
+	// md:NameIDFormat or md:SingleSignOnService, whose text is a constant of the
+	// protocol. Nothing else in the harness would notice, because
+	// ReplaceXMLValues' own refusal only fires when a mask covers *nothing*.
+	xml, err := XMLMaskedValues(body, c)
+	if err != nil {
+		return nil, err
+	}
+	for name, values := range xml {
+		out[name] = values
+	}
+	return out, nil
 }
 
 // htmlMasksThatDidNotMove is every HTML mask whose values are byte-identical
@@ -1573,7 +1618,7 @@ func htmlMasksThatDidNotMove(first, second map[string][][]byte) []maskFinding {
 			}
 		}
 		if !moved {
-			out = append(out, maskFinding{"VolatileHTML", name, fmt.Sprintf(
+			out = append(out, maskFinding{"VolatileMarkup", name, fmt.Sprintf(
 				"covers %d value(s) and two servings of this case produced the identical bytes (%q)",
 				len(a), a[0])})
 		}
@@ -1582,7 +1627,7 @@ func htmlMasksThatDidNotMove(first, second map[string][][]byte) []maskFinding {
 }
 
 // htmlMasksLeftInPlace is every finding of the guard below that is still in the
-// catalogue, keyed "<case ID> VolatileHTML <name>", with the reason.
+// catalogue, keyed "<case ID> VolatileMarkup <name>", with the reason.
 //
 // It is empty, and that is a statement rather than an oversight: no HTML mask in
 // this repository covers a value that does not move. It exists because the other
@@ -1610,7 +1655,8 @@ func TestNoHTMLMaskVariesNothing(t *testing.T) {
 	declared := 0
 	for _, c := range Catalog {
 		if c.Status != Implemented ||
-			len(c.VolatileHTMLQuery)+len(c.VolatileHTMLCall)+len(c.VolatileHTMLInput) == 0 {
+			len(c.VolatileHTMLQuery)+len(c.VolatileHTMLCall)+
+				len(c.VolatileHTMLInput)+len(c.VolatileXMLText) == 0 {
 			continue
 		}
 		declared++
@@ -1630,8 +1676,9 @@ func TestNoHTMLMaskVariesNothing(t *testing.T) {
 					continue
 				}
 				t.Errorf("%s - drop the mask and let the golden assert the value, or, "+
-					"if it belongs to the installation rather than to the request, "+
-					"give it an unconditional pass beside ReplaceThemeResource", m)
+					"if it belongs to every installation alike rather than to this "+
+					"one's database or this request, give it an unconditional pass "+
+					"beside ReplaceThemeResource", m)
 			}
 		})
 	}
@@ -1644,8 +1691,98 @@ func TestNoHTMLMaskVariesNothing(t *testing.T) {
 		t.Fatal("no Implemented case declares an HTML mask, so this test has stopped checking " +
 			"anything; F38's mechanism has no consumer and both it and this guard should go")
 	}
+
+	// **The scope above is a hand-written sum of four fields, and nothing
+	// checked it.** A mutation dropping VolatileXMLText from it made this test
+	// skip every SAML case and the whole package stayed green - so the day a
+	// fifth markup frame arrives and its author forgets this line, the frame
+	// ships with no varies ratchet at all and no test says so.
+	//
+	// This is the independent half, and it reads the committed bytes rather
+	// than the predicate. An XML mask writes `{{prefix:name}}` into a golden,
+	// and a colon is a spelling nothing else in this harness can produce:
+	// ReplaceIssuer writes `{{issuer}}`, ReplaceThemeResource
+	// `{{theme_resource}}`, Normalize a JSON type name, and a fixture capture
+	// matches capturedValue's `[a-z_0-9]+`. So a golden holding one on an
+	// Implemented case this test did not visit is a mask outside the ratchet's
+	// reach, found without asking the predicate what its reach is.
+	for _, c := range Catalog {
+		if c.Status != Implemented || visited[c.ID] {
+			continue
+		}
+		raw, err := os.ReadFile(GoldenPath(goldenDir, c.ID))
+		if err != nil {
+			continue // a missing golden is TestConformance's business
+		}
+		if m := qualifiedPlaceholder.Find(raw); m != nil {
+			t.Errorf("%q's golden holds %s and this test did not visit the case - "+
+				"a markup mask is being applied that the varies ratchet's scope does not name",
+				c.ID, m)
+		}
+	}
+
 	reportStale(t, "htmlMasksLeftInPlace", "moves between two servings now",
 		htmlMasksLeftInPlace, matched, visited)
+}
+
+// qualifiedPlaceholder matches `{{prefix:name}}`, which only an XML text mask
+// writes. Every other placeholder this harness produces is a single unqualified
+// word, so the colon is what makes the search specific rather than a guess.
+var qualifiedPlaceholder = regexp.MustCompile(`\{\{[A-Za-z_0-9]+:[A-Za-z_0-9]+\}\}`)
+
+// TestAssertAbsentHeadersAgreeWithTheGolden checks every absent-header
+// declaration against the bytes that were recorded, rather than only against
+// what a server serves.
+//
+// **It exists because of a surviving mutation.** `AssertAbsentHeaders` is read
+// by `diff`, and `diff`'s verdict on a `Recorded` case is only ever "these
+// differ" - the status requires a mismatch and is satisfied by any one. So
+// deleting an entry from a Recorded case's list changed nothing anywhere:
+// P11 added six such lists to pin the sharpest header finding this repository
+// has - `/protocol/saml`'s 400 page sending none of the five where the
+// byte-identical `/auth` page sends all of them - and every one of them was
+// unasserted the moment it was written.
+//
+// The golden answers it. The recorder writes **every** header a response
+// carried, so a declaration that a header is absent is a claim about a file in
+// this repository and can be checked against it here, for a Recorded and a
+// Pending case as readily as for an Implemented one. That turns six
+// declarations from a promise about a future promotion into a measurement with
+// a test under it today.
+//
+// It does not replace `diff`'s check and is not meant to: that one is about
+// what Gloak serves, this one is about what Keycloak was measured doing.
+func TestAssertAbsentHeadersAgreeWithTheGolden(t *testing.T) {
+	declared := 0
+	for _, c := range Catalog {
+		if len(c.AssertAbsentHeaders) == 0 {
+			continue
+		}
+		raw, err := os.ReadFile(GoldenPath(goldenDir, c.ID))
+		if err != nil {
+			continue // a missing golden is TestConformance's business
+		}
+		g, err := ParseGolden(raw)
+		if err != nil {
+			t.Errorf("%q: parse golden: %v", c.ID, err)
+			continue
+		}
+		present := map[string]string{}
+		for _, h := range g.Headers {
+			present[http.CanonicalHeaderKey(h.Name)] = h.Value
+		}
+		for _, name := range c.AssertAbsentHeaders {
+			declared++
+			if value, ok := present[http.CanonicalHeaderKey(name)]; ok {
+				t.Errorf("%q declares %s absent and its golden carries %q - "+
+					"the declaration contradicts the measurement it was written from",
+					c.ID, name, value)
+			}
+		}
+	}
+	if declared == 0 {
+		t.Fatal("no case declares an absent header, so this guard checks nothing")
+	}
 }
 
 // TestHTMLMaskVariesGuardCanFail proves the guard above can fail, which matters
