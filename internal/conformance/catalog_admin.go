@@ -20772,6 +20772,18 @@ var adminCases = []Case{
 				`"keyPassword":"gloakkey","storePassword":"gloakstore"}`),
 		},
 		AssertHeaders: []string{"Content-Type", "X-Frame-Options"},
+		// **F179.** The message names the three formats inside a Java
+		// collection's toString(), and its order is a fresh draw on every JVM
+		// start: one container restarted seven times against one database gave
+		// four different orders on 2026-09-07, each stable across three
+		// requests inside its own run. Under `-XX:hashCode=2` it stopped moving
+		// over four starts, so the set is keyed on values hashed by identity
+		// and nothing on the wire decides it. This mask gives up the order and
+		// keeps the sentence and the membership - including BCFKS, which F171
+		// records as listed although Gloak serves no such keystore, and which a
+		// Volatile over the whole message would have quietly stopped
+		// asserting. See Case.UnorderedBracketed.
+		UnorderedBracketed: []string{"error"},
 	},
 	{
 		// A client that has never generated anything: **404 `keypair not

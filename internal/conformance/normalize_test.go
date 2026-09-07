@@ -285,6 +285,138 @@ func TestSortUnorderedWordsRejectsNonString(t *testing.T) {
 	}
 }
 
+// TestSortUnorderedBracketed covers the mask F179 needed. The measured input
+// is the one it was built for; the rest are the shapes that would let it do
+// less than it claims.
+func TestSortUnorderedBracketed(t *testing.T) {
+	tests := []struct {
+		name  string
+		in    string
+		paths []string
+		want  string
+	}{
+		{
+			name: "sorts the items and keeps every byte around them",
+			in: `{"error":"Not supported keystore format. ` +
+				`Supported keystore formats: [PKCS12, JKS, BCFKS]"}`,
+			paths: []string{"error"},
+			want: `{"error":"Not supported keystore format. ` +
+				`Supported keystore formats: [BCFKS, JKS, PKCS12]"}`,
+		},
+		{
+			// The four measured draws of that one message all normalise to
+			// the same bytes, which is the property the golden rests on.
+			name:  "every observed order gives one answer",
+			in:    `{"a":"x: [BCFKS, PKCS12, JKS]","b":"x: [JKS, BCFKS, PKCS12]"}`,
+			paths: []string{"a", "b"},
+			want:  `{"a":"x: [BCFKS, JKS, PKCS12]","b":"x: [BCFKS, JKS, PKCS12]"}`,
+		},
+		{
+			name:  "leaves a neighbouring string alone",
+			in:    `{"masked":"[b, a]","other":"[b, a]"}`,
+			paths: []string{"masked"},
+			want:  `{"masked":"[a, b]","other":"[b, a]"}`,
+		},
+		{
+			name:  "changes nothing when already sorted",
+			in:    `{"e":"x [a, b]"}`,
+			paths: []string{"e"},
+			want:  `{"e":"x [a, b]"}`,
+		},
+		{
+			name:  "an empty list is left as it is",
+			in:    `{"e":"x []"}`,
+			paths: []string{"e"},
+			want:  `{"e":"x []"}`,
+		},
+		{
+			name:  "no paths is a no-op",
+			in:    `{"e":"[b, a]"}`,
+			paths: nil,
+			want:  `{"e":"[b, a]"}`,
+		},
+		{
+			name:  "reaches through a wildcard segment",
+			in:    `{"items":[{"e":"[b, a]"},{"e":"[d, c]"}]}`,
+			paths: []string{"items/*/e"},
+			want:  `{"items":[{"e":"[a, b]"},{"e":"[c, d]"}]}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := SortUnorderedBracketed([]byte(tt.in), tt.paths)
+			if err != nil {
+				t.Fatalf("SortUnorderedBracketed: %v", err)
+			}
+			if string(got) != tt.want {
+				t.Errorf("want %s, got %s", tt.want, got)
+			}
+		})
+	}
+}
+
+// Every way of naming the wrong thing is an error rather than a silent no-op,
+// for the reason SortUnorderedWords gives. The last two matter most: a message
+// carrying two lists has no single order to give up, and one whose brackets are
+// the wrong way round is a string this cannot have been meant for.
+func TestSortUnorderedBracketedRefusals(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		in   string
+	}{
+		{"not a string", `{"e":["b","a"]}`},
+		{"no brackets at all", `{"e":"PKCS12, JKS"}`},
+		{"only an opening bracket", `{"e":"x [a, b"}`},
+		{"only a closing bracket", `{"e":"x a, b]"}`},
+		{"two lists", `{"e":"[b, a] and [d, c]"}`},
+		{"closed before opened", `{"e":"x ] a, b ["}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := SortUnorderedBracketed([]byte(tt.in), []string{"e"}); err == nil {
+				t.Fatalf("want an error for %s, got nil", tt.in)
+			}
+		})
+	}
+}
+
+// TestSortUnorderedBracketedSeparatesTheSentenceFromTheList is the reason this
+// mask exists at all rather than UnorderedWords being pointed at the same
+// value. Sorting the whole string's words leaves the two sides with different
+// word multisets, because `[` and `]` attach to whichever item happens to be
+// first and last - so the two orders would compare unequal and the golden would
+// still be a coin flip.
+func TestSortUnorderedBracketedSeparatesTheSentenceFromTheList(t *testing.T) {
+	const a = `{"e":"formats: [PKCS12, JKS, BCFKS]"}`
+	const b = `{"e":"formats: [BCFKS, PKCS12, JKS]"}`
+
+	gotA, err := SortUnorderedWords([]byte(a), []string{"e"})
+	if err != nil {
+		t.Fatalf("SortUnorderedWords: %v", err)
+	}
+	gotB, err := SortUnorderedWords([]byte(b), []string{"e"})
+	if err != nil {
+		t.Fatalf("SortUnorderedWords: %v", err)
+	}
+	if string(gotA) == string(gotB) {
+		t.Fatal("UnorderedWords made the two orders agree, so this mask is unnecessary")
+	}
+
+	gotA, err = SortUnorderedBracketed([]byte(a), []string{"e"})
+	if err != nil {
+		t.Fatalf("SortUnorderedBracketed: %v", err)
+	}
+	gotB, err = SortUnorderedBracketed([]byte(b), []string{"e"})
+	if err != nil {
+		t.Fatalf("SortUnorderedBracketed: %v", err)
+	}
+	if string(gotA) != string(gotB) {
+		t.Fatalf("the two orders still differ: %s and %s", gotA, gotB)
+	}
+	if !strings.Contains(string(gotA), `formats: [`) {
+		t.Fatalf("the sentence did not survive: %s", gotA)
+	}
+}
+
 // The role listings are bare arrays at the root of the body and their order is
 // not stable across container starts, so the suite has to be able to sort a
 // value that is not under any key.

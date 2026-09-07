@@ -304,6 +304,39 @@ type Case struct {
 	// before comparison, so membership stays asserted while order does not.
 	UnorderedWords []string
 
+	// UnorderedBracketed lists paths pointing at JSON strings that carry a Java
+	// collection inside them - `[a, b, c]`, which is what
+	// AbstractCollection.toString() emits when a message is built by
+	// concatenation. The items between the brackets are sorted on both sides,
+	// so membership stays asserted and only their order stops being; every byte
+	// outside the brackets is compared exactly.
+	//
+	// **It exists because one committed golden was a coin flip.**
+	// admin/client-attribute-certificate/download-unsupported-format holds
+	// `Supported keystore formats: [PKCS12, JKS, BCFKS]`, and F179 records
+	// three recordings giving two orders, the middle one written up as a
+	// correction it was not. Measured on 2026-09-07 by restarting **one**
+	// container from **one** image against **one** database seven times: four
+	// distinct orders came back, each stable across three requests inside its
+	// own run and different across runs. Under `-XX:hashCode=2`, which makes
+	// Java's identity hash a constant, the order stopped moving over four JVM
+	// starts - so the set is keyed on values whose hashCode is
+	// Object.hashCode(), redrawn per JVM. Nothing on the wire determines it and
+	// internal/javamap cannot reach it: javamap is a pure function of the key
+	// set, and here the key set never changes.
+	//
+	// The three alternatives were all worse. `Volatile` over the whole message
+	// gives up the sentence, and with it F171's finding that the refusal lists
+	// BCFKS although Gloak does not serve it - the golden is the only thing
+	// asserting that name appears at all. `Pending` gives up the case. Computing
+	// the order is refuted by the measurement above.
+	//
+	// The refusals are deliberate and each one is a mistake this mask invites: a
+	// value that is not a string, a string with no bracket pair, one with more
+	// than one, and one whose brackets are the wrong way round. A mask that
+	// silently covers nothing is what AGENTS.md's inert-mask bullet is about.
+	UnorderedBracketed []string
+
 	// VolatileHTMLQuery names query parameters whose value is minted per
 	// request, wherever a URL carrying one appears in an **HTML body**. Each is
 	// replaced with {{<name>}} at every occurrence, on both sides.

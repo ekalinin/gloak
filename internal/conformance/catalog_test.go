@@ -923,6 +923,25 @@ var bodyMasks = []bodyMask{
 			return len(strings.Fields(s)) > 1, nil
 		},
 	},
+	{
+		name:  "UnorderedBracketed",
+		paths: func(c Case) []string { return c.UnorderedBracketed },
+		changes: func(raw []byte) (bool, error) {
+			var s string
+			if err := json.Unmarshal(raw, &s); err != nil {
+				return false, fmt.Errorf("not a string: %s", raw)
+			}
+			// A bracketed run of one item, or of none, is a mask that gives up
+			// an order there is not - the shape AGENTS.md records
+			// admin/roles/list-realm-full having had over a one-key object.
+			open := strings.Index(s, "[")
+			end := strings.Index(s, "]")
+			if open < 0 || end < open {
+				return false, fmt.Errorf("no bracketed list: %q", s)
+			}
+			return len(strings.Split(s[open+1:end], ", ")) > 1, nil
+		},
+	},
 }
 
 // inertMasks is every mask on c that the recorded body proves does nothing, one
@@ -1456,7 +1475,8 @@ func TestInertMaskGuardSeesEveryKind(t *testing.T) {
 	// One body carrying, for every mask, a value sorting cannot change and a
 	// value it can.
 	body := []byte(`{"one":[1],"two":[1,2],"oneKey":{"a":1},"twoKeys":{"a":1,"b":2},` +
-		`"oneWord":"a","twoWords":"a b"}`)
+		`"oneWord":"a","twoWords":"a b",` +
+		`"oneItem":"formats: [JKS]","twoItems":"formats: [JKS, PKCS12]"}`)
 
 	for _, tc := range []struct {
 		name  string
@@ -1466,6 +1486,9 @@ func TestInertMaskGuardSeesEveryKind(t *testing.T) {
 		{"Unordered", Case{Unordered: []string{"one"}}, Case{Unordered: []string{"two"}}},
 		{"UnorderedKeys", Case{UnorderedKeys: []string{"oneKey"}}, Case{UnorderedKeys: []string{"twoKeys"}}},
 		{"UnorderedWords", Case{UnorderedWords: []string{"oneWord"}}, Case{UnorderedWords: []string{"twoWords"}}},
+		{"UnorderedBracketed",
+			Case{UnorderedBracketed: []string{"oneItem"}},
+			Case{UnorderedBracketed: []string{"twoItems"}}},
 		// Volatile has no second shape: a golden cannot say whether a masked
 		// value varied. Absence is the one thing it can say.
 		{"Volatile", Case{Volatile: []string{"absent"}}, Case{Volatile: []string{"one"}}},

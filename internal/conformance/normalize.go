@@ -664,6 +664,29 @@ func SortUnorderedWords(raw []byte, paths []string) ([]byte, error) {
 	return out, nil
 }
 
+// SortUnorderedBracketed sorts the comma-separated items inside the one
+// bracketed run of each string value at the given paths, rewriting each as
+// `[` + the items joined by ", " + `]` with every byte outside the brackets
+// left exactly as it was.
+//
+// It reaches inside a string where SortUnordered addresses a JSON array, and it
+// keeps the sentence around the list where SortUnorderedWords beside it would
+// shuffle the sentence too - the brackets attach to the first and last item, so
+// sorting the whole string's words gives two sides different word multisets and
+// compares unequal. See Case.UnorderedBracketed for the measurement that made
+// it necessary.
+//
+// Path syntax matches Normalize and SortUnordered. Every way of naming the
+// wrong thing is an error rather than a silent no-op, for the reason
+// SortUnorderedWords gives.
+func SortUnorderedBracketed(raw []byte, paths []string) ([]byte, error) {
+	out, err := editPaths(raw, paths, (*editor).sortBracketed)
+	if err != nil {
+		return nil, fmt.Errorf("conformance: sort unordered bracketed: %w", err)
+	}
+	return out, nil
+}
+
 // MaskedValues returns the raw JSON of every value the given paths address,
 // without changing a byte.
 //
@@ -937,6 +960,60 @@ func (e *editor) sortWords() error {
 
 	e.edits = append(e.edits, edit{start: start, end: end, repl: repl})
 	return nil
+}
+
+// sortBracketed records an edit that rewrites the string at the current
+// position with the items inside its one bracketed run sorted. It reuses
+// replace's offset arithmetic to find the value's byte range, the way sortWords
+// does.
+func (e *editor) sortBracketed() error {
+	var raw json.RawMessage
+	if err := e.dec.Decode(&raw); err != nil {
+		return err
+	}
+	end := int(e.dec.InputOffset())
+	start := end - len(raw)
+
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return fmt.Errorf("value at this path is not a string: %s", raw)
+	}
+	sorted, err := sortBracketedRun(s)
+	if err != nil {
+		return err
+	}
+	repl, err := json.Marshal(sorted)
+	if err != nil {
+		return err
+	}
+
+	e.edits = append(e.edits, edit{start: start, end: end, repl: repl})
+	return nil
+}
+
+// bracketedItemSeparator is what java.util.AbstractCollection.toString() joins
+// its elements with. Splitting on a bare comma would leave a leading space on
+// every item but the first and sort them all together under " ".
+const bracketedItemSeparator = ", "
+
+// sortBracketedRun returns s with the items inside its one `[...]` run sorted.
+// Anything other than exactly one bracket pair, in the right order, is an
+// error: a mask declared on a string with no list in it, or with two, is a mask
+// whose author meant something this cannot do.
+func sortBracketedRun(s string) (string, error) {
+	open := strings.Index(s, "[")
+	close := strings.Index(s, "]")
+	switch {
+	case open < 0 || close < 0:
+		return "", fmt.Errorf("string at this path carries no bracketed list: %q", s)
+	case close < open:
+		return "", fmt.Errorf("string at this path closes a bracket before it opens one: %q", s)
+	case strings.Count(s, "[") != 1 || strings.Count(s, "]") != 1:
+		return "", fmt.Errorf("string at this path carries more than one bracketed list: %q", s)
+	}
+	items := strings.Split(s[open+1:close], bracketedItemSeparator)
+	sort.Strings(items)
+	return s[:open+1] + strings.Join(items, bracketedItemSeparator) + s[close:], nil
 }
 
 // descend walks into an object or array because some pattern points inside it.

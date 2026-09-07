@@ -47,6 +47,13 @@ var Chapters = []Chapter{
 	{Name: "oidc/discovery", Enumerated: true},
 	{Name: "oidc/introspection", Enumerated: true},
 	{Name: "oidc/logout", Enumerated: true},
+	// The protocol dispatcher, not one endpoint. Its four cases are what
+	// /realms/{realm}/protocol/{name} answers when {name} is not a protocol
+	// Keycloak registered, or is one and the path under it serves nothing.
+	// It is a chapter of its own rather than rows in http/fallback because
+	// the answer is decided by Keycloak's protocol map and not by whether a
+	// route matched - which is exactly what the two fallback bodies mean.
+	{Name: "oidc/protocol", Enumerated: true},
 	{Name: "oidc/registration", Enumerated: true},
 	{Name: "oidc/revocation", Enumerated: true},
 	{Name: "oidc/token", Enumerated: true},
