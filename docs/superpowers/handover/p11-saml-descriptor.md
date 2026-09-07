@@ -477,11 +477,168 @@ Every mutation was applied to the tree, `go test` run, its **exit code** read
 first, and the diff checked non-empty and compiling before the result was
 believed - both of those have produced false passes in this project before.
 
-<!-- MUTATION TABLE -->
+The harness itself has three refusals, and **the third was added mid-pass
+because it had just produced a false pass**: a `-run` pattern naming a test that
+does not exist runs nothing and exits 0, which reads exactly like a survivor.
+M20 was reported as surviving `TestEveryUnenumeratedChapterSaysWhy`; the test is
+called `TestUnenumeratedChaptersCarryAReason` and had never run. The harness now
+requires evidence in the output that something ran, and M20c is the control that
+proves the refusal fires.
+
+### The emitter
+
+| # | Mutation | Result |
+|---|---|---|
+| M1 | the two binding lists become one | killed by `TestTheTwoBindingListsDisagree` |
+| M1b | the same, asked of the golden | killed by `TestConformance/saml/descriptor/master` |
+| M2 | certificate in base64url | killed by `TestTheCertificateIsStandardBase64OfTheDER` |
+| M2b | the same, asked of the golden | **survived by design** - the certificate is masked, which is what M2's test exists for |
+| M3 | drop the unused `xmlns:saml` | killed by the golden |
+| M4 | `Cache-Control: no-store` | killed by the golden |
+| M5 | `Content-Type` without the charset | killed by the golden |
+| M6 | self-close the empty elements | killed by the golden |
+| M7 | hard-code `master` in the entityID | killed by `saml/descriptor/second-realm` |
+| M7b | the same, asked of the master case | **survived by design** - F142's mutation, and the second-realm case is what sees it |
+| M8 | the resolve `Location` loses its segment | killed by the golden |
+| M9 | `WriteXML` deletes `X-Frame-Options` | killed by the golden |
+| M22 | drop the second `xmlns:md` declaration | killed by the golden |
+| M23 | the artifact service loses its `index` | killed by the golden |
+| M24 | a `NameIDFormat` goes missing | killed by the golden |
+
+M2b and M7b are not findings; they are the pair that says **which** assertion
+does the killing. M2b is the honest cost of masking the certificate, and it is
+why `TestTheCertificateIsStandardBase64OfTheDER` was written: the golden asserts
+that the element is there and nothing about what is in it, so a base64url
+emitter, PEM armour, or the *encryption* key's certificate would all match. That
+test decodes the element with the standard alphabet and compares the bytes to
+the realm's signing DER, which is a second opinion rather than a copy of the
+emitter's expression.
+
+### The XML mask
+
+| # | Mutation | Result |
+|---|---|---|
+| M10 | drop the element-name boundary check | killed by `TestXMLMaskedValuesReadsWhatTheMaskCovers` |
+| M11 | drop the markup-content check | killed by `TestXMLTextMaskRefusesTheShapesItCannotCover` |
+| M12 | drop the self-closing check | killed by the same |
+| M13 | the mask covers the tags too | killed by `TestReplaceXMLValuesMasksTheTextAndNothingElse` |
+| M14 | drop the covers-nothing refusal | killed by `TestReplaceXMLValuesRefusesNothingAndEmptiness` |
+| M15 | `ReplaceXMLValues` out of `normalisePasses` | killed by the golden |
+| M16 | point the mask at `md:NameIDFormat`, a constant | killed by `TestNoHTMLMaskVariesNothing` |
+| M21 | an XML mask name with two colons | killed by `TestCatalogIsWellFormed` |
+
+M10 is the one the hand-built vector exists for. **The real descriptor cannot
+kill it**: it holds no element whose name is a prefix of another, so a mask that
+dropped its boundary check would mask the real body identically and every
+assertion about it would still pass. `md:Key` against `md:KeyDescriptor` is the
+row that kills it, `md:Closed` kills M12, `ds:KeyInfo` kills M11 and `md:Empty`
+kills half of M14 - each named in the vector's own comment, so a mutation that
+deletes one check is reported against the check it deleted.
+
+### The harness's own guards
+
+| # | Mutation | Result |
+|---|---|---|
+| M17 | drop `VolatileXMLText` from the varies ratchet's scope | **survived; fixed** |
+| M18 | the report writes a wrong unenumerated count | **survived; the assertion was a tautology and is gone** |
+| M19 | a chapter loses its row | killed by `TestCoverage` |
+| M20 | an enumerated chapter keeps a `Reason` | killed by `TestUnenumeratedChaptersCarryAReason` |
+| M20c | control: a test name that does not exist | refused by the harness |
+| M26 | an `AssertAbsentHeaders` entry removed | **survived, and is reported below** |
+| M27 | declare a header absent that the golden carries | killed by `TestAssertAbsentHeadersAgreeWithTheGolden` |
+
+### The three survivors, and what was done about each
+
+**M17 - the varies ratchet's scope was a hand-written sum and nothing checked
+it.** `TestNoHTMLMaskVariesNothing` decides which cases to visit with
+`len(VolatileHTMLQuery)+len(VolatileHTMLCall)+len(VolatileHTMLInput)+len(VolatileXMLText)`.
+Dropping the last term made it skip every SAML case with the whole package still
+green - so the day a fifth markup frame arrives and its author forgets that line,
+the frame ships with no ratchet and nothing says so.
+
+Fixed, and the fix reads the committed bytes rather than the predicate: an XML
+mask writes `{{prefix:name}}` into a golden, and a colon is a spelling nothing
+else in this harness produces - `ReplaceIssuer` writes `{{issuer}}`,
+`ReplaceThemeResource` `{{theme_resource}}`, `Normalize` a JSON type name, and a
+fixture capture matches `capturedValue`'s `[a-z_0-9]+`. A golden holding one on
+an `Implemented` case the ratchet did not visit is now an error, found without
+asking the predicate what its reach is.
+
+**M18 - this cut wrote an assertion that could not fail.** Removing the stale
+"the catalogue has four" from a message, I replaced it with a count of
+`Chapters` compared against `unenumerated` - which `TestCoverage` had already
+counted from `Chapters` twenty lines earlier. It was `count(x) == count(x)`. The
+mutation that exposed it was a poor one in itself (it disabled the assertion,
+which proves nothing); the useful one, making `writeParityReport` emit
+`unenumerated+1`, is killed by the `fields[3]` comparison that was already
+there. The tautology is gone and the number stays out of the message.
+
+**M26 - a declaration deleted is invisible to a checker of declarations, and it
+stands.** `AssertAbsentHeaders` is read only by `diff`, and `diff`'s verdict on
+a `Recorded` case is "these differ", which any one difference satisfies. So the
+six absent-header lists this cut added - pinning the finding in 1.9 - asserted
+nothing at all.
+
+Half of that is fixed. `TestAssertAbsentHeadersAgreeWithTheGolden` now checks
+every declaration against the recorded bytes, which works for a `Recorded` or
+`Pending` case as readily as for an `Implemented` one, and M27 proves it can
+fail. What it cannot catch is a declaration being **removed**: a smaller set of
+true claims is still a set of true claims. Killing that needs the mirror rule -
+*every* golden missing a security header must have a case declaring it absent -
+and **that rule fires on the existing tree**, because 87 committed goldens omit
+`X-Frame-Options` for the media-type reasons AGENTS.md records and none of them
+declares it. It is a sweep of its own and is F177.
+
+### A fourth false-pass shape, found in my own harness
+
+M25 was `; _ = 0` appended to a route registration: a textually non-empty diff
+that changes nothing. It "survived", correctly and uselessly. The harness
+refuses an empty diff and a build failure and now a `-run` that matches nothing,
+and it cannot refuse this one - a semantically null edit is a mutation only a
+reader can rule out. It is recorded because it is the third shape this session
+produced and the first that no check can catch.
 
 ## 5. Parity
 
-<!-- PARITY -->
+Measured with the procedure AGENTS.md documents - two `GLOAK_PARITY_REPORT`
+runs and `cmd/parity` built rather than `go run` - against the merge base
+`8c6448c`:
+
+```
+Parity: 536 -> 538 of 572 (+2)
+
+chapter                         before  after  delta
+saml/descriptor                      0      2     +2
+
+New chapters: saml/artifact-resolution, saml/descriptor, saml/endpoint, saml/idp-initiated
+Chapters gone: saml
+```
+
+The chapter table itself:
+
+```
+chapter                              served  recorded  documented  source
+saml/descriptor                           2         2           4  catalogue
+saml/endpoint                             0         8           9  catalogue
+saml/idp-initiated                        0         3           3  catalogue
+saml/artifact-resolution                  0         1           2  catalogue
+
+total: 538 of 572 enumerated behaviours served; 3 chapters not enumerated
+```
+
+**The denominator moved by 18 and the numerator by 2, and the first number is
+the point of the cut.** A chapter that reported `?` now reports 18 behaviours,
+of which two are served, 14 are measured and parked with a golden, and two are
+measured and cannot be. The unenumerated chapter count falls from four to three,
+which is the sentence in §3.2 of the roadmap becoming one chapter shorter.
+
+Two arithmetic notes, both so the next reader does not re-derive them:
+
+- **19 cases, 18 counted.** `saml/descriptor/second-realm` is a `SecondRealm`
+  case and is out of the denominator by `countsTowardsParity`, because it
+  re-measures a behaviour its master sibling already holds.
+- **the base is 536, not the 535 the roadmap's closing paragraph states.** That
+  line is one behind; it was measured here rather than copied.
 
 ## 6. Entries for AGENTS.md
 
@@ -660,6 +817,51 @@ catch the `Date` header's removal, and the same answer applies: the guard would
 have to be a package test using a real `httptest.NewServer`. Filed rather than
 built because no `HEAD` behaviour in this repository is currently asserted
 anywhere, so building it for SAML alone would leave the other producers unguarded.
+
+### F176 - a committed golden holds a Java set order that is not reproducible
+
+`make record` for this cut moved exactly one golden outside it:
+
+```
+admin/client-attribute-certificate/download-unsupported-format
+- {"error":"… Supported keystore formats: [PKCS12, JKS, BCFKS]"}
++ {"error":"… Supported keystore formats: [BCFKS, PKCS12, JKS]"}
+```
+
+**It was reverted, not committed.** Gloak serves the committed order, so the
+recording would have turned the tree red; and AGENTS.md's rule that two
+recordings agreeing is not evidence of stability has an obverse - two recordings
+*disagreeing* is evidence of instability, and this is it.
+
+The list is a Java set's iteration order inside an error string, so `Unordered`
+cannot reach it: no mask in this harness reaches inside a JSON string, which is
+the same wall `admin/clients/evaluate-example-saml-response` sits behind. The
+options are a mask that reaches inside a string value, `Volatile` over the whole
+message (which would give up the sentence as well as the order), or accepting a
+golden that is a coin flip. The case is `admin/client-attribute-certificate`'s
+and this cut does not own it.
+
+### F177 - a declaration removed is invisible, and the mirror rule sweeps the tree
+
+M26's survivor. `TestAssertAbsentHeadersAgreeWithTheGolden` now checks every
+absent-header declaration against the recorded bytes, and cannot catch one being
+**deleted** - a smaller set of true claims is still true.
+
+The rule that would catch it is the mirror: *every golden missing a security
+header must have a case declaring it absent*. That is a real invariant and it
+**fires on the tree today**, because 87 committed goldens omit `X-Frame-Options`
+for the media-type reasons AGENTS.md records and none of them declares it. So it
+is a sweep - eighty-odd declarations to add, each of which has to be read against
+that bullet's allow-list rather than pasted - and it is the same bargain
+`inertMasksLeftInPlace` took: a ratchet plus a declared exception list, arrived at
+by somebody reading the goldens.
+
+Worth noting what it would buy beyond tidiness. The header rule is the bullet
+AGENTS.md records as having been wrong six times, twice refuted by the very
+golden it cited. A rule that made every omission a declaration would put the
+tally in the catalogue instead of in a paragraph, which is what
+`TestTheDuplicateResourceErrorSplitIsNotDecidedByTheVerb` already does for one
+family.
 
 ### F113 - unchanged, and applied twice more
 
