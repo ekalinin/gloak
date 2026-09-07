@@ -223,7 +223,7 @@ operations is allocated below; none is left unassigned.
 | P10 third cut | The resource family, **done 2026-09-01** | P10 second cut | `admin/authz-resource-server` 13->22 - the whole resource family, listing and search included. **The "permanently-`[]` listings" were not permanently `[]`**: they were empty because nothing had been created, and `GET /resource` is served by the real store here. Nine remain: policy 4, permission 4, import 1, and they need the **typed per-provider representation** that `GET .../permission` uses and `GET .../policy` does not - not the "provider model before `POST` means anything" F129 claimed, since a policy needs a `type` and nothing else | 9 ops |
 | P10 fourth cut | Policy, permission and import, **done 2026-09-02** | P10 third cut | `admin/authz-resource-server` 22->29. **The nine policy types have eight representations over one stored map** - a projection table, not nine structures - which is what F129 meant by "a provider model" and did not say. Two operations remain, the `evaluate` pair, and they need an RPT from `internal/token`: F148 | 7 ops |
 | P10 first cut | The resource server and the twelve refusals | P5 | `admin/authz-resource-server` 0->5, and **three chapters closed outright**: `admin/roles` 28/28, `admin/roles-by-id` 10/10, `admin/groups` 11/11. The gate is the **client's** `authorizationServicesEnabled` and it runs **before** authorization - a fourth gate shape in four families | 17 ops |
-| **P11** | SAML 2.0 | P4 | descriptors, SSO and SLO bindings | not in OpenAPI |
+| **P11** | SAML 2.0, **first cut done 2026-09-07** | P4 | descriptors, SSO and SLO bindings. The chapter had no denominator at all; it has one now - **72 measured pairs over five route shapes**, of which 18 are counted and one is served. The second cut is the SSO flow and it needs F175 | +18 to the denominator |
 | **P12** | Organizations and Workflows, **first cut done 2026-08-31** | P4 | Organizations 36, Workflows 9. **The row's 45 is 56**: eleven more operations live under `/organizations/{org-id}/groups/.../role-mappings` and are counted under `Role Mapper` and `Client Role Mappings`, so building this unlocks them. 47 operations live under `/organizations` in all | 56 ops |
 | P12 second cut | Members, invitations and linked brokers, **done 2026-09-02** | P12 first cut | `admin/organizations` 6->24. A member **is a user**, addressed by the user id, and `POST .../members` takes it as **raw bytes rather than JSON**. Nineteen routes, five different role conjunctions, and no single role opens any of them. **F120 is unblocked** - the hidden root group's name and path are the organization's own id - leaving the eleven group operations as ordinary work. One operation is left, F153: it overlaps a sibling on one path and `ServeMux` panics | 18 ops |
 | P12 third cut | Organization groups and their role mappings, **done 2026-09-03** | P12 second cut | `admin/organizations` 24->35, and **`admin/role-mapper` 12->18 and `admin/client-role-mappings` 10->15 are complete** - the third locator of two tags served twice before. **Only three of the eleven group operations behave like the realm group family's**, and the key sets are disjoint. F120 closed. One operation is left, F153's member route | 22 ops |
@@ -250,10 +250,11 @@ operations is allocated below; none is left unassigned.
 | Partial export | `partial-export` and `partialImport`, **done 2026-09-06** | P14 | `admin/realms-admin` 42->44. The export is `GET /admin/realms/{realm}` **spliced**, not transcribed, so `realmrep.go` stays the one truth. Answers F163: the parse code separates **syntax from binding**, not shapes | 2 ops |
 | Certificate remainder | The `Client Attribute Certificate` tag's last three, **done 2026-09-06** | F161, F38 | `admin/client-attribute-certificate` 4->5, and **+1 counted, +3 served**: `download` and `generate-and-download` are built and uncounted, because no golden can hold a keystore. The dependency question **inverted** - `x/crypto/pkcs12` is already direct and cannot read Keycloak's BouncyCastle BER, so `internal/keystore` was written and no module added. BCFKS is a deliberate divergence, F171 | 1 op |
 
-Denominator today: **413 Admin API operations plus 141 protocol behaviours, 554
-enumerated**, plus four chapters (P11, P13, and parts of P6 and P14) whose
-surface is not counted and which the report says so about. Served: **536 of 554**
-after the certificate remainder, and **P2, P4 and P5 are complete** -
+Denominator today: **413 Admin API operations plus 159 protocol behaviours, 572
+enumerated**, plus three chapters (P13, and parts of P6 and P14) whose surface is
+not counted and which the report says so about - P11 left that list on
+2026-09-07. Served: **538 of 572** after the SAML first cut, and **P2, P4 and P5
+are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -284,7 +285,68 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-06 (twenty-sixth fold).** `make conformance` reports **536 of
+**Updated 2026-09-07 (twenty-seventh fold).** `make conformance` reports **538 of
+572**, and **the count of unenumerated chapters falls for the first time, four to
+three.** That is the cut, not the +2: `saml` had carried "no machine-readable
+description; the SAML endpoints have not been enumerated by hand" since the meter
+was built, and the denominator moves by **18** where the numerator moves by two.
+
+**The enumeration needed a discriminator, and Keycloak supplies one this
+repository had already recorded.** An unmatched path answers `Unable to find
+matching target resource method` with **none** of the five security headers; a
+path the router knows answers `HTTP 404 Not Found` with **all five**. Verified in
+both directions before it was relied on, then swept: five route shapes, 72
+request/response pairs, and `/metadata`, `/x509`, `/logout` and `/artifact` all
+ruled out by the second body. **22 of the 35 verb cells are the fallback family
+and are deliberately not in the denominator** - `http/fallback` counts them once
+for the whole API, and counting them per path would report two behaviours
+twenty-two times.
+
+**One behaviour is served and the restraint is the finding.** The three
+rejections on `/protocol/saml` are reachable and their bytes are here, and
+serving them would have been wrong: `POST /clients` with `{"protocol":"saml"}`
+generates `saml.client.signature: "true"`, and **turning that one attribute off
+makes the same AuthnRequest that answered `Invalid requester` answer 200 with the
+login page.** The ladder is five deep - client, protocol, signature,
+`Destination`, assertion consumer URL - so a handler serving the rejections
+without walking it is right on every case in this catalogue and wrong on the only
+request the endpoint exists for. That is "a set of assertions an incorrect
+implementation satisfies entirely", found before the code was written rather than
+by a surviving mutation.
+
+**`Case.VolatileXMLText` is the fourth markup frame and the first whose values
+are per database rather than per request.** It covers an element's text and never
+its frame, masks two values out of ~2.5 kB and leaves the rest compared byte for
+byte, and it mirrors `oidc/certs/master`'s `Volatile` over `kid` and `x5c` in the
+dialect the body is written in. Its four refusals are load-bearing, confirmed by
+mutation. No attribute frame was built, because the two per-request XML
+attributes here are both in bodies F113 bars whatever a mask does - F176.
+
+**A third producer of "none of the five", and the first that is a matched
+route.** `GET /protocol/openid-connect/auth` and `GET /protocol/saml`, both
+parameterless, answer the **byte-identical 3572-byte page** with complementary
+header sets: `/auth` all five plus CSP and no `Cache-Control`, `/saml`
+`Cache-Control` and none of the six. One segment down,
+`/protocol/saml/clients/{name}` answers the same template with all six.
+
+**And a fold from the day before was refuted.** The certificate cut reported the
+keystore format order `[BCFKS, PKCS12, JKS]` as wrong and `[PKCS12, JKS, BCFKS]`
+as the correction, and the twenty-sixth fold wrote that moving a drifting number
+into a golden is what stops it drifting. This cut's `make record` drew the first
+order again. **The second recording was never a correction; it was a second
+draw** - see F179, and the rule it adds: *a recording that disagrees with a
+golden is not evidence that the golden was wrong.* It is evidence that one of the
+two is unstable, and telling them apart needs a third draw, which arrived here
+for an unrelated reason.
+
+**Review found one thing and it was a name.** Twelve mutations, eleven killed;
+the survivor was `TestDescriptorIsBytewiseWhatKeycloakSends` passing while the
+two binding lists were made identical. The golden catches that, so it was not a
+coverage hole - it was a test whose name promised a byte comparison it does not
+make. Renamed to `TestDescriptorCarriesTheLayoutRulesThatLookWrong`, in a
+repository whose recurring failure is a sentence that reads as coverage.
+
+**Earlier on 2026-09-06 (twenty-sixth fold).** `make conformance` reports **536 of
 554**. `admin/client-attribute-certificate` went 4 to 5, and the tag is finished
 in every sense except the meter's.
 

@@ -135,9 +135,25 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   and was written up as a statement about five.
 
   **`Referrer-Policy`, `Strict-Transport-Security`, `X-Content-Type-Options` and
-  `X-Robots-Tag` are on everything**, with two exceptions:
+  `X-Robots-Tag` are on everything**, with three exceptions:
   - **a path matching no route** gets none of them, because that request never
     reaches Keycloak's filter chain;
+  - **`GET /realms/{realm}/protocol/saml`'s 400 page** gets none of them, and
+    this is the first exception that is a **matched route serving a real page**:
+    it answers `405` to `PUT` and a 200 with an `Allow` to `OPTIONS`, so the
+    router certainly reached it. It is also the sharpest instance this file has
+    of the rule it keeps getting wrong. `GET /protocol/openid-connect/auth` with
+    no parameters and `GET /protocol/saml` with no parameters answer the
+    **byte-identical 3572-byte page**, and the header sets are complementary:
+    `/auth` sends all five plus `Content-Security-Policy` and **no**
+    `Cache-Control`, `/saml` sends `Cache-Control: no-store, must-revalidate,
+    max-age=0` and **none of the six**. One path segment down,
+    `/protocol/saml/clients/{name}` answers the same template with all six. Two
+    committed goldens show it without a container - `saml/endpoint/no-parameters`
+    and `oidc/authorization/invalid-redirect-uri`. `AssertAbsentHeaders` on six
+    cases is what pins it: `AssertHeaders` can only check a header that is named,
+    so without the negative, the day Gloak starts sending the five here "for
+    consistency" looks like a pass;
   - **the `Duplicate resource error` family** gets none, and nobody has explained
     why. `TestTheDuplicateResourceErrorSplitIsNotDecidedByTheVerb` computes the
     tally rather than this bullet carrying it. Ruled out by goldens already here:
@@ -169,7 +185,15 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   four headers for `application/yaml` and five for `application/json` - **one
   route, one status, one caller, differing only in `Accept`** - so the response's
   media type decides and `application/yaml` joins `text/plain` and
-  `application/octet-stream`. The **request** side is a rule of its own and it is
+  `application/octet-stream`. **The XML pair splits on the same axis and the two
+  spellings disagree**: `application/xml` carries `X-Frame-Options` - the SAML
+  descriptor's 200, and `saml/descriptor/master` is the golden - and `text/xml`
+  does not - the artifact resolution response's 200, **measured with no golden**,
+  because that body carries a per-request `ID` and `IssueInstant` and is
+  `Pending` under F113. One endpoint family, two media types, opposite answers,
+  which is the media-type rule confirmed on a fourth and fifth type rather than a
+  new exception - with the fifth resting on a measurement nothing in the tree
+  re-checks. The **request** side is a rule of its own and it is
   an **allow-list of three exact media types**, not the `application/` prefix
   Gloak tested in two places: `application/ld+json` rules out a "+json suffix"
   reading, and the parameters are cut **without being trimmed**, so
@@ -2175,10 +2199,27 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   either, so `" JKS"` and `"JKS "` are 406s. Fifteen spellings were sent to
   establish it, because a single case-sensitive membership test answers 406 for
   every unrecognised one and is wrong on three. The first handler written here
-  had exactly that test; the mutation pass named it M9. The list's order is
-  `[PKCS12, JKS, BCFKS]` and it lives in
-  `admin/client-attribute-certificate/download-unsupported-format` rather than
-  in a sentence, because as prose it drifted inside a day.
+  had exactly that test; the mutation pass named it M9.
+  **The list's order is not a contract and the golden that holds it is a coin
+  flip.** It is a Java set's iteration order inside a JSON string, and no mask in
+  this repository reaches inside one. Three recordings:
+
+  ```
+  2026-09-05   [BCFKS, PKCS12, JKS]     reported as wrong
+  2026-09-06   [PKCS12, JKS, BCFKS]     recorded as the correction, and committed
+  2026-09-07   [BCFKS, PKCS12, JKS]     a third cut's make record, reverted by hand
+  ```
+
+  So the second was **not a correction, it was a second draw**, and the sentence
+  this file carried for one day - that moving a drifting number into a golden is
+  what stops it drifting - was wrong about this number. `make record` will keep
+  turning `admin/client-attribute-certificate/download-unsupported-format` red
+  at random until somebody masks inside the string, gives up the sentence with
+  it, or computes the order the way `internal/javamap` computes Java's. See F179.
+  **A recording that disagrees with a golden is not evidence that the golden was
+  wrong.** It is evidence that one of the two is unstable, and telling them apart
+  needs a third draw - which arrived here for an unrelated reason, from a cut
+  measuring SAML.
 - **An unrecognised keystore format has three answers in one tag.** The two
   downloads answer **406** for a spelling that is not a format and **500** for a
   real format spelled wrongly; `POST .../upload` answers **400 `error loading
@@ -2388,6 +2429,82 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `"internal": true` with no component type. What keeps the three CIBA cases
   unrecordable is the **recorder's container** and an inbound callout `Run` has
   no capture for: F122's boundary, measured from the other side.
+
+- **The SAML surface is five route shapes and 72 measured pairs, and there is no
+  document to enumerate it from.** The discriminator is Keycloak's own 404s, and
+  this repository already recorded both halves: an **unmatched path** answers
+  `Unable to find matching target resource method` with **none** of the five
+  security headers, and a path the router knows answers `HTTP 404 Not Found` with
+  **all five**. Sweeping candidates against that pair is how the surface was
+  found - `/protocol/saml`, `/descriptor`, `/resolve`, `/clients`,
+  `/clients/{name}`, and no more. `/metadata`, `/x509`, `/logout` and `/artifact`
+  all answer the second body, so the router reached the SAML resource and found
+  nothing to run.
+  **22 of the 35 verb cells are the generic fallback family** - seventeen 405s
+  and five generic 404s - and they are deliberately **not** in this chapter's
+  denominator, because `http/fallback` counts them once for the whole API and
+  counting them per path would report two behaviours twenty-two times.
+- **`Allow` describes the parent resource, not the path it was asked on.**
+  `OPTIONS` answers the identical `Allow: HEAD, POST, GET, OPTIONS` on all four
+  real SAML paths, so `/descriptor` advertises `POST` and answers it 404, and
+  `/resolve` advertises `GET` and answers it 404. Anybody reading `Allow` as a
+  statement about its own path gets both wrong. `HEAD` splits inside the same
+  family - a 405 on `/resolve` and `/clients`, a real answer on the other three -
+  which is the `/auth` against `/login-actions/authenticate` split met again on a
+  family whose five paths are one resource.
+- **The SAML descriptor is the one SAML response that is a pure function of the
+  realm**, and six things in its layout look wrong and are not: the root declares
+  **two prefixes for one namespace** and uses neither the default nor `xmlns:saml`
+  for any element; every empty element is spelled `<md:X></md:X>` and never
+  `<md:X/>`; there is no `<?xml ?>` prologue and no trailing newline;
+  `ArtifactResolutionService` is the only service with an `index` and the only one
+  whose `Location` is not the bare endpoint; and **the two service lists hold the
+  same four bindings in different orders** - `SingleLogoutService` is POST,
+  Redirect, Artifact, SOAP and `SingleSignOnService` is POST, Redirect, SOAP,
+  Artifact, with the four `NameIDFormat`s between them. A builder sharing one
+  list is right on three of four entries in **both** places, which no assertion
+  over membership and no count would catch; `TestTheTwoBindingListsDisagree` is
+  what pins it, and the golden is the bytewise contract.
+- **`encoding/xml` cannot emit this document, and the refutation is a test.**
+  It has no way to say "use this prefix", so `<md:NameIDFormat>` comes out
+  `<NameIDFormat xmlns="…">` on every element, and no struct tag produces a
+  namespace declaration nothing uses. `TestEncodingXMLCannotEmitTheDescriptor`
+  runs the marshaller and compares rather than asserting it in prose, so the day
+  a Go release makes either reachable the test fails and the hand emitter can go.
+  That is `internal/httpx/yaml.go`'s situation one format across.
+- **`/protocol/saml`'s answer is decided by the `Issuer` inside the message, not
+  by whether a message was read.** An absent `SAMLRequest`, an empty one, base64
+  that is not XML, well-formed XML that is not SAML, an `AuthnRequest` with no
+  `Issuer`, a `SAMLResponse` of junk and a raw undeflated message - **seven
+  inputs, one answer**, `Invalid Request`. An `Issuer` naming an
+  `openid-connect` client is `Wrong client protocol.` and one naming a `saml`
+  client is `Invalid requester`. Note the direction against the scope evaluator,
+  which serves **both** protocols on one route and where refusing the mismatch is
+  wrong on four operations: two families, one question, opposite answers.
+- **`Invalid requester` means the requester was not authenticated, not that it is
+  unknown - and the success path is one client attribute away.** `POST /clients`
+  with `{"protocol":"saml"}` produces a client carrying
+  **`saml.client.signature: "true"`** among fifteen generated attributes. Turn it
+  off and the same `AuthnRequest` that answered `Invalid requester` answers
+  **200 with the login page**. So the rejection ladder is **five deep** - client,
+  protocol, signature, `Destination`, assertion consumer URL - and a handler
+  serving the three rejections without walking it is right on every case in this
+  catalogue and wrong on the only request the endpoint exists for. That is why
+  `saml/endpoint/*` is `Recorded` rather than served.
+- **The segment under `/protocol/saml/clients/` is
+  `saml_idp_initiated_sso_url_name`, not a `clientId`.** A handler looking clients
+  up by `clientId` answers an unclaimed name correctly **by accident** and the
+  claimed name wrongly, and the two cases a reader writes first - a name nothing
+  carries and a name something carries - cannot tell the two implementations
+  apart. `saml/idp-initiated/client-id-is-not-the-name` is the third input, and it
+  is the one that kills the wrong implementation.
+- **Two spellings found by the SAML sweep belong to the protocol surface and not
+  to SAML.** `/protocol/{unknown}/…` is `404 {"error":"Protocol not found"}` with
+  all five - measured on `certs`, on a bare `/protocol/x` and on `saml-ecp` too -
+  and a **trailing slash is JAX-RS's rule**: `/descriptor/` answers the identical
+  200, and so does `/protocol/openid-connect/certs/`. Both are general rules Gloak
+  gets wrong everywhere, and fixing either inside a SAML branch would be a change
+  reaching every OIDC path for one instance of a rule. See F177 and F178.
 
 ## Boundaries
 

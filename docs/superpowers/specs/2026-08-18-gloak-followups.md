@@ -5034,3 +5034,161 @@ documentation edited and **not committed**, and the mutation harness's
 `git checkout --` reverted it along with the mutation. "Commit before any edit a
 mutation pass will revert" is not advice about tidiness: a harness that reverts
 to HEAD silently eats the work that explains why the mutation matters.
+
+## F175: `Fixture.SAMLRequests`, deferred to the cut that would use it
+
+`saml/endpoint/login-page` is measured and **unsendable**. An `AuthnRequest` has
+to name the server's own base URL in its `Destination`, and it is
+DEFLATE-compressed and base64'd before it becomes a parameter, so no literal
+works on the recorder's mapped port. `Expand` rewrites `Path`, `Query`,
+`Headers`, `Form` and `Body` from fixture captures and has **no issuer among
+them**. That is F122's boundary from a third side.
+
+`Fixture.Proofs` is the precedent and the shape: one field, minted before the
+steps run, substituted wherever `{{name}}` appears.
+
+**Deferred, not declined**, and the reason is F38 rather than reluctance.
+`Fixture.Proofs` earned its field by having three consumers on the day it landed;
+this one would have one, and behind a five-deep ladder - the success path needs
+`saml.client.signature` off **and** an `AuthnRequest` naming the server's own
+`Destination`. That is the shape of P11's second cut, the SSO flow, and the field
+belongs there where it will have consumers. Building it now leaves a mechanism
+with one caller and a `Pending` case still `Pending` at the end of it.
+
+It would not make the login page recordable either - that page carries a
+per-request `tab_id`, F113. What it unlocks first is a `Pending` case becoming a
+**sendable** `Pending` case, plus every rejection past the `Destination` check.
+
+## F176: `Case.VolatileXMLAttribute`, deliberately not built
+
+The XML frame covers an element's **text** and never its attributes. Nothing
+needs the attribute version today: the two measured per-request XML attributes in
+this project are the identity provider export's `ID="ID_<uuid>"` and the artifact
+resolution response's, and **both bodies are barred by F113 whatever a mask
+does**, so the frame would have no consumer.
+
+Filed rather than forgotten because the argument is contingent. If a body ever
+carries a volatile attribute and **nothing else** volatile, the frame becomes the
+difference between a contract and a `Pending`, and the shape is twenty lines
+beside `xmlTextMatches`.
+
+## F177 and F178 are one cut, and it needs a name rather than an owner
+
+Both are general rules Gloak gets wrong on **every** protocol path it serves, and
+both were found by the SAML sweep without being SAML's. They want their own diff:
+the fix is one change to `internal/oidc/router.go` and its fallbacks, and the
+goldens that move will be OIDC's rather than SAML's.
+
+**The cut is "the protocol surface's two dispatch rules", and it is not "whoever
+next touches `router.go`."** An anchor defined by who happens to arrive is F168
+in another dress - it gets read by somebody doing something else, who is the
+person least placed to judge whether the sweep is complete. Naming it as a cut is
+what makes it schedulable.
+
+Two things it must measure first, and the SAML cut did not: whether JAX-RS strips
+one trailing slash or many, and whether the rule reaches the Admin API.
+
+## F177: the trailing slash, across the whole protocol surface
+
+`/realms/{realm}/protocol/saml/descriptor/` and
+`/realms/{realm}/protocol/openid-connect/certs/` both answer their endpoint's
+200; `/protocol/openid-connect/auth/` answers `auth`'s own 400 page. Go's
+`ServeMux` matches none of them, so Gloak answers the unmatched-path 404 with no
+security headers on every protocol endpoint it serves.
+
+It is one rule and Gloak is wrong on all of it, which is why the SAML cut did not
+special-case the descriptor: **a fix aimed at one instance of a general rule
+reads as a fix and is not one.**
+
+## F178: `Protocol not found`, and a protocol dispatcher
+
+`/realms/{realm}/protocol/{unregistered}` is `404 {"error":"Protocol not found"}`
+with all five security headers, measured on four paths - `certs`, a bare
+`/protocol/x`, `saml-ecp` and `/protocol/nosuchproto/descriptor`. Gloak has no
+dispatcher and answers the unmatched-path body with no headers.
+
+Serving it means a catch-all under `/realms/{realm}/protocol/`, which Go's
+`ServeMux` lets a specific pattern beat - **the opposite of the precedence
+problem F153 met under `/organizations`**, so this is the easy direction. The
+risk to measure first is what it does to paths *under* a real protocol:
+`/protocol/openid-connect/nosuchsub` answers `HTTP 404 Not Found`, not `Protocol
+not found`, so the dispatcher has to know which protocols exist and stop there.
+
+## F179: a committed golden holds a Java set order that is a coin flip
+
+`make record` on the SAML cut moved exactly one golden outside it:
+
+```
+admin/client-attribute-certificate/download-unsupported-format
+- {"error":"… Supported keystore formats: [PKCS12, JKS, BCFKS]"}
++ {"error":"… Supported keystore formats: [BCFKS, PKCS12, JKS]"}
+```
+
+It was **reverted, not committed** - Gloak serves the committed order, so the
+recording would have turned the tree red.
+
+**There are three recordings, and the middle one was written down as a
+correction:**
+
+```
+2026-09-05   [BCFKS, PKCS12, JKS]     reported as wrong
+2026-09-06   [PKCS12, JKS, BCFKS]     recorded as the correction, and committed
+2026-09-07   [BCFKS, PKCS12, JKS]     the SAML cut
+```
+
+So the 09-06 recording was **never a correction; it was a second draw** - and the
+fold that landed it wrote into AGENTS.md that moving a drifting number into a
+golden is what stops it drifting. That sentence stood for one day.
+
+**The rule worth keeping is the obverse of one this file already has.** "Two
+recordings agreeing is never evidence of stability" is recorded; its other side
+is that **a recording that disagrees with a golden is not evidence that the
+golden was wrong** - it is evidence that one of the two is unstable, and telling
+them apart needs a third draw. Nothing about the sample size gave this away; a
+third draw taken for an unrelated reason did.
+
+The list is a Java set's iteration order inside a **JSON string**, so `Unordered`
+cannot reach it - no mask here reaches inside a string value, which is the wall
+`admin/clients/evaluate-example-saml-response` sits behind. Three options and
+none is free: a mask that reaches inside a string, `Volatile` over the whole
+message (which gives up the sentence as well as the order), or computing the
+order the way `internal/javamap` computes Java's `HashMap`. The third is the only
+one that keeps the assertion, and it is the reason this is filed rather than
+masked away.
+
+## F180: a `HEAD` case cannot be written in this harness
+
+`HEAD /realms/master/protocol/saml/descriptor` answers 200 with the descriptor's
+headers and no body, and `HEAD` differs from `GET` on two of the five SAML paths,
+so it is real surface. No case can hold it: the verifier serves through
+`httptest.ResponseRecorder`, which does **not** strip a body for a `HEAD` request
+where `http.Server` does. Gloak's side would carry 3422 bytes and Keycloak's
+none, so **the case would fail on a correct implementation**.
+
+Same class as the note that the verifier cannot catch the `Date` header's
+removal, and the same answer: the guard has to be a package test over a real
+`httptest.NewServer`. Filed rather than built because no `HEAD` behaviour in this
+repository is asserted anywhere, so building it for SAML alone leaves the other
+producers unguarded.
+
+## F181: an absent-header declaration removed is invisible, and the mirror rule sweeps the tree
+
+`TestAssertAbsentHeadersAgreeWithTheGolden` checks every absent-header
+declaration against the recorded bytes and **cannot catch one being deleted** - a
+smaller set of true claims is still true. It was a surviving mutation, half
+closed.
+
+The rule that would catch it is the mirror: *every golden missing a security
+header must have a case declaring it absent.* That is a real invariant and it
+**fires on the tree today**, because 87 committed goldens omit `X-Frame-Options`
+for the media-type reasons this file records and none of them declares it. So it
+is a sweep - eighty-odd declarations, each read against that bullet's allow-list
+rather than pasted - and it is `inertMasksLeftInPlace`'s bargain: a ratchet plus
+a declared exception list, arrived at by somebody reading the goldens.
+
+What it buys beyond tidiness is worth naming. The header rule is the bullet this
+project records as having been wrong **six** times, twice refuted by the very
+golden it cited. A rule making every omission a declaration would put the tally
+in the catalogue instead of in a paragraph - which is what
+`TestTheDuplicateResourceErrorSplitIsNotDecidedByTheVerb` already does for one
+family.
