@@ -250,11 +250,11 @@ operations is allocated below; none is left unassigned.
 | Partial export | `partial-export` and `partialImport`, **done 2026-09-06** | P14 | `admin/realms-admin` 42->44. The export is `GET /admin/realms/{realm}` **spliced**, not transcribed, so `realmrep.go` stays the one truth. Answers F163: the parse code separates **syntax from binding**, not shapes | 2 ops |
 | Certificate remainder | The `Client Attribute Certificate` tag's last three, **done 2026-09-06** | F161, F38 | `admin/client-attribute-certificate` 4->5, and **+1 counted, +3 served**: `download` and `generate-and-download` are built and uncounted, because no golden can hold a keystore. The dependency question **inverted** - `x/crypto/pkcs12` is already direct and cannot read Keycloak's BouncyCastle BER, so `internal/keystore` was written and no module added. BCFKS is a deliberate divergence, F171 | 1 op |
 
-Denominator today: **413 Admin API operations plus 159 protocol behaviours, 572
+Denominator today: **413 Admin API operations plus 167 protocol behaviours, 580
 enumerated**, plus three chapters (P13, and parts of P6 and P14) whose surface is
 not counted and which the report says so about - P11 left that list on
-2026-09-07. Served: **538 of 572** after the SAML first cut, and **P2, P4 and P5
-are complete** -
+2026-09-07. Served: **549 of 580** after the protocol dispatch rules, and **P2,
+P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -285,7 +285,62 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-07 (twenty-seventh fold).** `make conformance` reports **538 of
+**Updated 2026-09-07 (twenty-eighth fold).** `make conformance` reports **549 of
+580**, +11 served on +8 enumerated - and unusually for this project, **none of it
+is a chapter**. Both rules are things Gloak got wrong on *every* protocol path it
+serves, found by a sweep that was measuring something else.
+
+**F177's two questions, both answered.** One trailing slash is stripped and only
+one - and "many" turns out not to be a routing question at all. A doubled slash,
+a `.` or a `..` segment, in the **decoded** path, is
+`400 {"error":"missingNormalization",…}` with none of the five security headers,
+**before** the route table: `/nosuchthing//` answers it rather than the
+unmatched-path 404. And it reaches the Admin API, so it is a normalisation ahead
+of routing rather than a per-route alias - which is also why the fix is one guard
+in the wrapper and not a `ServeMux` subtree per endpoint, since registering one
+would make `net/http` 301-redirect the bare path. That is **F11's own failure
+mode returning through F177's fix**, and F11 - open since 2026-08-20 waiting for
+exactly this measurement - closes with it.
+
+**The measurement needed raw sockets, because curl normalises a path before
+sending it.** A probe of a malformed path written without `--path-as-is` measures
+curl. Another shape of a tool answering for itself, and the eleventh this roadmap
+has counted.
+
+**A third spelling of one header.** `application/json; charset=UTF-8` **with a
+space**, where the Admin API sends it without one and the protocol side sends a
+bare `application/json`. It is Quarkus's response rather than Keycloak's, which
+is the likeliest reason - and the spelling is the contract either way. F185 asks
+for the tally to be computed rather than written down, because the charset bullet
+is prose and has been wrong six times.
+
+**The dispatcher is defined by what it refuses.** Three cells around
+`Protocol not found` are each one probe away from an implementation that looks
+right: the realm is resolved **first**, a registered protocol stops the dispatch
+at any depth, and the bare `/protocol` segment is not a protocol name. Every
+probe a reader writes gets only one of those wrong at a time, which is why all
+three needed naming.
+
+**F179 is answered, and it was not a `HashSet` of literals.** One container
+restarted seven times against one database gave three orders; with the earlier
+recordings that is four of six permutations, and 26.7.2 agrees. Under
+`-XX:hashCode=2` it **stops moving**, so the set is keyed on values hashed by
+`Object.hashCode()`, redrawn per JVM. `internal/javamap` cannot reach it and the
+argument is arithmetic rather than a run. `Case.UnorderedBracketed` keeps the
+sentence and the membership - including BCFKS, which a `Volatile` over the
+message would have silently stopped asserting. **The runs of repeats are what
+made it hard**: three starts one way and three the other, which is why the number
+held for a day at a time.
+
+**Review found one survivor and it was equivalent.** Nine of my own mutations,
+eight killed; `TrimSuffix` swapped for `TrimRight` passes, because the
+normalisation guard three lines above rejects every path with two slashes, so the
+two are identical on everything that reaches the line. The cut's own pass had the
+same shape twice - both its round-one survivors were equivalent mutations against
+the real route table - and it fixed them by building a mux the test owns. F183
+records that serving `GET /` would make one of those guards carry a real request.
+
+**Earlier on 2026-09-07 (twenty-seventh fold).** `make conformance` reports **538 of
 572**, and **the count of unenumerated chapters falls for the first time, four to
 three.** That is the cut, not the +2: `saml` had carried "no machine-readable
 description; the SAML endpoints have not been enumerated by hand" since the meter

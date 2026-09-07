@@ -115,9 +115,53 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   say what the rule is**, which is exactly why nothing has been changed on the
   strength of any of them. The 405 body is
   `{"error":"HTTP 405 Method Not Allowed"}`, measured independently on the
-  protocol and admin sides on the same day, so the fallback family has **six**
+  protocol and admin sides on the same day, so the fallback family has **seven**
   bodies - the sixth is `HTTP 406 Not Acceptable`, from a JSON-only read asked
-  for `application/yaml`. See F31 before adding a 405 or defending the 404.
+  for `application/yaml`, and the seventh is `missingNormalization` below, the
+  first that is not a 404, a 405 or a 406. See F31 before adding a 405 or
+  defending the 404.
+- **A trailing slash is stripped, and exactly one of them.**
+  `/realms/{realm}/protocol/openid-connect/certs/` answers the endpoint's own
+  200, `/admin/serverinfo/` answers `serverinfo`'s, `/nosuchpath/` answers the
+  unmatched-path 404 and `POST .../.well-known/openid-configuration/` the
+  wrong-method one. It is **not a protocol rule and not a JAX-RS rule about
+  resources**: it runs ahead of the route table, across the whole server, and
+  both fallback shapes obey it.
+  **Two slashes are not a second strip.** A doubled slash, a `.` segment or a
+  `..` segment - in the **decoded** path, so `%2e` counts - is
+  `400 {"error":"missingNormalization","error_description":"Request path not
+  normalized"}` with **none** of the five security headers, which is the
+  never-reached-the-filter-chain exception rather than a new one. Its
+  `Content-Type` is `application/json; charset=UTF-8`, **with a space** - a
+  third spelling of that parameter, after the Admin API's without one and the
+  protocol side's bare `application/json`, and the reason it does not go through
+  `WriteJSON`. It runs **before** the route table: `/nosuchthing//` answers this
+  rather than the unmatched-path 404.
+  **Measured with raw sockets and `curl --path-as-is`, because curl normalises a
+  path before sending it** - a probe of a malformed path written without that
+  flag measures curl - another shape of a tool answering for itself, and the
+  roadmap keeps that tally rather than this file. This is the measurement F11
+  had been waiting for since 2026-08-20.
+- **`/realms/{realm}/protocol/{name}` is decided by Keycloak's protocol map, not
+  by its route table**, which is why the fallback cannot produce it. An
+  unregistered name is `404 {"error":"Protocol not found"}` with all five
+  security headers, at any depth and on **all six verbs** - the one route in this
+  project answering every method identically. Three cells around it are each one
+  probe away from an implementation that looks right:
+  - the **realm is resolved first**, so an unknown realm answers `Realm does not
+    exist` even when the protocol is unknown too;
+  - a **registered** protocol stops the dispatch and answers `HTTP 404 Not Found`
+    instead, at any depth;
+  - the **bare `/protocol` segment is not a protocol name** and answers
+    `HTTP 404 Not Found` as well.
+
+  The registered set is exactly `openid-connect` and `saml`, compared
+  **case-sensitively** - `SAML` is `Protocol not found` - and it is a **contract
+  rather than a list of what Gloak serves**: `saml` is in it although Gloak
+  serves one SAML endpoint, because what decides the answer is whether
+  Keycloak's protocol map has the key. `docker-v2` is a protocol Keycloak has
+  with its feature off, which is `CLIENT_TYPES`' situation - the constant is the
+  contract.
 - **They are not five headers with one rule. They are four with one rule and
   `X-Frame-Options` with its own.** Computed over all 921 committed goldens on
   2026-09-06:
@@ -259,6 +303,13 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   role listings declared `Unordered` while the case beside them deliberately
   does not, with a comment saying the paged path was measured sorted. All three
   were inert, so the contradiction had no effect and no way of being noticed.
+  **A fifth kind of mask exists and it reaches inside a string.**
+  `Case.UnorderedBracketed` sorts the items of a Java collection rendered by
+  `Collection.toString()` **inside** a JSON string and leaves every byte outside
+  the brackets compared. It has one consumer, and that was **grepped rather than
+  assumed**: exactly one golden in the tree carries such a run.
+  `UnorderedWords` cannot substitute, because the brackets attach to whichever
+  item is first and last, so two draws sort to different word multisets.
 - **Two recordings agreeing is never evidence of stability.** A client's
   `defaultClientScopes` came back identical on both of two container starts, on
   all six bootstrapped clients, while `optionalClientScopes` swapped two names
@@ -2212,14 +2263,28 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 
   So the second was **not a correction, it was a second draw**, and the sentence
   this file carried for one day - that moving a drifting number into a golden is
-  what stops it drifting - was wrong about this number. `make record` will keep
-  turning `admin/client-attribute-certificate/download-unsupported-format` red
-  at random until somebody masks inside the string, gives up the sentence with
-  it, or computes the order the way `internal/javamap` computes Java's. See F179.
-  **A recording that disagrees with a golden is not evidence that the golden was
-  wrong.** It is evidence that one of the two is unstable, and telling them apart
-  needs a third draw - which arrived here for an unrelated reason, from a cut
-  measuring SAML.
+  what stops it drifting - was wrong about this number.
+  **The order is redrawn on every JVM start**, measured 2026-09-07: one container
+  restarted seven times against one database gave three orders, each stable
+  across three requests inside its own run, and with the three earlier recordings
+  that is **four of the six permutations**; 26.7.2 behaves the same way. Under
+  `-XX:hashCode=2`, which makes HotSpot's identity hash a constant, it **stops
+  moving** over four starts - so the set is keyed on values whose `hashCode` is
+  `Object.hashCode()` rather than on strings, which is what a `HashSet` of enum
+  constants gives. **`internal/javamap` cannot reach it**, and that argument is
+  arithmetic rather than a run: both its functions are pure functions of a key
+  set, this key set never changes, and the value takes four values.
+  `Case.UnorderedBracketed` gives up the order and keeps the sentence and the
+  membership - including BCFKS, which F171 records as listed although Gloak
+  serves no such keystore, and which a `Volatile` over the whole message would
+  have silently stopped asserting.
+  **The runs of repeats are what made this hard.** Three consecutive starts gave
+  one order and the next three another, which is why the number looked stable for
+  a day at a time and why the 09-06 recording was written up as a correction it
+  was not. "Two recordings agreeing is never evidence of stability" is already
+  here; its other side is that **a recording that disagrees with a golden is not
+  evidence that the golden was wrong** - it is evidence that one of the two is
+  unstable, and telling them apart needs a third draw. See F179.
 - **An unrecognised keystore format has three answers in one tag.** The two
   downloads answer **406** for a spelling that is not a format and **500** for a
   real format spelled wrongly; `POST .../upload` answers **400 `error loading
