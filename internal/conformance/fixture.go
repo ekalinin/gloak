@@ -1660,6 +1660,16 @@ var Fixtures = map[string]Fixture{
 	// The helpers are in fixture_account.go, which is also where the reason
 	// for each of them is written down.
 	"account-user": accountUserFixture(accountProbeUser),
+
+	// The sessions listing needs a user **one case logs in as**, and that is
+	// not a tidiness preference. account-user is named by seven cases, the
+	// recorder runs its login once per case on one shared container, and every
+	// one of those logins is a session this listing then answers - so the
+	// golden held eleven rows on the first recording and twelve on the second,
+	// with `"current":true` at a different index. That is the shape AGENTS.md
+	// calls "a golden that holds only while the catalogue's order holds", and
+	// the answer is a fixture of its own rather than a mask over the array.
+	"account-user-sessions": accountUserFixture("gloak-probe-account-sessions"),
 	"account-user-view-profile": accountRoleFixture(
 		"gloak-probe-account-view-profile", "view-profile"),
 	"account-user-view-groups": accountRoleFixture(
@@ -1668,6 +1678,12 @@ var Fixtures = map[string]Fixture{
 		"gloak-probe-account-links-role", "manage-account-links"),
 	"account-user-no-roles": accountRoleFixture(
 		"gloak-probe-account-no-roles", ""),
+
+	// The two fixtures a mutation asked for. Each exists because a guard
+	// survived the whole chapter without it - the container test and the
+	// enabled check - and each carries the input that kills it.
+	"account-user-realm-role-collision": accountRealmRoleCollisionFixture(),
+	"account-user-disabled":             accountDisabledUserFixture(),
 
 	// A user in one group at the top of the realm, and a second in a child
 	// alone. **The second is not a variation on the first**: membership was

@@ -259,6 +259,82 @@ var accountCases = []Case{
 		AssertHeaders: []string{"Cache-Control", "Content-Type", "X-Frame-Options"},
 	},
 	{
+		ID: "account/gate/wrong-scheme",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs/26.7.1/server_admin/#account-api",
+			Section:   "Account REST API: bearer authentication",
+			Retrieved: "2026-09-07",
+		},
+		Status:  Implemented,
+		Fixture: "account-user",
+		// **A valid token under a scheme that is not Bearer.** The three
+		// refusals above all send something that would fail verification
+		// anyway, so a bearerToken that ignored the scheme entirely passed all
+		// of them - measured as a surviving mutation, which is why this case
+		// exists. `Negotiate`, `DPoP` and `Token` were all measured 401 with
+		// the same token that answers 200 as `Bearer` and as `bearer`.
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/account/groups",
+			Headers: map[string]string{
+				"Accept":        "application/json",
+				"Authorization": "Negotiate {{user_token}}",
+			},
+		},
+		AssertHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		ID: "account/gate/disabled-user",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs/26.7.1/server_admin/#account-api",
+			Section:   "Account REST API: bearer authentication",
+			Retrieved: "2026-09-07",
+		},
+		Status:  Implemented,
+		Fixture: "account-user-disabled",
+		// A token that verifies, names a live session, and belongs to an
+		// account that was disabled after it was issued. **401**, measured on
+		// one user before and after the PUT: 200 while enabled and 401 after.
+		// It is here because removing the enabled check survived every other
+		// case in the chapter.
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/account/groups",
+			Headers: map[string]string{
+				"Accept":        "application/json",
+				"Authorization": "Bearer {{user_token}}",
+			},
+		},
+		AssertHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		ID: "account/gate/realm-role-of-the-same-name",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs/26.7.1/server_admin/#account-api",
+			Section:   "Account REST API: the account client audience",
+			Retrieved: "2026-09-07",
+		},
+		Status:  Implemented,
+		Fixture: "account-user-realm-role-collision",
+		// **A realm role literally named `view-profile`, and no account role.**
+		// 401, measured on all three of /groups, /linked-accounts and
+		// /supportedLocales. It is internal/admin's F32 asked of this API: a
+		// gate that matched the role's *name* would hand the whole account
+		// surface to anybody who can mint a role, and every other case in this
+		// chapter is blind to it because no other fixture creates a colliding
+		// name. Found by a mutation that dropped the container test and
+		// survived.
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/account/groups",
+			Headers: map[string]string{
+				"Accept":        "application/json",
+				"Authorization": "Bearer {{user_token}}",
+			},
+		},
+		AssertHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
 		ID: "account/gate/no-account-roles",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs/26.7.1/server_admin/#account-api",
@@ -768,7 +844,13 @@ var accountCases = []Case{
 			"expires stamps and no per-client breakdown, so the body has five fields " +
 			"nothing in the store holds. It is a session-model cut rather than an " +
 			"account-API one",
-		Fixture: "account-user",
+		// **Its own user**, because this listing counts logins and account-user
+		// logs in once per case that names it. The first two recordings of this
+		// golden differed in exactly that - eleven rows then twelve, with
+		// `"current":true` at a different index - which is a golden that holds
+		// only while the catalogue's order holds. The fixture is the fix; a
+		// mask over the array would have hidden it.
+		Fixture: "account-user-sessions",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/account/sessions",

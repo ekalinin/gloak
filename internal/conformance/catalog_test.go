@@ -556,6 +556,20 @@ var namedOutsideTheConvention = map[string]string{
 	// callerFixture: "the roles come from master-realm by container, not by
 	// name".
 	"name manage-realm": "narrow-caller-impostor: a client role deliberately named after an admin role",
+
+	// The same shape one API over, and for the same reason: a **realm** role
+	// named after an account role, so that the caller holding it is refused.
+	// Renaming it to gloak-probe-view-profile builds a fixture that measures
+	// nothing, because the account API would not recognise the name either way.
+	//
+	// It cannot reach a golden's window. The only realm role listing recorded
+	// against the shared container is admin/roles/list-realm-page-no-search,
+	// which sends first=1&max=2 on a sorted listing whose first three names are
+	// admin, create-realm and default-roles-master; `view-profile` sorts after
+	// all three and outside the window. admin/roles/list-realm is PristineRealm
+	// and is recorded against a realm this fixture never touches, and the
+	// account cases are last in the catalogue besides.
+	"name view-profile": "account-user-realm-role-collision: a realm role deliberately named after an account role",
 }
 
 // TestEveryCreatedObjectCarriesTheProbePrefix turns six written arguments into

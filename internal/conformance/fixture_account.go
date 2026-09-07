@@ -187,6 +187,104 @@ func accountRoleFixture(username, role string) Fixture {
 	return Fixture{State: "bootstrap", Steps: append(steps, accountLoginStep("master", username))}
 }
 
+// accountCollidingRoleName is the account role name the collision fixture puts
+// on a **realm** role. It is deliberately not a gloak-probe- name, because a
+// name the account API would not recognise measures nothing, and it is declared
+// in namedOutsideTheConvention with the window argument that makes it safe.
+const accountCollidingRoleName = "view-profile"
+
+// accountRealmRoleCollisionFixture gives a user a **realm** role named after an
+// account role, and no account role at all.
+//
+// It is internal/admin's F32 asked of this API before the answer can be got
+// wrong here: a caller who can create a role can name it anything, so a gate
+// that asked "does this subject hold a role called view-profile" would hand the
+// whole account API to whoever minted one. Keycloak refuses it - measured,
+// **401**, on all three of /groups, /linked-accounts and /supportedLocales -
+// and accountGrants reduces by container for exactly this reason.
+//
+// It exists because the mutation that drops the container test **survived**
+// every other case in the chapter: no other fixture's user holds a role whose
+// name collides with an account role, so widening the grants to any container
+// changed no byte of any golden.
+func accountRealmRoleCollisionFixture() Fixture {
+	const username = "gloak-probe-account-collide"
+	return Fixture{State: "bootstrap", Steps: []Step{
+		adminTokenStep(),
+		accountCreateUserStep(username),
+		accountUserIDStep(username),
+		{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/roles/default-roles-master",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"default_roles_id": "id"},
+		},
+		{
+			Request: Request{
+				Method:  http.MethodDelete,
+				Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/realm",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`[{"id":"{{default_roles_id}}","name":"default-roles-master"}]`),
+			},
+		},
+		{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/roles",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"name":"` + accountCollidingRoleName + `"}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/roles/" + accountCollidingRoleName,
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"colliding_role_id": "id"},
+		},
+		{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/realm",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`[{"id":"{{colliding_role_id}}","name":"` +
+					accountCollidingRoleName + `"}]`),
+			},
+		},
+		accountLoginStep("master", username),
+	}}
+}
+
+// accountDisabledUserFixture logs a user in and **then** disables it, so the
+// case's own request carries a token that verifies, names a live session and
+// belongs to an account nobody may use any more.
+//
+// The order is the fixture: disabling first would make the password grant fail
+// and there would be no token to send. It exists because the mutation that
+// removes the `!user.Enabled` check survived the whole chapter - every other
+// case's user is enabled throughout - and Keycloak answers this 401.
+func accountDisabledUserFixture() Fixture {
+	const username = "gloak-probe-account-disabled"
+	return Fixture{State: "bootstrap", Steps: []Step{
+		adminTokenStep(),
+		accountCreateUserStep(username),
+		accountUserIDStep(username),
+		accountLoginStep("master", username),
+		{
+			Request: Request{
+				Method:  http.MethodPut,
+				Path:    "/admin/realms/master/users/{{user_id}}",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"enabled":false}`),
+			},
+		},
+	}}
+}
+
 // accountGroupFixture puts one user in one group and logs it in. child asks for
 // the group to be a **child** of a group the user is not in, which is the input
 // that separates the two readings of "the groups I am in".
