@@ -1730,6 +1730,61 @@ func TestNoHTMLMaskVariesNothing(t *testing.T) {
 // word, so the colon is what makes the search specific rather than a guess.
 var qualifiedPlaceholder = regexp.MustCompile(`\{\{[A-Za-z_0-9]+:[A-Za-z_0-9]+\}\}`)
 
+// TestAssertAbsentHeadersAgreeWithTheGolden checks every absent-header
+// declaration against the bytes that were recorded, rather than only against
+// what a server serves.
+//
+// **It exists because of a surviving mutation.** `AssertAbsentHeaders` is read
+// by `diff`, and `diff`'s verdict on a `Recorded` case is only ever "these
+// differ" - the status requires a mismatch and is satisfied by any one. So
+// deleting an entry from a Recorded case's list changed nothing anywhere:
+// P11 added six such lists to pin the sharpest header finding this repository
+// has - `/protocol/saml`'s 400 page sending none of the five where the
+// byte-identical `/auth` page sends all of them - and every one of them was
+// unasserted the moment it was written.
+//
+// The golden answers it. The recorder writes **every** header a response
+// carried, so a declaration that a header is absent is a claim about a file in
+// this repository and can be checked against it here, for a Recorded and a
+// Pending case as readily as for an Implemented one. That turns six
+// declarations from a promise about a future promotion into a measurement with
+// a test under it today.
+//
+// It does not replace `diff`'s check and is not meant to: that one is about
+// what Gloak serves, this one is about what Keycloak was measured doing.
+func TestAssertAbsentHeadersAgreeWithTheGolden(t *testing.T) {
+	declared := 0
+	for _, c := range Catalog {
+		if len(c.AssertAbsentHeaders) == 0 {
+			continue
+		}
+		raw, err := os.ReadFile(GoldenPath(goldenDir, c.ID))
+		if err != nil {
+			continue // a missing golden is TestConformance's business
+		}
+		g, err := ParseGolden(raw)
+		if err != nil {
+			t.Errorf("%q: parse golden: %v", c.ID, err)
+			continue
+		}
+		present := map[string]string{}
+		for _, h := range g.Headers {
+			present[http.CanonicalHeaderKey(h.Name)] = h.Value
+		}
+		for _, name := range c.AssertAbsentHeaders {
+			declared++
+			if value, ok := present[http.CanonicalHeaderKey(name)]; ok {
+				t.Errorf("%q declares %s absent and its golden carries %q - "+
+					"the declaration contradicts the measurement it was written from",
+					c.ID, name, value)
+			}
+		}
+	}
+	if declared == 0 {
+		t.Fatal("no case declares an absent header, so this guard checks nothing")
+	}
+}
+
 // TestHTMLMaskVariesGuardCanFail proves the guard above can fail, which matters
 // more here than for the three older ratchets: those are green with findings
 // they excuse, and this one is green with nothing excused at all - the same
