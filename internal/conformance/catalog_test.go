@@ -1529,7 +1529,26 @@ func htmlMaskedOnce(t *testing.T, c Case) (map[string][][]byte, error) {
 		return nil, fmt.Errorf("serve: %w", err)
 	}
 	body := ReplaceIssuer(ReplaceCaptured(got.Body.Bytes(), vars), testIssuer)
-	return HTMLMaskedValues(body, c)
+	out, err := HTMLMaskedValues(body, c)
+	if err != nil {
+		return nil, err
+	}
+	// The XML frame goes through the same ratchet, and it earns its place there
+	// rather than inheriting it. Its values are per **database** rather than per
+	// request - the descriptor's key id and certificate - and the verifier mints
+	// a fresh database for every serve, so two servings do move them. What that
+	// catches is the mistake this frame invites: a mask pointed at
+	// md:NameIDFormat or md:SingleSignOnService, whose text is a constant of the
+	// protocol. Nothing else in the harness would notice, because
+	// ReplaceXMLValues' own refusal only fires when a mask covers *nothing*.
+	xml, err := XMLMaskedValues(body, c)
+	if err != nil {
+		return nil, err
+	}
+	for name, values := range xml {
+		out[name] = values
+	}
+	return out, nil
 }
 
 // htmlMasksThatDidNotMove is every HTML mask whose values are byte-identical
@@ -1573,7 +1592,7 @@ func htmlMasksThatDidNotMove(first, second map[string][][]byte) []maskFinding {
 			}
 		}
 		if !moved {
-			out = append(out, maskFinding{"VolatileHTML", name, fmt.Sprintf(
+			out = append(out, maskFinding{"VolatileMarkup", name, fmt.Sprintf(
 				"covers %d value(s) and two servings of this case produced the identical bytes (%q)",
 				len(a), a[0])})
 		}
@@ -1582,7 +1601,7 @@ func htmlMasksThatDidNotMove(first, second map[string][][]byte) []maskFinding {
 }
 
 // htmlMasksLeftInPlace is every finding of the guard below that is still in the
-// catalogue, keyed "<case ID> VolatileHTML <name>", with the reason.
+// catalogue, keyed "<case ID> VolatileMarkup <name>", with the reason.
 //
 // It is empty, and that is a statement rather than an oversight: no HTML mask in
 // this repository covers a value that does not move. It exists because the other
@@ -1610,7 +1629,8 @@ func TestNoHTMLMaskVariesNothing(t *testing.T) {
 	declared := 0
 	for _, c := range Catalog {
 		if c.Status != Implemented ||
-			len(c.VolatileHTMLQuery)+len(c.VolatileHTMLCall)+len(c.VolatileHTMLInput) == 0 {
+			len(c.VolatileHTMLQuery)+len(c.VolatileHTMLCall)+
+				len(c.VolatileHTMLInput)+len(c.VolatileXMLText) == 0 {
 			continue
 		}
 		declared++
@@ -1630,8 +1650,9 @@ func TestNoHTMLMaskVariesNothing(t *testing.T) {
 					continue
 				}
 				t.Errorf("%s - drop the mask and let the golden assert the value, or, "+
-					"if it belongs to the installation rather than to the request, "+
-					"give it an unconditional pass beside ReplaceThemeResource", m)
+					"if it belongs to every installation alike rather than to this "+
+					"one's database or this request, give it an unconditional pass "+
+					"beside ReplaceThemeResource", m)
 			}
 		})
 	}

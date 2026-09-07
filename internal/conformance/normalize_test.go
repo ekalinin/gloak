@@ -912,3 +912,150 @@ func TestReplaceHTMLValuesLeavesAnUndeclaredBodyAlone(t *testing.T) {
 		t.Fatalf("a case with no HTML mask had its body rewritten: %s", got)
 	}
 }
+
+// descriptorFragment is a SAML IdP descriptor cut down to the shapes the XML
+// mask has to get right, built around the bytes a live 26.7.1 answered
+// GET /realms/master/protocol/saml/descriptor on 2026-09-07.
+//
+// It is hand-built on purpose. The real descriptor cannot separate the guard
+// from a rewrite of it: it holds no element whose name is a prefix of another,
+// nothing self-closing and nothing unterminated, so a mask that dropped its
+// boundary check, its self-closing check or its markup check would mask the
+// real body identically and every assertion about it would still pass. The
+// rows that separate them are md:Key against md:KeyDescriptor, md:Closed,
+// md:Empty and ds:KeyInfo, and each is named where it is used.
+const descriptorFragment = `<md:EntityDescriptor entityID="http://localhost:18080/realms/master">` +
+	`<md:KeyDescriptor use="signing"><ds:KeyInfo>` +
+	`<ds:KeyName>Br0_6gCZJkn2ZWS1EqfdgUnxt6v4I7akltE6zLRuAKE</ds:KeyName>` +
+	`<ds:X509Data><ds:X509Certificate>MIICmzCCAYMCBgGge5CoAg==</ds:X509Certificate></ds:X509Data>` +
+	`</ds:KeyInfo></md:KeyDescriptor>` +
+	`<md:Key>short</md:Key>` +
+	`<md:Empty></md:Empty><md:Closed/>` +
+	`<md:NameIDFormat>urn:oasis:names:tc:SAML:2.0:nameid-format:persistent</md:NameIDFormat>` +
+	`<md:NameIDFormat>urn:oasis:names:tc:SAML:2.0:nameid-format:transient</md:NameIDFormat>` +
+	`</md:EntityDescriptor>`
+
+// The mask covers the element's text and leaves the tag, its attributes and
+// every other byte of the document alone. That is VolatileHTMLQuery's bargain
+// in a third dialect, and it is what keeps the entityID, the namespaces and the
+// bindings compared.
+func TestReplaceXMLValuesMasksTheTextAndNothingElse(t *testing.T) {
+	got, err := ReplaceXMLValues([]byte(descriptorFragment), Case{
+		VolatileXMLText: []string{"ds:KeyName", "ds:X509Certificate"},
+	})
+	if err != nil {
+		t.Fatalf("mask: %v", err)
+	}
+	want := strings.NewReplacer(
+		"Br0_6gCZJkn2ZWS1EqfdgUnxt6v4I7akltE6zLRuAKE", "{{ds:KeyName}}",
+		"MIICmzCCAYMCBgGge5CoAg==", "{{ds:X509Certificate}}",
+	).Replace(descriptorFragment)
+	if string(got) != want {
+		t.Fatalf("want:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+// The values the mask covers are what the ratchet reads, through the same
+// finder the masker splices with.
+func TestXMLMaskedValuesReadsWhatTheMaskCovers(t *testing.T) {
+	values, err := XMLMaskedValues([]byte(descriptorFragment), Case{
+		VolatileXMLText: []string{"ds:KeyName", "md:NameIDFormat", "md:Key"},
+	})
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	for name, want := range map[string][]string{
+		"ds:KeyName": {"Br0_6gCZJkn2ZWS1EqfdgUnxt6v4I7akltE6zLRuAKE"},
+		"md:NameIDFormat": {
+			"urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+			"urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
+		},
+		// The row that kills the boundary mutation: md:Key must not fire on
+		// md:KeyDescriptor, so it covers one value and not two.
+		"md:Key": {"short"},
+	} {
+		got := make([]string, 0, len(values[name]))
+		for _, v := range values[name] {
+			got = append(got, string(v))
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: covers %q, want %q", name, got, want)
+		}
+	}
+}
+
+// The four shapes xmlTextMatches refuses, one row each, each naming the check
+// it exists to kill - so a mutation deleting one is reported against that check
+// rather than against the whole table.
+func TestXMLTextMaskRefusesTheShapesItCannotCover(t *testing.T) {
+	for _, tc := range []struct {
+		name, element, body, want string
+	}{
+		{
+			// Masking ds:KeyInfo would swallow ds:X509Data, its child and the
+			// whole shape of the key block. A text mask covers text.
+			name:    "markup rather than text",
+			element: "ds:KeyInfo",
+			body:    descriptorFragment,
+			want:    "holds markup rather than text",
+		},
+		{
+			name:    "self-closing",
+			element: "md:Closed",
+			body:    descriptorFragment,
+			want:    "self-closing",
+		},
+		{
+			name:    "never closed",
+			element: "md:Dangling",
+			body:    `<md:EntityDescriptor><md:Dangling>value`,
+			want:    "never closed",
+		},
+		{
+			name:    "not inside a closed tag",
+			element: "md:Unterminated",
+			body:    `<md:EntityDescriptor><md:Unterminated attr="x"`,
+			want:    "not inside a closed tag",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ReplaceXMLValues([]byte(tc.body), Case{VolatileXMLText: []string{tc.element}})
+			if err == nil {
+				t.Fatalf("the mask was applied to an element that is %s", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("refused for the wrong reason: %v", err)
+			}
+		})
+	}
+}
+
+// A name the document does not carry is refused rather than applied, and so is
+// one covering an empty value. Both are ReplaceHTMLValues' rules and the reason
+// is the same: the golden would hold the placeholder, the served body would
+// hold the raw value, and the diff would blame the document.
+func TestReplaceXMLValuesRefusesNothingAndEmptiness(t *testing.T) {
+	if _, err := ReplaceXMLValues([]byte(descriptorFragment), Case{
+		VolatileXMLText: []string{"md:NoSuchElement"},
+	}); err == nil {
+		t.Error("a mask covering nothing was applied")
+	}
+	if _, err := ReplaceXMLValues([]byte(descriptorFragment), Case{
+		VolatileXMLText: []string{"md:Empty"},
+	}); err == nil {
+		t.Error("a mask over an empty element was applied")
+	}
+}
+
+// A case declaring no XML mask has its body handed back untouched. Every body
+// in the catalogue goes through this pass, JSON and HTML included.
+func TestReplaceXMLValuesLeavesAnUndeclaredBodyAlone(t *testing.T) {
+	in := []byte(descriptorFragment)
+	got, err := ReplaceXMLValues(in, Case{})
+	if err != nil {
+		t.Fatalf("mask: %v", err)
+	}
+	if !bytes.Equal(got, in) {
+		t.Fatalf("a case with no XML mask had its body rewritten: %s", got)
+	}
+}
