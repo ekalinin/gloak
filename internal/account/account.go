@@ -283,13 +283,28 @@ func (h *handler) accountGrants(ctx context.Context, realm *model.Realm, effecti
 //	Basic <creds>             401
 //	Negotiate <t> DPoP <t>    401      a valid token under another scheme
 //
+// Every row above was re-measured on 2026-09-07 against a fresh 26.7.1 and all
+// sixteen reproduce.
+//
 // **A version that trimmed the remainder passed all of this except the three
 // refusals in the middle**, and that is how it was found: `strings.TrimSpace`
 // over the part after the first space turns `Bearer  <t>` into a 200 where
 // Keycloak answers 401. Trimming the whole value first and then refusing a
 // remainder that still holds a space is what fits all sixteen rows.
-// account/gate/double-space-scheme and account/gate/leading-space-scheme are
-// the two cases that hold the ends of it.
+// account/gate/double-space-scheme is the case that holds that end of it, and
+// the space is **inside** the value, so no HTTP stack removes it.
+//
+// **The other end has no case and cannot have one.** A leading or trailing
+// space is optional whitespace around the field value, and a conformant
+// receiver strips it before any handler runs: measured, a Go client sending
+// `" Bearer tok"` over a real socket is read by the server as `"Bearer tok"`,
+// while the same value handed to a handler in-process arrives with the space
+// intact. So a conformance case for it would compare 200 against 200 for two
+// different reasons - the recorder's Keycloak never sees the space and the
+// verifier's Gloak sees it and trims it - which is a case measuring the harness
+// rather than the server. The outer TrimSpace here is therefore defensive
+// rather than measured, and it is kept because this function is also called
+// from tests that construct a request directly. See F191.
 func bearerToken(r *http.Request) string {
 	value := strings.TrimSpace(r.Header.Get("Authorization"))
 	scheme, rest, ok := strings.Cut(value, " ")

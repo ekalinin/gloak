@@ -52,10 +52,37 @@ import "net/http"
 // different resource, and the only 406-shaped thing on the surface is nothing
 // at all.
 //
-// # The enumeration: 16 route shapes, 119 verb cells, 41 counted behaviours
+// # The enumeration: 16 route shapes, 112 verb cells, 40 counted behaviours
 //
-// Sweeping candidate paths **with `Accept: application/json`** - which puts the
-// two 404 bodies back - gives sixteen route shapes and no more:
+// **The three numbers in this heading disagreed with each other and with the
+// slice until 2026-09-07.** The commit that added the chapter said 36, this
+// heading said 41, the slice held 39, and a paragraph below said seventeen
+// paths where the list above it has sixteen. Nothing could fail on any of them.
+// TestAccountChapterCountIsThePinnedNumber now reads the slice, so the count in
+// this sentence is the one a test asserts rather than the one a reader trusts.
+//
+// **The two-404 discriminator does not work on this surface, and the sentence
+// that said it did was wrong.** It read: sweeping candidates with
+// `Accept: application/json` "puts the two 404 bodies back". Re-measured on
+// 2026-09-07, one container, one fully-privileged account user:
+//
+//	GET /realms/master/account/nosuchthing            404 HTTP 404 Not Found   5 of 5
+//	GET /realms/master/account/credentials/bogus      404 HTTP 404 Not Found   5 of 5
+//	GET /realms/master/nosuchthing                    404 HTTP 404 Not Found   5 of 5
+//	GET /nosuchthingatall                             404 Unable to find …     0 of 5
+//
+// A path that exists and a path that does not answer the **same body with the
+// same five headers**, and the unmatched-path body is not reachable anywhere
+// under `/realms/`. That is exactly F184's shape, which this chapter sits
+// inside; the SAML cut's method cannot be borrowed here, and the `Accept`
+// header buys the JSON branch rather than the discriminator.
+//
+// What did the enumerating is weaker and had to be stated: **a route exists
+// when at least one verb answers outside the generic fallback family** - a 200,
+// a 204, a 400, a 403, a 415, a 500, or a 404 carrying its own sentence.
+// `OPTIONS` is excluded from that test and the exclusion is load-bearing: it
+// answers 200 with an empty body on **every** path including ones that do not
+// exist, so it witnesses nothing. Sixteen route shapes answer it and no more:
 //
 //	/account                       the profile
 //	/account/credentials
@@ -74,13 +101,18 @@ import "net/http"
 //	/account/resources (and its five sub-paths, all behind one gate)
 //	/account/supportedLocales
 //
-// Twenty-three candidates were tried and answered the generic 404: `/totp`,
-// `/password`, `/organizations`, `/profile`, `/attributes`, `/metadata`,
-// `/devices`, `/consents`, `/roles`, `/realm`, `/logout`, `/login-redirect`,
-// `/credentials/password`, `/user-profile-metadata` among them.
+// Twenty-three candidates were tried and answered the generic 404 on every
+// verb: `/totp`, `/password`, `/organizations`, `/profile`, `/attributes`,
+// `/metadata`, `/devices`, `/consents`, `/roles`, `/realm`, `/logout`,
+// `/login-redirect`, `/credentials/password`, `/user-profile-metadata` among
+// them. "Answered the generic 404" is what they share with a route that exists,
+// which is why the rejection rests on **no verb answering anything else**
+// rather than on the body.
 //
-// Seventeen paths crossed with seven verbs is a 119-cell sweep and **most of
-// it is the generic fallback family**: `HTTP 404 Not Found` and `HTTP 405
+// Sixteen paths crossed with seven verbs is a 112-cell sweep, and the run of
+// 2026-09-07 added a seventeenth path - `/account/nosuchthing` - as the
+// control, which is where the 119 in the earlier draft came from. **Most of the
+// sweep is the generic fallback family**: `HTTP 404 Not Found` and `HTTP 405
 // Method Not Allowed`, which `http/fallback` already counts once for the whole
 // API. Those cells are **not** in this chapter's denominator, the same decision
 // the SAML cut made and for the same reason - counting them per path would
@@ -279,6 +311,36 @@ var accountCases = []Case{
 			Headers: map[string]string{
 				"Accept":        "application/json",
 				"Authorization": "Negotiate {{user_token}}",
+			},
+		},
+		AssertHeaders: []string{"Content-Type", "X-Frame-Options"},
+	},
+	{
+		ID: "account/gate/double-space-scheme",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs/26.7.1/server_admin/#account-api",
+			Section:   "Account REST API: bearer authentication",
+			Retrieved: "2026-09-07",
+		},
+		Status:  Implemented,
+		Fixture: "account-user",
+		// **Exactly one space separates the scheme from the token.** `Bearer`
+		// followed by two spaces and a token that answers 200 with one space is
+		// a 401 - measured, along with three spaces and a tab, which answer the
+		// same way.
+		//
+		// It is here because the obvious implementation passes everything else:
+		// a bearerToken that runs strings.TrimSpace over the part after the
+		// first space answers 200 to this request, and every other case on this
+		// API agrees with the correct one. bearerToken's doc comment named this
+		// case and account/gate/leading-space-scheme beside it before either
+		// existed; they exist now.
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/account/groups",
+			Headers: map[string]string{
+				"Accept":        "application/json",
+				"Authorization": "Bearer  {{user_token}}",
 			},
 		},
 		AssertHeaders: []string{"Content-Type", "X-Frame-Options"},

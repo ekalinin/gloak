@@ -1662,13 +1662,24 @@ var Fixtures = map[string]Fixture{
 	"account-user": accountUserFixture(accountProbeUser),
 
 	// The sessions listing needs a user **one case logs in as**, and that is
-	// not a tidiness preference. account-user is named by seven cases, the
+	// not a tidiness preference. account-user is named by twenty-one cases, the
 	// recorder runs its login once per case on one shared container, and every
 	// one of those logins is a session this listing then answers - so the
 	// golden held eleven rows on the first recording and twelve on the second,
 	// with `"current":true` at a different index. That is the shape AGENTS.md
 	// calls "a golden that holds only while the catalogue's order holds", and
 	// the answer is a fixture of its own rather than a mask over the array.
+	//
+	// **The count in that sentence read "seven" until 2026-09-07 and the real
+	// number was twenty-one**, which is the arithmetic that explains the eleven
+	// and the twelve: ten account-user cases sit ahead of the listing in the
+	// catalogue, and inserting an eleventh added exactly one row. A count in
+	// prose beside the list it counts drifts, and this one drifted in the
+	// direction that made the problem look smaller than it was.
+	//
+	// A **user** of its own is enough and a realm of its own is not needed:
+	// /account/sessions is scoped to the subject, so nothing another user does
+	// can reach it. That was the open question the first session left.
 	"account-user-sessions": accountUserFixture("gloak-probe-account-sessions"),
 	"account-user-view-profile": accountRoleFixture(
 		"gloak-probe-account-view-profile", "view-profile"),

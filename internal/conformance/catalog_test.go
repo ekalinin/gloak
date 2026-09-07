@@ -622,6 +622,33 @@ func TestPollutionGuardSeesEveryCreatedFamily(t *testing.T) {
 	}
 }
 
+// accountChapterCases is the number of cases catalog_account.go's heading
+// claims. It is here rather than in a comment there because a count in prose
+// beside the list it counts drifts, and this one drifted three ways at once:
+// the commit that added the chapter said 36, the file's heading said 41 and the
+// slice held 39. None of the three could fail.
+const accountChapterCases = 40
+
+// TestAccountChapterCountIsThePinnedNumber makes the heading's count an
+// assertion.
+//
+// It is deliberately a hard number rather than a floor. A chapter that grows is
+// a diff a reviewer should see, and this test failing is how they see it - the
+// remedy is one line here and one word in the heading, together, which is
+// exactly the coupling that was missing.
+func TestAccountChapterCountIsThePinnedNumber(t *testing.T) {
+	n := 0
+	for _, c := range Catalog {
+		if strings.HasPrefix(c.ID, "account/") {
+			n++
+		}
+	}
+	if n != accountChapterCases {
+		t.Errorf("the account chapter holds %d cases and accountChapterCases says %d; "+
+			"update both this constant and catalog_account.go's heading", n, accountChapterCases)
+	}
+}
+
 // TestPollutionGuardIgnoresNamesBootstrapShips proves the third source of the
 // invariant is wired, and that it is load-bearing rather than decorative.
 //
