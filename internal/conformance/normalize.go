@@ -1001,19 +1001,19 @@ const bracketedItemSeparator = ", "
 // error: a mask declared on a string with no list in it, or with two, is a mask
 // whose author meant something this cannot do.
 func sortBracketedRun(s string) (string, error) {
-	open := strings.Index(s, "[")
-	close := strings.Index(s, "]")
+	opened := strings.Index(s, "[")
+	closed := strings.Index(s, "]")
 	switch {
-	case open < 0 || close < 0:
+	case opened < 0 || closed < 0:
 		return "", fmt.Errorf("string at this path carries no bracketed list: %q", s)
-	case close < open:
+	case closed < opened:
 		return "", fmt.Errorf("string at this path closes a bracket before it opens one: %q", s)
 	case strings.Count(s, "[") != 1 || strings.Count(s, "]") != 1:
 		return "", fmt.Errorf("string at this path carries more than one bracketed list: %q", s)
 	}
-	items := strings.Split(s[open+1:close], bracketedItemSeparator)
+	items := strings.Split(s[opened+1:closed], bracketedItemSeparator)
 	sort.Strings(items)
-	return s[:open+1] + strings.Join(items, bracketedItemSeparator) + s[close:], nil
+	return s[:opened+1] + strings.Join(items, bracketedItemSeparator) + s[closed:], nil
 }
 
 // descend walks into an object or array because some pattern points inside it.
