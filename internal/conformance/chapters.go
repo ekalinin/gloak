@@ -113,12 +113,45 @@ var Chapters = []Chapter{
 	{Name: "admin/users", OpenAPITag: "Users", Enumerated: true},
 	{Name: "admin/workflows", OpenAPITag: "Workflows", Enumerated: true},
 
+	// The account REST API, enumerated by hand on 2026-09-07 and no longer a
+	// "?" row.
+	//
+	// There is no machine-readable description for this surface either, so the
+	// denominator is the catalogue's own case count. What it rests on is a
+	// sweep, and the sweep needed a **different discriminator** from the SAML
+	// one: every path under /realms/{realm}/account answers 200 with the
+	// account console's markup to a request that did not ask for JSON,
+	// including paths no route serves, so the two 404 bodies never appear and a
+	// sweep run that way would have found an infinite surface. The request's
+	// `Accept` decides which of two APIs the path is, and the REST resource is
+	// reached exactly when the accept list holds `application/json` with no
+	// parameters - `application/json;q=1` is the console.
+	//
+	// With that header the sweep gives sixteen route shapes and 119 verb cells.
+	// Almost all of the cells are the generic fallback family, which
+	// http/fallback already counts once for the whole API and which are **not**
+	// counted again here; two that look like it are counted, because they are
+	// not it - PATCH on /resources is a 403 rather than a 405, and OPTIONS is a
+	// 200 with no Allow header at all. See
+	// docs/superpowers/handover/account-api.md for the table.
+	//
+	// One chapter per route family, which is how the OIDC and SAML sides are
+	// split. account/gate is a chapter because the gate is two stages with two
+	// statuses and per-route role sets, which is behaviour rather than plumbing.
+	{Name: "account/gate", Enumerated: true},
+	{Name: "account/groups", Enumerated: true},
+	{Name: "account/linked-accounts", Enumerated: true},
+	{Name: "account/supported-locales", Enumerated: true},
+	{Name: "account/profile", Enumerated: true},
+	{Name: "account/credentials", Enumerated: true},
+	{Name: "account/sessions", Enumerated: true},
+	{Name: "account/applications", Enumerated: true},
+	{Name: "account/resources", Enumerated: true},
+	{Name: "account/console", Enumerated: true},
+	{Name: "account/dispatch", Enumerated: true},
+
 	// Surface with no machine-readable description, not counted by hand
 	// either. Listed so the report can say how much it is not measuring.
-	{
-		Name:   "account",
-		Reason: "the account REST API is not described by the Admin API document and has not been enumerated",
-	},
 	{
 		Name:   "themes",
 		Reason: "themes and i18n are served as resources, not as an API; no operation list exists",

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ekalinin/gloak/internal/account"
 	"github.com/ekalinin/gloak/internal/admin"
 	"github.com/ekalinin/gloak/internal/bootstrap"
 	"github.com/ekalinin/gloak/internal/keys"
@@ -64,6 +65,7 @@ func newFixture(t *testing.T, state string) http.Handler {
 		mux := http.NewServeMux()
 		oidc.Register(mux, s, km, testIssuer)
 		admin.Register(mux, s, km, testIssuer)
+		account.Register(mux, s, km, testIssuer)
 		return oidc.WithKeycloakFallbacks(mux)
 	default:
 		t.Fatalf("unknown fixture state %q", state)

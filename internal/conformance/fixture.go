@@ -1647,6 +1647,83 @@ var Fixtures = map[string]Fixture{
 	// written and already says which flag it turns off.
 	"saml-service-provider-unsigned": samlServiceProviderFixture("gloak-probe-saml-unsigned",
 		"gloak-probe-sso-unsigned", false),
+
+	// --- The account API ---
+	//
+	// Every one of these ends in a **user's** access token rather than an
+	// administrator's, which is what the account API's audience gate needs:
+	// a token granting no role on the realm's `account` client is 401 there,
+	// measured, and the bootstrapped administrator's own token is accepted
+	// only because `admin` holds `default-roles-master` and that composite
+	// reaches manage-account, manage-account-links and view-profile.
+	//
+	// The helpers are in fixture_account.go, which is also where the reason
+	// for each of them is written down.
+	"account-user": accountUserFixture(accountProbeUser),
+
+	// The sessions listing needs a user **one case logs in as**, and that is
+	// not a tidiness preference. account-user is named by twenty-one cases, the
+	// recorder runs its login once per case on one shared container, and every
+	// one of those logins is a session this listing then answers - so the
+	// golden held eleven rows on the first recording and twelve on the second,
+	// with `"current":true` at a different index. That is the shape AGENTS.md
+	// calls "a golden that holds only while the catalogue's order holds", and
+	// the answer is a fixture of its own rather than a mask over the array.
+	//
+	// **The count in that sentence read "seven" until 2026-09-07 and the real
+	// number was twenty-one**, which is the arithmetic that explains the eleven
+	// and the twelve: ten account-user cases sit ahead of the listing in the
+	// catalogue, and inserting an eleventh added exactly one row. A count in
+	// prose beside the list it counts drifts, and this one drifted in the
+	// direction that made the problem look smaller than it was.
+	//
+	// A **user** of its own is enough and a realm of its own is not needed:
+	// /account/sessions is scoped to the subject, so nothing another user does
+	// can reach it. That was the open question the first session left.
+	"account-user-sessions": accountUserFixture("gloak-probe-account-sessions"),
+	"account-user-view-profile": accountRoleFixture(
+		"gloak-probe-account-view-profile", "view-profile"),
+	"account-user-view-groups": accountRoleFixture(
+		"gloak-probe-account-view-groups", "view-groups"),
+	"account-user-links-role": accountRoleFixture(
+		"gloak-probe-account-links-role", "manage-account-links"),
+	"account-user-no-roles": accountRoleFixture(
+		"gloak-probe-account-no-roles", ""),
+
+	// The two fixtures a mutation asked for. Each exists because a guard
+	// survived the whole chapter without it - the container test and the
+	// enabled check - and each carries the input that kills it.
+	"account-user-realm-role-collision": accountRealmRoleCollisionFixture(),
+	"account-user-disabled":             accountDisabledUserFixture(),
+
+	// A user in one group at the top of the realm, and a second in a child
+	// alone. **The second is not a variation on the first**: membership was
+	// measured not to reach upwards on this route, so the child-only user is
+	// the input that separates "the groups I am in" from "the groups I am in
+	// and their ancestors", and the first user cannot - it is in a group with
+	// no ancestors to add.
+	"account-user-grouped":     accountGroupFixture("gloak-probe-account-grouped", false),
+	"account-user-child-group": accountGroupFixture("gloak-probe-account-child", true),
+
+	// The linked-accounts listing needs providers, and it needs them in a
+	// realm of its own: four identity providers in master would join every
+	// PristineRealm golden that enumerates the realm's brokers.
+	"account-user-brokers": accountBrokerFixture(false),
+
+	// The same realm plus the two provider types the linked-accounts listing
+	// omits. **Named by exactly one case on purpose** - see
+	// accountBrokerFixture: the kubernetes create is not idempotent, because
+	// its issuer is a server-filled constant and the issuer check runs before
+	// the alias check, so a second run of these two steps is a 400 rather than
+	// a 409. Both fixtures build the same realm and the same four brokers
+	// idempotently, so either may run first.
+	"account-user-brokers-unlisted": accountBrokerFixture(true),
+
+	// A user holding every account role whose token still cannot reach the
+	// API, because its client filters the account roles out of the token's
+	// scope. See the block above: this is the second half of the pair that
+	// says what the gate reads.
+	"account-user-scope-filtered": accountScopeFilteredFixture(),
 }
 
 // samlServiceProviderFixture creates one SAML client carrying the attribute the

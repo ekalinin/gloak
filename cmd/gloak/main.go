@@ -13,6 +13,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/ekalinin/gloak/internal/account"
 	"github.com/ekalinin/gloak/internal/admin"
 	"github.com/ekalinin/gloak/internal/bootstrap"
 	"github.com/ekalinin/gloak/internal/keys"
@@ -111,6 +112,7 @@ func serve(args []string) error {
 	mux := http.NewServeMux()
 	oidc.Register(mux, s, km, cfg.issuer)
 	admin.Register(mux, s, km, cfg.issuer)
+	account.Register(mux, s, km, cfg.issuer)
 
 	server := newHTTPServer(cfg.addr, logRequests(oidc.WithKeycloakFallbacks(mux)))
 
