@@ -1,12 +1,19 @@
 package account
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/ekalinin/gloak/internal/bootstrap"
 	"github.com/ekalinin/gloak/internal/model"
+	"github.com/ekalinin/gloak/internal/roles"
+	"github.com/ekalinin/gloak/internal/store"
+	"github.com/ekalinin/gloak/internal/store/sqlite"
+	"github.com/ekalinin/gloak/internal/token"
 )
 
 // The goldens are the contract and these are the rules beside them. Each of
@@ -222,5 +229,83 @@ func TestSubjectRoleQuestionsAreAskedOfOneContainer(t *testing.T) {
 	}
 	if (&subject{}).hasAny(roleViewGroups) {
 		t.Error("a subject with no grants at all was admitted")
+	}
+}
+
+// newAccountHandler builds a handler over a freshly bootstrapped master realm.
+//
+// It is the first one in this package and it exists for one branch: everything
+// above is a pure function and grantedRoles needs a store. It holds no keys,
+// because nothing it is used for verifies a token.
+func newAccountHandler(t *testing.T) (*handler, store.Store, *model.Realm) {
+	t.Helper()
+	ctx := context.Background()
+	s, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "gloak.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	if err := bootstrap.EnsureMaster(ctx, s, "admin", "admin"); err != nil {
+		t.Fatalf("EnsureMaster: %v", err)
+	}
+	realm, err := s.Realms().ByName(ctx, "master")
+	if err != nil {
+		t.Fatalf("ByName: %v", err)
+	}
+	return &handler{store: s, issuerBase: "http://localhost:8080"}, s, realm
+}
+
+// TestGrantedRolesRefusesATokenWhoseClientIsGone pins the fall-open branch of
+// the audience gate, and **the state it describes is reachable in Gloak.**
+//
+// `client_session` cascades when a client is deleted and `user_session` does
+// not - 0003_session.sql - so a token minted by a client that has since been
+// deleted still resolves to a live user session, reaches grantedRoles, and
+// finds no client to read fullScopeAllowed from. Answering with the user's
+// whole role set there hands the account API to that token; answering with
+// nothing refuses it, which is what this gate already does for a caller holding
+// no account role.
+//
+// No conformance case can reach it - no fixture deletes a client it has minted
+// a token at - and a mutation flipping the branch survived the whole tree. So
+// the direction is asserted here, with the control beside it: the same user and
+// realm through a client that **does** exist answers the account roles, which is
+// what makes the refusal a statement about the missing client rather than about
+// the user.
+func TestGrantedRolesRefusesATokenWhoseClientIsGone(t *testing.T) {
+	h, s, realm := newAccountHandler(t)
+	ctx := context.Background()
+
+	user := &model.User{
+		ID: model.NewID(), RealmID: realm.ID,
+		Username: "gloak-probe-gone-client-user", Enabled: true,
+	}
+	if err := s.Users().Create(ctx, user); err != nil {
+		t.Fatalf("Create(user): %v", err)
+	}
+	if err := roles.AssignDefaults(ctx, s.Roles(), realm.ID, realm.Name, user.ID); err != nil {
+		t.Fatalf("AssignDefaults: %v", err)
+	}
+
+	// The control. admin-cli carries fullScopeAllowed, so every role the user
+	// holds is in its scope and the account roles come through.
+	held, err := h.grantedRoles(ctx, realm, &token.Parsed{ClientID: "admin-cli"}, user)
+	if err != nil {
+		t.Fatalf("grantedRoles(admin-cli): %v", err)
+	}
+	grants, err := h.accountGrants(ctx, realm, held)
+	if err != nil {
+		t.Fatalf("accountGrants: %v", err)
+	}
+	if len(grants) == 0 {
+		t.Fatal("the control client granted no account role, so the refusal below asserts nothing")
+	}
+
+	gone, err := h.grantedRoles(ctx, realm, &token.Parsed{ClientID: "gloak-probe-deleted"}, user)
+	if err != nil {
+		t.Fatalf("grantedRoles(missing client): %v", err)
+	}
+	if len(gone) != 0 {
+		t.Fatalf("a token whose azp names no client granted %d role(s); want none", len(gone))
 	}
 }

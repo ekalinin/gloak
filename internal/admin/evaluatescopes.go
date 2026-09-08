@@ -79,24 +79,13 @@ const (
 // byte of the answer, not a 400. The same is true of a `scope` naming one of
 // the client's own *default* scopes: it is already in, and naming it adds
 // nothing.
+//
+// The body is roles.ScopesInEffect: the issuer answers this endpoint's
+// question for real, and 2026-09-08 measured the two agreeing on all four
+// cells of the attached/named cross - so one of them is enough, and two would
+// be two chances to drift.
 func (h *handler) evaluatedScopes(ctx context.Context, c *model.Client, requested string) ([]*model.ClientScope, error) {
-	defaults, err := h.store.ClientScopes().ListClientScopes(ctx, c.ID, true)
-	if err != nil {
-		return nil, err
-	}
-	optional, err := h.store.ClientScopes().ListClientScopes(ctx, c.ID, false)
-	if err != nil {
-		return nil, err
-	}
-	asked := strings.Fields(requested)
-	out := make([]*model.ClientScope, 0, len(defaults)+len(optional))
-	out = append(out, defaults...)
-	for _, s := range optional {
-		if slices.Contains(asked, s.Name) {
-			out = append(out, s)
-		}
-	}
-	return out, nil
+	return roles.ScopesInEffect(ctx, h.store.ClientScopes(), c, requested)
 }
 
 // listEvaluatedProtocolMappers serves
@@ -171,36 +160,18 @@ func (h *handler) roleContainer(ctx context.Context, rc *reqContext, id string) 
 // fullScopeAllowed short-circuits the rest, measured: a SAML client created
 // with the flag on answered every realm role from `granted` and `[]` from
 // `not-granted`, where `account` with the flag off answered the reverse.
+//
+// **This is the issuer's rule and that was measured rather than assumed**, on
+// 2026-09-08: on a client with the flag off, `granted` and this endpoint's
+// example access token agreed with a real password grant's realm_access and
+// resource_access on every probe - a realm role mapped, a client role mapped, a
+// composite mapped parent-only and child-only, and a client scope's own
+// mappings. The evaluator and the issuer therefore share one function in
+// internal/roles rather than each carrying a copy, and the three scope-mapping
+// *reads* next door are the ones that measurably differ - see hasScope.
 func (h *handler) evaluatedScopePredicate(ctx context.Context, c *model.Client,
 	scopes []*model.ClientScope) (func(*model.Role) bool, error) {
-	if c.FullScopeAllowed {
-		return func(*model.Role) bool { return true }, nil
-	}
-	direct, err := h.store.Roles().ListClientScopeMappings(ctx, c.ID)
-	if err != nil {
-		return nil, err
-	}
-	own, err := h.store.Roles().ListClientRoles(ctx, c.RealmID, c.ID)
-	if err != nil {
-		return nil, err
-	}
-	direct = append(direct, own...)
-	for _, s := range scopes {
-		mapped, err := h.store.Roles().ListClientScopeScopeMappings(ctx, s.ID)
-		if err != nil {
-			return nil, err
-		}
-		direct = append(direct, mapped...)
-	}
-	reachable, err := roles.ExpandFrom(ctx, h.store.Roles(), direct)
-	if err != nil {
-		return nil, err
-	}
-	in := make(map[string]bool, len(reachable))
-	for _, role := range reachable {
-		in[role.ID] = true
-	}
-	return func(role *model.Role) bool { return in[role.ID] }, nil
+	return roles.InScope(ctx, h.store.Roles(), c, scopes)
 }
 
 // evaluatedScopeMappings serves both

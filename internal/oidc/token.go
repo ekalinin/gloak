@@ -629,7 +629,7 @@ func (h *handler) startSession(ctx context.Context, realm *model.Realm, client *
 // Gloak has nowhere to keep it - model.UserSession is internal/model's. Filed
 // rather than guessed.
 func (h *handler) writeTokens(w http.ResponseWriter, r *http.Request, realm *model.Realm, client *model.Client, user *model.User, session *model.UserSession, scope string, k *keys.RealmKeys, serviceAccount bool, authTime time.Time, nonce, jkt string) {
-	realmRoles, clientRoles, err := h.tokenRoles(r.Context(), realm, user)
+	realmRoles, clientRoles, err := h.tokenRoles(r.Context(), realm, client, user, scope)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return

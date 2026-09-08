@@ -627,7 +627,8 @@ func TestPollutionGuardSeesEveryCreatedFamily(t *testing.T) {
 // beside the list it counts drifts, and this one drifted three ways at once:
 // the commit that added the chapter said 36, the file's heading said 41 and the
 // slice held 39. None of the three could fail.
-const accountChapterCases = 40
+// 41 since F192, which added account/gate/scope-filtered-lightweight.
+const accountChapterCases = 41
 
 // TestAccountChapterCountIsThePinnedNumber makes the heading's count an
 // assertion.

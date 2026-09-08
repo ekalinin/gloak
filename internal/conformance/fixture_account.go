@@ -486,8 +486,38 @@ func accountBrokerFixture(unlisted bool) Fixture {
 // where admin-cli's is accepted - so no implementation that inspects the claim
 // can tell them apart, and one that inspects the granted roles gets both right.
 func accountScopeFilteredFixture() Fixture {
-	const clientID = "gloak-probe-account-narrow"
-	const username = "gloak-probe-account-narrow-user"
+	return accountNarrowClientFixture("gloak-probe-account-narrow", "")
+}
+
+// accountScopeFilteredLightweightFixture is the same client with
+// client.use.lightweight.access.token.enabled, and it is **the pair that says
+// this gate cannot be reading a claim**.
+//
+// admin-cli is lightweight and has fullScopeAllowed on; this client is
+// lightweight and has it off. Their access tokens carry the identical eight
+// keys - exp, iat, jti, iss, typ, azp, sid, scope - with no aud, no
+// realm_access and no resource_access between them, so there is no byte in
+// either token an implementation could read to tell them apart. Measured
+// 2026-09-08 on a live 26.7.1 with one user holding every account role through
+// default-roles: **200 for the one with the flag on, 401 for the one with it
+// off.**
+//
+// The chapter's existing pair - admin-cli accepted, gloak-probe-account-narrow
+// refused - is one measurement short of this. Those two clients also differ in
+// the lightweight attribute, so a gate reading `aud` could have been right
+// about the second and wrong about the first for a reason nothing separated.
+// This one holds every other variable still.
+func accountScopeFilteredLightweightFixture() Fixture {
+	return accountNarrowClientFixture("gloak-probe-account-narrow-lw",
+		`,"attributes":{"client.use.lightweight.access.token.enabled":"true"}`)
+}
+
+// accountNarrowClientFixture is what the two share: a fully-privileged user
+// logged in through a client with fullScopeAllowed off and no scope mappings,
+// so the account roles the user really holds are filtered out of the token's
+// scope. `extra` is spliced into the client's create body.
+func accountNarrowClientFixture(clientID, extra string) Fixture {
+	username := clientID + "-user"
 	return Fixture{State: "bootstrap", Steps: []Step{
 		adminTokenStep(),
 		{
@@ -496,7 +526,8 @@ func accountScopeFilteredFixture() Fixture {
 				Path:    "/admin/realms/master/clients",
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 				Body: []byte(`{"clientId":"` + clientID + `","enabled":true,"publicClient":true,` +
-					`"standardFlowEnabled":false,"directAccessGrantsEnabled":true,"fullScopeAllowed":false}`),
+					`"standardFlowEnabled":false,"directAccessGrantsEnabled":true,` +
+					`"fullScopeAllowed":false` + extra + `}`),
 			},
 			ExpectStatus: idempotentCreate,
 		},

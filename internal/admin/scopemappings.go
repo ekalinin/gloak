@@ -543,16 +543,14 @@ func mayMapRole(c *caller, role *model.Role) bool {
 	return c.has("manage-realm")
 }
 
-// keep is filter, spelled locally because the two composite reads want the same
-// three lines and `without` next door takes a set rather than a predicate.
+// keep is filter. It was spelled out here because the two composite reads want
+// the same three lines and `without` next door takes a set rather than a
+// predicate; since F192 the same three lines are in internal/roles, where the
+// issuer and the account gate reach them, so this is the name and that is the
+// body. Two copies of a filter over the same predicate is how they come to
+// disagree.
 func keep(in []*model.Role, ok func(*model.Role) bool) []*model.Role {
-	out := make([]*model.Role, 0, len(in))
-	for _, role := range in {
-		if ok(role) {
-			out = append(out, role)
-		}
-	}
-	return out
+	return roles.Filter(in, ok)
 }
 
 // writeScopeMappingUnknownError is the 500 the realm write answers for an entry
