@@ -93,7 +93,24 @@ func (h *handler) introspect(w http.ResponseWriter, r *http.Request) {
 	// what lets a refresh token - which carries none - introspect into the
 	// access token's full claim set, and it is measured: the body reflects a
 	// role assigned after the token was minted.
-	realmRoles, clientRoles, err := h.tokenRoles(r.Context(), realm, user)
+	//
+	// **The scope filter belongs to the token's own client, not to the caller.**
+	// Measured 2026-09-08: a client with fullScopeAllowed off introspected a
+	// token minted by a *different* client with the flag off, and the body
+	// carried the issuing client's filtered role set - one realm role reached
+	// through that client's client scope - where the caller's own scope holds
+	// none of it. Passing `client` here is the obvious implementation and it is
+	// wrong on exactly the tokens this endpoint exists to describe.
+	subject, err := h.store.Clients().ByClientID(r.Context(), realm.ID, parsed.ClientID)
+	if err != nil {
+		// A token whose azp names no client of this realm cannot be described,
+		// and this is the same answer the dead session above gets. Unmeasured -
+		// deleting a client deletes its sessions, so no probe reaches it - and
+		// filed as F197.
+		httpx.WriteJSON(w, http.StatusOK, inactive{})
+		return
+	}
+	realmRoles, clientRoles, err := h.tokenRoles(r.Context(), realm, subject, user, parsed.Scope)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return

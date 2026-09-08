@@ -137,7 +137,11 @@ func (h *handler) tokenExchangeGrant(w http.ResponseWriter, r *http.Request,
 	// exchange of a token granted "openid profile email" answers with those
 	// three, and the request names no scope.
 	scope := parsed.Scope
-	realmRoles, clientRoles, err := h.tokenRoles(ctx, realm, user)
+	// The scope filter is the **requesting** client's, because this mints a new
+	// token for it. Unmeasured - token exchange is a preview feature a default
+	// 26.7.1 does not enable, so the container cannot answer - and filed as
+	// F196 rather than left implicit.
+	realmRoles, clientRoles, err := h.tokenRoles(ctx, realm, client, user, scope)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return

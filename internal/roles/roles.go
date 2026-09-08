@@ -11,11 +11,25 @@
 // same answer. internal/admin authorises a request with it; internal/oidc
 // fills realm_access and resource_access with it. Two copies of the expansion
 // would be two chances to disagree about who is an administrator.
+//
+// # The second question, and why it is here too
+//
+// InScope answers the other half: of the roles a user holds, which survive
+// into a token issued for one client? That is Keycloak's fullScopeAllowed
+// filter, and it has four callers who must not be able to disagree -
+// internal/oidc's issuance and introspection, internal/account's audience gate
+// and internal/admin's scope evaluator. It is a **set computation over the
+// same composite walk**, not a policy: AGENTS.md records that a scope mapping
+// grants nothing and is not an escalation surface, so this stays inside the
+// boundary table's "must not decide who may do what". mayMapRole and
+// mayGrantRole - which do decide that - deliberately stay in internal/admin.
 package roles
 
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 
 	"github.com/ekalinin/gloak/internal/model"
 	"github.com/ekalinin/gloak/internal/store"
@@ -73,6 +87,125 @@ func ExpandFrom(ctx context.Context, repo store.RoleRepo, direct []*model.Role) 
 		queue = append(queue, children...)
 	}
 	return out, nil
+}
+
+// ScopesInEffect is the client scopes one issuance evaluates against: the
+// client's default client scopes, plus the optional ones the granted scope
+// names.
+//
+// Measured 2026-09-08 on a client with fullScopeAllowed off and a client scope
+// carrying a scope mapping to a realm role the user holds:
+//
+//	the scope exists but is attached to nothing   the role is NOT in the token
+//	attached as a default client scope            the role IS in the token
+//	attached as optional, not named by `scope`    the role is NOT in the token
+//	attached as optional, named by `scope`        the role IS in the token
+//
+// So the attachment is not enough on its own and neither is the request: an
+// optional scope contributes exactly when the granted scope carries its name,
+// which is also the name Keycloak writes into the token's own scope claim.
+//
+// A name in the granted scope that is not one of this client's optional scopes
+// contributes nothing and is not an error - the admin evaluator's `?scope=`
+// was measured silently ignoring one, and the protocol side never gets that
+// far because grantedScope drops it first.
+func ScopesInEffect(ctx context.Context, repo store.ClientScopeRepo, c *model.Client, granted string) ([]*model.ClientScope, error) {
+	defaults, err := repo.ListClientScopes(ctx, c.ID, true)
+	if err != nil {
+		return nil, err
+	}
+	optional, err := repo.ListClientScopes(ctx, c.ID, false)
+	if err != nil {
+		return nil, err
+	}
+	asked := strings.Fields(granted)
+	out := make([]*model.ClientScope, 0, len(defaults)+len(optional))
+	out = append(out, defaults...)
+	for _, s := range optional {
+		if slices.Contains(asked, s.Name) {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+// InScope reports which of a subject's roles survive into a token issued for
+// this client: Keycloak's fullScopeAllowed filter.
+//
+// Measured 2026-09-08 against a live 26.7.1, on a realm built for the purpose.
+// A user holding five realm roles and three clients' roles asked a client with
+// the flag **off** for a password grant:
+//
+//	nothing mapped        realm_access ABSENT, resource_access {capp: [capp-own]}
+//	realm role rr1 mapped realm_access {roles: [rr1]}
+//	client role co1 mapped resource_access gains {cother: [co1]}, and aud becomes
+//	                      "cother" - the filter moves a second observable
+//
+// Three clauses, each refutable by a case the others pass:
+//
+//   - the flag short-circuits everything, and the control client differing only
+//     in the flag answered all eight realm roles and three clients;
+//   - **a client's own roles are in its own scope without being mapped** -
+//     `capp-own` above - and it is the *issuing* client's, not every client's:
+//     the same user's token from `cother` carried `cother`'s two roles and not
+//     `capp-own`;
+//   - an attached client scope contributes its own scope mappings, which is the
+//     input the three scope-mapping *reads* do not have: with the scope
+//     attached, .../scope-mappings, .../realm and .../realm/composite on the
+//     client all answered empty while the token carried the role.
+//
+// # The composite question, and the measurement that settled it
+//
+// **The subject's roles are expanded first and the filter runs per role.** The
+// discriminating fixture is a user holding a composite parent and *not* its
+// child, with the **child alone** mapped into the scope: expand-then-filter
+// answers the child, filter-then-expand answers nothing. Keycloak answered
+// `{"roles":["rrchild"]}`.
+//
+// The scope side is expanded too, and separately: with the **parent alone**
+// mapped the token carried parent and child both. So it is set membership over
+// two independent closures, and mapping a child does not pull its parent in -
+// measured, the parent stayed out.
+func InScope(ctx context.Context, repo store.RoleRepo, c *model.Client, scopes []*model.ClientScope) (func(*model.Role) bool, error) {
+	if c.FullScopeAllowed {
+		return func(*model.Role) bool { return true }, nil
+	}
+	direct, err := repo.ListClientScopeMappings(ctx, c.ID)
+	if err != nil {
+		return nil, err
+	}
+	own, err := repo.ListClientRoles(ctx, c.RealmID, c.ID)
+	if err != nil {
+		return nil, err
+	}
+	direct = append(direct, own...)
+	for _, s := range scopes {
+		mapped, err := repo.ListClientScopeScopeMappings(ctx, s.ID)
+		if err != nil {
+			return nil, err
+		}
+		direct = append(direct, mapped...)
+	}
+	reachable, err := ExpandFrom(ctx, repo, direct)
+	if err != nil {
+		return nil, err
+	}
+	in := make(map[string]bool, len(reachable))
+	for _, role := range reachable {
+		in[role.ID] = true
+	}
+	return func(role *model.Role) bool { return in[role.ID] }, nil
+}
+
+// Filter keeps the roles a predicate accepts, in order.
+func Filter(in []*model.Role, ok func(*model.Role) bool) []*model.Role {
+	out := make([]*model.Role, 0, len(in))
+	for _, role := range in {
+		if ok(role) {
+			out = append(out, role)
+		}
+	}
+	return out
 }
 
 // AssignDefaults gives a newly created user the realm's default-roles-<realm>

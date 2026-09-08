@@ -151,12 +151,12 @@ func (h *handler) resolve(w http.ResponseWriter, r *http.Request) *subject {
 		return nil
 	}
 
-	user := h.authenticate(w, r, realm)
+	user, parsed := h.authenticate(w, r, realm)
 	if user == nil {
 		return nil
 	}
 
-	effective, err := roles.Effective(r.Context(), h.store.Roles(), user.ID)
+	effective, err := h.grantedRoles(r.Context(), realm, parsed, user)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return nil
@@ -172,6 +172,9 @@ func (h *handler) resolve(w http.ResponseWriter, r *http.Request) *subject {
 	// one holding none; and a client with fullScopeAllowed off is refused 401
 	// for a user holding all of them. So the gate is the granted role set and
 	// not the claim, and the two refused tokens are the pair that says so.
+	//
+	// The sharper pair is grantedRoles': two clients differing in nothing a
+	// caller can see, one 200 and one 401.
 	if len(grants) == 0 {
 		writeUnauthorized(w)
 		return nil
@@ -193,33 +196,77 @@ func (h *handler) resolve(w http.ResponseWriter, r *http.Request) *subject {
 // measured: no header, `Bearer garbage`, a syntactically valid token that does
 // not verify, and `Basic` credentials all answer the identical 33 bytes with
 // all five security headers and **no WWW-Authenticate**.
-func (h *handler) authenticate(w http.ResponseWriter, r *http.Request, realm *model.Realm) *model.User {
+// It returns the parsed token beside the user, because the gate's second stage
+// needs the client the token was minted for - see resolve.
+func (h *handler) authenticate(w http.ResponseWriter, r *http.Request, realm *model.Realm) (*model.User, *token.Parsed) {
 	raw := bearerToken(r)
 	if raw == "" {
 		writeUnauthorized(w)
-		return nil
+		return nil, nil
 	}
 	k, err := h.keys.ForRealm(r.Context(), realm)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
-		return nil
+		return nil, nil
 	}
 	parsed, err := token.ParseAccess(k, h.issuerBase+"/realms/"+realm.Name, raw, time.Now())
 	if err != nil {
 		writeUnauthorized(w)
-		return nil
+		return nil, nil
 	}
 	session, err := h.store.Sessions().UserSessionByID(r.Context(), realm.ID, parsed.SessionID)
 	if err != nil {
 		writeUnauthorized(w)
-		return nil
+		return nil, nil
 	}
 	user, err := h.store.Users().ByID(r.Context(), realm.ID, session.UserID)
 	if err != nil || !user.Enabled {
 		writeUnauthorized(w)
-		return nil
+		return nil, nil
 	}
-	return user
+	return user, parsed
+}
+
+// grantedRoles is the user's effective roles narrowed to what the token's own
+// client actually granted: Keycloak's fullScopeAllowed filter, applied here
+// because **this gate reads the granted role set and not the claim**.
+//
+// That the two are different things is measured rather than reasoned, and the
+// pair that says so is new. Two clients differing **only** in fullScopeAllowed,
+// both carrying client.use.lightweight.access.token.enabled, mint tokens whose
+// aud, realm_access and resource_access are equally absent - there is no byte
+// in either token to tell them apart - and GET .../account/groups answers
+// **200** for the one with the flag on and **401** for the one with it off.
+// Measured 2026-09-08 on a live 26.7.1 with a user holding every account role
+// through default-roles. So the server recomputes the scope; it does not read
+// the token.
+//
+// A token whose azp names no client of this realm grants nothing, which falls
+// out of an empty set rather than needing a branch: the gate refuses 401 on an
+// empty grant set already, and answering 500 would turn a deleted client into
+// a server error.
+func (h *handler) grantedRoles(ctx context.Context, realm *model.Realm,
+	parsed *token.Parsed, user *model.User) ([]*model.Role, error) {
+	effective, err := roles.Effective(ctx, h.store.Roles(), user.ID)
+	if err != nil {
+		return nil, err
+	}
+	client, err := h.store.Clients().ByClientID(ctx, realm.ID, parsed.ClientID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	scopes, err := roles.ScopesInEffect(ctx, h.store.ClientScopes(), client, parsed.Scope)
+	if err != nil {
+		return nil, err
+	}
+	inScope, err := roles.InScope(ctx, h.store.Roles(), client, scopes)
+	if err != nil {
+		return nil, err
+	}
+	return roles.Filter(effective, inScope), nil
 }
 
 // accountGrants reduces an expanded role set to the names owned by the realm's
