@@ -196,8 +196,9 @@ func (h *handler) resolve(w http.ResponseWriter, r *http.Request) *subject {
 // measured: no header, `Bearer garbage`, a syntactically valid token that does
 // not verify, and `Basic` credentials all answer the identical 33 bytes with
 // all five security headers and **no WWW-Authenticate**.
+//
 // It returns the parsed token beside the user, because the gate's second stage
-// needs the client the token was minted for - see resolve.
+// needs the client the token was minted for - see grantedRoles.
 func (h *handler) authenticate(w http.ResponseWriter, r *http.Request, realm *model.Realm) (*model.User, *token.Parsed) {
 	raw := bearerToken(r)
 	if raw == "" {
@@ -241,10 +242,18 @@ func (h *handler) authenticate(w http.ResponseWriter, r *http.Request, realm *mo
 // through default-roles. So the server recomputes the scope; it does not read
 // the token.
 //
-// A token whose azp names no client of this realm grants nothing, which falls
-// out of an empty set rather than needing a branch: the gate refuses 401 on an
-// empty grant set already, and answering 500 would turn a deleted client into
-// a server error.
+// **A token whose azp names no client of this realm grants nothing, and that
+// branch is reachable rather than defensive.** client_session cascades when a
+// client is deleted and user_session does not - 0003_session.sql - so a token
+// minted by a deleted client still verifies, still resolves to a live session
+// and arrives here with no client to read the flag from. Returning the user's
+// whole role set opens the API to it; returning none refuses it, which is what
+// the gate already does for a caller holding no account role. Answering 500
+// instead would turn a deleted client into a server error.
+//
+// No conformance case reaches it and a mutation flipping it survives the whole
+// tree, so the direction is asserted by
+// TestGrantedRolesRefusesATokenWhoseClientIsGone and by nothing else.
 func (h *handler) grantedRoles(ctx context.Context, realm *model.Realm,
 	parsed *token.Parsed, user *model.User) ([]*model.Role, error) {
 	effective, err := roles.Effective(ctx, h.store.Roles(), user.ID)
