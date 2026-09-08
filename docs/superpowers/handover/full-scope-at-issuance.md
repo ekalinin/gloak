@@ -10,7 +10,7 @@ session - so filtering the token alone left `account/gate/scope-filtered-token`
 answering 200 exactly as before. And the same defect exists on a **third**
 surface this cut deliberately does not change: a `fullScopeAllowed: false`
 client's token drives Gloak's Admin API as a full administrator where Keycloak
-answers 403. Section 8 is that measurement and F198 is the entry.
+answers 403. Section 9 is that measurement and F198 is the entry.
 
 Everything below was measured against `quay.io/keycloak/keycloak:26.7.1
 start-dev` on 2026-09-08, on a container started clean for this session, in a
@@ -361,11 +361,211 @@ one.
 **The introspecting client's own flag is on**, so the body also pins section 4:
 reading the caller's `fullScopeAllowed` answers every role the subject holds.
 
-## 7. The mutation pass
+## 7. The record diff, read file by file
 
-*(filled in below)*
+`make record` on the branch, log preserved. **1071 goldens rewritten, 1069 of
+them byte-identical to `main`, two added and none modified.**
 
-## 8. The Admin API is scope-filtered too, and this cut does not serve it
+```
+git diff --name-status 1d2ac8d HEAD -- internal/conformance/testdata/golden/
+A  account/gate/scope-filtered-lightweight.http
+A  oidc/introspection/scope-filtered-access-token.http
+```
+
+The accounting is complete rather than asserted. 1072 golden files exist and
+1071 were rewritten; the one that was not is
+`admin/realms-admin/partial-export-clients.http`, the single parked `Pending`
+golden AGENTS.md declares, which the recorder is required to leave alone.
+
+Per file:
+
+- **`account/gate/scope-filtered-lightweight.http`** - new. 401
+  `{"error":"HTTP 401 Unauthorized"}` with five headers, byte-identical to the
+  chapter's other 401s. It moved because it did not exist: it is Keycloak's
+  answer for a lightweight client with the flag off, and section 5 is the
+  measurement.
+- **`oidc/introspection/scope-filtered-access-token.http`** - new. The filtered
+  claim set in section 6.2, and every byte of it is Keycloak's. It was recorded
+  three times and only the third is committed; sections 7.1 and 7.2 say why,
+  because both intermediate failures were the harness refusing something and
+  both are findings.
+- **Everything else** - unmoved, and the reason is worth stating exactly,
+  because "nothing moved" is easy to read as "nothing was at risk".
+
+**`make record` re-measures Keycloak, not Gloak.** A change to Gloak's handlers
+cannot move a golden; only a changed fixture or a changed case can. So the empty
+diff is evidence about the *fixtures* - that `introspect-scope-filtered` created
+two clients, five realm roles, two client roles, a client scope and a user in
+**master**, on the shared container, ahead of most of the admin chapter, and
+polluted nothing - and it is **not** evidence that the handler change is safe.
+
+The evidence for the handler change is a different test. `TestConformance`
+serves all 1071 from Gloak and compares them, and it is green: the run is in
+section 11. That is the number the blast-radius question actually asks about,
+and reading the record diff cannot answer it.
+
+One fixture was refactored rather than added -
+`accountScopeFilteredFixture` became a call into `accountNarrowClientFixture` -
+and its golden is one of the 1069 that did not move, which is the check that the
+refactor changed no byte the recorder sends: the same `clientId`, the same
+derived username `gloak-probe-account-narrow-user`, the same create body.
+
+### 7.1 The recorder refused a mask, and the refusal is a rule
+
+The first recording of the introspection case failed with
+
+```
+normalize: conformance: sort unordered: value at this path is not an array:
+"gloak-probe-narrow-peer"
+```
+
+`Unordered: ["aud"]` was copied from the two sibling cases, whose `aud` is an
+array. Here the scope admits one client, so `aud` takes the measured
+absent/string/array rule's middle case and is a **bare string** - which is
+itself the filter's second observable, section 2.2.
+
+**A mask cannot be copied from a neighbour on the assumption the shape
+matches**: the harness refuses it at record time and writes nothing. That is
+stronger than the inert-mask ratchets, which run afterwards over what was
+written.
+
+### 7.2 And a second mask, for the opposite reason
+
+With `aud` dropped, `TestNoMaskIsInertOnItsGolden` refused
+`resource_access/*/roles`: each of the two clients has exactly one role in
+scope, so sorting is the identity. It is gone, and **both role lists under
+`resource_access` are now asserted in full** - which is stronger than either
+sibling case and is what makes the own-roles clause and the mapped-client-role
+clause separately refutable.
+
+Two guards, in one case, each rejecting a mask taken from the neighbours.
+
+## 8. The mutation pass
+
+The harness is `/tmp/f192/mutate.sh` and its order is the point: refuse an empty
+diff, refuse a build failure, **read `go test`'s exit code before looking at any
+output**, revert, and verify the revert restored the byte-identical file. Both
+refusals were self-tested against deliberate controls before any real mutation
+ran - a no-op substitution is `REFUSED: the diff is empty` and a typo'd field is
+`REFUSED: does not build`.
+
+Every mutation names the test that kills it.
+
+| # | mutation | verdict | killed by |
+|---|---|---|---|
+| A1 | `if c.FullScopeAllowed` → `if false`: the flag is ignored and the filter always applies | killed | `TestConformance/oidc/introspection/active-access-token` |
+| A2 | → `if true`: never filter, which is the pre-F192 behaviour | killed | `TestConformance/oidc/introspection/scope-filtered-access-token` |
+| A3 | drop the own-roles clause | killed | same |
+| A4 | drop the client-scope clause | killed | same |
+| A5 | no composite expansion on the scope side | killed | same |
+| A7 | `ScopesInEffect` drops the client's default scopes | killed | same |
+| A8 | `ScopesInEffect` drops the optional half | killed | `internal/admin`'s `TestEvaluatedScopeReadsTheLinkedClientScopesMappings` |
+| A9 | every optional scope in scope always - the permissive half | killed | `TestTokenRolesReadsTheGrantedScopeForOptionalClientScopes` |
+| B1 | the issuer's predicate is always true | killed | `TestConformance/oidc/introspection/scope-filtered-access-token` |
+| C1 | introspection reads the **caller's** `fullScopeAllowed` | killed | same |
+| D1 | the account gate does not filter | killed | `TestConformance/account/gate/scope-filtered-token` |
+| D1b | the same | killed | `TestConformance/account/gate/scope-filtered-lightweight` |
+| E1 | the admin evaluator's predicate is always true | killed | `TestConformance/admin/clients/evaluate-scope-mappings-not-granted` **and** `.../evaluate-example-access-token` |
+| E2 | the admin evaluator sees no client scopes | killed | `TestConformance/admin/clients/evaluate-protocol-mappers` |
+| G1 | the account gate reads a fixed client, not `azp` | killed | `TestConformance/account/gate/scope-filtered-token` |
+| H1 | `ScopesInEffect` swaps default for optional | killed | `TestConformance/oidc/introspection/scope-filtered-access-token` |
+| I1 | `roles.Filter` keeps nothing | killed | same |
+| J1 | the issuer ignores the granted scope | **survived, then closed** - 8.2 | `TestTokenRolesReadsTheGrantedScopeForOptionalClientScopes` |
+| L1 | the account gate falls open on an unknown `azp` | **survived, then closed** - 8.3 | `TestGrantedRolesRefusesATokenWhoseClientIsGone` |
+| M1 | `InScope` matches by **name**, not id - F32's shape | killed | `TestConformance/oidc/introspection/scope-filtered-access-token` |
+| N1 | introspection falls back to the caller when `azp` is gone | **survivor** - 8.4 | nothing |
+
+### 8.1 The corpus problem, demonstrated rather than asserted
+
+A2 is the whole cut inverted - the filter never runs - and **before this branch
+nothing in the tree would have caught it.** Every client the catalogue creates
+carries the flag on, the two bootstrapped clients that carry it are lightweight,
+and the one client with it off had a `Recorded` case, which is required *not* to
+match. `oidc/introspection/scope-filtered-access-token` is what kills A2, and it
+did not exist on `main`.
+
+E1 is the same shape one chapter over and it is worth reading carefully. The
+first run named `admin/clients/evaluate-scope-mappings-granted` and reported a
+**survivor**. It is not one: that case asks about the client's **own**
+container, where every role is in scope through the own-roles clause, so an
+always-true predicate answers the identical eight roles. Its `not-granted`
+sibling, asked about the realm container, is what guards the predicate. One
+family, two cases, and only one of them can fail.
+
+### 8.2 J1, and why the survivor was real before it was closed
+
+`internal/oidc`'s `tokenRoles` passes the granted scope to `ScopesInEffect`, and
+replacing it with `""` **survived the entire tree** - `CGO_ENABLED=0 go test
+./...`, not one package.
+
+That is not a hole in this rule. It is F16 showing through: `grantedScope` is a
+constant, so an optional client scope's name can never reach the function
+through an HTTP request, and no case can be written that would. A8 dies because
+`internal/admin`'s evaluator *does* honour `?scope=` and has its own package
+test for it; the protocol path has no equivalent.
+
+Closed with `TestTokenRolesReadsTheGrantedScopeForOptionalClientScopes`, at the
+seam rather than through a request, which is strictly weaker than a golden and
+strictly stronger than the prose it replaces - `TestKeystoreDownloadHeaders`
+makes the same trade for the same reason. **Both directions are asserted**: A9,
+which puts every optional scope in scope always, is the permissive half and a
+test checking only the naming case passes it.
+
+### 8.3 L1, and a fall-open branch that is reachable
+
+`grantedRoles` returns no roles when the token's `azp` names no client of the
+realm, so the gate refuses. Flipping it to return the user's whole role set
+**survived the whole tree.**
+
+The state is not hypothetical. `client_session` cascades when a client is
+deleted and `user_session` does not - `0003_session.sql` - so a token minted by
+a deleted client still verifies, still resolves to a live user session, and
+reaches this branch. With the mutation applied it opens the account API to that
+token.
+
+Closed with `TestGrantedRolesRefusesATokenWhoseClientIsGone`, which has the
+control beside it: the same user through a client that **does** exist answers the
+account roles, so the refusal is a statement about the missing client rather
+than about the user. It needed the first handler builder this package has had.
+
+### 8.4 N1 is a survivor, and it is left as one
+
+`internal/oidc`'s introspection answers the inactive body when the subject
+token's `azp` names no client, and falling back to the caller's client survives
+`TestConformance/oidc/introspection`. It is L1's shape on the neighbouring
+surface and it is **not** closed here, for two reasons: the direction chosen is
+the conservative one, and introspection reports rather than authorises - the
+worst case is a slightly wrong role set handed to a caller already inside the
+token's audience, where L1's worst case was an open gate.
+
+The cell is unmeasured against Keycloak - no probe was sent - which is F197, and
+the code comment says so at the branch.
+
+### 8.5 The harness manufactured one false kill, and the brief predicted it
+
+N1's first run used `-run '.'` over `./...` and reported **killed by
+`TestCodeGrantCarriesTheAuthorizationRequest`**. That test has nothing to do
+with introspection. Its assertion is
+
+```
+auth_time 1.788881285e+09 and iat 1.788881286e+09 disagree on a login redeemed at once
+```
+
+a login and a redemption straddling a **second boundary**. It is a pre-existing
+flake in a file this cut does not otherwise touch, and it was the difference
+between a survivor and a kill.
+
+Exit-code-first is necessary and not sufficient. **Naming the test is what
+catches this**, and it is the same discipline that turned E1's false survivor
+into a kill in the opposite direction: an unnamed run can invent a kill, and a
+wrongly named one can invent a survivor. Both happened in this pass.
+
+The flake is fixed - one second of slack, with a gap of two or more still
+failing, so the six-second case the comment contrasts with is still caught. The
+test cannot pin the clock because `writeTokens` builds its own `token.Issuer`
+and nothing threads a `Now` into it. F199.
+
+## 9. The Admin API is scope-filtered too, and this cut does not serve it
 
 The same discriminator, on the surface nobody asked about. Two lightweight
 clients in **master** differing only in the flag, the bootstrapped administrator
@@ -405,7 +605,7 @@ a general rule inside a family branch. Serving it needs its own cut:
 
 F198.
 
-## 9. What belongs in AGENTS.md
+## 10. What belongs in AGENTS.md
 
 Phrased as it would be folded, under "Things that look like bugs and are not".
 
@@ -457,10 +657,81 @@ Phrased as it would be folded, under "Things that look like bugs and are not".
   inert-mask ratchets give, and it is how `aud`'s bare-string form was noticed
   here.
 
-## 10. Follow-ups
+## 11. Follow-ups
 
-*(numbered from F196; F171-F195 are taken)*
+**F196: token exchange's scope filter is the requesting client's, and it is
+unmeasured.** `internal/oidc/tokenexchange.go` mints a new token for the
+requesting client and passes that client's `fullScopeAllowed`, which is the only
+reading consistent with "the token is for this client". A default 26.7.1 does
+not enable the token-exchange feature, so the container cannot answer and no
+probe was sent. The entry is the request to send: enable
+`token-exchange`, exchange a token from a full-scope client at a flag-off one
+and back, and read `realm_access` on both.
 
-## 11. Parity
+**F197: introspection's unknown-`azp` cell is unmeasured, and its branch is a
+mutation survivor.** When a subject token's `azp` names no client of the realm,
+`internal/oidc` answers the inactive body - the conservative direction, chosen
+without a measurement. The state is reachable in Gloak, since `client_session`
+cascades on a client delete and `user_session` does not. The probe: mint a token
+at a client, introspect it once from a client in its audience, delete the issuing
+client, introspect again. N1 in section 8.4 is the survivor; a case cannot be
+written until the answer is known.
 
-*(filled in below)*
+**F198: the Admin API is scope-filtered and Gloak is not.** Section 9 is the
+measurement and the reason this cut does not serve it. It needs its own corpus -
+every admin fixture authenticates through `admin-cli`, whose flag is on - and
+three probes it does not have: where the check sits in each family's guard
+order, and what a master token with the flag off answers for another realm.
+**This is the largest remaining instance of F192's defect** and it is on the
+surface that matters most.
+
+**F199: `internal/oidc`'s browser-flow tests cannot pin the clock.**
+`TestCodeGrantCarriesTheAuthorizationRequest` compared `auth_time` to `iat` for
+equality and flaked on a second boundary, manufacturing a false mutation kill -
+section 8.5. It now takes one second of slack, which is a workaround: the real
+fix is a `Now` threaded into the `token.Issuer` that `writeTokens` builds, which
+would let the assertion be exact. Any other wall-clock assertion in that file is
+in the same position and nobody has swept for them.
+
+**F200: `Case.Unordered` and `Case.Volatile` have no static check against the
+golden's shape.** Section 7.1: a mask on a path whose value is not an array is a
+record-time failure with no golden written, and it was found by running the
+recorder rather than by any test. `TestCatalogIsWellFormed` could refuse it
+against the committed golden without a container, the way
+`TestNoMaskIsInertOnItsGolden` already reads them. The entry is that the check is
+cheap and the failure it prevents costs a container start.
+
+**F201: the account chapter's gate now has two pairs and only one is minimal.**
+`account/gate/lowercase-scheme` and `account/gate/scope-filtered-token` differ in
+two variables and `scope-filtered-lightweight` holds one of them still - section
+5. The older pair is not wrong, but it is the shape AGENTS.md warns about, and
+the chapter has other two-variable pairs nobody has audited. The entry is to
+sweep them rather than to change this one.
+
+## 12. Parity
+
+`make conformance`, reproduced by hand with `cmd/parity` between `1d2ac8d` and
+the branch head:
+
+```
+Parity: 567 -> 570 of 622 (+3)
+
+chapter                         before  after  delta
+account/gate                        13     15     +2
+oidc/introspection                   5      6     +1
+```
+
+The base is the brief's **567 of 620, 2 chapters not enumerated**, and it
+reproduces exactly. Three behaviours served and two added to the denominator:
+
+- `account/gate/scope-filtered-token` promoted from `Recorded` to `Implemented`,
+  which moves the numerator and not the denominator - F192 closed;
+- `account/gate/scope-filtered-lightweight`, new and `Implemented`;
+- `oidc/introspection/scope-filtered-access-token`, new and `Implemented`.
+
+**The total did not fall and no case that was `Implemented` stopped matching.**
+`CGO_ENABLED=0 go test ./...` is green over the whole tree, which is the number
+section 7 says the record diff cannot answer: all 1071 comparable goldens are
+served from Gloak and compared, including the 1069 that did not move.
+
+`make lint` is clean, both invocations, `gofmt` included.
