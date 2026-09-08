@@ -28,7 +28,10 @@ Working today:
 - roles resolved at issuance, so a token's `realm_access`, `resource_access` and
   `aud` are Keycloak's - including the rule that `aud` names the clients the
   *user* has roles on and never the one that asked for the token, which is why
-  introspecting your own access token is refused
+  introspecting your own access token is refused - and **`fullScopeAllowed`**,
+  so a client that has it off gets only the roles its scope mappings reach.
+  That filter moves four observables, not one: `realm_access`,
+  `resource_access`, `aud` and the refresh token's `aud_x`
 - SSO sessions, so `sid` is stable across a refresh and revocation actually ends
   the session
 - realm signing keys persisted per realm, so the published `kid` survives a
@@ -96,7 +99,7 @@ Working today:
   Gloak's responses byte-for-byte against bytes recorded from a live
   Keycloak 26.7.1
 - a parity meter whose denominator comes from Keycloak's own OpenAPI description
-  rather than from a hand-kept list: **567 of 620 enumerated behaviours served**,
+  rather than from a hand-kept list: **570 of 622 enumerated behaviours served**,
   plus two chapters whose surface has not been counted
 - an external oracle: `make oracle` drives Gloak with `kcadm.sh`, Keycloak's own
   admin CLI, which asks for things no recorded case asks for
@@ -111,6 +114,12 @@ fifth rung is a 200. The **account API** is enumerated and its gate and two
 derived reads are served, 18 of 40; the remaining refusals are eleven separate
 blockers rather than one, which F194 records so nobody plans them as one cut.
 `BCFKS` is refused where Keycloak answers a keystore, on purpose - see F171.
+
+One known divergence is worth stating rather than leaving in a follow-up: the
+**Admin API is scope-filtered on Keycloak and is not here**. A client with
+`fullScopeAllowed` off is refused `/admin/realms/{realm}`, `/admin/realms` and
+`/admin/serverinfo` there and served them by Gloak. It is the same defect the
+token path just closed, on a larger surface - see F198.
 
 (This list carried `an organization's groups and members`, `workflows`, `DPoP`
 and `the rest of authorization services` until 2026-09-06, after all four had
@@ -237,10 +246,10 @@ and stay out of the total rather than being dropped from it silently, which
 would inflate the percentage by hiding the parts nobody has counted. It reads:
 
 ```
-total: 567 of 620 enumerated behaviours served; 2 chapters not enumerated
+total: 570 of 622 enumerated behaviours served; 2 chapters not enumerated
 ```
 
-The denominator is 620 rather than 413 plus a fixed number because the protocol
+The denominator is 622 rather than 413 plus a fixed number because the protocol
 chapters have no OpenAPI source and are counted case by case, so they grow as
 measurements find behaviours nobody had named. It moved from 485 on 2026-08-29
 for the first time since it was set, and again the next day when the logout

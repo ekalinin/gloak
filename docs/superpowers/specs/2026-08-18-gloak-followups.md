@@ -5462,3 +5462,71 @@ and organizations chapters for one instance of a rule, which is the mistake
 AGENTS.md names about fixing a general rule inside a family branch. The account
 case is fixed structurally instead, with `PristineRealm`.
 
+
+## F196: token exchange's scope filter is the requesting client's, and it is unmeasured.
+
+`internal/oidc/tokenexchange.go` mints a new token for the
+requesting client and passes that client's `fullScopeAllowed`, which is the only
+reading consistent with "the token is for this client". A default 26.7.1 does
+not enable the token-exchange feature, so the container cannot answer and no
+probe was sent. The entry is the request to send: enable
+`token-exchange`, exchange a token from a full-scope client at a flag-off one
+and back, and read `realm_access` on both.
+
+## F197: introspection's unknown-`azp` cell is unmeasured, and its branch is a mutation survivor.
+
+When a subject token's `azp` names no client of the realm,
+`internal/oidc` answers the inactive body - the conservative direction, chosen
+without a measurement. The state is reachable in Gloak, since `client_session`
+cascades on a client delete and `user_session` does not. The probe: mint a token
+at a client, introspect it once from a client in its audience, delete the issuing
+client, introspect again. N1 in section 8.4 is the survivor; a case cannot be
+written until the answer is known.
+
+## F198: the Admin API is scope-filtered and Gloak is not.
+
+Section 9 is the
+measurement and the reason this cut does not serve it. **This is the largest
+remaining instance of F192's defect** and it is on the surface that matters
+most.
+
+**The first thing that cut has to do is build a corpus, and that decides how it
+starts.** Every fixture in the admin chapter authenticates through `admin-cli`,
+whose `fullScopeAllowed` is on, and `security-admin-console`'s is on too - so a
+guard that works and a guard that is never reached produce the identical 900-odd
+admin goldens. Serving the filter and running the suite would prove nothing, and
+a green tree would look like evidence. It is exactly the trap this cut had to
+build `introspect-scope-filtered` to escape, one chapter over and with a much
+larger blast radius: the fixture has to come **before** the handler, and it has
+to be an admin fixture whose caller's client carries the flag off and whose
+golden is a refusal.
+
+Two other things are missing and neither is a corpus problem: where the scope
+check sits in each family's guard order - measured here on three routes and not
+on the family - and the **cross-realm** cell, since AGENTS.md records that a
+request to `/admin/realms/{realm}` may carry a token from that realm or from
+master, and which realm's client the filter reads is a probe nobody has sent.
+
+## F199: `internal/oidc`'s browser-flow tests cannot pin the clock.
+`TestCodeGrantCarriesTheAuthorizationRequest` compared `auth_time` to `iat` for
+equality and flaked on a second boundary, manufacturing a false mutation kill -
+section 8.5. It now takes one second of slack, which is a workaround: the real
+fix is a `Now` threaded into the `token.Issuer` that `writeTokens` builds, which
+would let the assertion be exact. Any other wall-clock assertion in that file is
+in the same position and nobody has swept for them.
+
+## F200: `Case.Unordered` and `Case.Volatile` have no static check against the golden's shape.
+
+Section 7.1: a mask on a path whose value is not an array is a
+record-time failure with no golden written, and it was found by running the
+recorder rather than by any test. `TestCatalogIsWellFormed` could refuse it
+against the committed golden without a container, the way
+`TestNoMaskIsInertOnItsGolden` already reads them. The entry is that the check is
+cheap and the failure it prevents costs a container start.
+
+## F201: the account chapter's gate now has two pairs and only one is minimal.
+`account/gate/lowercase-scheme` and `account/gate/scope-filtered-token` differ in
+two variables and `scope-filtered-lightweight` holds one of them still - section
+5. The older pair is not wrong, but it is the shape AGENTS.md warns about, and
+the chapter has other two-variable pairs nobody has audited. The entry is to
+sweep them rather than to change this one.
