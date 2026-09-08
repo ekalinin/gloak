@@ -104,9 +104,16 @@ func (h *handler) introspect(w http.ResponseWriter, r *http.Request) {
 	subject, err := h.store.Clients().ByClientID(r.Context(), realm.ID, parsed.ClientID)
 	if err != nil {
 		// A token whose azp names no client of this realm cannot be described,
-		// and this is the same answer the dead session above gets. Unmeasured -
-		// deleting a client deletes its sessions, so no probe reaches it - and
-		// filed as F197.
+		// and this is the same answer the dead session above gets.
+		//
+		// **The state is reachable and the answer is unmeasured**, which is the
+		// pair that makes this a follow-up rather than a defensive branch:
+		// client_session cascades when a client is deleted and user_session
+		// does not - 0003_session.sql - so a token minted by a deleted client
+		// still verifies and still resolves to a live session. Nothing was
+		// asked of Keycloak here, the inactive body is the conservative choice
+		// rather than a measurement, and a mutation falling back to the
+		// caller's client survives. F197.
 		httpx.WriteJSON(w, http.StatusOK, inactive{})
 		return
 	}
