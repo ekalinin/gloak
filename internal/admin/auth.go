@@ -51,10 +51,18 @@ type caller struct {
 	// administrator managing another realm authenticates in master. It is kept
 	// so foreignGrants can read the caller's rights on a second container.
 	authRealm *model.Realm
-	// effective is the caller's whole expanded role set, before adminGrants
-	// narrowed it to one container. foreignGrants narrows it again, to a
-	// different one.
+	// effective is the caller's expanded role set **as the token's client scope
+	// leaves it**, before adminGrants narrowed it to one container. Every route
+	// admission on this API reads it or a narrowing of it.
 	effective []*model.Role
+	// held is the caller's expanded role set with no scope filter applied - the
+	// roles the user really has. Two questions read it rather than effective,
+	// both measured: the conferral closure behind mayGrantRole, and the
+	// Workflows family's guard. See inTokenScope.
+	held []*model.Role
+	// heldGrants memoises adminRoleNames over held, which is what those two
+	// questions actually ask for.
+	heldGrants map[string]bool
 	// container is the client adminGrants were read from - the one
 	// containerFor chose for this pair of realms - or nil when the caller has
 	// no rights over the realm in the path at all. mayGrantRole compares a
@@ -78,6 +86,36 @@ func (c *caller) has(role string) bool { return c.adminGrants[role] }
 func (c *caller) hasAny(roles []string) bool {
 	for _, role := range roles {
 		if c.adminGrants[role] {
+			return true
+		}
+	}
+	return false
+}
+
+// names is the caller's admin role names computed from the roles it really
+// holds, before the token's client scope narrowed them.
+//
+// **Two questions on this API ask it rather than adminGrants, and both were
+// measured on a client with fullScopeAllowed off.** A caller whose token scope
+// carried manage-users and manage-clients alone, over a user really holding the
+// realm role admin, handed out master-realm's manage-realm and saw all 21 roles
+// in its available list - byte for byte what a full administrator sees, and not
+// what a user genuinely holding those two roles sees, which is twelve and a 403.
+// The Workflows family is the other: the same caller reads GET .../workflows,
+// where every other route on the API answers it 403. See inTokenScope.
+func (c *caller) names() map[string]bool {
+	if c.heldGrants == nil {
+		c.heldGrants = adminRoleNames(c.authRealm, c.container, c.held)
+	}
+	return c.heldGrants
+}
+
+// hasAnyHeld is hasAny asked of the roles the caller really holds. Only the
+// Workflows guard calls it; see names.
+func (c *caller) hasAnyHeld(roles []string) bool {
+	held := c.names()
+	for _, role := range roles {
+		if held[role] {
 			return true
 		}
 	}
@@ -150,10 +188,14 @@ var adminRoleImplications = map[string][]string{
 //
 // Computed once per request and memoised on the caller, which is built per
 // request and never shared.
+// **It closes over the roles the caller really holds, not over adminGrants.**
+// That was one set until the token's scope filter split them and it is measured:
+// see names.
 func (c *caller) grants() map[string]bool {
 	if c.granted == nil {
-		c.granted = make(map[string]bool, len(c.adminGrants))
-		for name := range c.adminGrants {
+		held := c.names()
+		c.granted = make(map[string]bool, len(held))
+		for name := range held {
 			c.implies(name)
 		}
 	}
@@ -275,14 +317,18 @@ func (h *handler) resolveCaller(w http.ResponseWriter, r *http.Request, realm *m
 		return nil
 	}
 
-	authRealm, user := h.authenticate(w, r, raw)
+	authRealm, user, parsed := h.authenticate(w, r, raw)
 	if user == nil {
 		return nil
 	}
 
-	effective, err := roles.Effective(r.Context(), h.store.Roles(), user.ID)
+	held, err := roles.Effective(r.Context(), h.store.Roles(), user.ID)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return nil
+	}
+	effective, ok := h.inTokenScope(w, r, authRealm, parsed, held)
+	if !ok {
 		return nil
 	}
 	// realm is nil on the two routes with no {realm} segment, where there is no
@@ -304,8 +350,72 @@ func (h *handler) resolveCaller(w http.ResponseWriter, r *http.Request, realm *m
 		adminGrants: adminRoleNames(authRealm, container, effective),
 		authRealm:   authRealm,
 		effective:   effective,
+		held:        held,
 		container:   container,
 	}
+}
+
+// inTokenScope narrows the caller's roles to the ones the token's own client
+// lets through - Keycloak's fullScopeAllowed, applied to the Admin API.
+//
+// **This API is scope-filtered and the mechanism is the role set, not a check
+// of its own.** Measured 2026-09-08 on a live 26.7.1 over 79 routes and four
+// callers: a full administrator reaching the API through a client with
+// fullScopeAllowed off answers **cell for cell** what a caller holding no admin
+// role at all answers, and the same administrator through a client whose scope
+// maps master-realm's view-realm alone answers cell for cell what a user
+// genuinely holding only view-realm answers. Two pairs, 77 of 79 routes
+// identical - the two that differ are the Workflows family, which reads the
+// unfiltered set; see names. So there is no audience test, no client test and no
+// coarse gate: the filter runs on the roles and every family's own resolution
+// order is untouched by it.
+//
+// Nothing in the token could have answered it. admin-cli is lightweight and its
+// token carries eight claims with no realm_access, no resource_access and no aud
+// at all, and it drives the whole API; a flag-off lightweight client's token
+// carries the **identical eight claims** and is 403 everywhere. There is no byte
+// in either token to read, which is the account gate's finding on a second
+// surface - see internal/account's grantedRoles.
+//
+// The granted **scope** is read off the token and not defaulted: one client, one
+// user, an optional client scope carrying the admin scope mappings, and the two
+// token requests differing only in whether `scope` named it answered 403 and 200.
+//
+// **A client the token names and the realm does not have is a 401**, not a 403
+// and not a fall-open. Measured by minting a token and deleting its client: both
+// a flag-on and a flag-off client answered 401 afterwards where they had
+// answered 200 and 403 before. internal/account's equivalent branch refuses with
+// an empty role set instead, which is that API's measured answer and not this
+// one's.
+//
+// **Which realm's client is read is the token's, never the path's.** Measured
+// with one clientId existing in two realms with opposite flags, both ways round:
+// a master token from the flag-off twin is 403 on another realm's admin API
+// although that realm's twin has the flag on, and a master token from the
+// flag-on twin is 200 there although that realm's twin has it off.
+func (h *handler) inTokenScope(w http.ResponseWriter, r *http.Request, authRealm *model.Realm,
+	parsed *token.Parsed, held []*model.Role,
+) ([]*model.Role, bool) {
+	client, err := h.store.Clients().ByClientID(r.Context(), authRealm.ID, parsed.ClientID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeUnauthorized(w)
+			return nil, false
+		}
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return nil, false
+	}
+	scopes, err := roles.ScopesInEffect(r.Context(), h.store.ClientScopes(), client, parsed.Scope)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return nil, false
+	}
+	inScope, err := roles.InScope(r.Context(), h.store.Roles(), client, scopes)
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return nil, false
+	}
+	return roles.Filter(held, inScope), true
 }
 
 // authenticate resolves the bearer token in **the realm that issued it**, which
@@ -324,44 +434,48 @@ func (h *handler) resolveCaller(w http.ResponseWriter, r *http.Request, realm *m
 // realm's keys, so a token naming a realm it was not issued by fails closed.
 //
 // Every failure is the same measured 401, byte for byte with a missing header.
-func (h *handler) authenticate(w http.ResponseWriter, r *http.Request, raw string) (*model.Realm, *model.User) {
+//
+// The parsed token is returned because inTokenScope needs two claims off it -
+// azp and scope - and re-parsing to read them would verify the same signature
+// twice.
+func (h *handler) authenticate(w http.ResponseWriter, r *http.Request, raw string) (*model.Realm, *model.User, *token.Parsed) {
 	iss, err := token.UnverifiedIssuer(raw)
 	if err != nil {
 		writeUnauthorized(w)
-		return nil, nil
+		return nil, nil, nil
 	}
 	name, ok := strings.CutPrefix(iss, h.issuerBase+"/realms/")
 	if !ok || name == "" || strings.Contains(name, "/") {
 		writeUnauthorized(w)
-		return nil, nil
+		return nil, nil, nil
 	}
 	authRealm, err := h.store.Realms().ByName(r.Context(), name)
 	if err != nil {
 		writeUnauthorized(w)
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	k, err := h.keys.ForRealm(r.Context(), authRealm)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
-		return nil, nil
+		return nil, nil, nil
 	}
 	parsed, err := token.ParseAccess(k, h.realmIssuer(authRealm.Name), raw, time.Now())
 	if err != nil {
 		writeUnauthorized(w)
-		return nil, nil
+		return nil, nil, nil
 	}
 	session, err := h.store.Sessions().UserSessionByID(r.Context(), authRealm.ID, parsed.SessionID)
 	if err != nil {
 		writeUnauthorized(w)
-		return nil, nil
+		return nil, nil, nil
 	}
 	user, err := h.store.Users().ByID(r.Context(), authRealm.ID, session.UserID)
 	if err != nil || !user.Enabled {
 		writeUnauthorized(w)
-		return nil, nil
+		return nil, nil, nil
 	}
-	return authRealm, user
+	return authRealm, user, parsed
 }
 
 // containerFor is the client whose roles decide what this caller may do to the
@@ -490,8 +604,11 @@ func (c *caller) foreignGrants(container *model.Client) map[string]bool {
 	if names, ok := c.foreign[container.ID]; ok {
 		return names
 	}
+	// held rather than effective: this feeds mayGrantRole, which was measured
+	// reading the roles the caller really holds and not the ones its token's
+	// client scope left it. See names.
 	names := make(map[string]bool)
-	for _, role := range c.effective {
+	for _, role := range c.held {
 		if role.ClientID == container.ID {
 			names[role.Name] = true
 		}
