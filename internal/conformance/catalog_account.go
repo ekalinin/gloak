@@ -426,14 +426,43 @@ var accountCases = []Case{
 			Section:   "Account REST API: the account client audience",
 			Retrieved: "2026-09-07",
 		},
-		Status: Recorded,
-		Reason: "the audience gate is measured on the token's granted scope, and Gloak's " +
-			"token issuance does not implement fullScopeAllowed at all - the client's " +
-			"filter is ignored, so the account roles the user really holds reach the " +
-			"gate and Gloak answers 200 where Keycloak answers 401. It is a divergence " +
-			"in internal/oidc's token path rather than in this package, and it is " +
-			"recorded here because this is the request that exposes it",
+		Status: Implemented,
+		// Served since F192. The fix is **two** places and the entry named one:
+		// internal/oidc filters the issued claims, and internal/account's gate
+		// filters again, because that gate recomputes the granted roles from
+		// the session rather than reading the token - so the token path alone
+		// left this answering 200. See account/gate/scope-filtered-lightweight
+		// for the pair that says the gate cannot be reading a claim.
 		Fixture: "account-user-scope-filtered",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/account/groups",
+			Headers: map[string]string{
+				"Accept":        "application/json",
+				"Authorization": "Bearer {{user_token}}",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
+	{
+		ID: "account/gate/scope-filtered-lightweight",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs/26.7.1/server_admin/#account-api",
+			Section:   "Account REST API: the account client audience",
+			Retrieved: "2026-09-08",
+		},
+		Status: Implemented,
+		// **The pair that says this gate reads no claim at all**, and it is
+		// sharper than the one above it. This client is lightweight *and* has
+		// fullScopeAllowed off; admin-cli is lightweight and has it on. Their
+		// tokens carry the identical eight keys with no aud, no realm_access
+		// and no resource_access between them - there is nothing in either
+		// token to read - and `account/gate/lowercase-scheme`, which uses
+		// admin-cli, answers 200 where this answers 401.
+		//
+		// Measured 2026-09-08. See accountScopeFilteredLightweightFixture for
+		// why the chapter's existing pair is one variable short of this.
+		Fixture: "account-user-scope-filtered-lw",
 		Request: Request{
 			Method: http.MethodGet,
 			Path:   "/realms/master/account/groups",

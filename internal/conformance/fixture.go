@@ -1536,8 +1536,9 @@ var Fixtures = map[string]Fixture{
 	// The two fixtures the protocol remainder needed, both of them lifting a
 	// Reason rather than adding surface. See
 	// docs/superpowers/handover/protocol-remainder.md.
-	"introspect-in-audience": introspectInAudienceFixture(),
-	"frontchannel-logout":    frontchannelLogoutFixture(),
+	"introspect-in-audience":    introspectInAudienceFixture(),
+	"introspect-scope-filtered": introspectScopeFilteredFixture(),
+	"frontchannel-logout":       frontchannelLogoutFixture(),
 
 	// partial-export and partialImport.
 	//
@@ -1723,7 +1724,8 @@ var Fixtures = map[string]Fixture{
 	// API, because its client filters the account roles out of the token's
 	// scope. See the block above: this is the second half of the pair that
 	// says what the gate reads.
-	"account-user-scope-filtered": accountScopeFilteredFixture(),
+	"account-user-scope-filtered":    accountScopeFilteredFixture(),
+	"account-user-scope-filtered-lw": accountScopeFilteredLightweightFixture(),
 }
 
 // samlServiceProviderFixture creates one SAML client carrying the attribute the
@@ -8180,6 +8182,365 @@ func introspectInAudienceFixture() Fixture {
 				Capture: map[string]string{"access_token": "access_token"},
 			},
 		},
+	}
+}
+
+// The objects introspect-scope-filtered creates. Named here for
+// introspectInAudienceFixture's reason: twenty-odd steps refer to them and a
+// typo in one would look like a measurement.
+//
+// Every realm role sorts after `default-roles-master`, which
+// admin/roles/list-realm-page-no-search's comment asks of a new fixture by
+// name.
+const (
+	narrowIssuerClient = "gloak-probe-narrow-issuer"
+	narrowPeerClient   = "gloak-probe-narrow-peer"
+	narrowOwnRole      = "gloak-probe-narrow-own"
+	narrowPeerRole     = "gloak-probe-narrow-peer-role"
+	narrowScopeParent  = "gloak-probe-narrow-scope-parent"
+	narrowScopeChild   = "gloak-probe-narrow-scope-child"
+	narrowUserParent   = "gloak-probe-narrow-user-parent"
+	narrowUserChild    = "gloak-probe-narrow-user-child"
+	narrowScopedRole   = "gloak-probe-narrow-scoped"
+	narrowClientScope  = "gloak-probe-narrow-scope"
+	narrowUser         = "gloak-probe-narrow-user"
+	narrowPassword     = "gloak-probe-narrow-password"
+)
+
+// introspectScopeFilteredFixture is the corpus F192 said this repository did
+// not have: **a client whose fullScopeAllowed is off and whose token therefore
+// differs.**
+//
+// Every client this catalogue creates carries the flag on, because
+// POST /clients defaults it to true and bootstrap sets it on the two clients
+// that have it - so a filter that was never reached and a filter that works
+// produce the same 921 goldens. This fixture is the one that can tell them
+// apart, and it is built so that **each of the rule's clauses fails
+// separately**. Measured 2026-09-08 against a live 26.7.1.
+//
+// The subject holds nine roles and the token carries five of them:
+//
+//	role                     held  in scope how                 in token
+//	gloak-probe-narrow-own    yes  the issuer's OWN role         yes
+//	gloak-probe-narrow-peer-role yes mapped into the scope       yes
+//	gloak-probe-narrow-user-child yes reached by expanding the   yes
+//	                               user's parent, mapped directly
+//	gloak-probe-narrow-user-parent yes not in scope at all        NO
+//	gloak-probe-narrow-scope-child yes reached by expanding the  yes
+//	                               scope's mapped parent
+//	gloak-probe-narrow-scoped yes  mapped into an attached       yes
+//	                               client scope
+//	default-roles-master      yes  nothing maps it                NO
+//	offline_access            yes  nothing maps it                NO
+//	uma_authorization         yes  nothing maps it                NO
+//	account's three roles     yes  nothing maps them              NO
+//
+// So the golden refutes, one clause each:
+//
+//   - dropping the filter: four realm names and `account` come back, and
+//     `aud` gains a second element;
+//   - dropping the own-roles clause: resource_access loses the issuer's key;
+//   - dropping the client-scope clause: realm_access loses -scoped;
+//   - expanding the **scope** side but not the user's: -user-child goes;
+//   - expanding the **user** side but not the scope's: -scope-child goes;
+//   - closing the filter upwards as well as downwards: -user-parent appears;
+//   - reading the **caller's** fullScopeAllowed instead of the token's:
+//     gloak-probe-narrow-peer has the flag on, so everything comes back.
+//
+// The peer is the introspecting client because it has to be: an access token's
+// aud never names the client that minted it, so nothing else in this realm may
+// ask. That is introspect-in-audience's finding reused rather than remeasured.
+func introspectScopeFilteredFixture() Fixture {
+	steps := []Step{adminTokenStep()}
+
+	// The two clients. The issuer carries the flag **off**, which is the whole
+	// fixture; the peer is left at the create default of true, which is what
+	// makes it the control for whose flag introspection reads.
+	steps = append(steps,
+		narrowClientStep(narrowIssuerClient, `"directAccessGrantsEnabled":true,"fullScopeAllowed":false`),
+		narrowCaptureClientStep(narrowIssuerClient, "issuer_uuid"),
+		narrowSecretStep("issuer_uuid", "issuer_secret"),
+		narrowClientStep(narrowPeerClient, `"standardFlowEnabled":false`),
+		narrowCaptureClientStep(narrowPeerClient, "client_uuid"),
+		narrowSecretStep("client_uuid", "client_secret"),
+	)
+
+	// The client roles: one owned by the issuer and never mapped, one owned by
+	// the peer and mapped into the issuer's scope.
+	steps = append(steps, narrowClientRoleStep("issuer_uuid", narrowOwnRole, "own_role_id")...)
+	steps = append(steps, narrowClientRoleStep("client_uuid", narrowPeerRole, "peer_role_id")...)
+
+	// The realm roles, and the two composite links. A composite is written
+	// through POST .../roles/{name}/composites, which takes the child's own
+	// representation - so each child's id is captured first.
+	for _, name := range []string{narrowScopeChild, narrowUserChild, narrowScopedRole} {
+		steps = append(steps, narrowRealmRoleStep(name), narrowRealmRoleIDStep(name))
+	}
+	steps = append(steps,
+		narrowRealmRoleStep(narrowScopeParent), narrowRealmRoleIDStep(narrowScopeParent),
+		narrowCompositeStep(narrowScopeParent, narrowScopeChild),
+		narrowRealmRoleStep(narrowUserParent), narrowRealmRoleIDStep(narrowUserParent),
+		narrowCompositeStep(narrowUserParent, narrowUserChild),
+	)
+
+	// The client scope, and its id read out of the create's Location.
+	//
+	// **This is the one create here that is not idempotent, and it cannot be.**
+	// GET /client-scopes answers an array with no filter parameter and an order
+	// this project has measured unstable, so there is no lookup to fall back on
+	// the way accountUserIDStep has - the id has to come from the create. The
+	// fixture is named by exactly one case for that reason; a second one would
+	// get a 409 with no Location and fail loudly on the capture rather than
+	// quietly on the body.
+	steps = append(steps,
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/client-scopes",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"name":"` + narrowClientScope + `","protocol":"openid-connect",` +
+					`"attributes":{"include.in.token.scope":"true"}}`),
+			},
+			ExpectStatus:  []int{http.StatusCreated},
+			CaptureHeader: map[string]string{"scope_uuid": "Location"},
+		},
+		// The scope's own scope mapping. This is the input the three
+		// scope-mapping reads on the *client* do not have: with this attached,
+		// .../clients/{issuer}/scope-mappings answers `{}` and the token carries
+		// the role anyway. Measured 2026-09-08.
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/client-scopes/{{scope_uuid}}/scope-mappings/realm",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`[{"id":"{{` + narrowVar(narrowScopedRole) + `}}","name":"` + narrowScopedRole + `"}]`),
+			},
+			ExpectStatus: []int{http.StatusNoContent},
+		},
+		// Attached as a **default** client scope. Optional and unnamed
+		// contributes nothing and an unattached scope contributes nothing, both
+		// measured, so this line is a third of what the golden asserts.
+		Step{
+			Request: Request{
+				Method:  http.MethodPut,
+				Path:    "/admin/realms/master/clients/{{issuer_uuid}}/default-client-scopes/{{scope_uuid}}",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			ExpectStatus: []int{http.StatusNoContent},
+		},
+	)
+
+	// The issuer's own scope mappings: the composite scope-parent and the peer's
+	// client role. Nothing maps -user-parent, -scoped is reached through the
+	// client scope above, and -own is reached by being the issuer's own.
+	steps = append(steps,
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients/{{issuer_uuid}}/scope-mappings/realm",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`[{"id":"{{` + narrowVar(narrowScopeParent) + `}}","name":"` + narrowScopeParent + `"},` +
+					`{"id":"{{` + narrowVar(narrowUserChild) + `}}","name":"` + narrowUserChild + `"}]`),
+			},
+			ExpectStatus: []int{http.StatusNoContent},
+		},
+		Step{
+			// The client pair resolves by **name** where the realm pair above
+			// resolves by id - AGENTS.md's "four operations, two lookup keys" -
+			// so this body carries a name and no id on purpose.
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients/{{issuer_uuid}}/scope-mappings/clients/{{client_uuid}}",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`[{"name":"` + narrowPeerRole + `"}]`),
+			},
+			ExpectStatus: []int{http.StatusNoContent},
+		},
+	)
+
+	// The subject, and the nine roles it holds. -scope-parent is deliberately
+	// **not** assigned: it is in scope and unheld, which is what makes
+	// -scope-child's presence a statement about the scope's expansion rather
+	// than about the parent.
+	steps = append(steps,
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/users",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"username":"` + narrowUser + `","enabled":true,` +
+					`"credentials":[{"type":"password","value":"` + narrowPassword + `","temporary":false}]}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/users",
+				Query:   map[string]string{"username": narrowUser, "exact": "true"},
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"user_id": "0/id"},
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/realm",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`[{"id":"{{` + narrowVar(narrowUserParent) + `}}","name":"` + narrowUserParent + `"},` +
+					`{"id":"{{` + narrowVar(narrowScopeChild) + `}}","name":"` + narrowScopeChild + `"},` +
+					`{"id":"{{` + narrowVar(narrowScopedRole) + `}}","name":"` + narrowScopedRole + `"}]`),
+			},
+			ExpectStatus: []int{http.StatusNoContent},
+		},
+		narrowAssignClientRoleStep("issuer_uuid", narrowOwnRole, "own_role_id"),
+		narrowAssignClientRoleStep("client_uuid", narrowPeerRole, "peer_role_id"),
+		// The subject's own token, which overwrites the administrator's -
+		// confidentialClientFixture's device, and nothing after this needs the
+		// admin's.
+		Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "/realms/master/protocol/openid-connect/token",
+				Form: map[string]string{
+					"grant_type":    "password",
+					"client_id":     narrowIssuerClient,
+					"client_secret": "{{issuer_secret}}",
+					"username":      narrowUser,
+					"password":      narrowPassword,
+					"scope":         "openid",
+				},
+			},
+			Capture: map[string]string{"access_token": "access_token"},
+		},
+	)
+
+	return Fixture{State: "bootstrap", Steps: steps}
+}
+
+// narrowVar is the capture name a realm role's id is held under. One function
+// rather than a literal per role, because eight steps refer to five of them.
+func narrowVar(role string) string {
+	return strings.ReplaceAll(strings.TrimPrefix(role, "gloak-probe-"), "-", "_") + "_id"
+}
+
+// narrowClientStep creates one of introspect-scope-filtered's clients. `extra`
+// is the JSON that differs between them, spliced rather than parameterised so
+// that the flag under test reads as a literal at the call site.
+func narrowClientStep(clientID, extra string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/clients",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			// **Neither scope list is named**, for introspectInAudienceFixture's
+			// measured reason: a client inherits the realm's client scopes only
+			// when it names neither, and an empty defaultClientScopes takes the
+			// `roles` scope away along with the mappers that write aud and
+			// resource_access.
+			Body: []byte(`{"clientId":"` + clientID + `","enabled":true,` +
+				`"publicClient":false,` + extra + `}`),
+		},
+		ExpectStatus: idempotentCreate,
+	}
+}
+
+func narrowCaptureClientStep(clientID, into string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients",
+			Query:   map[string]string{"clientId": clientID},
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		Capture: map[string]string{into: "0/id"},
+	}
+}
+
+func narrowSecretStep(uuidVar, into string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients/{{" + uuidVar + "}}/client-secret",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		Capture: map[string]string{into: "value"},
+	}
+}
+
+// narrowClientRoleStep creates a client role and captures its id, which the
+// assignment two dozen steps later needs. The id is read back by name rather
+// than out of the create's Location so the create can stay idempotent.
+func narrowClientRoleStep(uuidVar, name, into string) []Step {
+	return []Step{
+		{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients/{{" + uuidVar + "}}/roles",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`{"name":"` + name + `"}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/clients/{{" + uuidVar + "}}/roles/" + name,
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{into: "id"},
+		},
+	}
+}
+
+func narrowAssignClientRoleStep(uuidVar, name, into string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/clients/{{" + uuidVar + "}}",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`[{"id":"{{` + into + `}}","name":"` + name + `"}]`),
+		},
+		ExpectStatus: []int{http.StatusNoContent},
+	}
+}
+
+func narrowRealmRoleStep(name string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/roles",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`{"name":"` + name + `"}`),
+		},
+		ExpectStatus: idempotentCreate,
+	}
+}
+
+// narrowRealmRoleIDStep reads a realm role's id by name rather than out of the
+// create's Location, so the create above can stay idempotent.
+func narrowRealmRoleIDStep(name string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/roles/" + name,
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		Capture: map[string]string{narrowVar(name): "id"},
+	}
+}
+
+// narrowCompositeStep makes parent composite over child. The write takes the
+// child's own representation, which is why every child's id is captured first.
+func narrowCompositeStep(parent, child string) Step {
+	return Step{
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/roles/" + parent + "/composites",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+			Body:    []byte(`[{"id":"{{` + narrowVar(child) + `}}","name":"` + child + `"}]`),
+		},
+		ExpectStatus: []int{http.StatusNoContent},
 	}
 }
 

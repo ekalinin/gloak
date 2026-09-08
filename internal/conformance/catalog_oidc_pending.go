@@ -2738,6 +2738,62 @@ var oidcPending = []Case{
 		UnorderedWords: []string{"scope"},
 	},
 	{
+		ID: "oidc/introspection/scope-filtered-access-token",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs/26.7.1/server_admin/#_client_scopes",
+			Section:   "Introspection endpoint: a token from a client whose fullScopeAllowed is off",
+			Retrieved: "2026-09-08",
+		},
+		Status: Implemented,
+		// **This is the case F192 said the corpus could not contain.**
+		//
+		// A token's decoded claims are Volatile in every golden that carries
+		// one, so no case in this catalogue can compare realm_access or
+		// resource_access byte for byte - except through this endpoint, which
+		// serves the access token's claim set as an ordinary JSON body. That is
+		// what makes this the one place the fullScopeAllowed filter is
+		// assertable at all.
+		//
+		// The fixture's whole design is in introspectScopeFilteredFixture: the
+		// subject holds nine roles, the issuing client's scope admits five, and
+		// each clause of the rule fails on its own. The reason it is here rather
+		// than beside the account gate is that the gate is one bit and this is
+		// the claim set.
+		//
+		// **The caller's own fullScopeAllowed is on**, which the body also
+		// pins: the filter this endpoint applies is the one belonging to the
+		// token's azp, measured 2026-09-08 on a live 26.7.1 with a second
+		// client asking. Reading the caller's is the obvious implementation
+		// and it answers every role the subject holds.
+		//
+		// **Not PristineRealm**, for active-access-token's reason rather than
+		// its sibling's: this subject is a purpose-made user holding four
+		// probe roles and default-roles-master, so nothing here enumerates a
+		// realm-wide set the way the bootstrapped administrator's create-realm
+		// does. The filter makes that stronger, not weaker - a realm created by
+		// some other fixture would have to be mapped into this client's scope
+		// to reach the body at all.
+		Fixture: "introspect-scope-filtered",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/master/protocol/openid-connect/token/introspect",
+			Form: map[string]string{
+				"client_id":     narrowPeerClient,
+				"client_secret": "{{client_secret}}",
+				"token":         "{{access_token}}",
+			},
+		},
+		AssertHeaders: []string{"Content-Type"},
+		// `sub` is not masked: the fixture captures the user's id, so
+		// ReplaceCaptured writes {{user_id}} and the golden says which user
+		// this is. Same four as active-access-token beside it.
+		Volatile: []string{"exp", "iat", "jti", "sid"},
+		// Java sets. `aud` names one client here and is therefore a bare
+		// string rather than an array, which Unordered leaves alone.
+		Unordered:      []string{"aud", "realm_access/roles", "resource_access/*/roles"},
+		UnorderedWords: []string{"scope"},
+	},
+	{
 		ID: "oidc/introspection/inactive-token",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
