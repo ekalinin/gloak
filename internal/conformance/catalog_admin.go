@@ -20843,4 +20843,195 @@ var adminCases = []Case{
 		},
 		AssertHeaders: []string{"Content-Type", "X-Frame-Options"},
 	},
+
+	// F198: the Admin API is scope-filtered, and these eight cases are the only
+	// thing in the catalogue that can see it.
+	//
+	// Every other admin fixture authenticates through admin-cli, whose
+	// fullScopeAllowed is on, so a guard that works and a guard that is never
+	// reached produce identical goldens everywhere else. They read
+	// adminScopeFilteredFixture - one full administrator and three clients
+	// differing only in the flag and in what their scope maps - and they are
+	// **last in this file on purpose**: the fixture creates a user and three
+	// clients, and a fixture's objects are in the shared recording realm for
+	// everything recorded after it.
+	//
+	// Measured 2026-09-08 against a live 26.7.1. See
+	// docs/superpowers/handover/admin-scope-filter.md.
+	{
+		ID: "admin/users/scope-filtered-read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get a user through a client whose fullScopeAllowed is off",
+			Retrieved: "2026-09-08",
+		},
+		Status: Implemented,
+		// The flag-off half of the pair. Its sibling below differs in **one
+		// field of one client** and answers 404, so this 403 is a statement
+		// about fullScopeAllowed and about nothing else - the user is a full
+		// administrator in both.
+		Fixture: "admin-scope-filtered",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/" + scopeFilteredMissingUser,
+			Headers: map[string]string{"Authorization": "Bearer {{narrow_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "admin/users/scope-filtered-read-full-scope",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get a user through a client whose fullScopeAllowed is on",
+			Retrieved: "2026-09-08",
+		},
+		Status: Implemented,
+		// The control. One field of one client apart from the case above, and
+		// the answer is the ordinary `User not found` - so the administrator
+		// really is one and the 403 above is the filter rather than the user.
+		Fixture: "admin-scope-filtered",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/" + scopeFilteredMissingUser,
+			Headers: map[string]string{"Authorization": "Bearer {{full_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "admin/users/scope-filtered-role-in-scope",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: get a user through a flag-off client whose scope maps view-users",
+			Retrieved: "2026-09-08",
+		},
+		Status: Implemented,
+		// **The case that refuses a coarse reading.** This client also has
+		// fullScopeAllowed off, and it answers the flag-on client's 404 because
+		// its scope maps master-realm's view-users. An implementation that
+		// refuses a flag-off caller outright passes the two cases above and
+		// fails this one; one that admits a flag-off caller with any mapping at
+		// all passes this one and fails the client listing below.
+		Fixture: "admin-scope-filtered",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/users/" + scopeFilteredMissingUser,
+			Headers: map[string]string{"Authorization": "Bearer {{view_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "admin/clients/scope-filtered-role-out-of-scope",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Clients: list clients through a flag-off client whose scope maps view-users",
+			Retrieved: "2026-09-08",
+		},
+		Status: Implemented,
+		// The other half of that 2x2, and what says the filter runs **per role**
+		// rather than per client: the token that reads a user above is refused
+		// the client listing here, exactly as a caller genuinely holding
+		// view-users alone is.
+		Fixture: "admin-scope-filtered",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/clients",
+			Headers: map[string]string{"Authorization": "Bearer {{view_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "admin/realms-admin/scope-filtered-read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: get a realm through a client whose fullScopeAllowed is off",
+			Retrieved: "2026-09-08",
+		},
+		Status: Implemented,
+		// guardRealmRead's admission is not a role list - it is maySeeRealm,
+		// which reads the caller's admin roles on **every** container rather
+		// than on the one this request's guards use - so it is a separate code
+		// path from the guards above and needs its own case.
+		Fixture: "admin-scope-filtered",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master",
+			Headers: map[string]string{"Authorization": "Bearer {{narrow_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "admin/realms-admin/scope-filtered-listing",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: list realms through a client whose fullScopeAllowed is off",
+			Retrieved: "2026-09-08",
+		},
+		Status: Implemented,
+		// The third code path: /admin/realms has no {realm} segment, so
+		// resolveCaller runs with a nil realm and the caller gets no container
+		// at all. F198 named this route and it is measured 403.
+		Fixture: "admin-scope-filtered",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms",
+			Headers: map[string]string{"Authorization": "Bearer {{narrow_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "admin/realms-admin/scope-filtered-unknown-realm",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: an unknown realm reached with a scope-filtered token",
+			Retrieved: "2026-09-08",
+		},
+		Status: Implemented,
+		// **The guard order, and one of the two things F198 said nobody had
+		// probed.** The refusal sits behind the realm resolution: this token is
+		// 403 on every realm that exists and still gets `Realm not found.` for
+		// one that does not. A filter applied ahead of resolveRealm answers 403
+		// here and passes every other case in this block.
+		Fixture: "admin-scope-filtered",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/nosuchrealm",
+			Headers: map[string]string{"Authorization": "Bearer {{narrow_token}}"},
+		},
+		AssertHeaders:       []string{"Content-Type"},
+		AssertAbsentHeaders: []string{"Cache-Control"},
+	},
+	{
+		ID: "admin/workflows/scope-filtered-held-roles",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Workflows: list workflows through a client whose fullScopeAllowed is off",
+			Retrieved: "2026-09-08",
+		},
+		Status: Implemented,
+		// **The one family of the 79 routes swept that does not read the
+		// filtered set.** This token is 403 on the seven cases above and 200
+		// here, because the Workflows guard asks for the roles the caller really
+		// holds. A filter applied uniformly answers 403, and this golden is what
+		// says so.
+		Fixture: "admin-scope-filtered",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/admin/realms/master/workflows",
+			Headers: map[string]string{"Authorization": "Bearer {{narrow_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type"},
+	},
 }
+
+// scopeFilteredMissingUser is a user id that names nothing, so the three reads
+// that use it answer either the caller's 403 or the resource's 404 and never a
+// user's representation. A missing id rather than a real one on purpose: it
+// keeps all three goldens under thirty bytes and keeps them out of reach of the
+// pollution guard.
+const scopeFilteredMissingUser = "00000000-0000-0000-0000-000000000000"
