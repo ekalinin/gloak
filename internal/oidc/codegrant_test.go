@@ -170,9 +170,20 @@ func TestCodeGrantCarriesTheAuthorizationRequest(t *testing.T) {
 		t.Errorf("nonce is measured on the ID token alone, and the access token has %v", access["nonce"])
 	}
 	// auth_time is when the user authenticated, not when the token was issued.
-	// Both are the same second here, so what is asserted is that they agree
-	// rather than the six-second gap the live measurement produced.
-	if access["auth_time"] != access["iat"] {
+	// What is asserted is that they agree on a login redeemed at once, rather
+	// than the six-second gap the live measurement produced.
+	//
+	// **One second of slack, and it is a measured flake rather than caution.**
+	// Both values are wall-clock seconds taken a few milliseconds apart, so a
+	// login and a redemption straddling a second boundary make them differ by
+	// exactly one - observed on 2026-09-08, where it manufactured a false kill
+	// in a mutation pass over an unrelated file. Equality is the wrong
+	// assertion because the test cannot pin the clock: writeTokens builds its
+	// own token.Issuer and nothing threads a Now into it. A gap of two or more
+	// still fails, so the six-second case this sentence contrasts with is
+	// still caught. See F199.
+	gap := access["iat"].(float64) - access["auth_time"].(float64)
+	if gap < 0 || gap > 1 {
 		t.Errorf("auth_time %v and iat %v disagree on a login redeemed at once",
 			access["auth_time"], access["iat"])
 	}
