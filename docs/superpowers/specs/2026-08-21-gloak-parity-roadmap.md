@@ -250,11 +250,11 @@ operations is allocated below; none is left unassigned.
 | Partial export | `partial-export` and `partialImport`, **done 2026-09-06** | P14 | `admin/realms-admin` 42->44. The export is `GET /admin/realms/{realm}` **spliced**, not transcribed, so `realmrep.go` stays the one truth. Answers F163: the parse code separates **syntax from binding**, not shapes | 2 ops |
 | Certificate remainder | The `Client Attribute Certificate` tag's last three, **done 2026-09-06** | F161, F38 | `admin/client-attribute-certificate` 4->5, and **+1 counted, +3 served**: `download` and `generate-and-download` are built and uncounted, because no golden can hold a keystore. The dependency question **inverted** - `x/crypto/pkcs12` is already direct and cannot read Keycloak's BouncyCastle BER, so `internal/keystore` was written and no module added. BCFKS is a deliberate divergence, F171 | 1 op |
 
-Denominator today: **413 Admin API operations plus 207 protocol and account
-behaviours, 620 enumerated**, plus **two** chapters (parts of P13 and P14) whose
+Denominator today: **413 Admin API operations plus 209 protocol and account
+behaviours, 622 enumerated**, plus **two** chapters (parts of P13 and P14) whose
 surface is not counted and which the report says so about - P11 left that list on
-2026-09-07 and the account API on 2026-09-08. Served: **567 of 620** after the
-account chapter, and **P2, P4 and P5 are complete** -
+2026-09-07 and the account API on 2026-09-08. Served: **570 of 622** after
+`fullScopeAllowed` at issuance, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -285,7 +285,54 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-08 (twenty-ninth fold).** `make conformance` reports **567 of
+**Updated 2026-09-08 (thirtieth fold).** `make conformance` reports **570 of
+622**. The number is the least of it: this is the first cut in weeks whose
+subject was **a place where Gloak was more permissive than Keycloak**, rather
+than a behaviour it did not serve. `fullScopeAllowed` was stored, read by
+`internal/admin` in two places, and read by the token path **nowhere**.
+
+**The filter moves four observables, not one** - `realm_access`,
+`resource_access`, `aud` and the refresh token's `aud_x`, the last two because
+the audience is computed from the client roles. `userinfo` and the ID token carry
+no roles either way.
+
+**The composite question had two plausible answers and one probe decided it.** A
+user holding a composite parent and *not* its child, with the **child alone**
+mapped: expand-then-filter answers the child, filter-then-expand answers nothing.
+Keycloak answered the child. The scope side is a second, independent closure, and
+neither runs upwards.
+
+**The issuer's rule is the scope evaluator's and not the scope-mapping family's**
+- measured, not read off the code, which mattered because the three
+scope-mapping reads disagree with the token on exactly this input: with a client
+scope attached they answer empty while the token carries the role. That is why
+`roles.InScope` has four callers and `hasScope` is deliberately not one.
+
+**Review found one survivor and it was the cut's own mutation done properly.**
+Keying scope membership by `role.Name` instead of `role.ID` survived every
+package in the tree, run separately. `model.Role`'s own comment says why it
+matters - a role is a realm role when `ClientID` is empty - so a name names two
+roles in two containers, and a name-keyed filter lets a client role through
+because some realm role of that name is in scope. Every fixture in the tree gave
+every role a distinct name, so the two implementations agreed on all of it.
+
+**The lesson from that is general enough to have gone into AGENTS.md.** The cut's
+own M1 had rewritten the *lookup* to `role.Name` while the map was still built by
+id, so nothing matched and a golden moved. That kills "the predicate is broken",
+not "a name identifies a role". **A mutation that makes a function fail is not
+the same mutation as one that makes it wrong consistently, and only the second
+tests the rule.**
+
+**And the biggest thing the cut found, it did not fix.** The **Admin API is
+scope-filtered too** and Gloak is not: a flag-off client's token is 403 on
+`/admin/realms/{realm}`, `/admin/realms` and `/admin/serverinfo`, and Gloak
+answers 200. Same defect, same permissive direction, much larger surface - F198.
+Its first task is a corpus rather than a handler, because every admin fixture
+authenticates as `admin-cli` with the flag on, so a working guard and an
+unreached one produce identical goldens and a green tree would look like
+evidence.
+
+**Earlier on 2026-09-08 (twenty-ninth fold).** `make conformance` reports **567 of
 620**, and the unenumerated chapters fall again, three to **two**. The account
 REST API is enumerated - **40 cases over eleven chapters** - and 18 are served:
 the gate and the two reads derived from it.

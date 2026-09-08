@@ -2623,6 +2623,64 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   cover every create, and widening a step to accept the 400 would also accept
   `Issuer is required` - a fixture that passes while creating nothing.
 
+- **`fullScopeAllowed` is a filter on the roles that reach a token, and it
+  reaches four observables rather than one.** `realm_access`, `resource_access`,
+  `aud` and the refresh token's `aud_x` - the last two because the audience is
+  computed from the client roles, so a scope mapping moves `aud` from absent to
+  a bare string. `userinfo` and the ID token carry no roles at all and are
+  unaffected, measured on two clients differing only in the flag.
+- **The rule has three clauses and the third is the one the scope-mapping reads
+  do not have.** A client's own roles are in its own scope without ever being
+  mapped - the *issuing* client's, measured symmetrically on two clients - and
+  the scope mappings of every **granted** client scope contribute. With a client
+  scope attached, `.../scope-mappings`, `.../realm` and `.../realm/composite` on
+  the client all answer empty while the token carries the role. So the issuer's
+  rule is the **scope evaluator's** and not the scope-mapping family's, measured
+  by taking `granted` and `generate-example-access-token` beside a real password
+  grant on every probe.
+- **A granted client scope is the default ones plus the optional ones the
+  request names.** Four cells, all measured: unattached contributes nothing,
+  default contributes, optional-and-unnamed contributes nothing,
+  optional-and-named contributes. `include.in.token.scope` decides only whether
+  the scope's name is written into the `scope` claim and does **not** gate the
+  mapping, measured both ways on one client.
+- **The subject's roles are expanded first and the filter runs per role, and the
+  scope side is a second, independent closure.** A user holding a composite
+  parent and not its child, with the child alone mapped, gets the child - which
+  filter-then-expand cannot produce. Mapping the parent alone puts both in scope.
+  Neither closure runs upwards: with the child mapped, the parent the user holds
+  stays out.
+- **A role in a scope is identified by its id and never by its name, and the
+  filter is where that bites.** A realm role and a client role may share a name -
+  `model.Role` says a role is a realm role when `ClientID` is empty - so a
+  name-keyed scope membership lets a client role through because some realm role
+  of that name is in scope. Measured: with the realm half mapped and the client
+  half mapped nowhere, the token carries the realm role and **no
+  `resource_access` at all**. The two implementations agree on every set of
+  roles whose names are distinct, which is why a corpus cannot find it and a
+  fixture has to be built to collide them - the same shape as F32 one level
+  down.
+- **Introspection applies the filter of the client named by the subject token's
+  `azp`, not the caller's.** Measured with a caller whose own scope holds none of
+  what came back.
+- **The account API's gate reads the granted role set and no byte of the token,
+  and the pair that says so is two lightweight clients differing only in the
+  flag.** Their tokens carry the identical eight keys - no `aud`, no
+  `realm_access`, no `resource_access` - and answer 200 and 401. The chapter's
+  older pair also differed in the lightweight attribute, so it was one variable
+  short of this.
+- **The Admin API is scope-filtered as well, and Gloak is not.** A flag-off
+  client's token is 403 on `/admin/realms/{realm}`, `/admin/realms` and
+  `/admin/serverinfo` with the generic `HTTP 403 Forbidden`, behind the realm
+  resolution - an unknown realm is still `Realm not found.` Gloak answers 200.
+  See F198.
+- **`Case.Unordered` on a path whose value is not an array is a hard failure at
+  record time**, not a no-op: `normalize: sort unordered: value at this path is
+  not an array`. So a mask cannot be copied from a neighbouring case on the
+  assumption the shape matches - which is a stronger guarantee than the
+  inert-mask ratchets give, and it is how `aud`'s bare-string form was noticed
+  here.
+
 ## Boundaries
 
 | Package | Owns | Must not |
@@ -2969,3 +3027,23 @@ compiles can still return the wrong rows.
 
 Known gaps are in `docs/superpowers/specs/2026-08-18-gloak-followups.md`. Each was
 reproduced, not theorised. Read it before concluding you have found something new.
+
+**A mutation that makes a function fail is not the same mutation as one that
+makes it wrong consistently, and only the second tests the rule.** Measured on
+2026-09-08, on one line. Rewriting a scope predicate's *lookup* from `role.ID` to
+`role.Name` while the map is still built by id makes nothing match, so the filter
+keeps nothing and a golden moves - a kill of "the predicate is broken". Keying
+**and** looking up by name is a different mutation, it is the one the rule is
+about, and it survived every package in the tree run separately. The pass had one
+of each and could not tell them apart.
+
+So when a mutation dies, ask what it proved. A mutation that breaks the mechanism
+proves the mechanism runs; only a mutation that leaves a **coherent wrong
+implementation** proves the rule is the right one. The second kind is what a
+review should look for first, and it is where both of this project's named
+failure shapes live - a set of assertions, and a set of inputs, that an incorrect
+implementation satisfies entirely.
+
+**Run each package separately.** A filtered `-run` has twice reported a survivor
+that a test outside the filter was killing, and once hidden a real survivor
+behind a package that did not exercise it.
