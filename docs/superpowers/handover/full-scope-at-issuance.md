@@ -393,9 +393,12 @@ Per file:
   measurement.
 - **`oidc/introspection/scope-filtered-access-token.http`** - new. The filtered
   claim set in section 6.2, and every byte of it is Keycloak's. It was recorded
-  three times and only the third is committed; sections 7.1 and 7.2 say why,
-  because both intermediate failures were the harness refusing something and
-  both are findings.
+  **four** times and only the last is committed. Two of the intermediate
+  failures were the harness refusing something and both are findings - sections
+  7.1 and 7.2. The fourth recording is the twin pair review asked for, section
+  8.5, and it moved one byte range of the body: `realm_access` gained
+  `gloak-probe-narrow-twin` and nothing else changed, which is the measurement
+  that a client role of the same name does **not** come with it.
 - **Everything else** - unmoved, and the reason is worth stating exactly,
   because "nothing moved" is easy to read as "nothing was at risk".
 
@@ -479,7 +482,10 @@ Every mutation names the test that kills it.
 | I1 | `roles.Filter` keeps nothing | killed | same |
 | J1 | the issuer ignores the granted scope | **survived, then closed** - 8.2 | `TestTokenRolesReadsTheGrantedScopeForOptionalClientScopes` |
 | L1 | the account gate falls open on an unknown `azp` | **survived, then closed** - 8.3 | `TestGrantedRolesRefusesATokenWhoseClientIsGone` |
-| M1 | `InScope` matches by **name**, not id - F32's shape | killed | `TestConformance/oidc/introspection/scope-filtered-access-token` |
+| M1 | `InScope` **looks up** by name against an id-keyed map | killed | `TestConformance/oidc/introspection/scope-filtered-access-token` |
+| S5 | `InScope` **keys and looks up** by name - M1 done consistently | **survived, then closed** - 8.5 | `TestConformance/oidc/introspection/scope-filtered-access-token` |
+| S2 | the client's own roles dropped from its own scope - 8.6 | killed | `TestTokenRolesKeepsTheIssuingClientsOwnRolesAndNoOtherClients` |
+| S2b | **every** client role in scope, not just the issuer's own | killed | same |
 | N1 | introspection falls back to the caller when `azp` is gone | **survivor** - 8.4 | nothing |
 
 ### 8.1 The corpus problem, demonstrated rather than asserted
@@ -548,7 +554,74 @@ token's audience, where L1's worst case was an open gate.
 The cell is unmeasured against Keycloak - no probe was sent - which is F197, and
 the code comment says so at the branch.
 
-### 8.5 The harness manufactured one false kill, and the brief predicted it
+### 8.5 S5, and a mutation this pass thought it had already run
+
+**M1 was too weak and it read as a kill.** It rewrote the predicate's lookup to
+`in[role.Name]` and left the map built with `in[role.ID] = true`, so no lookup
+ever matched, the filter kept nothing, and the golden moved. That is a kill of
+*"the predicate is broken"*, not of *"a name identifies a role"* - and the
+mutation the second reads is M1 done **consistently**, keying and looking up by
+name together. Review found it and it **survived the whole tree**: every
+package separately, not one filtered run.
+
+It is not equivalent and the direction is this cut's own. `model.Role`'s comment
+says why: a role is a realm role when `ClientID` is empty and a client role
+otherwise, so a name names two roles in two containers. A name-keyed filter lets
+a client role through because some **realm** role of that name is in scope -
+roles nobody mapped into that client - which is F192's shape one level down.
+
+Every fixture in the tree gave every role a distinct name, so the two
+implementations agreed on all of it. That is the second failure mode this
+handover names - *a set of inputs an incorrect implementation satisfies
+entirely* - and another flag-off client does not fix it.
+
+**Measured before anything was written.** A realm role and a client role sharing
+a name, the user holding both, only the realm one mapped into a flag-off
+client's scope:
+
+```
+user holds        realm twin, realm only-realm, holder:twin
+issuer scope maps realm twin only, fullScopeAllowed off
+
+  realm_access    {"roles":["twin"]}
+  resource_access ABSENT
+  aud             ABSENT
+```
+
+`introspect-scope-filtered` now carries that pair, on a **third client that is
+otherwise absent from the token entirely** rather than on the peer, because that
+makes the leak unmistakable. The mutation moves three claims of one golden:
+
+```
+want  "aud":"gloak-probe-narrow-peer"
+      "resource_access":{...issuer..., ...peer...}
+got   "aud":["gloak-probe-narrow-peer","gloak-probe-narrow-twin-holder"]
+      "resource_access":{...issuer..., ...peer...,
+                         "gloak-probe-narrow-twin-holder":{"roles":["gloak-probe-narrow-twin"]}}
+```
+
+`realm_access` is **unchanged** between the two, which is the point: the realm
+half is in scope either way and only the client half separates them.
+
+The collision was not invented for this. The account chapter already creates a
+realm role deliberately named after one of `account`'s own, for internal/admin's
+F32. What did not exist anywhere was two same-named roles on **opposite sides of
+a scope filter**.
+
+### 8.6 The own-roles clause had no package guard, and now has one
+
+Review's second observation: S2 - dropping the client's own roles from its own
+scope - was killed by `TestConformance` alone, and none of `roles_test.go`'s 158
+lines touched the clause. The golden is the contract, so that was acceptable
+rather than a defect, but the clause this handover proves **symmetrically** in
+section 2.4 had only one half asserted anywhere.
+
+`TestTokenRolesKeepsTheIssuingClientsOwnRolesAndNoOtherClients` asserts both:
+two flag-off clients each owning one role the user holds, and each client's own
+token carries its own role and not the other's. It kills S2 and S2b - the latter
+being "every client role is in scope", which the golden's half alone passes.
+
+### 8.7 The harness manufactured one false kill, and the brief predicted it
 
 N1's first run used `-run '.'` over `./...` and reported **killed by
 `TestCodeGrantCarriesTheAuthorizationRequest`**. That test has nothing to do
@@ -643,6 +716,16 @@ Phrased as it would be folded, under "Things that look like bugs and are not".
   filter-then-expand cannot produce. Mapping the parent alone puts both in scope.
   Neither closure runs upwards: with the child mapped, the parent the user holds
   stays out.
+- **A role in a scope is identified by its id and never by its name, and the
+  filter is where that bites.** A realm role and a client role may share a name -
+  `model.Role` says a role is a realm role when `ClientID` is empty - so a
+  name-keyed scope membership lets a client role through because some realm role
+  of that name is in scope. Measured: with the realm half mapped and the client
+  half mapped nowhere, the token carries the realm role and **no
+  `resource_access` at all**. The two implementations agree on every set of
+  roles whose names are distinct, which is why a corpus cannot find it and a
+  fixture has to be built to collide them - the same shape as F32 one level
+  down.
 - **Introspection applies the filter of the client named by the subject token's
   `azp`, not the caller's.** Measured with a caller whose own scope holds none of
   what came back.
@@ -685,12 +768,26 @@ client, introspect again. N1 in section 8.4 is the survivor; a case cannot be
 written until the answer is known.
 
 **F198: the Admin API is scope-filtered and Gloak is not.** Section 9 is the
-measurement and the reason this cut does not serve it. It needs its own corpus -
-every admin fixture authenticates through `admin-cli`, whose flag is on - and
-three probes it does not have: where the check sits in each family's guard
-order, and what a master token with the flag off answers for another realm.
-**This is the largest remaining instance of F192's defect** and it is on the
-surface that matters most.
+measurement and the reason this cut does not serve it. **This is the largest
+remaining instance of F192's defect** and it is on the surface that matters
+most.
+
+**The first thing that cut has to do is build a corpus, and that decides how it
+starts.** Every fixture in the admin chapter authenticates through `admin-cli`,
+whose `fullScopeAllowed` is on, and `security-admin-console`'s is on too - so a
+guard that works and a guard that is never reached produce the identical 900-odd
+admin goldens. Serving the filter and running the suite would prove nothing, and
+a green tree would look like evidence. It is exactly the trap this cut had to
+build `introspect-scope-filtered` to escape, one chapter over and with a much
+larger blast radius: the fixture has to come **before** the handler, and it has
+to be an admin fixture whose caller's client carries the flag off and whose
+golden is a refusal.
+
+Two other things are missing and neither is a corpus problem: where the scope
+check sits in each family's guard order - measured here on three routes and not
+on the family - and the **cross-realm** cell, since AGENTS.md records that a
+request to `/admin/realms/{realm}` may carry a token from that realm or from
+master, and which realm's client the filter reads is a probe nobody has sent.
 
 **F199: `internal/oidc`'s browser-flow tests cannot pin the clock.**
 `TestCodeGrantCarriesTheAuthorizationRequest` compared `auth_time` to `iat` for
