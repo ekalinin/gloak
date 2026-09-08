@@ -166,6 +166,26 @@ func ScopesInEffect(ctx context.Context, repo store.ClientScopeRepo, c *model.Cl
 // mapped the token carried parent and child both. So it is set membership over
 // two independent closures, and mapping a child does not pull its parent in -
 // measured, the parent stayed out.
+//
+// # The membership is keyed by id, and a name would be a hole
+//
+// `in` is keyed by `role.ID` and never by `role.Name`. **A name does not
+// identify a role**: model.Role's own comment says a role is a realm role when
+// ClientID is empty and a client role otherwise, so one name can name two
+// roles in two containers. Keying by name is a consistent implementation that
+// agrees with this one on every set of roles whose names are distinct - which
+// is every fixture in this repository except the one built to refute it - and
+// it is wrong in the **permissive** direction, which is the direction this
+// whole function exists to close: it would let a client role through because
+// some realm role of the same name is in scope.
+//
+// Measured 2026-09-08 on a realm built for it. A realm role and a client role
+// share a name, the user holds both, and only the realm one is mapped into a
+// flag-off client's scope: the token carries `realm_access {"roles":["twin"]}`
+// and **no resource_access at all**. Pinned by
+// oidc/introspection/scope-filtered-access-token, where a name-keyed map moves
+// three claims at once - resource_access gains a client key and `aud` turns
+// from a bare string into an array.
 func InScope(ctx context.Context, repo store.RoleRepo, c *model.Client, scopes []*model.ClientScope) (func(*model.Role) bool, error) {
 	if c.FullScopeAllowed {
 		return func(*model.Role) bool { return true }, nil

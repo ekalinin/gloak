@@ -140,6 +140,71 @@ func TestScopesInEffectIsWhatTheIssuerAndTheEvaluatorShare(t *testing.T) {
 	}
 }
 
+// TestTokenRolesKeepsTheIssuingClientsOwnRolesAndNoOtherClients is the
+// own-roles clause, which had no package-level guard until a review said so.
+//
+// The clause is measured symmetrically: a user holding roles on two flag-off
+// clients gets, from each client's own token, that client's roles and not the
+// other's. `TestConformance/oidc/introspection/scope-filtered-access-token`
+// asserts one half against a recording; this asserts **both**, which is what
+// says the clause is about the issuing client rather than about client roles in
+// general. An implementation putting every client role in scope passes the
+// golden's half and fails here.
+func TestTokenRolesKeepsTheIssuingClientsOwnRolesAndNoOtherClients(t *testing.T) {
+	h, s, realm := newHandler(t)
+	ctx := context.Background()
+
+	user := &model.User{
+		ID: model.NewID(), RealmID: realm.ID,
+		Username: "gloak-probe-own-roles-user", Enabled: true,
+	}
+	if err := s.Users().Create(ctx, user); err != nil {
+		t.Fatalf("Create(user): %v", err)
+	}
+
+	// Two clients, both with the flag **off** and neither mapping anything.
+	// Each owns one role and the user holds both.
+	clients := map[string]*model.Client{}
+	for _, name := range []string{"gloak-probe-own-a", "gloak-probe-own-b"} {
+		c := &model.Client{
+			ID: model.NewID(), RealmID: realm.ID, ClientID: name,
+			Enabled: true, PublicClient: true, FullScopeAllowed: false,
+			RedirectURIs: []string{}, WebOrigins: []string{},
+		}
+		if err := s.Clients().Create(ctx, c); err != nil {
+			t.Fatalf("Create(%s): %v", name, err)
+		}
+		role := &model.Role{
+			ID: model.NewID(), RealmID: realm.ID, ClientID: c.ID, Name: name + "-role",
+		}
+		if err := s.Roles().Create(ctx, role); err != nil {
+			t.Fatalf("Create(%s role): %v", name, err)
+		}
+		if err := s.Roles().AssignToUser(ctx, user.ID, role.ID); err != nil {
+			t.Fatalf("AssignToUser(%s): %v", name, err)
+		}
+		clients[name] = c
+	}
+
+	for issuing, other := range map[string]string{
+		"gloak-probe-own-a": "gloak-probe-own-b",
+		"gloak-probe-own-b": "gloak-probe-own-a",
+	} {
+		t.Run(issuing, func(t *testing.T) {
+			_, clientRoles, err := h.tokenRoles(ctx, realm, clients[issuing], user, "")
+			if err != nil {
+				t.Fatalf("tokenRoles: %v", err)
+			}
+			if got := clientRoles[issuing]; len(got) != 1 || got[0] != issuing+"-role" {
+				t.Errorf("the issuing client's own role is not in its own scope: %v", clientRoles)
+			}
+			if _, ok := clientRoles[other]; ok {
+				t.Errorf("another client's role reached the token: %v", clientRoles)
+			}
+		})
+	}
+}
+
 func hasScopeNamed(scopes []*model.ClientScope, name string) bool {
 	for _, s := range scopes {
 		if s.Name == name {
