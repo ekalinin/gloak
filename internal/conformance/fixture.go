@@ -8298,8 +8298,21 @@ func introspectScopeFilteredFixture() Fixture {
 				Method:  http.MethodPost,
 				Path:    "/admin/realms/master/client-scopes",
 				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				// **`include.in.token.scope` is "false" and that is measured
+				// rather than tidy.** It decides only the `scope` claim's
+				// spelling: with it on, Keycloak writes the scope's name into
+				// `scope` and the token still carries the scope's mapped roles;
+				// with it off, `scope` is the plain `openid profile email` and
+				// the roles are unchanged. Measured 2026-09-08 both ways on one
+				// client, because a flag that gated the mapping too would make
+				// this whole fixture measure the wrong thing.
+				//
+				// It is off here because Gloak's granted scope is still the
+				// constant of F16 and cannot name a client scope, so leaving it
+				// on would make this golden fail on a claim that has nothing to
+				// do with the filter.
 				Body: []byte(`{"name":"` + narrowClientScope + `","protocol":"openid-connect",` +
-					`"attributes":{"include.in.token.scope":"true"}}`),
+					`"attributes":{"include.in.token.scope":"false"}}`),
 			},
 			ExpectStatus:  []int{http.StatusCreated},
 			CaptureHeader: map[string]string{"scope_uuid": "Location"},

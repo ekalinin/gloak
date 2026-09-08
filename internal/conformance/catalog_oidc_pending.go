@@ -2788,9 +2788,29 @@ var oidcPending = []Case{
 		// ReplaceCaptured writes {{user_id}} and the golden says which user
 		// this is. Same four as active-access-token beside it.
 		Volatile: []string{"exp", "iat", "jti", "sid"},
-		// Java sets. `aud` names one client here and is therefore a bare
-		// string rather than an array, which Unordered leaves alone.
-		Unordered:      []string{"aud", "realm_access/roles", "resource_access/*/roles"},
+		// Java sets - **but `aud` is not one of them here**, and that is the
+		// filter's second observable rather than an omission. The subject holds
+		// roles on three clients and the scope admits one, so `aud` names one
+		// client and takes the absent/string/array rule's middle case: a bare
+		// string. Its two siblings above list `aud` under Unordered because
+		// theirs are arrays.
+		//
+		// Listing it anyway is not inert, which is how this was found: the
+		// recorder answers `normalize: sort unordered: value at this path is
+		// not an array` and writes nothing. So a mask cannot be copied from a
+		// neighbouring case "in case the shape is the same" - the harness
+		// refuses it - which is a stronger guarantee than the inert-mask
+		// ratchets give and worth knowing before adding one.
+		//
+		// **`resource_access/*/roles` is not here either, and for the opposite
+		// reason.** Both siblings carry it; here each of the two clients has
+		// exactly one role in scope, so sorting is the identity and
+		// TestNoMaskIsInertOnItsGolden refuses it - which is the second guard
+		// in one case to reject a mask copied from the neighbours. Both role
+		// lists are asserted in full, which is stronger than the siblings and
+		// is what makes the own-roles clause and the mapped-client-role clause
+		// separately refutable.
+		Unordered:      []string{"realm_access/roles"},
 		UnorderedWords: []string{"scope"},
 	},
 	{

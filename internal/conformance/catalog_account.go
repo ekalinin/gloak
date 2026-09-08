@@ -52,7 +52,7 @@ import "net/http"
 // different resource, and the only 406-shaped thing on the surface is nothing
 // at all.
 //
-// # The enumeration: 16 route shapes, 112 verb cells, 40 counted behaviours
+// # The enumeration: 16 route shapes, 112 verb cells, 41 counted behaviours
 //
 // **The three numbers in this heading disagreed with each other and with the
 // slice until 2026-09-07.** The commit that added the chapter said 36, this
