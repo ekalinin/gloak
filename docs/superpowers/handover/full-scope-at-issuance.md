@@ -366,6 +366,13 @@ reading the caller's `fullScopeAllowed` answers every role the subject holds.
 `make record` on the branch, log preserved. **1071 goldens rewritten, 1069 of
 them byte-identical to `main`, two added and none modified.**
 
+It was run twice. The second run is on the branch head after every commit below,
+and its whole result is `git status --short` printing nothing: 1071 rewritten, 11
+Pending left alone, 4 cases skipped for want of a fixture, and **not one byte
+different from what is committed**. That is the property this section is really
+about - the goldens in the tree are what a single `make record` produces on this
+source, rather than what a sequence of partial runs accumulated.
+
 ```
 git diff --name-status 1d2ac8d HEAD -- internal/conformance/testdata/golden/
 A  account/gate/scope-filtered-lightweight.http
