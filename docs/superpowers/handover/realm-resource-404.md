@@ -452,16 +452,16 @@ explaining.
 
 ## 6. The mutation pass
 
-Twenty mutations across two rounds, by a harness that copies the original aside
-and installs the revert on a `trap ... EXIT` **before** anything can fail,
+Twenty-four mutations across three rounds, by a harness that copies the original
+aside and installs the revert on a `trap ... EXIT` **before** anything can fail,
 counts the target as a substring rather than as grep's matching lines, refuses a
 target that does not appear exactly once, refuses one that does not build,
 refuses one whose `-run` selected no test, and re-hashes the file after
-reverting. The tree was committed before the pass and nothing was staged during
-it. `git status` was read after every group and was clean every time.
+reverting. The tree was committed before each round and nothing was staged
+during one. `git status` was read after every group and was clean every time.
 
-**Twenty applied, nineteen killed, one survivor - and the survivor is F181's,
-not a new one.**
+**Twenty-four applied, twenty-two killed, two survivors - one is F181's, and the
+other is the finding that closed F212.**
 
 The harness's substring count earned itself twice. `grep -c` counts matching
 *lines*, so a multi-line target came back as 624 occurrences and the mutation
@@ -497,6 +497,11 @@ R3   M2 against all of internal/conformance              KILLED  TestConformance
      round two, the catalogue's own declarations
 R4   drop realms-collection's AssertAbsentHeaders        SURVIVED  see 6.2
 R5   demote account/dispatch/unknown-subpath-json        KILLED  TestConformance
+     round three, F212: which case witnesses the Allow probe
+M16  invert the Allow probe, run the OLD case alone      SURVIVED  see 6.3
+M17  invert the Allow probe, run the NEW case alone      KILLED  TestConformance
+M18  drop the headers from the branch, NEW case alone    KILLED  TestConformance
+M19  rename the sibling-locator case's ID                KILLED  TestRecordedCaseRules
 ```
 
 The `-run` filter on M1-M15 is the thing this project has been bitten by, so
@@ -571,6 +576,37 @@ What stops it is not the corpus. M12 is killed by
 the whole set absent. So the guard exists and lives in a different package from
 the case that looks like it holds it - which is the shape of F181 rather than a
 hole this cut opened, and it is a fifth consumer for that follow-up's argument.
+
+### 6.3 The second survivor is F212, and it is the point of the round
+
+Review asked for a conformance case putting `WithKeycloakFallbacks`' Allow probe
+back in the corpus. The obvious way to justify one is to assert that the branch
+lost its witness. Round three measures it instead, with **one mutation run twice
+against two different cases**:
+
+```
+M16  invert the Allow probe, -run …/http/fallback/method-not-allowed        SURVIVED
+M17  invert the Allow probe, -run …/http/fallback/method-not-allowed-admin  KILLED
+```
+
+Same mutation, same package, same command, two cases. The old case - `POST` on
+a `.well-known` path, written for this branch in P1 - **cannot see the branch
+being inverted at all**, because F184's dispatcher now serves it and answers the
+identical thirty bytes. The new case kills it. That is F212 demonstrated rather
+than argued, and it is worth the paragraph because the failure mode is silent:
+**a case that stops witnessing what it was written for goes on passing**, and
+the meter counts it either way.
+
+M18 is the same pair on the header half - dropping `httpx.SetSecurityHeaders`
+from the branch - and the new case kills that too, so the case pins the whole
+response and not only its body.
+
+M19 checks the other new case is bound to its recording rather than carrying a
+name nothing reads: renaming
+`http/fallback/method-not-allowed-sibling-locator` is killed by
+**`TestRecordedCaseRules`**, not by `TestConformance` - the harness refuses a
+`Recorded` case with no golden before it ever compares one, which is the
+stronger of the two guards and the one a reader would not predict.
 
 ## 7. What moved on the meter
 
