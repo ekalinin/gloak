@@ -1,0 +1,508 @@
+# The Admin API's scope filter: one mechanism, two role sets, and a family that reads the other one
+
+F198 recorded a **symptom**: a client with `fullScopeAllowed: false` is refused
+`/admin/realms/{realm}`, `/admin/realms` and `/admin/serverinfo` with the generic
+`HTTP 403 Forbidden`, behind the realm resolution, and Gloak answered 200. It did
+not say why, and it named two cells nobody had probed.
+
+The mechanism is **not** what the brief's most likely candidate said. It is not
+yesterday's token filter showing through - the Admin API's guard never reads the
+token's claims and could not - and it is not an audience or client check either.
+It is the **role set**, recomputed server-side under the token's client scope,
+and it is the account gate's finding on a third surface.
+
+Two things also turned out to read the **unfiltered** set, both measured and
+neither predictable from the other: the conferral closure behind `mayGrantRole`,
+and the whole `Workflows` family.
+
+Everything below was measured against `quay.io/keycloak/keycloak:26.7.1
+start-dev` on 2026-09-08 and re-verified on a second, clean container on
+2026-09-09.
+
+## 1. The corpus, and why it came first
+
+F198 said this and it is the reason the cut could not start with the handler:
+
+> Every fixture in the admin chapter authenticates through `admin-cli`, whose
+> `fullScopeAllowed` is on, and `security-admin-console`'s is on too - so a
+> guard that works and a guard that is never reached produce the identical
+> 900-odd admin goldens.
+
+That is exact. `POST /clients` defaults the flag to **true**, `internal/bootstrap`
+sets it on the two clients that carry it, and `internal/oidc/registration.go`
+sets it on every dynamically registered client. Before this branch **no admin
+fixture in the tree had a flag-off caller at all**, so serving the filter and
+running the suite would have proved nothing and a green tree would have looked
+like evidence.
+
+`adminScopeFilteredFixture` is the corpus. One user and three clients:
+
+```
+gloak-probe-adminscope-full    fullScopeAllowed true
+gloak-probe-adminscope-narrow  fullScopeAllowed false, nothing mapped
+gloak-probe-adminscope-view    fullScopeAllowed false, master-realm's view-users mapped
+```
+
+The user is a **full administrator** - it holds the realm role `admin`, composite
+over all 21 of `master-realm`'s roles plus `create-realm` - so every refusal is a
+statement about the client and not about the user. `-full` and `-narrow` differ in
+**one field**, which is the minimal pair AGENTS.md asks for and which the account
+chapter's older pair was one variable short of.
+
+Measured on exactly these three clients:
+
+```
+                       -full  -narrow  -view
+GET /users/{unknown}    404     403     404
+GET /clients            200     403     403
+GET /admin/realms/{r}   200     403     200
+GET /admin/realms       200     403     200
+GET /admin/realms/nope  404     404     404
+GET /workflows          200     200     200
+```
+
+### 1.1 What it can refute
+
+Eight cases read it, and each of these mistakes moves at least one golden:
+
+| a wrong implementation | the case that catches it |
+|---|---|
+| no filter at all - today's Gloak | `admin/users/scope-filtered-read` moves 403 → 404 |
+| the flag read backwards | `admin/users/scope-filtered-read-full-scope` moves 404 → 403 |
+| **a coarse gate**: a flag-off client refused outright | `admin/users/scope-filtered-role-in-scope` moves 404 → 403 |
+| **any mapping opens everything**: flag-off plus one scope mapping admitted wholesale | `admin/clients/scope-filtered-role-out-of-scope` moves 403 → 200 |
+| the filter applied only to the container-narrowed set and not to `maySeeRealm`'s wider one | `admin/realms-admin/scope-filtered-read` |
+| the filter skipped where there is no `{realm}` segment and so no container | `admin/realms-admin/scope-filtered-listing` |
+| the filter run **ahead** of the realm resolution | `admin/realms-admin/scope-filtered-unknown-realm` moves 404 → 403 |
+| the filter applied uniformly, `Workflows` included | `admin/workflows/scope-filtered-held-roles` moves 200 → 403 |
+
+The third and fourth rows are the pair that matters most. They are the same
+flag-off client on two routes, and no single-cell reading passes both: refusing a
+flag-off caller outright is right on `-narrow` and wrong on `-view`'s user read,
+and admitting one with any mapping at all is right on `-view`'s user read and
+wrong on its client listing.
+
+### 1.2 Two decisions inside the fixture
+
+**`view-users` rather than `view-realm` on the third client.** Both prove the
+same thing. `view-users` opens the user read with a 26-byte body and is refused
+on the client listing with a 30-byte one; `view-realm`'s 200 is the realm's whole
+4486-byte representation. The evidence is identical and the goldens are two
+orders of magnitude smaller.
+
+**A user id that names nothing** in the three user reads. A real user would make
+the golden a representation, which the pollution guard then has to reason about
+and which changes whenever the user serialiser does. A missing id keeps all three
+goldens under thirty bytes and still separates 403 from 404, which is the whole
+question.
+
+**The cases are last in `catalog_admin.go` on purpose.** The fixture creates a
+user and three clients, and AGENTS.md records that a fixture's objects are in the
+shared recording realm for everything recorded after it. Last means nothing in
+the admin chapter is recorded after them.
+
+## 2. The mechanism
+
+### 2.1 It is not the token's claims, and it cannot be
+
+The first probe settles the most likely reading before anything else.
+
+```
+admin-cli, the bootstrapped administrator, master
+
+  azp, exp, iat, iss, jti, scope, sid, typ         -- eight claims
+  realm_access     ABSENT
+  resource_access  ABSENT
+  aud              ABSENT
+```
+
+`admin-cli` carries `client.use.lightweight.access.token.enabled = true`, so its
+token names **no roles at all**, and it drives the entire Admin API. So the guard
+cannot be reading `resource_access`.
+
+The pair that makes it airtight is two lightweight clients differing only in the
+flag:
+
+```
+p-full-lw   fullScopeAllowed true,  lightweight   8 claims   200
+p-narrow-lw fullScopeAllowed false, lightweight   8 claims   403
+```
+
+**The identical eight claims, and opposite answers.** There is no byte in either
+token an implementation could read. That is exactly the shape
+`account/gate/scope-filtered-lightweight` records one chapter over, and it says
+the same thing here: the server recomputes the granted role set.
+
+`aud` is ruled out separately and it is worth saying, because it is the obvious
+second guess. `admin-cli` has **no** `aud` and is served; `p-narrow-view` has
+`aud: "master-realm"` and is refused on `/users`; `p-full` has
+`aud: ["master-realm","account"]` and is served. Every combination occurs.
+
+### 2.2 It is the roles, and mapping them back restores everything
+
+`p-narrow-mapped` is `fullScopeAllowed: false` with all 21 of `master-realm`'s
+roles mapped into its scope:
+
+```
+                     /admin/realms/master  /admin/realms  /admin/serverinfo  ~/users  ~/clients
+p-narrow              403                   403            403                403      403
+p-narrow-mapped       200                   200            200                200      200
+```
+
+So there is no audience test, no client test and no coarse gate. Put the roles
+back in scope and the flag-off client is a full administrator again.
+
+Three other candidate explanations are refuted by construction, each with its
+control:
+
+```
+p-conf-narrow  confidential, flag off        403      p-conf-full  confidential, flag on   200
+p-sa-narrow    client_credentials, flag off  403      p-sa-full    same, flag on           200
+p-narrow-lw    lightweight, flag off         403      p-full-lw    lightweight, flag on    200
+```
+
+Public against confidential, user grant against service account, lightweight
+against ordinary - none of them is the variable.
+
+### 2.3 The scope side expands composites
+
+`p-narrow-adminrole` maps the **realm** role `admin` alone into its scope. Its
+token comes back carrying all 21 `master-realm` client roles and it is 200
+everywhere. So the scope side's downward closure that yesterday's cut measured on
+the token path reaches client roles through a realm composite, and the admin
+surface inherits it rather than having a rule of its own.
+
+### 2.4 The granted scope is read off the token
+
+One client, one user, an optional client scope carrying the 21 admin scope
+mappings, and two token requests differing only in `scope`:
+
+```
+optional, not named   scope "openid email profile"                      403
+optional, NAMED       scope "openid email f198-admin-scope profile"     200
+default, not named    scope "openid email f198-admin-scope profile"     200
+```
+
+So the granted scope is an input, not a default. `inTokenScope` passes
+`parsed.Scope` for that reason. **Gloak cannot exercise this cell today**: F16's
+`grantedScope` is a constant plus `openid`, so no request can put a client
+scope's name into a Gloak token's `scope` claim. The code is right and the case
+cannot be written - F203.
+
+### 2.5 The filter is frozen at issuance, and Gloak recomputes
+
+This is the one place Gloak diverges knowingly, and it was not guessed.
+
+```
+token minted with the flag OFF                    403
+  flip the flag ON, same token                    403
+  a fresh token, flag ON                          200
+flip the flag OFF again, the fresh ON token       200
+  a fresh token, flag OFF                         403
+
+fresh token before a scope mapping is added       403
+  add the mapping, same token                     403
+  a fresh token                                   200
+  remove the mapping, that same token             200
+```
+
+**Keycloak records the granted role set on the client session at login and reads
+it afterwards.** That is the last piece of the mechanism and it explains
+everything above at once: lightweight tokens work because the roles are on the
+session rather than in the token; a flag-off token is refused because the stored
+set is empty; and flipping the flag under a live token changes nothing.
+
+Gloak recomputes per request from the client's current state. It has no stored
+granted set and giving it one means a migration and the session model, which is
+the "fixing a general rule inside a family branch" mistake AGENTS.md names. The
+divergence is observable **only** by mutating a client's flag or scope mappings
+while one of its tokens is alive. No conformance case does that, and the fixture
+creates its clients before it mints anything. Filed as **F202**, with the
+direction stated: removing a mapping revokes immediately in Gloak where Keycloak
+waits for expiry, which is the restrictive side; adding one grants immediately,
+which is permissive relative to Keycloak but never beyond the client's configured
+scope.
+
+### 2.6 So: is the fix one line?
+
+Nearly, and the brief asked for that to be said plainly if so.
+
+The **route guard** half is one line of intent: filter the caller's effective
+roles by the token client's scope before `adminRoleNames` narrows them, using the
+`roles.InScope`/`roles.ScopesInEffect`/`roles.Filter` trio yesterday's cut
+already built. Nothing new was needed in `internal/roles`. The measurement is
+the work, and it is what says that one line is right rather than a coarse gate.
+
+What stops it being *only* one line is section 4: two questions on this API read
+the other set, and neither is predictable from the guard.
+
+## 3. The per-family guard order
+
+F198 said the order was measured on three routes and not on the family. It is
+measured on the family now, and the answer is that **the filter is not a step in
+the order at all.**
+
+### 3.1 The sweep
+
+79 routes across every family Gloak serves, four callers, two pairs:
+
+```
+PAIR 1   admin-cli + a user holding no admin role
+   vs    a flag-off client + a full administrator
+
+PAIR 2   admin-cli + a user holding master-realm's view-realm alone
+   vs    a flag-off client scoping view-realm + a full administrator
+```
+
+**77 of 79 routes are identical in both pairs**, status and body. Not "both
+403" - identical, including every family whose resolution order AGENTS.md
+records as unusual:
+
+```
+GET  /admin/realms/master/groups/{unknown}      404 Could not find group by id   both
+GET  /admin/realms/master/roles-by-id/{unknown} 404 Could not find role with id  both
+GET  /admin/realms/master/group-by-path/nope    404 Group path does not exist    both
+GET  /admin/realms/master/client-scopes/{unk}   403                              both
+PUT  /admin/realms/master/default-groups/{unk}  403                              both
+GET  /admin/realms/master/organizations         403                              both
+GET  /admin/realms/master/clients/{unk}/roles   403                              both
+GET  /admin/realms/master/client-types          501 Feature not enabled          both
+GET  /admin/realms/nosuchrealm                  404 Realm not found.             both
+GET  /admin/realms/master/nosuchthing           404 unmatched-path body          both
+```
+
+The `Groups` family still resolves its group before the caller and answers 404 to
+everybody. `client-types` still answers its 501 ahead of authorization.
+`Organizations` still resolves the caller first. The scope filter changes none of
+it, because it is upstream of all of it: it decides *which roles the caller has*,
+and each family then asks its own question of that set in its own order.
+
+That is the finding, and it is the reason the fix could go in `resolveCaller`
+rather than in 26 guard combinators.
+
+### 3.2 Where it does sit
+
+```
+1.  authentication          401  - a garbage or absent bearer, ahead of the realm:
+                                   /admin/realms/nosuchrealm is 401 without a token
+2.  realm resolution        404  `Realm not found.` to a flag-off caller
+3.  feature gates           501  client-types answers a flag-off caller its 501
+4.  the caller's roles           <- the filter is here, inside the set
+5.  each family's own order      unchanged
+```
+
+Steps 1 and 2 in that order are worth pinning: a garbage bearer aimed at
+`/admin/realms/nosuchrealm` is **401**, not `Realm not found.`, so authentication
+precedes realm resolution, while a *valid* flag-off token aimed at the same path
+is 404. `admin/realms-admin/scope-filtered-unknown-realm` is the golden.
+
+## 4. The two questions that read the unfiltered set
+
+This is the part nothing predicted and the part that made the diff bigger than
+one line.
+
+### 4.1 `mayGrantRole`'s conferral closure
+
+Measured with a flag-off client whose scope carries `manage-users` alone, over a
+user holding the realm role `admin`, handing out `master-realm`'s `manage-realm`:
+
+```
+                                                        grant  available
+full administrator @ flag-off client scoping manage-users  204     20
+manage-users holder @ THE SAME flag-off client             403      7
+manage-users holder @ admin-cli (flag on)                  403      7
+full administrator @ admin-cli                             204     20
+```
+
+The first row answers what the **fourth** answers and not what the second does -
+although its *route guard* answers what the second's does, since `manage-users`
+is the only admin role its token scope carries and that is what admits it to the
+route at all.
+
+So one request asks two questions of two different sets. The route guard reads the
+scope-filtered set; the conferral closure reads the roles the caller really holds.
+Rows two and three together are what make it a statement about the **source** of
+the set rather than about the client: the same holder is refused through both
+clients.
+
+### 4.2 The `Workflows` family
+
+The two routes of the 79 that differ between the pairs are both `Workflows`, and
+the whole nine-operation family behaves the same way:
+
+```
+                                                 workflows  users
+full administrator @ flag-off, nothing mapped        200      403
+manage-users holder @ flag-off, nothing mapped       403      403
+manage-users holder @ admin-cli                      403      200
+full administrator @ admin-cli                       200      200
+```
+
+The family authorises - row two is 403 - and it authorises against the unfiltered
+set. AGENTS.md already records that its guard is the realm role `admin` itself
+and that all 21 `master-realm` roles are 403 singly; what is new is *which* role
+set that name is looked up in.
+
+It is not "the realm roles escape the filter", and that was checked rather than
+assumed: `create-realm` is filtered like everything else - a `create-realm`
+holder through a flag-off client is 403 on `POST /admin/realms` - and a user
+holding **only** the realm role `admin` through a flag-off client is 403 on
+`/admin/realms/master` and 200 on `/workflows`. One role, two routes, two
+answers. The family is the variable.
+
+### 4.3 What that cost in code
+
+`caller` grew one field and one memo:
+
+```go
+effective []*model.Role   // scope-filtered  - every route admission
+held      []*model.Role   // unfiltered      - conferral and Workflows
+```
+
+`effective` keeps its name and every existing reader - `namesOnContainerFor`,
+`adminRolesAnywhere`, `guardRealmContainerAny` - and silently becomes right,
+because all three are route admissions. `foreignGrants` moves to `held`, which is
+where it was already going conceptually. `grants()` stops closing over
+`adminGrants` and closes over `caller.names()` instead, which is
+`adminRoleNames` over `held` - **exactly what `adminGrants` used to be**, so for
+every flag-on caller in the tree nothing changed at all. `guardAnyHeld` is a new
+combinator with one user, the nine `Workflows` routes.
+
+## 5. The cross-realm cell
+
+F198's second unprobed cell: "which realm's client the filter reads is a probe
+nobody has sent".
+
+The probe has to be built rather than looked for, because a token from master
+naming a client that exists only in master is consistent with both readings. So:
+**one `clientId` in two realms with opposite flags**, both ways round.
+
+```
+twin      master: flag OFF     f198x: flag ON
+twinrev   master: flag ON      f198x: flag OFF
+
+caller                        GET /admin/realms/f198x   GET /admin/realms/master
+master admin @ twin    (off/on)      403                      403
+master admin @ twinrev (on/off)      200                      200
+f198x xadmin @ twin    (off/on)      200                      403
+f198x xadmin @ twinrev (on/off)      403                      403
+```
+
+**The filter reads the client of the token's issuing realm, never the addressed
+realm's client of the same name**, and the twin pair says so in both directions:
+a master token from the flag-off `twin` is refused `f198x` although `f198x`'s
+`twin` has the flag on, and a master token from the flag-on `twinrev` is served
+`f198x` although `f198x`'s `twinrev` has it off.
+
+Gloak gets this for free and it is worth saying why rather than claiming credit:
+`resolveCaller` already carries `authRealm`, the realm that issued the token, for
+`foreignGrants`' sake, and `inTokenScope` looks the client up in it. Looking it
+up in the path's realm would have been the natural mistake and it is the one this
+probe rules out.
+
+The cross-realm cell is otherwise **not a new rule**. `p-narrow-view`, whose
+filtered set is `view-users` alone, still reads `f198x`'s realm representation
+and is still 403 on its users and clients - AGENTS.md's "one read leaks
+sideways", running on the filtered set exactly as it runs on the unfiltered one.
+The filter is computed once in the token's realm and the ordinary cross-realm
+container logic runs on the result.
+
+## 6. The boundary question
+
+**`internal/roles` gained nothing and decides nothing new.** No function was
+added, no signature changed, and the package's own comment - *"must not write
+anything, or decide who may do what"* - is untouched.
+
+`internal/admin/auth.go` is the fifth caller of `roles.InScope`, and it calls it
+the way the other four do: as a set computation. The three calls are
+`ScopesInEffect`, `InScope` and `Filter`, and what comes back is a `[]*model.Role`.
+The **authorisation** decision is made afterwards and in `internal/admin`, by
+`adminRoleNames` narrowing that slice to one container and by `hasAny` asking
+whether a route's names are in it. `mayMapRole` and `mayGrantRole` did not move
+and did not change shape.
+
+The line is easy to state and worth stating, because the tempting version of this
+fix crosses it: it would have been shorter to give `internal/roles` a
+`roles.AdminGrants(ctx, repo, client, user, container)` that answered "the admin
+names this caller has". That would have put the container test - F32's
+escalation - inside `internal/roles`, where the boundary table says it must not
+be, and it would have made a second place that decides who is an administrator,
+which is the exact thing `internal/roles`' package comment warns about. It was
+not done.
+
+Section 4's split is a second argument for the boundary sitting where it does.
+One request now asks `internal/roles` for one set and then asks **two different
+questions** of two different sets. A `roles` function that answered "may this
+caller do this" would have had to be told which - which is a policy argument, and
+a policy argument is the boundary being crossed with extra steps.
+
+## 7. The record diff, read file by file
+
+TO BE FILLED
+
+## 8. The mutation pass
+
+TO BE FILLED
+
+## 9. What belongs in AGENTS.md
+
+Phrased as it would be folded, under "Things that look like bugs and are not".
+
+- **The Admin API is scope-filtered, and the filter is the caller's role set
+  rather than a check of its own.** A full administrator reaching the API through
+  a client with `fullScopeAllowed` off answers, **cell for cell over 79 routes**,
+  what a caller holding no admin role answers; one through a client scoping
+  `view-realm` alone answers cell for cell what a user genuinely holding
+  `view-realm` answers. So no family's resolution order changes: the filter
+  decides which roles the caller has and each family then asks its own question
+  in its own order. The refusal is the generic
+  `{"error":"HTTP 403 Forbidden"}`, `application/json` with no charset, and it
+  sits **behind** the realm resolution and behind `client-types`' 501 - an
+  unknown realm is still `Realm not found.` and `client-types` is still 501 - and
+  **in front of** nothing, because it is not a step.
+- **Nothing in the token could have answered it.** `admin-cli` is lightweight:
+  its token carries eight claims, no `realm_access`, no `resource_access` and no
+  `aud`, and it drives the whole API. Two lightweight clients differing only in
+  the flag mint **byte-identically shaped tokens** and answer 200 and 403. `aud`
+  is ruled out separately: the served `admin-cli` has none, a refused caller has
+  a bare string, a served one has an array. The server recomputes the granted set
+  - which is `internal/account`'s finding on a third surface.
+- **Two questions on this API read the roles the caller *holds*, not the filtered
+  set, and neither is predictable from the guard beside it.** `mayGrantRole`'s
+  conferral closure is one: a full administrator through a client scoping
+  `manage-users` alone hands out `master-realm`'s `manage-realm` and sees the
+  full available list, where a caller genuinely holding `manage-users` is refused
+  and sees seven - so one request asks two questions of two sets. The
+  `Workflows` family is the other, and it is the only family of 79 routes that
+  does: the same flag-off administrator is 403 everywhere else and 200 on all
+  nine of its operations, while a `manage-users` holder is 403 there through
+  either client. It is not "the realm roles escape the filter" - `create-realm`
+  is filtered, and a user holding only `admin` is 403 on the realm read and 200
+  on `/workflows`.
+- **The granted scope is an input.** An optional client scope carrying the admin
+  scope mappings opens the Admin API exactly when the token request named it -
+  one client, one user, two requests differing only in `scope`, 403 and 200.
+- **The filter is frozen at issuance and lives on the client session.** Flipping
+  a client's `fullScopeAllowed` on does not open an already-minted token, and
+  flipping it off does not close one; the same holds for adding and removing a
+  scope mapping. Gloak recomputes per request instead, which is observable only
+  by mutating a client while one of its tokens is alive. See F202.
+- **The filter reads the client of the token's issuing realm, never the addressed
+  realm's.** Measured with one `clientId` in two realms carrying opposite flags,
+  both ways round: a master token from the flag-off twin is refused another
+  realm's admin API although that realm's twin has the flag on, and the flag-on
+  twin is served there although that realm's has it off. Reading the path's realm
+  is the natural mistake.
+- **A token whose client the realm no longer has is a 401 on the Admin API**, not
+  a 403 and not a fall-open - measured by minting a token and deleting its
+  client, on a flag-on and a flag-off client alike. `internal/account`'s
+  equivalent branch refuses with an empty role set instead, which is that API's
+  own measured answer; the two surfaces do not share one.
+
+## 10. Follow-ups
+
+TO BE FILLED
+
+## 11. Parity
+
+TO BE FILLED
