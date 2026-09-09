@@ -61,6 +61,13 @@ GET /admin/realms/nope  404     404     404
 GET /workflows          200     200     200
 ```
 
+**All three are lightweight**, held constant so it is not a second variable, and
+that buys two things. Their tokens carry the **identical eight claims** - `exp`,
+`iat`, `jti`, `iss`, `typ`, `azp`, `sid`, `scope` - with no `aud`, no
+`realm_access` and no `resource_access` between them, and they answer 403, 404
+and 200. So the corpus asserts the mechanism itself rather than leaving it to
+this document's prose. Section 7.1 is the second reason, and it was a finding.
+
 ### 1.1 What it can refute
 
 Eight cases read it, and each of these mistakes moves at least one golden:
@@ -438,7 +445,92 @@ a policy argument is the boundary being crossed with extra steps.
 
 ## 7. The record diff, read file by file
 
-TO BE FILLED
+`make record` was run three times. The first two were on the heavy corpus and
+section 7.1 is what they found; the third is the one the branch carries.
+
+**Run 3: 1078 goldens rewritten. Every golden that existed on `main` is
+byte-identical to `main`. Eight added, none modified, none removed.**
+
+```
+$ git status --short internal/conformance/testdata/golden
+?? admin/clients/scope-filtered-role-out-of-scope.http
+?? admin/realms-admin/scope-filtered-listing.http
+?? admin/realms-admin/scope-filtered-read.http
+?? admin/realms-admin/scope-filtered-unknown-realm.http
+?? admin/users/scope-filtered-read.http
+?? admin/users/scope-filtered-read-full-scope.http
+?? admin/users/scope-filtered-role-in-scope.http
+?? admin/workflows/scope-filtered-held-roles.http
+```
+
+Eight `??` and nothing else. There is no golden to explain, because none moved -
+which is the answer the corpus problem predicted and the reason the corpus had to
+exist. **413 operations' worth of admin authorisation goldens all authenticate
+through `admin-cli`, whose `fullScopeAllowed` is on, so `roles.InScope`
+short-circuits to "everything" for every one of them and `adminGrants` is
+computed from exactly the slice it was computed from before.** Serving the filter
+could not have moved them, and if one had moved that would have been the finding.
+
+The eight new ones, read individually:
+
+| golden | what it holds | why that is right |
+|---|---|---|
+| `admin/users/scope-filtered-read` | 403, `{"error":"HTTP 403 Forbidden"}`, `application/json`, five headers | the flag-off caller, refused - F198's symptom |
+| `admin/users/scope-filtered-read-full-scope` | 404, `{"error":"User not found"}` | the control one field away; the administrator really is one |
+| `admin/users/scope-filtered-role-in-scope` | 404, `{"error":"User not found"}` | flag off **and** served, because `view-users` is in scope |
+| `admin/clients/scope-filtered-role-out-of-scope` | 403 | the same token, refused a role its scope does not carry |
+| `admin/realms-admin/scope-filtered-read` | 403 | `maySeeRealm`'s wider question, filtered too |
+| `admin/realms-admin/scope-filtered-listing` | 403 | the route with no `{realm}` segment and so no container |
+| `admin/realms-admin/scope-filtered-unknown-realm` | 404, `{"error":"Realm not found."}` | the refusal sits behind the realm resolution |
+| `admin/workflows/scope-filtered-held-roles` | 200, `--- []`, `application/yaml;charset=UTF-8`, **four** headers | the family that reads the unfiltered set |
+
+The last row's four headers are not an anomaly: `application/yaml` is one of the
+media types AGENTS.md records as omitting `X-Frame-Options`, and it does here.
+
+### 7.1 A golden that could not be reproduced, and what it was measuring
+
+The first run's flag-on control recorded
+
+```
+HTTP/1.1 431 Request Header Fields Too Large
+```
+
+with an empty body, where every hand probe of the same request had answered
+`404 {"error":"User not found"}`. Read rather than re-recorded, and the mechanism
+is this: **master holds a `{realm}-realm` client for every realm that exists**,
+and the realm role `admin` is composite over each one's 21 roles. So a full
+administrator's ordinary access token gains a `resource_access` key per realm.
+Measured directly, on one container, adding realms four at a time:
+
+```
+realms   token bytes   resource_access keys
+     1          1759                      2
+     5          3999                      6
+     9          6239                     10
+    13          8485                     14
+    17         10735                     18
+    21         12986                     22
+```
+
+About 560 bytes a realm. Recorded in catalogue order **after** every fixture that
+creates a realm, the `Authorization` header crossed Quarkus's limit and Keycloak
+answered 431 instead of the case's behaviour.
+
+That golden was a measurement of the container's history rather than of anything
+this cut is about, and AGENTS.md names the shape: *a golden that holds only while
+the catalogue's order holds is worse than no golden, because it looks like a
+measurement.* It would also have failed `TestConformance` outright - `net/http`'s
+default `MaxHeaderBytes` is 1 MB and the verifier serves through a
+`ResponseRecorder` with no limit at all, so Gloak answers the 404.
+
+The fix is in the fixture rather than in a mask: all three clients are
+lightweight, so all three tokens are eight claims and about 760 bytes **whatever
+the container's history**. Re-measured on the same container at 21 realms: 758,
+761 and 758 bytes, and all six route cells unchanged. The 431 itself is a real
+measured Keycloak behaviour that Gloak does not reproduce, and it is **F206**.
+
+**This is the third recent cut to find a real defect by reading the record diff**,
+and it is the first to find one in a golden it had just written itself.
 
 ## 8. The mutation pass
 
