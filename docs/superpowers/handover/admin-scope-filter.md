@@ -593,8 +593,100 @@ Phrased as it would be folded, under "Things that look like bugs and are not".
 
 ## 10. Follow-ups
 
-TO BE FILLED
+**F202: Keycloak freezes the scope filter at issuance and Gloak recomputes it per
+request.** Measured both ways in section 2.5: flipping a client's
+`fullScopeAllowed` on does not open an already-minted token and flipping it off
+does not close one, and adding or removing a scope mapping behaves the same.
+Keycloak records the granted role set on the client session at login; Gloak has
+no stored granted set and reads the client's current state on every request.
+Observable **only** by mutating a client while one of its tokens is alive, which
+no case does. Closing it means a migration and the session model, which is why it
+is an entry rather than part of this cut. The direction is worth recording:
+removing a mapping revokes immediately in Gloak where Keycloak waits for expiry,
+which is the restrictive side; adding one grants immediately, which is permissive
+relative to Keycloak but never beyond the client's configured scope.
+
+**F203: the Admin API's granted-scope input cannot be exercised, and the mutation
+that ignores it survives.** `inTokenScope` passes `parsed.Scope` to
+`roles.ScopesInEffect`, which is measured right - an optional client scope
+carrying the admin scope mappings opens the API exactly when the token request
+named it. But F16's `grantedScope` is a constant plus `openid`, so no request can
+put a client scope's name into a Gloak token's `scope` claim, and replacing
+`parsed.Scope` with `""` survives the whole tree (A14 in section 8). It is J1's
+shape on a third surface - `internal/account`'s gate is in the same position and
+nothing has swept for a fourth. The entry is that F16 is what unblocks the case,
+and that until then the argument is a measurement in this document rather than a
+test.
+
+**F204: a disabled client's token is 401 on the Admin API and Gloak serves it.**
+Measured 2026-09-08: a token minted at a client that is then disabled answers
+`401 {"error":"HTTP 401 Unauthorized"}` where it had answered 200, on the same
+request. `inTokenScope` now looks the client up and could read `Enabled` in the
+same branch that already answers 401 for a client that is gone - one `||`. It was
+left out deliberately: it is a rule about **authentication** rather than about the
+scope filter, it has no case, and folding an unrelated refusal into this branch is
+how a one-line fix reaches every admin route. The probe is already written; the
+entry is to serve it with a case of its own.
+
+**F205: `/admin/serverinfo` is one of F198's three symptom routes and Gloak does
+not serve it at all.** There is no `HandleFunc` for it anywhere in the tree - the
+path appears only in doc comments citing it as a measurement source. So F198's
+symptom is now served on two of its three routes and the third is unreachable.
+Worth saying because a reader of F198 will otherwise look for a
+`serverinfo` case and not find one.
+
+**F206: a full administrator's access token outgrows Keycloak's request header
+limit, and Gloak answers the route instead of 431.** Section 7.1 is the
+measurement: master holds a `{realm}-realm` client per realm and the realm role
+`admin` is composite over each one's 21 roles, so an ordinary token grows about
+560 bytes per realm - 1759 bytes at one realm, 12986 at 21. Past Quarkus's limit
+the Admin API answers `431 Request Header Fields Too Large` with an empty body
+and no headers at all. `net/http`'s default `MaxHeaderBytes` is 1 MB and the
+conformance verifier serves through a `ResponseRecorder` with no limit, so Gloak
+cannot reproduce it as things stand. Two things are unmeasured and both are cheap:
+where the limit actually is, and whether the 431 carries the security headers.
+This is also a **harness** entry - it is the second known way for a golden to be a
+measurement of the container's history rather than of a behaviour, after F40's
+counts, and nothing sweeps for a case whose request grows with the catalogue.
+
+**F207: `foreignGrants` is scope-sensitive in Gloak and nothing measures whether
+it should be.** It reads `caller.held`, which is this cut's reading of section
+4.1 extended to the cross-realm case by symmetry rather than by measurement:
+`mayGrantRole`'s same-realm closure was measured unfiltered, and the foreign one
+was assumed to follow. The probe: a master caller holding another realm's admin
+role through a client whose scope carries only part of it, handing that role out
+on the other realm's container. See A10 in section 8, which is a survivor.
 
 ## 11. Parity
 
-TO BE FILLED
+`make conformance` on the branch head:
+
+```
+total: 570 of 622 enumerated behaviours served; 2 chapters not enumerated
+```
+
+The brief's base is **570 of 622, 2 chapters not enumerated**, and it is
+unchanged. That is the expected result and not a disappointment, and the reason
+is worth stating so nobody reads it as the cut having served nothing:
+
+**the admin chapters' denominator counts distinct OpenAPI operations, not
+cases.** All four operations the eight new cases address -
+`GET /admin/realms/{realm}/users/{id}`, `GET /admin/realms/{realm}/clients`,
+`GET /admin/realms/{realm}`, `GET /admin/realms` and
+`GET /admin/realms/{realm}/workflows` - were already served and already counted,
+so eight new `Implemented` cases move the numerator by nothing. The meter is
+measuring surface, and this cut added no surface; it made an authorisation
+decision correct on surface that was already there.
+
+```
+chapter                served  recorded  documented
+admin/clients              31         1          35
+admin/realms-admin         44         3          45
+admin/users                31         2          34
+admin/workflows             9         0           9
+```
+
+**The total did not fall and no case that was `Implemented` stopped matching.**
+`CGO_ENABLED=0 go test ./...` is green over the whole tree, which is the number
+section 7 cannot answer on its own: all 1079 comparable goldens are served from
+Gloak and compared, including the 1071 that did not move.
