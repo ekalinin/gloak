@@ -525,6 +525,112 @@ var oidcCore = []Case{
 		// A known path hit with the wrong method still reaches the filter
 		// chain a matched resource sits behind, so the five security headers
 		// are present, unlike the unmatched-path case above.
+		//
+		// **Since F184 this case no longer witnesses the branch it was written
+		// for.** The path is under a realm, so it now reaches
+		// realmResourceDispatch rather than WithKeycloakFallbacks' Allow probe -
+		// same status, same body, same headers, a different producer. What it
+		// still pins is Keycloak's answer, which is why it stays; what it
+		// stopped pinning is Gloak's fallback, and
+		// http/fallback/method-not-allowed-admin below is what pins that now.
+		AssertHeaders: []string{
+			"Content-Type",
+			"Referrer-Policy",
+			"Strict-Transport-Security",
+			"X-Content-Type-Options",
+			"X-Frame-Options",
+			"X-Robots-Tag",
+		},
+	},
+	{
+		// F212, closed here rather than filed: the coverage this cut's own
+		// change took away.
+		//
+		// WithKeycloakFallbacks tells "no route matched" from "a route matched
+		// the path but not the method" by running a throwaway probe and looking
+		// for the Allow header net/http sets on the second case. F184's
+		// dispatcher is registered with no method on the whole realm tree, so
+		// **nothing under /realms can reach that branch any more** and the case
+		// above stopped being its witness. The branch is still live for every
+		// route internal/admin registers, and this is a request that takes it.
+		//
+		// The endpoint is chosen for three properties. Gloak registers GET on it
+		// and nothing else, so POST reaches the probe. Keycloak answers the
+		// generic 404 here rather than the real 405 it answers on
+		// /admin/realms/{realm}/keys, /admin/serverinfo and the
+		// attack-detection paths - all four measured on 2026-09-09, three of
+		// them 405, which is F31's tally and the reason this cell had to be
+		// found rather than picked. And its body is a constant, so the golden
+		// cannot drift with the container's state.
+		//
+		// **The token is required by Keycloak and ignored by Gloak.** Without
+		// an Authorization header the same request is
+		// `401 {"error":"HTTP 401 Unauthorized"}` with all five, because the
+		// admin bearer gate sits in front; Gloak's fallback answers this 404
+		// either way. So the case is honest about the cell it measures and not
+		// about the one beside it - that unauthenticated cell is a divergence
+		// this cut neither created nor closes.
+		ID: "http/fallback/method-not-allowed-admin",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Realms Admin: a known Admin API path hit with a method it does not serve",
+			Retrieved: "2026-09-09",
+		},
+		Status:  Implemented,
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/client-session-stats",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{
+			"Content-Type",
+			"Referrer-Policy",
+			"Strict-Transport-Security",
+			"X-Content-Type-Options",
+			"X-Frame-Options",
+			"X-Robots-Tag",
+		},
+	},
+	{
+		// The counterexample found while looking for the case above, and it is
+		// a **new shape** for the rule AGENTS.md records as measured too broad
+		// seven times: a wrong method on a known path that answers neither the
+		// generic 404 nor a 405, but a **resource sentence**.
+		//
+		//	POST /admin/realms/master/users/count    404 {"error":"User not found"}
+		//	POST /admin/realms/master/groups/count   404 {"error":"Could not find group by id"}
+		//
+		// `count` is being read as the `{id}` of the sibling locator, which
+		// resolves to nothing - so JAX-RS resolves the locator **before** it
+		// dispatches the method, which is exactly F184's finding on the protocol
+		// side met on the Admin API. `POST /admin/realms/nosuchrealm/users/count`
+		// is `Realm not found.`, so the realm is ahead of both.
+		//
+		// It is `Recorded` and Gloak's answer is the generic 404: the mux has no
+		// POST on .../users/{userID}, so the request reaches the Allow probe
+		// instead of the locator. Reproducing it means the fallback knowing
+		// which sibling patterns share the path, which is a routing model this
+		// project does not have and should not grow for one cell. See F215.
+		ID: "http/fallback/method-not-allowed-sibling-locator",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Users: a wrong method on /users/count falls into the {id} locator",
+			Retrieved: "2026-09-09",
+		},
+		Status: Recorded,
+		Reason: "Keycloak resolves the sibling `{id}` locator before it dispatches the " +
+			"method, so a verb no route under /users/count serves answers `User not " +
+			"found` rather than the generic 404. Gloak's fallback sees only that no " +
+			"pattern matched the method and answers `HTTP 404 Not Found`. Closing it " +
+			"means teaching the fallback which sibling patterns share a path - a " +
+			"routing model this project does not have, for a cell no client sends",
+		Fixture: "admin-token",
+		Request: Request{
+			Method:  http.MethodPost,
+			Path:    "/admin/realms/master/users/count",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
 		AssertHeaders: []string{
 			"Content-Type",
 			"Referrer-Policy",

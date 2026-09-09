@@ -248,7 +248,7 @@ Three things prove none of them moved.
    server, so neither package's own tests would otherwise see the composition.
    `newServerWithAccount` exists for that one test.
 2. **`make record` moved no committed golden.** Section 5.
-3. **The golden corpus is the ratchet, and it ran.** 1087 `.http` files under
+3. **The golden corpus is the ratchet, and it ran.** 1089 `.http` files under
    `internal/conformance/testdata/golden` after this cut, 1080 before it -
    counted rather than taken from AGENTS.md, whose 921 is from 2026-09-06. R2
    and R3 in section 6 are the routing mutations run against the whole
@@ -327,6 +327,29 @@ in the `Authorization` header, on one path, on one container. A reader who
 probes with a token concludes the catch-all is right; a reader who probes
 without one concludes it is wrong. Both probes were sent.
 
+### 3.4 Checked once off a real socket, not only through the recorder
+
+The conformance verifier serves through `httptest.ResponseRecorder`, which
+never adds a `Date` header - AGENTS.md records that as the one thing the
+verifier structurally cannot catch. So the built binary was run on port 18099
+against a fresh SQLite store and probed with the same script that measured
+Keycloak. Every row agrees with §1 and §2, byte for byte and header for header:
+
+```
+GET  /realms/master/nosuchthing                            404 5/5 {"error":"HTTP 404 Not Found"}
+GET  /realms/master/nosuchthing/a/b/c/d/e                  404 5/5 {"error":"HTTP 404 Not Found"}
+GET  /realms/nosuchrealm/nosuchthing                       404 5/5 {"error":"Realm does not exist"}
+GET  /realms                                               404 0/5 Unable to find matching…
+GET  /realms/                                              404 0/5 Unable to find matching…
+GET  /realms/master/protocol/nosuchproto                   404 5/5 {"error":"Protocol not found"}
+POST /realms/nosuchrealm                                   404 5/5 {"error":"Realm does not exist"}
+POST /realms/nosuchrealm/.well-known/openid-configuration  404 5/5 {"error":"Realm does not exist"}
+```
+
+and the raw headers off the socket carry `Content-Length: 30`, the five, and
+**no `Date`** - so `internal/httpx`'s suppression reaches the new handler, which
+is the one property no golden here could have shown.
+
 ## 4. Does the shape reach `/admin/`? Yes, and it is deeper there
 
 The dispatch cut measured the trailing-slash rule reaching the Admin API. The
@@ -363,10 +386,11 @@ Filed as F211.
 
 ## 5. The `make record` diff, read file by file
 
-`make record` created **seven** goldens and moved **none**. The brief's worry -
-that a catch-all one level up churns the corpus - does not happen, and the
-reason is section 3: every path an existing case sends is either a served route
-or already one of the two bodies the dispatcher writes.
+`make record` was run twice - once for the cut and once for the two cases review
+asked for - and between them created **nine** goldens and moved **none**. The
+brief's worry - that a catch-all one level up churns the corpus - does not
+happen, and the reason is section 3: every path an existing case sends is either
+a served route or already one of the two bodies the dispatcher writes.
 
 ```
 A internal/conformance/testdata/golden/http/fallback/realm-resource.http
@@ -375,9 +399,16 @@ A internal/conformance/testdata/golden/http/fallback/realm-resource-unknown-real
 A internal/conformance/testdata/golden/http/fallback/method-not-allowed-unknown-realm.http
 A internal/conformance/testdata/golden/http/fallback/realm-root-unknown-realm.http
 A internal/conformance/testdata/golden/http/fallback/realms-collection.http
+A internal/conformance/testdata/golden/http/fallback/method-not-allowed-admin.http
+A internal/conformance/testdata/golden/http/fallback/method-not-allowed-sibling-locator.http
 A internal/conformance/testdata/golden/account/dispatch/unknown-subpath-unauthenticated.http
 M -- none
 ```
+
+**The second recording moved nothing either**, which is the answer to the
+question a second `make record` always raises: the two cases added after review
+are on paths no other case sends, and neither of them perturbed the container
+state the rest of the corpus is recorded against.
 
 Each read against the hand-measurement that motivated it:
 
@@ -405,8 +436,16 @@ Each read against the hand-measurement that motivated it:
   bytes.
 - **`unknown-subpath-unauthenticated.http`** - `GET /realms/master/account/nosuchsub`
   with no `Authorization`, **401**, `{"error":"HTTP 401 Unauthorized"}`, five
-  headers. §3.3's second row. It is the one golden here Gloak does not match,
-  and it is `Recorded` for that reason.
+  headers. §3.3's second row. It is `Recorded`, and Gloak answers the 404.
+- **`method-not-allowed-admin.http`** - `POST /admin/realms/master/client-session-stats`
+  with an administrator's token, 404, `{"error":"HTTP 404 Not Found"}`, five
+  headers. §4's sweep found this cell after three neighbouring families answered
+  a real 405. It is F212's replacement witness for the wrong-method branch.
+- **`method-not-allowed-sibling-locator.http`** -
+  `POST /admin/realms/master/users/count`, 404,
+  **`{"error":"User not found"}`**, five headers. The counterexample of §9.2:
+  `count` read as the `{id}` of the sibling locator. `Recorded`; Gloak answers
+  the generic 404.
 
 Nothing else in the tree moved, so there is no file whose movement needs
 explaining.
@@ -540,15 +579,17 @@ re-measured on the merge base:
 
 ```
                        base            head
-http/fallback           6 of  6        12 of 12
+http/fallback           6 of  6        13 of 14
 account/dispatch        0 of  3         1 of  4
-total                 570 of 622      577 of 629
+total                 570 of 622      578 of 631
 ```
 
-Seven behaviours served where none was served before: six new `Implemented`
-cases and one promotion. One new `Recorded` case, which is the cell the cut gets
-wrong and now records. **The parity total does not fall**, and the two chapters
-that are not enumerated are still two.
+Eight behaviours served where none was served before: seven new `Implemented`
+cases and one promotion. Two new `Recorded` cases - the cell this cut gets wrong
+under `/account`, and the sibling-locator sentence found while closing F212 -
+so `http/fallback` is the first time that chapter has held a `Recorded` case at
+all. **The parity total does not fall**, and the two chapters that are not
+enumerated are still two.
 
 The promotion is `account/dispatch/unknown-subpath-json`. Its `Reason` said the
 shape "is fixed by a wildcard dispatcher under `/account`, which is a cut of its
@@ -683,25 +724,87 @@ Under **"Things that look like bugs and are not"**, a new bullet after the
 >   `clients-registrations/default` - answers the 404 to a caller holding
 >   nothing.
 
-Under the security-header bullet, extending the "a path matching no route gets
-none of them" exception:
+### 9.1 The security-header bullet: a correction, and the measurement that forces it
 
-> The exception is about the **route table**, not about the path's shape, and
-> the realm tree is where that bites: `/realms/master/nosuchthing` sends all
-> five because the realm resource's own locator resolved and the request is
-> inside the filter chain, while `/realms` - two segments shorter - sends none
-> because nothing resolved at all. A rule phrased as "an unknown path gets no
-> headers" is wrong on the first and right on the second.
+**This is a correction to the passage AGENTS.md itself records as having been
+wrong six times, so it is written as one.** The bullet's first exception reads:
 
-And a sentence for the "wrong method on a known path" bullet, which now has a
-fifth producer of the `HTTP 404 Not Found` body:
+> - **a path matching no route** gets none of them, because that request never
+>   reaches Keycloak's filter chain;
+
+The clause after the comma is right and the clause before it is **wrong, and
+wrong in a way no golden in the tree could show until this cut**. What decides
+the header set is whether **something resolved** - a route, or a resource
+locator on the way to one - not whether the *path* names a route. Two requests
+that differ only in length settle it, one container, 2026-09-09:
+
+```
+GET /realms/master/nosuchthing   404  {"error":"HTTP 404 Not Found"}                 5 of 5
+GET /realms                      404  {"error":"Unable to find matching…"}           0 of 5
+```
+
+Neither path names a route. The longer one sends all five, because the realm
+resource's own locator resolved and the request is inside the filter chain; the
+shorter one sends none, because nothing resolved at all. So the exception is
+about the **route table**, not the path's shape, and "an unknown path gets no
+headers" is wrong on the first row and right on the second.
+
+The suggested replacement, phrased to be folded in place of that sub-bullet:
+
+> - **a request that resolves nothing at all** gets none of them, because it
+>   never reaches Keycloak's filter chain. That is narrower than "a path
+>   matching no route", and the realm tree is where the difference bites:
+>   `/realms/master/nosuchthing` matches no route and sends **all five**,
+>   because the realm resource's locator resolved on the way; `/realms`, two
+>   segments shorter, sends **none**. Measured on one container on 2026-09-09
+>   and pinned by `http/fallback/realm-resource` and
+>   `http/fallback/realms-collection`, which declare the presence and the
+>   absence respectively - the second declares all five absent, because
+>   `AssertHeaders` can only check a header that is named.
+
+**Why this is the seventh correction and not a restatement.** The six before it
+each *narrowed* a rule about which responses carry the headers. This one
+narrows the rule about which *requests* do, and it is the first counterexample
+where the two candidate readings - "no route matched" and "nothing resolved" -
+disagree on a path any client can send. Before F184 the tree held no golden that
+separated them, because Gloak answered the header-less body for the whole realm
+subtree and the corpus agreed with itself.
+
+### 9.2 The wrong-method bullet: a fifth producer, and a shape that is not a 404 body at all
 
 > **There are five producers of that second body, not four.** The fifth is a
-> path under a realm that resolves and that no route serves - which is the first
-> producer that is neither a wrong method, a switched-off resource, nor a
-> malformed parameter. It confirms rather than complicates the reading the
-> fourth producer forced: the body does not mean "wrong method", it means "the
-> router found nothing to run".
+> path under a realm that resolves and that no route serves - the first producer
+> that is neither a wrong method, a switched-off resource, nor a malformed
+> parameter. It confirms rather than complicates the reading the fourth producer
+> forced: the body does not mean "wrong method", it means "the router found
+> nothing to run".
+>
+> **And a wrong method on a known path does not always produce a body from this
+> family.** `POST /admin/realms/master/users/count` is
+> `404 {"error":"User not found"}` and `POST .../groups/count` is
+> `Could not find group by id`: `count` is read as the `{id}` of the sibling
+> locator, which resolves to nothing, so **JAX-RS resolves the locator before it
+> dispatches the method**. That is the same ordering the realm tree shows one
+> level up, met on the Admin API, and it means the count of "spellings of
+> not-found" and the count of "bodies in the fallback family" are not disjoint
+> lists: one request can be in both. Pinned by
+> `http/fallback/method-not-allowed-sibling-locator`, which is `Recorded`.
+
+### 9.3 The near-miss, phrased for whichever file keeps routing hazards
+
+> **A Go `ServeMux` subtree pattern brings an implicit redirect with it, and
+> `WithKeycloakFallbacks` cannot see past one.** Registering
+> `/realms/{realm}/{rest...}` without also registering `/realms/{realm}` makes
+> `POST /realms/master` answer a **307 to `/realms/master/`** with `net/http`'s
+> own body - and `mux.Handler` reports a **non-empty pattern** for the redirect
+> handler, so the wrapper's "a real route matched" test passes it straight
+> through. It is invisible to a `GET` probe, because a registered
+> `GET /realms/{realm}` shadows the redirect for that one method. This is the
+> third time a `ServeMux` assumption has been wrong in this repository, after
+> F153's registration panic and F11's 307 on an unnormalised path, and all three
+> were found by **running the route table rather than reading the
+> documentation**. Before adding a `{rest...}` or a trailing-slash subtree
+> pattern, send every verb at the subtree root and look at the status.
 
 ## 10. Follow-ups
 
@@ -775,7 +878,7 @@ roles, organizations and components each need the same probe.
 five**, which is neither of the two bodies an unrouted path is supposed to
 produce and is the eighth body in the fallback family.
 
-### F212: the wrong-method probe is unreachable through `internal/oidc`'s route table
+### F212: the wrong-method probe lost its corpus witness (closed in this cut)
 
 `WithKeycloakFallbacks` distinguishes "no route matched" from "a route matched
 the path but not the method" by running a throwaway probe and looking for an
@@ -783,13 +886,37 @@ the path but not the method" by running a throwaway probe and looking for an
 method-less pattern, so **nothing in `internal/oidc` can reach the second
 branch**, and the one conformance case that used to -
 `http/fallback/method-not-allowed` - now goes through the dispatcher and answers
-the same bytes for a different reason.
+the same bytes for a different reason. The case stayed green throughout, which
+is the whole problem: **a branch that had a corpus witness and lost it to a
+refactor is not visible from the meter.**
 
-The branch is still live for `internal/admin`'s routes. Its only in-package
-guard is now `TestWrongMethodReturnsKeycloakShapedNotFound`, which builds a mux
-of its own. What is missing is a conformance case on an admin path -
-`PATCH /admin/realms/master/keys`, say - so the corpus covers the branch rather
-than a unit test alone. It is one case and a `make record`.
+**Closed here rather than filed, because it is this cut's own debt.** Deferring
+it would have made the anchor "whoever next touches the fallbacks", which is
+F168 in another dress - read by somebody doing something else, who is the person
+least placed to judge whether it matters.
+
+`http/fallback/method-not-allowed-admin` is the replacement witness:
+`POST /admin/realms/master/client-session-stats`, a path Gloak serves with `GET`
+alone, so the request reaches the probe. **Finding the cell cost four probes and
+that is the point.** The obvious choices are all real 405s and would have made
+the case `Recorded` rather than a guard, all measured 2026-09-09 with an
+administrator's token:
+
+```
+POST/PUT/PATCH/DELETE /admin/realms/master/keys                      405 5/5
+POST/PUT/DELETE       /admin/serverinfo                              405 5/5
+POST/PUT/PATCH        /admin/realms/master/attack-detection/...      405 5/5
+POST/PUT/PATCH        /admin/realms/master/client-session-stats      404 5/5  HTTP 404 Not Found
+```
+
+Three families answering 405 and one answering 404 on one API is F31's tally
+again, and it is why this case had to be **found** rather than picked.
+
+One thing the case does not cover, said plainly so it is not read as more than
+it is: without an `Authorization` header the same request is
+`401 {"error":"HTTP 401 Unauthorized"}` and Gloak's fallback answers the 404
+either way. That cell is a divergence this cut neither created nor closes, and
+it is the same shape as F209's.
 
 ### F213: two sentences the catch-all now answers plausibly and wrongly
 
@@ -812,18 +939,23 @@ it is a sentence template rather than a spelling - the second one after
 `Requested audience not available: <name>`, and the first outside the Admin API.
 Recording it needs the broker chapter, which is not enumerated.
 
-### F214: the realm root is a real 405 and this cut measured three more of them
+### F214: the realm root is a real 405 and this cut measured nine more of them
 
 For F31's tally, measured 2026-09-09 and changed on the strength of none of
 them:
 
 ```
-POST    /realms/master                    405 {"error":"HTTP 405 Method Not Allowed"} 5 of 5
-PUT     /realms/master                    405 the same 39 bytes
-DELETE  /realms/master                    405
-OPTIONS /realms/master                    200 no body, no Content-Type, 4 of 5
+POST    /realms/master                       405 {"error":"HTTP 405 Method Not Allowed"} 5 of 5
+PUT     /realms/master                       405 the same 39 bytes
+DELETE  /realms/master                       405
+OPTIONS /realms/master                       200 no body, no Content-Type, 4 of 5
 GET     /realms/master/clients-registrations 405 5 of 5
-GET     /admin/nosuchthing                405 0 of 5
+GET     /admin/nosuchthing                   405 0 of 5
+POST/PUT/PATCH/DELETE /admin/realms/master/keys                 405 5 of 5
+POST/PUT/DELETE       /admin/serverinfo                         405 5 of 5
+POST/PUT/PATCH        /admin/realms/master/attack-detection/
+                        brute-force/users/{unknown}             405 5 of 5
+POST/PUT/PATCH        /admin/realms/master/client-session-stats 404 5 of 5
 ```
 
 The realm root is the sharpest: `GET /realms/master` is a served 200 and the
@@ -831,3 +963,45 @@ other three verbs are a real 405, on the one path in this project that every
 client hits. Gloak answers 404 to all of them, before and after this cut. The
 `OPTIONS` 200 with four of the five is the header rule's `OPTIONS` cell, which
 AGENTS.md records as measured on four endpoints with no golden; this is a fifth.
+
+The last four rows are the sweep F212's case needed, and they are worth keeping
+together: **three neighbouring Admin API families answer 405 and the fourth
+answers 404**, all four reached with the same token on the same container. That
+is the eighth disagreement in AGENTS.md's tally and it still does not say what
+the rule is - which is why `http/fallback/method-not-allowed-admin` is a case
+about the fallback and not about the verb.
+
+### F215: a wrong method can fall into a sibling locator, and the answer is a resource sentence
+
+```
+POST /admin/realms/master/users/count       404 {"error":"User not found"}            5 of 5
+PUT  /admin/realms/master/users/count       404 the same
+DELETE /admin/realms/master/users/count     404 the same
+POST /admin/realms/master/groups/count      404 {"error":"Could not find group by id"} 5 of 5
+POST /admin/realms/nosuchrealm/users/count  404 {"error":"Realm not found."}          5 of 5
+```
+
+`count` is being read as the `{id}` of the sibling locator, which resolves to
+nothing. So **JAX-RS resolves the locator before it dispatches the method** -
+F184's ordering finding met on the Admin API - and a wrong method on a known
+path answers neither the generic 404 nor a 405 but a **resource sentence**. The
+last row puts the realm ahead of both.
+
+Two consequences worth writing down. AGENTS.md's "thirty-six spellings of
+not-found" and its list of bodies in the fallback family are not disjoint: one
+request can be counted in both, and this is the first that is. And the rule "a
+wrong method on a known path returns 404, not 405" is true here in the letter
+and misleading in the spirit, because the 404 is about a resource the caller
+never named.
+
+Gloak answers the generic 404: its mux has no `POST` on `.../users/{userID}`, so
+the request reaches the Allow probe rather than the locator. Closing it means
+teaching `WithKeycloakFallbacks` which sibling patterns share a path - a routing
+model this project does not have, for a cell no client sends. Pinned as
+`Recorded` by `http/fallback/method-not-allowed-sibling-locator`.
+
+Two of the three verbs above are **not** divergences and that is worth knowing
+before somebody "fixes" this: Gloak registers `PUT` and `DELETE` on
+`.../users/{userID}`, so both already route to the locator and already answer
+`User not found`. It is `POST` alone that differs, which is why the case sends
+`POST`.

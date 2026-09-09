@@ -118,6 +118,13 @@ func TestUnknownPathReturnsKeycloakShapedNotFound(t *testing.T) {
 // is a mux of the wrapper's own, which is what WithKeycloakFallbacks takes.
 // Asserting it through /realms/master instead would pass on the dispatcher's
 // identical body and stop testing the probe at all.
+//
+// **A mux built here is not the whole guard, and it should not be.** A unit
+// test compares against what this project believes; a golden compares against a
+// recording. http/fallback/method-not-allowed-admin is the recording - POST on
+// an Admin API path Gloak serves with GET alone - and it exists because a
+// branch that had a corpus witness and lost it to a refactor is the kind of
+// thing nobody notices until it is wrong.
 func TestWrongMethodReturnsKeycloakShapedNotFound(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /outside/{$}", func(w http.ResponseWriter, _ *http.Request) {})
