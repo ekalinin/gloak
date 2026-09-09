@@ -238,21 +238,41 @@ var staleReasonsOwnedElsewhere = map[string]string{}
 // Both are the same claim - a named endpoint is not built - and both are
 // falsifiable against the router without serving the case, which matters
 // because 21 of the 28 Pending cases carry no fixture and cannot be served at
-// all. The probe is a method no route registers: Gloak answers a **known** path
-// with the wrong method 404 `{"error":"HTTP 404 Not Found"}` and an unrouted
-// path with 404 `{"error":"Unable to find matching target resource method"}`,
-// which is Keycloak's measured pair and the thing withKeycloakFallbacks exists
-// to tell apart. So a routed path is visible without authenticating, without a
-// fixture, and without running a handler that could change anything.
+// all. So a routed path is visible without authenticating, without a fixture,
+// and without running a handler that could change anything.
+//
+// **The probe reads the route table, and until F184 it read the response.** It
+// used to send TRACE, which nothing registers, and separate Keycloak's two
+// measured fallback bodies: `HTTP 404 Not Found` for a known path hit with the
+// wrong method against `Unable to find matching target resource method` for an
+// unrouted one. F184's realm resource dispatcher is registered with no method
+// on /realms/{realm} and /realms/{realm}/{rest...}, so every path under a realm
+// now matches something and every path in the table below read as routed -
+// including the invented control, which is what said so rather than a reader.
+//
+// What replaces it is the same question asked of the mux: a path is served when
+// **some** method matches a pattern that carries a method. Every route the three
+// packages register is registered with one; the only method-less patterns in the
+// server are the two dispatchers, and that is the invariant the two controls
+// below check rather than assume.
 func TestNoReasonClaimsAServedEndpointIsUnserved(t *testing.T) {
-	h := newFixture(t, "bootstrap")
+	mux := newFixtureMux(t, "bootstrap")
 	routed := func(path string) bool {
-		// TRACE is registered by nothing, so this reaches the fallback either
-		// way and never runs a handler.
-		req := httptest.NewRequest(http.MethodTrace, path, nil)
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, req)
-		return !bytes.Contains(w.Body.Bytes(), []byte("Unable to find matching target resource method"))
+		for _, method := range []string{
+			http.MethodGet, http.MethodPost, http.MethodPut,
+			http.MethodDelete, http.MethodPatch, http.MethodHead,
+			http.MethodOptions,
+		} {
+			_, pattern := mux.Handler(httptest.NewRequest(method, path, nil))
+			// A ServeMux pattern separates its method from its path with a
+			// space, and a path cannot hold one. A pattern without a method is
+			// a dispatcher, and a dispatcher is exactly what "no route serves
+			// this" looks like from here.
+			if strings.Contains(pattern, " ") {
+				return true
+			}
+		}
+		return false
 	}
 
 	// A guard whose probe cannot tell the two apart passes everything. Both
@@ -628,7 +648,10 @@ func TestPollutionGuardSeesEveryCreatedFamily(t *testing.T) {
 // the commit that added the chapter said 36, the file's heading said 41 and the
 // slice held 39. None of the three could fail.
 // 41 since F192, which added account/gate/scope-filtered-lightweight.
-const accountChapterCases = 41
+// 42 since F184, which added account/dispatch/unknown-subpath-unauthenticated:
+// the account gate runs before the account routing, and the realm resource
+// dispatcher that now serves this chapter's 404 does not run it.
+const accountChapterCases = 42
 
 // TestAccountChapterCountIsThePinnedNumber makes the heading's count an
 // assertion.

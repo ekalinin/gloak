@@ -215,6 +215,37 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /realms/{realm}/clients-registrations/openid-connect/{clientId}", h.updateRegisteredClient)
 	mux.HandleFunc("DELETE /realms/{realm}/clients-registrations/openid-connect/{clientId}", h.deleteRegisteredClient)
 	mux.HandleFunc("GET /realms/{realm}", h.realmInfo)
+	// The realm resource dispatcher, F184. Two patterns and one handler,
+	// covering everything under /realms/{realm} that no route serves -
+	// including the routes internal/account and any later package put on this
+	// same mux, which nothing here has to know about. See
+	// realmResourceDispatch for the measurements.
+	//
+	// It is written last for a reader rather than for the router: ServeMux
+	// gives a request to the most specific pattern that matches it, not to the
+	// first one registered, so the two packages can register in either order.
+	// TestTheRealmResourceDispatcherDoesNotSwallowAServedRoute is what checks
+	// that, on a mux holding both.
+	//
+	// All methods, deliberately: the realm is resolved before the method is
+	// dispatched on a live 26.7.1, so POST on a path only GET serves under an
+	// unknown realm answers about the realm rather than about the method.
+	//
+	// **The bare pattern is not decoration.** Registering the {rest...} one
+	// alone makes Go's ServeMux register an implicit redirect at
+	// /realms/{realm}, and POST /realms/master then answers a 307 to
+	// /realms/master/ - with a non-empty pattern, so WithKeycloakFallbacks
+	// hands it to the mux and net/http writes its own HTML body. That is
+	// F153's shape and §3.1's 301 hazard met again, verified by running the
+	// route table rather than read from the documentation.
+	//
+	// **Neither pattern reaches /realms or /realms/.** A ServeMux wildcard
+	// matches a non-empty segment, so {realm} does not match the empty one,
+	// and both spellings stay off the route table - which is what Keycloak
+	// measurably does with them. A catch-all one segment higher would take
+	// that away.
+	mux.HandleFunc("/realms/{realm}", h.realmResourceDispatch)
+	mux.HandleFunc("/realms/{realm}/{rest...}", h.realmResourceDispatch)
 }
 
 // registeredProtocols is the set of login protocols a default Keycloak 26.7.1
@@ -278,6 +309,60 @@ func (h *handler) protocolDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteMessageError(w, http.StatusNotFound, "Protocol not found")
+}
+
+// realmResourceDispatch answers every path under /realms/{realm} that no route
+// serves. It exists for protocolDispatch's reason one segment higher up: a
+// request that names a realm reaches Keycloak's filter chain through the realm
+// resource's own locator, so it carries all five security headers, where the
+// fallback's unmatched-path body carries none of them.
+//
+// Measured 2026-09-09 on a live 26.7.1, all with the five security headers and
+// no Cache-Control, `application/json`:
+//
+//	/realms/master/nosuchthing                 404 {"error":"HTTP 404 Not Found"}
+//	/realms/master/nosuchthing/deeper          404 {"error":"HTTP 404 Not Found"}
+//	/realms/master/nosuchthing/a/b/c/d/e       404 {"error":"HTTP 404 Not Found"}
+//	/realms/master/login-actions/nosuchaction  404 {"error":"HTTP 404 Not Found"}
+//	/realms/master/device/nosuchsub            404 {"error":"HTTP 404 Not Found"}
+//	/realms/master/.well-known/nosuchdoc       404 {"error":"HTTP 404 Not Found"}
+//	/realms/nosuchrealm/nosuchthing            404 {"error":"Realm does not exist"}
+//	/realms/nosuchrealm/nosuchthing/deeper     404 {"error":"Realm does not exist"}
+//
+// Three things decide the shape and each of them is one probe away from an
+// implementation that looks right:
+//
+//   - **The realm is resolved before the method is dispatched**, which is
+//     stronger than protocolDispatch's "the realm is resolved first". POST on
+//     /realms/nosuchrealm/.well-known/openid-configuration - a path this router
+//     serves, hit with a method it does not - answers `Realm does not exist`
+//     and not the wrong-method 404, and so does POST /realms/nosuchrealm. So
+//     the patterns above carry no method: a GET-only catch-all would leave both
+//     of those to WithKeycloakFallbacks, which cannot resolve a realm.
+//   - **Depth changes nothing**, measured at one, two and six segments, so one
+//     {rest...} pattern is the whole tree rather than a pattern per depth.
+//   - **/realms and /realms/ are not part of it.** Both answer the
+//     unmatched-path body with none of the five headers on a live 26.7.1 - the
+//     one measured place where a shorter path is less reachable than a longer
+//     one - so this dispatcher must not be registered a segment higher.
+//
+// Two families under /realms/{realm} answer something else and are **not**
+// reproduced here, both measured on 2026-09-09 and both already divergences
+// before this dispatcher existed:
+//
+//   - **/account runs its gate before it routes.** An unrouted account path is
+//     401 for a caller with no token and this 404 only for one past the gate,
+//     so this dispatcher is right on the authenticated cell and wrong on the
+//     anonymous one. See account/dispatch/unknown-subpath-unauthenticated and
+//     follow-up F209.
+//   - **Keycloak content-negotiates this 404.** With `Accept: text/html` the
+//     same path answers a 404 theme page instead of these thirty bytes. Gloak
+//     does not parse Accept here. See follow-up F210.
+func (h *handler) realmResourceDispatch(w http.ResponseWriter, r *http.Request) {
+	if h.resolveRealm(w, r) == nil {
+		return
+	}
+	httpx.WriteMessageError(w, http.StatusNotFound, "HTTP 404 Not Found")
 }
 
 // WithKeycloakFallbacks routes requests that match no registered route, or
