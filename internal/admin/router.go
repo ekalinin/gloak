@@ -767,23 +767,23 @@ func (h *handler) register(mux *http.ServeMux) {
 	// own `{"error":"HTTP 404 Not Found"}`, which net/http's mux would not
 	// produce for a segment it happily matched.
 	mux.HandleFunc("GET /admin/realms/{realm}/workflows",
-		h.guardAny(workflowRoles, h.listWorkflows))
+		h.guardAnyHeld(workflowRoles, h.listWorkflows))
 	mux.HandleFunc("POST /admin/realms/{realm}/workflows",
-		h.guardAny(workflowRoles, h.createWorkflow))
+		h.guardAnyHeld(workflowRoles, h.createWorkflow))
 	mux.HandleFunc("POST /admin/realms/{realm}/workflows/migrate",
-		h.guardAny(workflowRoles, h.migrateWorkflowSteps))
+		h.guardAnyHeld(workflowRoles, h.migrateWorkflowSteps))
 	mux.HandleFunc("GET /admin/realms/{realm}/workflows/scheduled/{resourceID}",
-		h.guardAny(workflowRoles, h.listScheduledWorkflows))
+		h.guardAnyHeld(workflowRoles, h.listScheduledWorkflows))
 	mux.HandleFunc("GET /admin/realms/{realm}/workflows/{workflowID}",
-		h.guardAny(workflowRoles, h.readWorkflow))
+		h.guardAnyHeld(workflowRoles, h.readWorkflow))
 	mux.HandleFunc("PUT /admin/realms/{realm}/workflows/{workflowID}",
-		h.guardAny(workflowRoles, h.updateWorkflow))
+		h.guardAnyHeld(workflowRoles, h.updateWorkflow))
 	mux.HandleFunc("DELETE /admin/realms/{realm}/workflows/{workflowID}",
-		h.guardAny(workflowRoles, h.deleteWorkflow))
+		h.guardAnyHeld(workflowRoles, h.deleteWorkflow))
 	mux.HandleFunc("POST /admin/realms/{realm}/workflows/{workflowID}/activate/{resourceType}/{resourceID}",
-		h.guardAny(workflowRoles, h.activateWorkflow))
+		h.guardAnyHeld(workflowRoles, h.activateWorkflow))
 	mux.HandleFunc("POST /admin/realms/{realm}/workflows/{workflowID}/deactivate/{resourceType}/{resourceID}",
-		h.guardAny(workflowRoles, h.deactivateWorkflow))
+		h.guardAnyHeld(workflowRoles, h.deactivateWorkflow))
 
 	// Authentication Management, the eighteen operations of P8's first cut.
 	// The other twenty-one - the flows, the executions and the shared
@@ -1486,6 +1486,31 @@ func (h *handler) guard(role string, next func(http.ResponseWriter, *http.Reques
 // user takes only the first and third.
 func (h *handler) guardAny(roles []string, next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
 	return h.guardAnyRejecting(roles, writeForbidden, next)
+}
+
+// guardAnyHeld is guardAny asked of the roles the caller **really holds**,
+// ignoring the token's client scope. The Workflows family is the only user, and
+// it is measured rather than inherited: a full administrator reaching this API
+// through a client with fullScopeAllowed off is 403 on all 77 other routes swept
+// and 200 on all nine Workflows operations, while a caller holding only
+// create-realm is 403 on Workflows through either client. So the family
+// authorises, and it authorises against a different set. See caller.names.
+func (h *handler) guardAnyHeld(roles []string, next func(http.ResponseWriter, *http.Request, *reqContext)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		realm := h.resolveRealm(w, r)
+		if realm == nil {
+			return
+		}
+		c := h.resolveCaller(w, r, realm)
+		if c == nil {
+			return
+		}
+		if !c.hasAnyHeld(roles) {
+			writeForbidden(w)
+			return
+		}
+		next(w, r, &reqContext{realm: realm, caller: c})
+	}
 }
 
 // guardRejecting is guard with the rejection spelled out, for the one route

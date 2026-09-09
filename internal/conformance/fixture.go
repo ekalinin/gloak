@@ -1540,6 +1540,12 @@ var Fixtures = map[string]Fixture{
 	"introspect-scope-filtered": introspectScopeFilteredFixture(),
 	"frontchannel-logout":       frontchannelLogoutFixture(),
 
+	// F198's corpus. One administrator, three clients differing only in
+	// fullScopeAllowed and what their scope maps, and eight cases across three
+	// chapters read it. Nothing else in the admin catalogue can tell a scope
+	// filter that works from one that is never reached.
+	"admin-scope-filtered": adminScopeFilteredFixture(),
+
 	// partial-export and partialImport.
 	//
 	// **The export's guard is a conjunction the query switches on**, so it
@@ -8623,6 +8629,197 @@ func narrowCompositeStep(parent, child string) Step {
 		},
 		ExpectStatus: []int{http.StatusNoContent},
 	}
+}
+
+// adminScopeFilteredFixture is F198's corpus, and it had to be built before the
+// guard it tests.
+//
+// **Every fixture in the admin chapter authenticates through admin-cli, whose
+// fullScopeAllowed is on**, and security-admin-console's is on too. So a scope
+// filter that runs and one that is never reached produce the identical 900-odd
+// admin goldens, and a green tree would look like evidence. That is the failure
+// shape this repository names as *a set of inputs an incorrect implementation
+// satisfies entirely*, and it is the same trap introspectScopeFilteredFixture
+// was built to escape one chapter over.
+//
+// One user and three clients. The user is a **full administrator** - it holds
+// the realm role admin, which is composite over all 21 of master-realm's roles
+// plus create-realm - so every refusal below is a statement about the client
+// rather than about the user. The clients differ as little as they can:
+//
+//	gloak-probe-adminscope-full    fullScopeAllowed true
+//	gloak-probe-adminscope-narrow  fullScopeAllowed false, nothing mapped
+//	gloak-probe-adminscope-view    fullScopeAllowed false, view-users mapped
+//
+// **All three are lightweight, and that is load-bearing twice.** It is held
+// constant, so it is not a second variable in any comparison here - the account
+// chapter's older pair is the mistake it avoids. What it buys is that all three
+// tokens carry the identical eight claims - exp, iat, jti, iss, typ, azp, sid,
+// scope - with no aud, no realm_access and no resource_access between them, and
+// they answer 403, 404 and 200. **There is no byte in any of these tokens an
+// implementation could read**, which is the corpus asserting the mechanism
+// rather than the handover asserting it in prose.
+//
+// It is also what makes the goldens reproducible, and that was a finding rather
+// than a preference. An *ordinary* token for this user grew by about 560 bytes
+// for every realm in the container: master holds a `{realm}-realm` client per
+// realm and `admin` is composite over each one's 21 roles, so `resource_access`
+// gains a key per realm - 1759 bytes at one realm, 12986 at 21. Recorded in
+// catalogue order after every fixture that creates a realm, it crossed
+// Keycloak's request header limit and the flag-on control recorded
+// **431 Request Header Fields Too Large** with an empty body instead of its
+// 404. That golden was a measurement of the container's history, not of this
+// behaviour, and net/http's 1 MB default means Gloak would not reproduce it
+// anyway. See F206.
+//
+// The first two differ in **one field**, which is the pair the whole cut rests
+// on. The third is what stops a coarse reading passing: an implementation that
+// refuses a flag-off client outright is right on -narrow and wrong on -view, and
+// one that admits a flag-off client with any mapping at all is right on -view's
+// user read and wrong on its client listing. Measured 2026-09-08 on a live
+// 26.7.1, on exactly these clients:
+//
+//	                       -full  -narrow  -view
+//	GET /users/{unknown}    404     403     404
+//	GET /clients            200     403     403
+//	GET /admin/realms/{r}   200     403     200
+//	GET /admin/realms       200     403     200
+//	GET /admin/realms/nope  404     404     404
+//	GET /workflows          200     200     200
+//
+// The last two rows are the two things F198 said nobody had probed. The unknown
+// realm answers `Realm not found.` to the flag-off caller, so the refusal sits
+// **behind** the realm resolution and the order every family already has is
+// untouched. Workflows answers 200 to the flag-off caller where every other
+// route on the API answers it 403, because that family reads the roles the
+// caller really holds - see internal/admin's caller.names.
+//
+// view-users rather than view-realm on purpose: it opens the user read with a
+// 26-byte body and is refused on the client listing with a 30-byte one, where
+// view-realm's 200 is the realm's whole 4486-byte representation. The evidence
+// is the same and the goldens are two orders of magnitude smaller.
+func adminScopeFilteredFixture() Fixture {
+	const (
+		user     = "gloak-probe-adminscope-user"
+		password = "gloak-probe-adminscope-password"
+	)
+	steps := []Step{adminTokenStep()}
+
+	for _, c := range []struct{ suffix, full string }{
+		{"full", "true"},
+		{"narrow", "false"},
+		{"view", "false"},
+	} {
+		steps = append(steps, Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				// Neither scope list is named, so the client inherits the
+				// realm's defaults - a client naming either list suppresses
+				// inheritance on both, which would take the `roles` scope away
+				// and change what the token carries for a reason that has
+				// nothing to do with this flag.
+				Body: []byte(`{"clientId":"gloak-probe-adminscope-` + c.suffix + `","enabled":true,` +
+					`"publicClient":true,"standardFlowEnabled":false,` +
+					`"directAccessGrantsEnabled":true,"fullScopeAllowed":` + c.full + `,` +
+					`"attributes":{"client.use.lightweight.access.token.enabled":"true"}}`),
+			},
+			ExpectStatus: idempotentCreate,
+		})
+	}
+
+	steps = append(steps,
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/clients",
+				Query:   map[string]string{"clientId": "gloak-probe-adminscope-view"},
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"view_client_uuid": "0/id"},
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/clients",
+				Query:   map[string]string{"clientId": "master-realm"},
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"admin_client_uuid": "0/id"},
+		},
+		// The one scope mapping in the fixture. This write resolves each entry
+		// by **name** within the named client and ignores any id, which is why
+		// the body carries no id - see AGENTS.md's "two lookup keys".
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/clients/{{view_client_uuid}}/scope-mappings/clients/{{admin_client_uuid}}",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`[{"name":"view-users"}]`),
+			},
+			ExpectStatus: []int{http.StatusNoContent},
+		},
+	)
+
+	steps = append(steps,
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/users",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body: []byte(`{"username":"` + user + `","enabled":true,` +
+					`"credentials":[{"type":"password","value":"` + password + `","temporary":false}]}`),
+			},
+			ExpectStatus: idempotentCreate,
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/users",
+				Query:   map[string]string{"username": user, "exact": "true"},
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"user_id": "0/id"},
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/master/roles/admin",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"realm_role_admin_id": "id"},
+		},
+		Step{
+			Request: Request{
+				Method:  http.MethodPost,
+				Path:    "/admin/realms/master/users/{{user_id}}/role-mappings/realm",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
+				Body:    []byte(`[{"id":"{{realm_role_admin_id}}","name":"admin"}]`),
+			},
+			ExpectStatus: []int{http.StatusNoContent},
+		},
+	)
+
+	// Three tokens for one user, minted last so that each carries the roles the
+	// assignment above gave it.
+	for _, suffix := range []string{"full", "narrow", "view"} {
+		steps = append(steps, Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "/realms/master/protocol/openid-connect/token",
+				Form: map[string]string{
+					"grant_type": "password",
+					"client_id":  "gloak-probe-adminscope-" + suffix,
+					"username":   user,
+					"password":   password,
+				},
+			},
+			Capture: map[string]string{suffix + "_token": "access_token"},
+		})
+	}
+
+	return Fixture{State: "bootstrap", Steps: steps}
 }
 
 // frontchannelLogoutFixture signs a browser in at a client registered for
