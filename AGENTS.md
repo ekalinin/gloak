@@ -180,8 +180,29 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 
   **`Referrer-Policy`, `Strict-Transport-Security`, `X-Content-Type-Options` and
   `X-Robots-Tag` are on everything**, with three exceptions:
-  - **a path matching no route** gets none of them, because that request never
-    reaches Keycloak's filter chain;
+  - **a request that resolves nothing at all** gets none of them, because it
+    never reaches Keycloak's filter chain. That is narrower than "a path
+    matching no route", which is what this line said until 2026-09-09, and the
+    realm tree is where the difference bites:
+
+    ```
+    GET /realms/master/nosuchthing   404  HTTP 404 Not Found          5 of 5
+    GET /realms                      404  Unable to find matching…    0 of 5
+    ```
+
+    **Neither path names a route.** The longer one sends all five, because the
+    realm resource's own locator resolved on the way and the request is inside
+    the filter chain; the shorter one, two segments up, sends none because
+    nothing resolved. Pinned by `http/fallback/realm-resource` and
+    `http/fallback/realms-collection`, which declare the presence and the
+    absence respectively - the second declares all five absent, because
+    `AssertHeaders` can only check a header that is named.
+    **This is the seventh correction to this bullet and the first of its kind.**
+    The six before it each narrowed a rule about which *responses* carry the
+    headers; this one narrows the rule about which *requests* do. No golden in
+    the tree could have shown it before F184, because Gloak answered the
+    header-less body for the whole realm subtree and the corpus agreed with
+    itself;
   - **`GET /realms/{realm}/protocol/saml`'s 400 page** gets none of them, and
     this is the first exception that is a **matched route serving a real page**:
     it answers `405` to `PUT` and a 200 with an `Allow` to `OPTIONS`, so the
@@ -2731,6 +2752,65 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   client, on a flag-on and a flag-off client alike. `internal/account`'s
   equivalent branch refuses with an empty role set instead, which is that API's
   own measured answer; the two surfaces do not share one.
+
+- **Everything under `/realms/{realm}` that no route serves is the router's
+  generic `404 {"error":"HTTP 404 Not Found"}` with all five security
+  headers**, and an unknown realm is `Realm does not exist` with all five -
+  at any depth, on all seven verbs, and **whether or not the path is a route
+  hit with the wrong method**. That last clause is the sharp one:
+  `POST /realms/nosuchrealm/.well-known/openid-configuration` answers about
+  the realm, not about the method, so the realm is resolved **before the
+  method is dispatched** rather than merely first. `/realms` and `/realms/`
+  are the exception and they go the other way - both fall off the route table
+  entirely and answer the unmatched-path body with **none** of the five, which
+  is the only measured place in this server where a **shorter** path is less
+  reachable than a longer one. On the Admin API the same shape carries the
+  other spelling, `Realm not found.` with its full stop, behind the bearer
+  gate and behind each sub-resource locator - `/admin/realms/master/clients/{unknown}/nosuchsub`
+  is `Could not find client` - so that side is a chain rather than one
+  catch-all. `/admin/nosuchthing` is a **405 with none of the five**, which is
+  neither known unrouted body.
+
+- **`/realms/{realm}/account` runs its gate before it routes, and it is the
+  only family under a realm that does.** One path, one container, two probes
+  differing only in the `Authorization` header: with no token
+  `/realms/master/account/nosuchsub` is `401 {"error":"HTTP 401
+  Unauthorized"}` and with a valid one it is the generic 404 above. Everything
+  else under a realm - `login-actions`, `device`, `.well-known`,
+  `clients-registrations/default` - answers the 404 to a caller holding
+  nothing.
+
+- **There are five producers of that second body, not four.** The fifth is a
+  path under a realm that resolves and that no route serves - the first producer
+  that is neither a wrong method, a switched-off resource, nor a malformed
+  parameter. It confirms rather than complicates the reading the fourth producer
+  forced: the body does not mean "wrong method", it means "the router found
+  nothing to run".
+
+  **And a wrong method on a known path does not always produce a body from this
+  family.** `POST /admin/realms/master/users/count` is
+  `404 {"error":"User not found"}` and `POST .../groups/count` is
+  `Could not find group by id`: `count` is read as the `{id}` of the sibling
+  locator, which resolves to nothing, so **JAX-RS resolves the locator before it
+  dispatches the method**. That is the same ordering the realm tree shows one
+  level up, met on the Admin API, and it means the count of "spellings of
+  not-found" and the count of "bodies in the fallback family" are not disjoint
+  lists: one request can be in both. Pinned by
+  `http/fallback/method-not-allowed-sibling-locator`, which is `Recorded`.
+
+- **A Go `ServeMux` subtree pattern brings an implicit redirect with it, and
+  `WithKeycloakFallbacks` cannot see past one.** Registering
+  `/realms/{realm}/{rest...}` without also registering `/realms/{realm}` makes
+  `POST /realms/master` answer a **307 to `/realms/master/`** with `net/http`'s
+  own body - and `mux.Handler` reports a **non-empty pattern** for the redirect
+  handler, so the wrapper's "a real route matched" test passes it straight
+  through. It is invisible to a `GET` probe, because a registered
+  `GET /realms/{realm}` shadows the redirect for that one method. This is the
+  third time a `ServeMux` assumption has been wrong in this repository, after
+  F153's registration panic and F11's 307 on an unnormalised path, and all three
+  were found by **running the route table rather than reading the
+  documentation**. Before adding a `{rest...}` or a trailing-slash subtree
+  pattern, send every verb at the subtree root and look at the status.
 
 ## Boundaries
 

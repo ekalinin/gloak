@@ -250,11 +250,11 @@ operations is allocated below; none is left unassigned.
 | Partial export | `partial-export` and `partialImport`, **done 2026-09-06** | P14 | `admin/realms-admin` 42->44. The export is `GET /admin/realms/{realm}` **spliced**, not transcribed, so `realmrep.go` stays the one truth. Answers F163: the parse code separates **syntax from binding**, not shapes | 2 ops |
 | Certificate remainder | The `Client Attribute Certificate` tag's last three, **done 2026-09-06** | F161, F38 | `admin/client-attribute-certificate` 4->5, and **+1 counted, +3 served**: `download` and `generate-and-download` are built and uncounted, because no golden can hold a keystore. The dependency question **inverted** - `x/crypto/pkcs12` is already direct and cannot read Keycloak's BouncyCastle BER, so `internal/keystore` was written and no module added. BCFKS is a deliberate divergence, F171 | 1 op |
 
-Denominator today: **413 Admin API operations plus 209 protocol and account
-behaviours, 622 enumerated**, plus **two** chapters (parts of P13 and P14) whose
+Denominator today: **413 Admin API operations plus 218 protocol and account
+behaviours, 631 enumerated**, plus **two** chapters (parts of P13 and P14) whose
 surface is not counted and which the report says so about - P11 left that list on
-2026-09-07 and the account API on 2026-09-08. Served: **570 of 622** after
-`fullScopeAllowed` at issuance, and **P2, P4 and P5 are complete** -
+2026-09-07 and the account API on 2026-09-08. Served: **578 of 631** after the realm
+resource's 404, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -285,7 +285,63 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-09 (thirty-first fold).** `make conformance` reports **570 of
+**Updated 2026-09-09 (thirty-second fold).** `make conformance` reports **578 of
+631**. F184 is closed - the fourth family of one shape, deferred three times, and
+each deferral had made the case stronger.
+
+**The near-miss is worth more than the fix.** Registering
+`/realms/{realm}/{rest...}` alone makes Go's `ServeMux` add an **implicit
+redirect at the subtree root**: `POST /realms/master` answers a 307,
+`mux.Handler` reports a **non-empty pattern** for it, and `WithKeycloakFallbacks`
+therefore hands it to the mux, which writes a `net/http` body this project never
+produces. It is **invisible to a GET probe**, because a registered
+`GET /realms/{realm}` shadows the redirect for that one method. The bare pattern
+is what stops it. That is the **third** wrong `ServeMux` assumption here after
+F153 and F11, and all three were found by running the route table rather than
+reading the documentation.
+
+**The seventh correction to the security-header bullet, and the first of its
+kind.** The exception read *"a path matching no route gets none of them"*. The
+clause after the comma was right and the clause before it was wrong:
+
+```
+GET /realms/master/nosuchthing   404  5 of 5   the locator resolved
+GET /realms                      404  0 of 5   nothing resolved
+```
+
+Neither names a route. What decides the header set is whether **something
+resolved**, not whether the path names a route. The six corrections before this
+one each narrowed a rule about which *responses* carry the headers; this narrows
+which *requests* do, and **no golden in the tree could have shown it before**,
+because Gloak answered the header-less body for the whole realm subtree and the
+corpus agreed with itself.
+
+**The realm is resolved before the *method* is dispatched**, which is stronger
+than the dispatch cut's "realm first" and is the row nobody had sent:
+`POST /realms/nosuchrealm/.well-known/openid-configuration` - a real route with
+the wrong method - answers about the realm. That is what decides the patterns
+carry no method.
+
+**F212 was closed by proof rather than by assertion**, and it is the model for
+how a coverage claim should be settled here. The cut said a branch had lost its
+corpus witness; instead of asserting it, one mutation was run against two cases:
+
+```
+invert the Allow probe, vs the old case   SURVIVED
+invert the Allow probe, vs the new case   KILLED
+```
+
+Same mutation, same package, same command. I reproduced both rows independently
+before merging.
+
+**And one `Recorded` case nobody asked for earns its place.**
+`POST /admin/realms/master/users/count` is `404 {"error":"User not found"}`,
+because `count` is read as the `{id}` of the sibling locator - **JAX-RS resolves
+the locator before it dispatches the method**, the realm tree's ordering met on
+the Admin API. It means the "spellings of not-found" list and the fallback-body
+list are **not disjoint**: one request can be in both.
+
+**Earlier on 2026-09-09 (thirty-first fold).** `make conformance` reports **570 of
 622, no change** - and the flat number is correct rather than disappointing.
 Admin chapters count operations, all five the cut touched were already served,
 and **no golden moved**, which was predicted before the recording: all 413
