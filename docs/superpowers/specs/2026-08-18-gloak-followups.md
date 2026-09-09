@@ -5483,7 +5483,37 @@ at a client, introspect it once from a client in its audience, delete the issuin
 client, introspect again. N1 in section 8.4 is the survivor; a case cannot be
 written until the answer is known.
 
-## F198: the Admin API is scope-filtered and Gloak is not.
+## F198: the Admin API is scope-filtered and Gloak is not (fixed 2026-09-09)
+
+**Served.** The mechanism was established rather than assumed, and it is **not a
+check of its own**: the filter is the caller's role set, recomputed server-side.
+A full administrator reaching the API through a flag-off client answers, **cell
+for cell over 79 routes**, what a caller holding no admin role answers. Nothing
+in the token could have said so - `admin-cli` is lightweight, carries eight
+claims and no roles at all, and drives the whole API, so two clients differing
+only in the flag mint identically shaped tokens and answer 200 and 403.
+
+The corpus this entry demanded was built first and is a **2x2 rather than a
+pair**: three clients one field apart, and the third - flag off with `view-users`
+mapped - answers **404** on the user read and **403** on the client listing. "A
+flag-off client is refused outright" is right on one of them and wrong on that;
+"any mapping opens everything" is right on one route and wrong on the other. A
+two-client corpus passes one of the two wrong readings.
+
+**No golden moved**, as expected: all 413 operations' worth of admin goldens use
+`admin-cli`, where the filter short-circuits.
+
+Two questions on this API turned out to read the roles the caller **holds**
+rather than the filtered set, and neither is predictable from the guard beside
+it - `mayGrantRole`'s conferral closure and the whole `Workflows` family. That is
+why the route-guard half being nearly one line does not make the cut one line.
+
+Follow-ups from it: F202 the filter is frozen at issuance where Gloak recomputes,
+F203 a deliberate survivor, F204 a disabled client's 401 left unserved on
+purpose, F205 `/admin/serverinfo` unserved so the symptom closes on two of three
+routes, F206 a token that outgrows the header limit.
+
+## F198 (original): the entry as filed on 2026-09-08
 
 Section 9 is the
 measurement and the reason this cut does not serve it. **This is the largest
@@ -5530,3 +5560,121 @@ two variables and `scope-filtered-lightweight` holds one of them still - section
 5. The older pair is not wrong, but it is the shape AGENTS.md warns about, and
 the chapter has other two-variable pairs nobody has audited. The entry is to
 sweep them rather than to change this one.
+
+## F202: Keycloak freezes the scope filter at issuance and Gloak recomputes it per request.
+
+Measured both ways in section 2.5: flipping a client's
+`fullScopeAllowed` on does not open an already-minted token and flipping it off
+does not close one, and adding or removing a scope mapping behaves the same.
+Keycloak records the granted role set on the client session at login; Gloak has
+no stored granted set and reads the client's current state on every request.
+Observable **only** by mutating a client while one of its tokens is alive, which
+no case does. Closing it means a migration and the session model, which is why it
+is an entry rather than part of this cut. The direction is worth recording:
+removing a mapping revokes immediately in Gloak where Keycloak waits for expiry,
+which is the restrictive side; adding one grants immediately, which is permissive
+relative to Keycloak but never beyond the client's configured scope.
+
+## F203: the Admin API's granted-scope input cannot be exercised, and the mutation that ignores it survives.
+
+`inTokenScope` passes `parsed.Scope` to
+`roles.ScopesInEffect`, which is measured right - an optional client scope
+carrying the admin scope mappings opens the API exactly when the token request
+named it, section 2.4. But F16's `grantedScope` is a constant plus `openid`, so
+no request can put a client scope's name into a Gloak token's `scope` claim, and
+replacing `parsed.Scope` with `""` survives the whole tree - A14, section 8.5. It
+is J1's shape on a third surface: `internal/account`'s gate is in the same
+position, and **nothing has swept for a fourth**. The entry is that F16 is what
+unblocks the case, and that until then the argument is a measurement in this
+document rather than a test.
+
+## F204: a disabled client's token is 401 on the Admin API and Gloak serves it.
+Measured 2026-09-08: a token minted at a client that is then disabled answers
+`401 {"error":"HTTP 401 Unauthorized"}` where it had answered 200, on the same
+request. `inTokenScope` now looks the client up and could read `Enabled` in the
+same branch that already answers 401 for a client that is gone - one `||`. It was
+left out deliberately: it is a rule about **authentication** rather than about the
+scope filter, it has no case, and folding an unrelated refusal into this branch is
+how a one-line fix reaches every admin route. The probe is already written; the
+entry is to serve it with a case of its own.
+
+## F205: `/admin/serverinfo` is one of F198's three symptom routes and Gloak does not serve it at all.
+
+There is no `HandleFunc` for it anywhere in the tree - the
+path appears only in doc comments citing it as a measurement source. So F198's
+symptom is now served on two of its three routes and the third is unreachable.
+Worth saying because a reader of F198 will otherwise look for a
+`serverinfo` case and not find one.
+
+## F206: a full administrator's access token outgrows Keycloak's request header limit, and Gloak answers the route instead of 431.
+
+Section 7.1 is the
+measurement: master holds a `{realm}-realm` client per realm and the realm role
+`admin` is composite over each one's 21 roles, so an ordinary token grows about
+560 bytes per realm - 1759 bytes at one realm, 12986 at 21. Past Quarkus's limit
+the Admin API answers `431 Request Header Fields Too Large` with an empty body
+and no headers at all. `net/http`'s default `MaxHeaderBytes` is 1 MB and the
+conformance verifier serves through a `ResponseRecorder` with no limit, so Gloak
+cannot reproduce it as things stand. Two things are unmeasured and both are cheap:
+where the limit actually is, and whether the 431 carries the security headers.
+This is also a **harness** entry - it is the second known way for a golden to be a
+measurement of the container's history rather than of a behaviour, after F40's
+counts, and nothing sweeps for a case whose request grows with the catalogue.
+
+## F207: a mutation harness whose revert is on the happy path leaves the tree mutated, and a wildcard add during a pass commits that.
+
+Both bit in this cut,
+about an hour apart. The first version of the harness aborted under `set -u`
+before its revert and left five mutations applied at once (section 8.1); a
+`git add -A && git commit` issued while the pass was running staged one of them
+under a documentation subject (section 8.2).
+
+**The entry is a discipline, not a detector, and that is a correction to this
+entry.** It first argued from "nothing in the repository can catch a committed
+mutation". Review checked that and refuted it, and so did re-running it here:
+`edeb841` fails `./internal/admin/` and `./internal/conformance/` on four named
+tests, and `make test` runs both. A killed mutation, committed, is a red suite by
+definition. Building a pre-commit detector would be building a trap for a hazard
+the suite already catches.
+
+What survives the correction is smaller and still worth having written down. A
+mutation pass leaves the tree dirty **by design**, so the window in which a
+wildcard add is destructive is exactly the window the discipline itself creates,
+and the resulting commit is mislabelled - it wears the message of whatever the
+author thought they were committing, which is what makes it easy to scroll past
+in a log. The exposure lasted hours here only because the session was running
+mutations rather than the suite. Two things close it and both are free: **the
+revert on a `trap ... EXIT`**, which this cut's harness now has, and **committing
+before the pass and naming paths during it**.
+
+AGENTS.md says a harness must "revert, and verify the revert" and does not say
+from where. That one sentence is worth sharpening; the rest of this entry is a
+record of the sequence, not a request to build anything.
+
+## F208: a mutation that changes text without changing semantics reads as a result
+
+Found in review on 2026-09-09, on my own mutation rather than a cut's. Rewriting
+`ByClientID(ctx, authRealm.ID, parsed.ClientID)` to
+`ByClientID(ctx, authRealm.ID+"", parsed.ClientID+"")` is a **no-op**, and it
+"survived" - which says nothing at all.
+
+**Every mutation harness in this project has the same blind spot.** They all
+guard against an empty diff by comparing the file before and after, so a change
+that alters bytes and not behaviour passes the guard and then passes the tests,
+and the report reads `SURVIVED` in the same column as a real finding.
+
+It is the third side of a shape this repository has now met twice in two days:
+
+- **F174** - a set of assertions, and a set of inputs, an incorrect
+  implementation satisfies entirely;
+- the `full-scope` cut's **A1 against S5** - a mutation that makes a function
+  *fail* is not the one that makes it *wrong consistently*;
+- and this - a mutation that changes **nothing** wearing a survivor's clothes.
+
+All three are the same question asked about different objects: **what did this
+mutation actually prove?** A harness cannot answer it, because the answer is
+about meaning and the harness compares bytes. What can be done is smaller and
+worth doing: when a mutation survives, **read the mutated line before reporting
+it**, and say in the report what an implementation satisfying it would look like.
+A survivor you cannot describe as a coherent wrong implementation is not a
+finding yet.
