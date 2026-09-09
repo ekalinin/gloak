@@ -415,8 +415,7 @@ func (h *handler) inTokenScope(w http.ResponseWriter, r *http.Request, authRealm
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return nil, false
 	}
-	_ = inScope
-	return held, true
+	return roles.Filter(held, inScope), true
 }
 
 // authenticate resolves the bearer token in **the realm that issued it**, which
