@@ -312,3 +312,110 @@ func TestScopeFilterReadsTheTokenRealmsClient(t *testing.T) {
 		t.Errorf("master's flag-on twinrev reading master = %d %s, want 200", w.Code, w.Body)
 	}
 }
+
+// TestForeignGrantsAreComputedFromTheRolesTheCallerHolds is section 4.1's rule
+// on the **cross-realm** conferral set, and it closes a mutation survivor.
+//
+// mayGrantRole reads foreignGrants rather than grants() when the role being
+// handed out belongs to another realm's admin container, and this cut first
+// extended section 4.1 to it by symmetry rather than by measurement - which is
+// exactly the reasoning this project distrusts. A mutation pointing
+// foreignGrants back at the filtered set survived the whole tree, so the probe
+// was sent instead of the assumption being kept.
+//
+// Measured 2026-09-09 on a live 26.7.1, handing out f198y-realm's manage-realm
+// to a master user:
+//
+//	full administrator @ flag-off client scoping manage-users  204, available 20
+//	full administrator @ flag-on client                        204, available 20
+//	full administrator @ admin-cli                             204, available 20
+//	a master manage-users holder @ admin-cli                   403, available 0
+//
+// So the foreign closure follows the same-realm one: it reads the roles the
+// caller really holds. The last row is the control that stops the first being
+// "this route admits anybody" - that caller passes the same route guard and
+// holds nothing at all on the other realm's container.
+//
+// The caller's token scope carries master-realm's manage-users because it has to:
+// the route guard runs first and is filtered, so a caller with nothing in scope
+// never reaches the predicate under test.
+func TestForeignGrantsAreComputedFromTheRolesTheCallerHolds(t *testing.T) {
+	h, s, master := newServer(t)
+	ctx := context.Background()
+	other := secondRealm(t, s, "othr")
+
+	scopedClient(t, s, master, "narrow-mu", false, "manage-users")
+	administrator(t, s, master, "foreign-admin")
+	subject := createUserWithPassword(t, s, master, "foreign-subject", "pw")
+
+	// master holds a {realm}-realm client per realm, and the realm role admin is
+	// composite over its roles - which is what makes the administrator hold them
+	// without ever being assigned one.
+	foreign, err := s.Clients().ByClientID(ctx, master.ID, masterContainerFor(other.Name))
+	if err != nil {
+		t.Fatalf("ByClientID(%s): %v", masterContainerFor(other.Name), err)
+	}
+	manageRealm, err := s.Roles().ByName(ctx, master.ID, foreign.ID, "manage-realm")
+	if err != nil {
+		t.Fatalf("ByName(manage-realm on the foreign container): %v", err)
+	}
+	path := "/admin/realms/master/users/" + subject.ID + "/role-mappings/clients/" + foreign.ID
+	body := `[{"id":"` + manageRealm.ID + `","name":"manage-realm"}]`
+
+	scoped := tokenForClient(t, h, "narrow-mu", "foreign-admin", "pw")
+	if w := post(t, h, path, scoped, "application/json", body); w.Code != http.StatusNoContent {
+		t.Errorf("a full administrator through a flag-off client granting the other realm's manage-realm = %d %s, want 204",
+			w.Code, w.Body)
+	}
+
+	// The control: a caller that passes the same route guard and holds nothing
+	// on the foreign container is refused, so the 204 above is about the roles
+	// the caller holds rather than about the route being open.
+	held := tokenForRoles(t, h, s, master, "manage-users")
+	if w := post(t, h, path, held, "application/json", body); w.Code != http.StatusForbidden {
+		t.Errorf("a master manage-users holder granting the other realm's manage-realm = %d %s, want 403",
+			w.Code, w.Body)
+	}
+}
+
+// TestLocalizationGuardReadsTheScopeFilteredRoles closes the second survivor.
+//
+// guardRealmContainerAny has two users - GET .../localization and
+// GET .../localization/{locale}/{key} - and no conformance case sends a
+// flag-off token to either, so a mutation pointing it at the unfiltered set
+// survived the whole tree. It is a route admission, so it should be filtered
+// like every other one, and that was measured rather than reasoned:
+//
+//	full administrator @ flag-on client                200 and 404
+//	full administrator @ flag-off, nothing mapped      403 and 403
+//	full administrator @ flag-off, view-realm mapped   200 and 404
+//
+// One user, three clients, and the middle row is the one the mutation moves.
+func TestLocalizationGuardReadsTheScopeFilteredRoles(t *testing.T) {
+	h, s, realm := newServer(t)
+
+	scopedClient(t, s, realm, "loc-full", true)
+	scopedClient(t, s, realm, "loc-narrow", false)
+	scopedClient(t, s, realm, "loc-view", false, "view-realm")
+	administrator(t, s, realm, "loc-admin")
+
+	for _, path := range []string{
+		"/admin/realms/master/localization",
+		"/admin/realms/master/localization/en/somekey",
+	} {
+		full := tokenForClient(t, h, "loc-full", "loc-admin", "pw")
+		if w := get(t, h, path, full); w.Code == http.StatusForbidden {
+			t.Errorf("%s through a flag-on client = 403, want the route's own answer", path)
+		}
+		narrow := tokenForClient(t, h, "loc-narrow", "loc-admin", "pw")
+		if w := get(t, h, path, narrow); w.Code != http.StatusForbidden {
+			t.Errorf("%s through a flag-off client with nothing mapped = %d %s, want 403",
+				path, w.Code, w.Body)
+		}
+		view := tokenForClient(t, h, "loc-view", "loc-admin", "pw")
+		if w := get(t, h, path, view); w.Code == http.StatusForbidden {
+			t.Errorf("%s through a flag-off client scoping view-realm = 403, want the route's own answer",
+				path)
+		}
+	}
+}
