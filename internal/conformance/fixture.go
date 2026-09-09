@@ -8651,6 +8651,27 @@ func narrowCompositeStep(parent, child string) Step {
 //	gloak-probe-adminscope-narrow  fullScopeAllowed false, nothing mapped
 //	gloak-probe-adminscope-view    fullScopeAllowed false, view-users mapped
 //
+// **All three are lightweight, and that is load-bearing twice.** It is held
+// constant, so it is not a second variable in any comparison here - the account
+// chapter's older pair is the mistake it avoids. What it buys is that all three
+// tokens carry the identical eight claims - exp, iat, jti, iss, typ, azp, sid,
+// scope - with no aud, no realm_access and no resource_access between them, and
+// they answer 403, 404 and 200. **There is no byte in any of these tokens an
+// implementation could read**, which is the corpus asserting the mechanism
+// rather than the handover asserting it in prose.
+//
+// It is also what makes the goldens reproducible, and that was a finding rather
+// than a preference. An *ordinary* token for this user grew by about 560 bytes
+// for every realm in the container: master holds a `{realm}-realm` client per
+// realm and `admin` is composite over each one's 21 roles, so `resource_access`
+// gains a key per realm - 1759 bytes at one realm, 12986 at 21. Recorded in
+// catalogue order after every fixture that creates a realm, it crossed
+// Keycloak's request header limit and the flag-on control recorded
+// **431 Request Header Fields Too Large** with an empty body instead of its
+// 404. That golden was a measurement of the container's history, not of this
+// behaviour, and net/http's 1 MB default means Gloak would not reproduce it
+// anyway. See F206.
+//
 // The first two differ in **one field**, which is the pair the whole cut rests
 // on. The third is what stops a coarse reading passing: an implementation that
 // refuses a flag-off client outright is right on -narrow and wrong on -view, and
@@ -8701,7 +8722,8 @@ func adminScopeFilteredFixture() Fixture {
 				// nothing to do with this flag.
 				Body: []byte(`{"clientId":"gloak-probe-adminscope-` + c.suffix + `","enabled":true,` +
 					`"publicClient":true,"standardFlowEnabled":false,` +
-					`"directAccessGrantsEnabled":true,"fullScopeAllowed":` + c.full + `}`),
+					`"directAccessGrantsEnabled":true,"fullScopeAllowed":` + c.full + `,` +
+					`"attributes":{"client.use.lightweight.access.token.enabled":"true"}}`),
 			},
 			ExpectStatus: idempotentCreate,
 		})
