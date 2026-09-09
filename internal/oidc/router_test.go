@@ -1,13 +1,43 @@
 package oidc_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/ekalinin/gloak/internal/account"
+	"github.com/ekalinin/gloak/internal/bootstrap"
+	"github.com/ekalinin/gloak/internal/keys"
 	"github.com/ekalinin/gloak/internal/oidc"
+	"github.com/ekalinin/gloak/internal/store/sqlite"
 )
+
+// newServerWithAccount is newServer plus the account API on the same mux, which
+// is how cmd/gloak and the conformance server build the real one. It exists for
+// TestTheRealmResourceDispatcherDoesNotSwallowAServedRoute: F184's catch-all
+// covers every path under /realms/{realm}, including the ones a package other
+// than this one registers, and neither package's own tests would otherwise see
+// the two combined.
+func newServerWithAccount(t *testing.T) http.Handler {
+	t.Helper()
+	ctx := context.Background()
+	s, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "gloak.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	if err := bootstrap.EnsureMaster(ctx, s, "admin", "admin"); err != nil {
+		t.Fatalf("EnsureMaster: %v", err)
+	}
+	mux := http.NewServeMux()
+	km := keys.NewManager(s)
+	oidc.Register(mux, s, km, "http://localhost:8080")
+	account.Register(mux, s, km, "http://localhost:8080")
+	return oidc.WithKeycloakFallbacks(mux)
+}
 
 // securityHeaders is the five Keycloak attaches to a response that reached its
 // filter chain. The tests below assert the whole set on both sides of the
@@ -48,8 +78,14 @@ func wantSecurityHeaders(t *testing.T, w *httptest.ResponseRecorder, want bool) 
 // internal/conformance/testdata/golden/http/fallback/unknown-path.http and
 // the "Fallback responses" section of
 // docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+//
+// **The path is outside /realms/ and that is load-bearing.** It was
+// /realms/master/nope until F184, which is not an unmatched path on a live
+// 26.7.1 at all: everything under a realm that resolves reaches the filter
+// chain and answers `HTTP 404 Not Found` with all five security headers. This
+// body is what is left once realmResourceDispatch has taken that tree.
 func TestUnknownPathReturnsKeycloakShapedNotFound(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/realms/master/nope", nil)
+	req := httptest.NewRequest(http.MethodGet, "/nosuchpath", nil)
 	w := httptest.NewRecorder()
 
 	newServer(t).ServeHTTP(w, req)
@@ -72,11 +108,23 @@ func TestUnknownPathReturnsKeycloakShapedNotFound(t *testing.T) {
 // internal/conformance/testdata/golden/http/fallback/method-not-allowed.http
 // and the "Fallback responses" section of
 // docs/superpowers/specs/2026-08-18-keycloak-26.7.1-observed.md.
+//
+// **It builds its own mux, because F184 made this branch unreachable through
+// this package's route table.** realmResourceDispatch is registered with no
+// method on /realms/{realm} and /realms/{realm}/{rest...}, so every path under
+// a realm now matches something and the wrong-method probe never runs for one.
+// The branch is still live for the routes internal/admin registers under
+// /admin, which this package cannot see - so the input that exercises it here
+// is a mux of the wrapper's own, which is what WithKeycloakFallbacks takes.
+// Asserting it through /realms/master instead would pass on the dispatcher's
+// identical body and stop testing the probe at all.
 func TestWrongMethodReturnsKeycloakShapedNotFound(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/realms/master", nil)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /outside/{$}", func(w http.ResponseWriter, _ *http.Request) {})
+	req := httptest.NewRequest(http.MethodPost, "/outside", nil)
 	w := httptest.NewRecorder()
 
-	newServer(t).ServeHTTP(w, req)
+	oidc.WithKeycloakFallbacks(mux).ServeHTTP(w, req)
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("want 404, got %d", w.Code)
@@ -87,6 +135,10 @@ func TestWrongMethodReturnsKeycloakShapedNotFound(t *testing.T) {
 	if got, want := w.Body.String(), `{"error":"HTTP 404 Not Found"}`; got != want {
 		t.Fatalf("want body %s, got %s", want, got)
 	}
+	// The half the body cannot see: a known path hit with the wrong method
+	// reached the filter chain, so it carries all five where the unmatched-path
+	// body above carries none.
+	wantSecurityHeaders(t, w, true)
 }
 
 // TestOneTrailingSlashIsStripped is F177's rule and the positive control the
@@ -128,6 +180,12 @@ func TestOneTrailingSlashIsStripped(t *testing.T) {
 // that says it is a strip and not a route: the two measured fallback bodies
 // answer a slashed path exactly as they answer the bare one, so nothing
 // downstream needs to know the slash was there.
+//
+// Since F184 the second half reaches realmResourceDispatch rather than the
+// wrong-method probe - same status, same body, same header set, a different
+// producer - so what it now pins is that the strip runs ahead of the catch-all
+// too. The bytes are unchanged either way, which is the point: the strip is
+// invisible downstream.
 func TestTheTwoFallbackShapesAlsoStripOneTrailingSlash(t *testing.T) {
 	h := newServer(t)
 
@@ -423,6 +481,227 @@ func TestTheDispatcherDoesNotSwallowAServedRoute(t *testing.T) {
 			body := w.Body.String()
 			if strings.Contains(body, "Protocol not found") ||
 				strings.Contains(body, "HTTP 404 Not Found") ||
+				strings.Contains(body, "Unable to find matching target resource method") {
+				t.Fatalf("%s: the dispatcher swallowed a served route: %d %.100s",
+					p, w.Code, body)
+			}
+		}
+	}
+}
+
+// TestTheProtocolDispatcherBeatsTheRealmResourceDispatcher is the precedence
+// F184 said to establish rather than assume. Both dispatchers are catch-alls
+// registered with no method, one nested inside the other's tree, and they
+// answer **different sentences** for the same status - so if the wider one won,
+// `Protocol not found` would disappear from the server and every test that
+// asserts it would still pass on the narrower paths.
+//
+// Go's ServeMux gives the more specific pattern the request:
+// /realms/{realm}/protocol/{protocol} matches a strict subset of
+// /realms/{realm}/{rest...}. That is verified here by running the routes rather
+// than read from the documentation, because the two cuts' patterns are not the
+// same patterns and F153 is in this repository because a ServeMux assumption
+// was wrong once.
+func TestTheProtocolDispatcherBeatsTheRealmResourceDispatcher(t *testing.T) {
+	h := newServer(t)
+	for _, path := range []string{
+		"/realms/master/protocol/nosuchproto",
+		"/realms/master/protocol/nosuchproto/descriptor",
+		"/realms/master/protocol/x/a/b/c/d",
+		"/realms/master/protocol/SAML",
+	} {
+		t.Run(path, func(t *testing.T) {
+			if got, want := get(t, h, path).Body.String(),
+				`{"error":"Protocol not found"}`; got != want {
+				t.Fatalf("want body %s, got %s", want, got)
+			}
+		})
+	}
+}
+
+// TestARealmResourceThatNoRouteServes is F184's leading shape. Six paths rather
+// than one, because a dispatcher that answered this sentence for everything
+// under /realms/ satisfies any single one of them - the failure shape AGENTS.md
+// names - and because four of the six are paths a *neighbouring* family owns on
+// a live 26.7.1 and answers with this same body:
+// /login-actions/nosuchaction, /device/nosuchsub and /.well-known/nosuchdoc all
+// sit beside routes this package serves.
+//
+// Depth is in the list because it is a decision: one {rest...} pattern rather
+// than a pattern per depth, measured identical at one, two and six segments.
+func TestARealmResourceThatNoRouteServes(t *testing.T) {
+	h := newServer(t)
+	for _, path := range []string{
+		"/realms/master/nosuchthing",
+		"/realms/master/nosuchthing/deeper",
+		"/realms/master/nosuchthing/a/b/c/d/e",
+		"/realms/master/login-actions/nosuchaction",
+		"/realms/master/device/nosuchsub",
+		"/realms/master/.well-known/nosuchdoc",
+	} {
+		t.Run(path, func(t *testing.T) {
+			w := get(t, h, path)
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("want 404, got %d", w.Code)
+			}
+			if got, want := w.Body.String(), `{"error":"HTTP 404 Not Found"}`; got != want {
+				t.Fatalf("want body %s, got %s", want, got)
+			}
+			if got, want := w.Header().Get("Content-Type"), "application/json"; got != want {
+				t.Fatalf("want Content-Type %q, got %q", want, got)
+			}
+			wantSecurityHeaders(t, w, true)
+			if cc := w.Header().Get("Cache-Control"); cc != "" {
+				t.Fatalf("want no Cache-Control, got %q", cc)
+			}
+		})
+	}
+}
+
+// TestTheRealmResourceDispatcherResolvesTheRealmFirst is the discriminating
+// half: the same paths under a realm that does not exist answer about the realm
+// instead. A dispatcher that wrote its sentence without looking the realm up
+// passes the test above and fails here.
+func TestTheRealmResourceDispatcherResolvesTheRealmFirst(t *testing.T) {
+	h := newServer(t)
+	for _, path := range []string{
+		"/realms/nosuchrealm/nosuchthing",
+		"/realms/nosuchrealm/nosuchthing/deeper",
+		"/realms/nosuchrealm/account/nosuchsub",
+		"/realms/nosuchrealm",
+	} {
+		t.Run(path, func(t *testing.T) {
+			w := get(t, h, path)
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("want 404, got %d", w.Code)
+			}
+			if got, want := w.Body.String(), `{"error":"Realm does not exist"}`; got != want {
+				t.Fatalf("want body %s, got %s", want, got)
+			}
+			wantSecurityHeaders(t, w, true)
+		})
+	}
+}
+
+// TestTheRealmIsResolvedBeforeTheMethodIsDispatched is why both patterns carry
+// no method, and it is the cell a GET-only catch-all gets wrong while passing
+// everything above. Measured 2026-09-09: a path this router serves, hit with a
+// method it does not serve, under a realm that does not exist, answers about
+// the realm and not the wrong-method 404.
+//
+// Registering the catch-all with a method would leave these to
+// WithKeycloakFallbacks, which has no store and cannot resolve a realm, so it
+// would answer `HTTP 404 Not Found` - the right body for the wrong reason on
+// master and the wrong body outright here.
+func TestTheRealmIsResolvedBeforeTheMethodIsDispatched(t *testing.T) {
+	h := newServer(t)
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, "/realms/nosuchrealm/.well-known/openid-configuration"},
+		{http.MethodPost, "/realms/nosuchrealm"},
+		{http.MethodPut, "/realms/nosuchrealm"},
+		{http.MethodDelete, "/realms/nosuchrealm/account/groups"},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+			if got, want := w.Body.String(), `{"error":"Realm does not exist"}`; got != want {
+				t.Fatalf("want body %s, got %s", want, got)
+			}
+			wantSecurityHeaders(t, w, true)
+		})
+	}
+}
+
+// TestTheRealmCollectionStaysOffTheRouteTable is F184's other half and the
+// constraint on where the catch-all may be registered. /realms and /realms/ are
+// the one measured place in this server where a **shorter** path is less
+// reachable than a longer one: both answer the unmatched-path body with none of
+// the five security headers, where everything below them carries all five.
+//
+// A catch-all one segment higher - /realms/{rest...}, or a /realms/ subtree -
+// serves both of them and passes every other test in this file.
+func TestTheRealmCollectionStaysOffTheRouteTable(t *testing.T) {
+	h := newServer(t)
+	for _, path := range []string{"/realms", "/realms/"} {
+		t.Run(path, func(t *testing.T) {
+			w := get(t, h, path)
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("want 404, got %d", w.Code)
+			}
+			if got, want := w.Body.String(),
+				`{"error":"Unable to find matching target resource method"}`; got != want {
+				t.Fatalf("want body %s, got %s", want, got)
+			}
+			wantSecurityHeaders(t, w, false)
+		})
+	}
+}
+
+// TestTheRealmResourceDispatcherNeverRedirects is the F153-shaped hazard this
+// cut met, and it is the reason the bare /realms/{realm} pattern is registered
+// beside the {rest...} one.
+//
+// Go's ServeMux registers an implicit redirect at the root of a subtree
+// pattern. With /realms/{realm}/{rest...} alone, POST /realms/master answers a
+// **307 to /realms/master/** - and mux.Handler reports a non-empty pattern for
+// it, so WithKeycloakFallbacks hands it straight to the mux and net/http writes
+// a body this project never produces. Registering /realms/{realm} shadows it.
+//
+// Verified by running the route table rather than read from the documentation,
+// which is what F178 told the dispatch cut to do and what F153 is in this
+// repository for. The status is what this asserts, because the body of a 307 is
+// not what a reader would look at.
+func TestTheRealmResourceDispatcherNeverRedirects(t *testing.T) {
+	h := newServer(t)
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, "/realms/master"},
+		{http.MethodPut, "/realms/master"},
+		{http.MethodPost, "/realms/nosuchrealm"},
+		{http.MethodGet, "/realms/master/nosuchthing"},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+			if w.Code >= 300 && w.Code < 400 {
+				t.Fatalf("want no redirect, got %d to %q", w.Code, w.Header().Get("Location"))
+			}
+			if loc := w.Header().Get("Location"); loc != "" {
+				t.Fatalf("want no Location header, got %q", loc)
+			}
+		})
+	}
+}
+
+// TestTheRealmResourceDispatcherDoesNotSwallowAServedRoute is the composition
+// question F184 named, asked of the whole realm tree rather than of /protocol.
+// Every route this package serves under /realms/{realm} is asked for, bare and
+// slashed, and required not to answer any of the three 404 sentences.
+//
+// **The account API's two routes are in the list and they are registered by
+// another package.** That is the point of the test: the catch-all is one mux
+// entry away from taking a path it does not own, and the two packages are
+// combined only in cmd/gloak and in the conformance server, so nothing else in
+// either package's own tests would notice. account.Register is imported here
+// for that reason alone.
+func TestTheRealmResourceDispatcherDoesNotSwallowAServedRoute(t *testing.T) {
+	h := newServerWithAccount(t)
+	for _, path := range []string{
+		"/realms/master",
+		"/realms/master/.well-known/openid-configuration",
+		"/realms/master/protocol/openid-connect/certs",
+		"/realms/master/protocol/openid-connect/auth",
+		"/realms/master/protocol/saml/descriptor",
+		"/realms/master/protocol/nosuchproto",
+		"/realms/master/device",
+		"/realms/master/device/status",
+		"/realms/master/login-actions/authenticate",
+		"/realms/master/account/groups",
+		"/realms/master/account/linked-accounts",
+	} {
+		for _, p := range []string{path, path + "/"} {
+			w := get(t, h, p)
+			body := w.Body.String()
+			if strings.Contains(body, "HTTP 404 Not Found") ||
 				strings.Contains(body, "Unable to find matching target resource method") {
 				t.Fatalf("%s: the dispatcher swallowed a served route: %d %.100s",
 					p, w.Code, body)

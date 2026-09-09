@@ -48,6 +48,17 @@ func testDSN(t *testing.T) string {
 // against the handler this returns.
 func newFixture(t *testing.T, state string) http.Handler {
 	t.Helper()
+	return oidc.WithKeycloakFallbacks(newFixtureMux(t, state))
+}
+
+// newFixtureMux is the route table newFixture wraps.
+//
+// It is split out for TestNoReasonClaimsAServedEndpointIsUnserved, which since
+// F184 has to ask **what is registered** rather than what is answered: the
+// realm resource dispatcher matches every path under /realms/{realm}, so the
+// two fallback bodies no longer tell a served endpoint from an invented one.
+func newFixtureMux(t *testing.T, state string) *http.ServeMux {
+	t.Helper()
 	switch state {
 	case "bootstrap":
 		ctx := context.Background()
@@ -59,14 +70,15 @@ func newFixture(t *testing.T, state string) http.Handler {
 		if err := bootstrap.EnsureMaster(ctx, s, "admin", "admin"); err != nil {
 			t.Fatalf("EnsureMaster: %v", err)
 		}
-		// Both APIs on one mux, wrapped once, exactly as cmd/gloak composes
-		// them - otherwise the suite would verify a handler nobody serves.
+		// All three APIs on one mux, wrapped once, exactly as cmd/gloak
+		// composes them - otherwise the suite would verify a handler nobody
+		// serves.
 		km := keys.NewManager(s)
 		mux := http.NewServeMux()
 		oidc.Register(mux, s, km, testIssuer)
 		admin.Register(mux, s, km, testIssuer)
 		account.Register(mux, s, km, testIssuer)
-		return oidc.WithKeycloakFallbacks(mux)
+		return mux
 	default:
 		t.Fatalf("unknown fixture state %q", state)
 		return nil
