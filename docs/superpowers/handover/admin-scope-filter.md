@@ -534,7 +534,165 @@ and it is the first to find one in a golden it had just written itself.
 
 ## 8. The mutation pass
 
-TO BE FILLED
+The harness is `/tmp/f198/mutate.sh`, driven by `/tmp/f198/run_mutations.py`. Its
+order is the one this project asks for: refuse an empty diff, refuse a build
+failure, **read `go test`'s exit code before looking at any output**, revert,
+verify the revert restored the byte-identical file, and run **every package
+separately** rather than a filtered `-run`. All four refusals were self-tested
+against deliberate controls before any real mutation ran - a no-op substitution
+is `REFUSED: the diff is empty`, a typo'd field is `REFUSED: does not build`, an
+absent pattern is `REFUSED: the pattern is not in <file>`, and a known-good
+mutation of `caller.has` is `KILLED`.
+
+Every mutation names the tests that kill it. Seventeen were run over every
+package; **fourteen were killed on the first pass, two survived and were closed,
+and one survives deliberately.**
+
+| # | mutation | verdict | killed by |
+|---|---|---|---|
+| A1 | no filter at all - the whole cut inverted, which is what `main` does | killed | `TestConformance/admin/users/scope-filtered-read` and three siblings; `TestWorkflowsReadsTheRolesTheCallerHolds`; `TestScopeFilterReadsTheTokenRealmsClient` |
+| A3 | **a coarse gate**: the flag read as "may this client do anything" | killed | `TestConformance/admin/users/scope-filtered-role-in-scope`; `TestGrantsAreComputedFromTheRolesTheCallerHolds` |
+| A4 | **any mapping opens everything**: a non-empty filtered set admitted wholesale | killed | `TestConformance/admin/clients/scope-filtered-role-out-of-scope` |
+| A5 | the filter reaches `adminGrants` and not the realm predicates | killed | `TestConformance/admin/realms-admin/scope-filtered-read` and `-listing`; `TestScopeFilterReadsTheTokenRealmsClient` |
+| A6 | the missing client falls open - L1's shape here | killed | `TestScopeFilterRefusesATokenWhoseClientIsGone` |
+| A7 | the missing client refuses with an empty set - `internal/account`'s answer | killed | same |
+| A9 | `grants()` closes over `adminGrants` again - the pre-split implementation | killed | `TestGrantsAreComputedFromTheRolesTheCallerHolds` |
+| A11 | `names()` reads the filtered set - "apply it uniformly" | killed | `TestConformance/admin/workflows/scope-filtered-held-roles`; both new package tests |
+| A12 | Workflows guarded by the filtered set | killed | same golden; `TestWorkflowsReadsTheRolesTheCallerHolds` |
+| A13 | `guardAnyHeld` admits everybody | killed | `TestConformance/admin/workflows/list-forbidden`; `TestWorkflowGuardIsTheAdminRoleItselfAndNotItsComposites` |
+| A15 | the realm listing's per-row question reads the unfiltered set | killed | `TestConformance/admin/realms-admin/scope-filtered-listing` |
+| A16 | `maySeeRealm`'s wider question reads the unfiltered set | killed | `TestConformance/admin/realms-admin/scope-filtered-read`; `TestScopeFilterReadsTheTokenRealmsClient` |
+| A2 | `roles.InScope` ignores the flag, so the filter always applies | killed | `internal/account`, `internal/admin` and `internal/conformance`, broadly |
+| S1 | `InScope` **keys and looks up** by name - yesterday's S5, re-run here | killed | `TestConformance/oidc/introspection/scope-filtered-access-token` |
+| A10 | `foreignGrants` reads the filtered set | **survived, then closed** - 8.3 | `TestForeignGrantsAreComputedFromTheRolesTheCallerHolds` |
+| A17 | `guardRealmContainerAny` reads the unfiltered set | **survived, then closed** - 8.4 | `TestLocalizationGuardReadsTheScopeFilteredRoles` |
+| A14 | the granted scope is ignored | **survivor** - 8.5 | nothing |
+
+Three rows deserve reading rather than counting.
+
+**A1 is the corpus earning its keep.** It is this cut inverted - the filter
+resolved and thrown away - and **nothing on `main` would have caught it.** Six
+tests kill it now and all six are new. That is the corpus problem demonstrated
+rather than asserted, and it is why the fixture had to come first.
+
+**A3 and A4 are the pair no single case separates.** A3 is a coherent
+implementation of "the flag is a gate" and A4 of "a mapping is a pass"; each is
+right on every case the other fails. Only `-view` answering **404 on the user
+read and 403 on the client listing** rules out both, which is the 2x2 section 1.1
+describes. A corpus with two clients instead of three would have passed one of
+them.
+
+**S1 is killed by yesterday's golden and not by mine**, and that is worth being
+honest about. Every role in `adminScopeFilteredFixture` has a distinct name, so a
+name-keyed `InScope` and an id-keyed one agree on all of it - the admin corpus
+inherits `introspect-scope-filtered`'s protection rather than adding to it. The
+mutation was run from this branch precisely because the admin guard is a fifth
+caller of that function, and the answer is that the fifth caller is covered by
+the second caller's fixture.
+
+### 8.1 The harness had to be rewritten twice, and both reasons are findings
+
+**The first version could leave the tree mutated.** It built its package list
+with `mapfile`, which does not exist in macOS's bash 3.2, so under `set -u` the
+unbound `PKGS` aborted the script **before the revert ran**. Five mutations were
+left applied in the working tree at once. Nothing detected it except reading
+`git status`.
+
+The fix is that the revert is a `trap ... EXIT` rather than a step on the happy
+path. **A harness whose revert is reachable only on the success path is a harness
+that leaves the tree mutated exactly when something has gone wrong**, which is
+the moment it matters. AGENTS.md's list of what a mutation harness must do says
+"revert, and verify the revert"; it does not say *from where*, and this is the
+argument for adding it.
+
+**The second version silently failed to match three patterns.** Driven from
+shell, multi-line `from` strings carrying tabs did not survive quoting, and three
+mutations reported `REFUSED: the pattern is not in <file>` - which reads like a
+stale mutation list rather than like a broken harness. It is driven from Python
+now, so the patterns reach the harness byte for byte. Worth saying because
+`REFUSED` is the harness's *safe* answer and is easy to skim past: a refusal that
+should have been a kill looks like housekeeping.
+
+### 8.2 `git add -A` during a mutation pass commits the mutation
+
+This project says "commit early and often" and "apply a mutation, confirm the
+named test fails, revert". **Those two instructions are in tension and nothing
+says so.** A `git add -A && git commit` issued while the pass was running staged
+a mutated `internal/admin/auth.go` - `edeb841` carries mutation A1 - and the
+commit message was about a documentation change. The working tree was correct
+within the second, because the harness's trap restored it; the commit was not.
+
+It was caught by reading `git diff e1e2dad HEAD` over the source files, which is
+not something the tree can do for itself: `make test` passes on the mutated
+commit's *working tree*, CI would have run the mutation, and no test in this
+repository compares HEAD against the working tree.
+
+Fixed in `9341abc`, which reverts the source and says so in its subject rather
+than being folded silently into the next commit. The rule worth folding is narrow
+and absolute: **never stage by wildcard while a mutation pass is running**, and
+name paths instead.
+
+### 8.3 A10, and a survivor that was a question rather than a hole
+
+`foreignGrants` is the conferral set for a role belonging to **another realm's**
+admin container. Section 4.1 measured the same-realm closure unfiltered, and this
+cut pointed the foreign one at the same set - **by symmetry, not by measurement**,
+which is the reasoning this project distrusts. Pointing it back at the filtered
+set survived every package.
+
+The right response was not a test, it was a probe. Sent 2026-09-09, handing out
+`f198y-realm`'s `manage-realm` to a master user:
+
+```
+full administrator @ flag-off client scoping manage-users   204, available 20
+full administrator @ flag-on client                         204, available 20
+full administrator @ admin-cli                              204, available 20
+a master manage-users holder @ admin-cli                    403, available 0
+```
+
+The foreign closure follows the same-realm one. The implementation was right and
+the argument for it was not, and the difference matters: a test written before
+the probe would have frozen an assumption. Closed with
+`TestForeignGrantsAreComputedFromTheRolesTheCallerHolds`, which carries the
+control - the last row - so it asserts the source of the set rather than that the
+route is open.
+
+The caller's token scope has to carry `manage-users` for this test to exist at
+all, because the route guard is filtered and runs first. That is the two-set
+split showing up as a constraint on how it can be observed.
+
+### 8.4 A17, and two routes nothing had pointed a flag-off token at
+
+`guardRealmContainerAny` has exactly two users, `GET .../localization` and
+`GET .../localization/{locale}/{key}`, and no case sends them a flag-off token -
+so pointing it at the unfiltered set survived. It is a route admission and every
+other route admission is filtered, but "it should be" is the argument that got
+A10 wrong, so it was measured too:
+
+```
+full administrator @ flag-on client                200 and 404
+full administrator @ flag-off, nothing mapped      403 and 403
+full administrator @ flag-off, view-realm mapped   200 and 404
+```
+
+Closed with `TestLocalizationGuardReadsTheScopeFilteredRoles`. Both re-runs
+confirmed the kill.
+
+### 8.5 A14 is a survivor and is left as one
+
+Replacing `parsed.Scope` with `""` in `inTokenScope` survives the whole tree, and
+it is **J1's shape on a third surface**. F16's `grantedScope` is a constant plus
+`openid`, so no request can put a client scope's name into a Gloak token's
+`scope` claim; `ScopesInEffect("")` and `ScopesInEffect(<the constant>)` return
+the same set, and no case can be written that would tell them apart.
+
+It is left open rather than closed at the seam, and that is a departure from
+yesterday's treatment of J1. The reason is that J1's seam test asserted a rule
+Gloak's own code could express - the granted scope naming an optional client
+scope - where here the value is measured against **Keycloak** (section 2.4) and
+Gloak cannot produce it at all. A seam test would assert that the argument is
+passed, which is what the `git diff` already shows, and not that it is the right
+argument. F203 is the entry, and F16 is what unblocks it.
 
 ## 9. What belongs in AGENTS.md
 
@@ -591,6 +749,22 @@ Phrased as it would be folded, under "Things that look like bugs and are not".
   equivalent branch refuses with an empty role set instead, which is that API's
   own measured answer; the two surfaces do not share one.
 
+And two for the mutation-discipline paragraph at the end of the file, both earned
+in this cut rather than reasoned about:
+
+- **A mutation harness's revert belongs on a `trap ... EXIT`, not on the happy
+  path.** This one's first version built its package list with `mapfile`, which
+  macOS's bash 3.2 does not have, so `set -u` aborted **before** the revert and
+  left five mutations applied at once. A revert reachable only when nothing went
+  wrong is missing exactly when it is needed. The existing sentence says a
+  harness must "revert, and verify the revert"; it does not say from where.
+- **Never stage by wildcard while a mutation pass is running.** A
+  `git add -A && git commit` about a documentation change committed a mutated
+  `internal/admin/auth.go`. Nothing in this repository can catch that: `make test`
+  passes on the mutated commit's working tree, because the harness had already
+  restored it, and no test compares HEAD against the tree. "Commit early and
+  often" and "apply a mutation, then revert" are in tension and neither says so.
+
 ## 10. Follow-ups
 
 **F202: Keycloak freezes the scope filter at issuance and Gloak recomputes it per
@@ -610,13 +784,13 @@ relative to Keycloak but never beyond the client's configured scope.
 that ignores it survives.** `inTokenScope` passes `parsed.Scope` to
 `roles.ScopesInEffect`, which is measured right - an optional client scope
 carrying the admin scope mappings opens the API exactly when the token request
-named it. But F16's `grantedScope` is a constant plus `openid`, so no request can
-put a client scope's name into a Gloak token's `scope` claim, and replacing
-`parsed.Scope` with `""` survives the whole tree (A14 in section 8). It is J1's
-shape on a third surface - `internal/account`'s gate is in the same position and
-nothing has swept for a fourth. The entry is that F16 is what unblocks the case,
-and that until then the argument is a measurement in this document rather than a
-test.
+named it, section 2.4. But F16's `grantedScope` is a constant plus `openid`, so
+no request can put a client scope's name into a Gloak token's `scope` claim, and
+replacing `parsed.Scope` with `""` survives the whole tree - A14, section 8.5. It
+is J1's shape on a third surface: `internal/account`'s gate is in the same
+position, and **nothing has swept for a fourth**. The entry is that F16 is what
+unblocks the case, and that until then the argument is a measurement in this
+document rather than a test.
 
 **F204: a disabled client's token is 401 on the Admin API and Gloak serves it.**
 Measured 2026-09-08: a token minted at a client that is then disabled answers
@@ -649,13 +823,18 @@ This is also a **harness** entry - it is the second known way for a golden to be
 measurement of the container's history rather than of a behaviour, after F40's
 counts, and nothing sweeps for a case whose request grows with the catalogue.
 
-**F207: `foreignGrants` is scope-sensitive in Gloak and nothing measures whether
-it should be.** It reads `caller.held`, which is this cut's reading of section
-4.1 extended to the cross-realm case by symmetry rather than by measurement:
-`mayGrantRole`'s same-realm closure was measured unfiltered, and the foreign one
-was assumed to follow. The probe: a master caller holding another realm's admin
-role through a client whose scope carries only part of it, handing that role out
-on the other realm's container. See A10 in section 8, which is a survivor.
+**F207: a mutation harness whose revert is on the happy path leaves the tree
+mutated, and nothing in this repository can detect a mutation that got
+committed.** Both halves bit in this cut, an hour apart. The first version of the
+harness aborted under `set -u` before its revert and left five mutations applied
+at once (section 8.1); a `git add -A` issued while the pass was running committed
+one of them under a documentation subject (section 8.2). The second is the
+sharper of the two, because the tree cannot see it: `make test` passes on the
+mutated commit's working tree, and no test compares HEAD against the working
+tree. Two cheap things would close it - a revert on a `trap ... EXIT`, which this
+cut's harness now has, and a pre-commit check that refuses a commit while a
+mutation is applied. AGENTS.md says a harness must "revert, and verify the
+revert" and does not say from where; that is the sentence to sharpen.
 
 ## 11. Parity
 
