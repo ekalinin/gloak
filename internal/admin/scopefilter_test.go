@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ekalinin/gloak/internal/bootstrap"
 	"github.com/ekalinin/gloak/internal/model"
 	"github.com/ekalinin/gloak/internal/store"
 )
@@ -31,9 +32,15 @@ func scopedClient(t *testing.T, s store.Store, realm *model.Realm, clientID stri
 	if err := s.Clients().Create(ctx, c); err != nil {
 		t.Fatalf("Clients().Create(%s): %v", clientID, err)
 	}
-	container, err := s.Clients().ByClientID(ctx, realm.ID, "master-realm")
+	if len(scoped) == 0 {
+		return c
+	}
+	// Looked up only when there is something to map, because a realm that is
+	// not master spells its admin container realm-management and the callers
+	// that map nothing must still work there - which is the cross-realm test.
+	container, err := s.Clients().ByClientID(ctx, realm.ID, bootstrap.AdminContainerFor(realm.Name))
 	if err != nil {
-		t.Fatalf("ByClientID(master-realm): %v", err)
+		t.Fatalf("ByClientID(admin container of %s): %v", realm.Name, err)
 	}
 	for _, name := range scoped {
 		r, err := s.Roles().ByName(ctx, realm.ID, container.ID, name)
@@ -97,18 +104,21 @@ func administrator(t *testing.T, s store.Store, realm *model.Realm, username str
 // golden can reach: the **conferral** predicate behind mayGrantRole is not
 // scope-filtered, although every route guard on this API is.
 //
-// Measured 2026-09-08 on a live 26.7.1, on three callers and the same write:
+// Measured 2026-09-08 and re-verified on a clean container 2026-09-09, on four
+// callers and the same write of master-realm's manage-realm:
 //
-//	full administrator through a flag-off client scoping manage-users
-//	                                     hands out manage-realm   204, available 21
-//	a user genuinely holding manage-users and manage-clients
-//	                                     hands out manage-realm   403, available 12
-//	full administrator through admin-cli  hands out manage-realm   204, available 21
+//	                                                        grant  available
+//	full administrator @ flag-off client scoping manage-users  204     20
+//	manage-users holder @ THE SAME flag-off client             403      7
+//	manage-users holder @ admin-cli (flag on)                  403      7
+//	full administrator @ admin-cli                             204     20
 //
-// So the first row answers what the third answers and not what the second does,
-// although the first row's *route guard* answers what the second's does - it is
-// admitted here by manage-users, which is the only admin role its token scope
-// carries. Two questions, two sets, one request.
+// So the first row answers what the **fourth** answers and not what the second
+// does, although the first row's *route guard* answers what the second's does -
+// it is admitted here by manage-users, which is the only admin role its token
+// scope carries. Two questions, two sets, one request. Rows two and three are
+// what make it a statement about the source of the set rather than about the
+// client: the same holder is refused through both.
 //
 // **Both directions are asserted.** The refusal below is what stops the answer
 // being "this caller may hand out anything", which a test checking only the 204
@@ -250,5 +260,55 @@ func TestScopeFilterRefusesATokenWhoseClientIsGone(t *testing.T) {
 	}
 	if got := w.Body.String(); got != `{"error":"HTTP 401 Unauthorized"}` {
 		t.Errorf("body = %s, want the measured 401", got)
+	}
+}
+
+// TestScopeFilterReadsTheTokenRealmsClient pins F198's cross-realm cell, the
+// second of the two things it said nobody had probed.
+//
+// **The probe has to be built rather than looked for.** A master token naming a
+// client that exists only in master is consistent with both readings - the
+// token's realm and the path's realm resolve the same client either way - so it
+// takes **one clientId in two realms carrying opposite flags**, and both ways
+// round, before the two readings differ on anything.
+//
+// Measured 2026-09-08 on a live 26.7.1, on exactly this pair:
+//
+//	twin     master flag OFF, other flag ON    master caller on /admin/realms/other  403
+//	twinrev  master flag ON,  other flag OFF   master caller on /admin/realms/other  200
+//
+// So the filter reads the client of the realm that **issued** the token, never
+// the addressed realm's client of the same name. Reading the path's realm is the
+// natural mistake and it inverts both rows.
+func TestScopeFilterReadsTheTokenRealmsClient(t *testing.T) {
+	h, s, master := newServer(t)
+	other := secondRealm(t, s, "othr")
+
+	// One name, two realms, opposite flags - and its mirror, so neither row can
+	// be explained by "the flag-off spelling loses".
+	scopedClient(t, s, master, "twin", false)
+	scopedClient(t, s, other, "twin", true)
+	scopedClient(t, s, master, "twinrev", true)
+	scopedClient(t, s, other, "twinrev", false)
+
+	administrator(t, s, master, "xrealm-admin")
+
+	twin := tokenForClient(t, h, "twin", "xrealm-admin", "pw")
+	if w := get(t, h, "/admin/realms/othr", twin); w.Code != http.StatusForbidden {
+		t.Errorf("master's flag-off twin reading othr = %d %s, want 403 - othr's twin has the flag on and it is not the client that decides",
+			w.Code, w.Body)
+	}
+	rev := tokenForClient(t, h, "twinrev", "xrealm-admin", "pw")
+	if w := get(t, h, "/admin/realms/othr", rev); w.Code != http.StatusOK {
+		t.Errorf("master's flag-on twinrev reading othr = %d %s, want 200 - othr's twinrev has the flag off and it is not the client that decides",
+			w.Code, w.Body)
+	}
+	// The controls in the token's own realm, so the two rows above are about
+	// which client was read and not about the other realm being reachable.
+	if w := get(t, h, "/admin/realms/master", twin); w.Code != http.StatusForbidden {
+		t.Errorf("master's flag-off twin reading master = %d %s, want 403", w.Code, w.Body)
+	}
+	if w := get(t, h, "/admin/realms/master", rev); w.Code != http.StatusOK {
+		t.Errorf("master's flag-on twinrev reading master = %d %s, want 200", w.Code, w.Body)
 	}
 }
