@@ -844,8 +844,17 @@ revert" and does not say from where; that is the sentence to sharpen.
 total: 570 of 622 enumerated behaviours served; 2 chapters not enumerated
 ```
 
-The brief's base is **570 of 622, 2 chapters not enumerated**, and it is
-unchanged. That is the expected result and not a disappointment, and the reason
+and reproduced by hand with `cmd/parity` between the merge base `e1e2dad` and the
+branch head, which is what CI posts:
+
+```
+Parity: 570 of 622, no change.
+```
+
+`no change` rather than `total unchanged` is the meter's stronger phrasing: it is
+reserved for a diff where **no row moved at all**, not merely one where the total
+came out level. The brief's base is **570 of 622, 2 chapters not enumerated**, and
+it is unchanged. That is the expected result and not a disappointment, and the reason
 is worth stating so nobody reads it as the cut having served nothing:
 
 **the admin chapters' denominator counts distinct OpenAPI operations, not
