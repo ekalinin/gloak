@@ -622,15 +622,49 @@ a mutated `internal/admin/auth.go` - `edeb841` carries mutation A1 - and the
 commit message was about a documentation change. The working tree was correct
 within the second, because the harness's trap restored it; the commit was not.
 
-It was caught by reading `git diff e1e2dad HEAD` over the source files, which is
-not something the tree can do for itself: `make test` passes on the mutated
-commit's *working tree*, CI would have run the mutation, and no test in this
-repository compares HEAD against the working tree.
+It was noticed by reading `git diff e1e2dad HEAD` over the source files. Fixed in
+`9341abc`, which reverts the source and says so in its subject rather than being
+folded silently into the next commit.
 
-Fixed in `9341abc`, which reverts the source and says so in its subject rather
-than being folded silently into the next commit. The rule worth folding is narrow
-and absolute: **never stage by wildcard while a mutation pass is running**, and
-name paths instead.
+**This paragraph claimed the tree could not have caught it, and that was false.**
+Checked out and run rather than argued about, on review:
+
+```
+$ git worktree add --detach /tmp/mutcommit edeb841
+$ CGO_ENABLED=0 go test -timeout 20m ./internal/admin/ ./internal/conformance/
+
+FAIL github.com/ekalinin/gloak/internal/admin        155.8s
+  --- FAIL: TestWorkflowsReadsTheRolesTheCallerHolds
+  --- FAIL: TestScopeFilterReadsTheTokenRealmsClient
+FAIL github.com/ekalinin/gloak/internal/conformance  311.0s
+  --- FAIL: TestConformance/admin/realms-admin/scope-filtered-read
+  --- FAIL: TestConformance/admin/realms-admin/scope-filtered-listing
+```
+
+`make test` is `CGO_ENABLED=0 go test -timeout 20m ./...`, so both packages are
+in it, and the eight goldens recorded at `66ec341` already pinned the filter two
+commits before the mutation was staged. **The mutation was never invisible.** It
+is a killed mutation, and a killed mutation committed is a red suite by
+definition - which section 8's own table says, four tests by name, two sections
+above the sentence that denied it.
+
+The error was reasoning about the wrong object. `make test` did pass on that
+commit's *working tree*, because the harness's trap had already restored it - and
+that true statement was written down as a conclusion about the **commit**, which
+is a different thing. Measuring took twenty minutes and would have cost less than
+the paragraph did.
+
+So the hazard is narrower than it was made out to be, and it is still real. **A
+mutation pass leaves the tree dirty by design**, for minutes at a time, so a
+wildcard add during one stages exactly the edit that is about to be reverted -
+and it lands under whatever message the commit was really about, which here was
+documentation. What made it survive for hours was not that it was undetectable
+but that nobody ran the suite: the session was running mutations, not
+`make test`, and CI had not been reached.
+
+The rule worth folding is therefore about discipline and not about a detector:
+**commit before the pass, and never stage by wildcard during one** - name paths
+instead. Nothing needs building.
 
 ### 8.3 A10, and a survivor that was a question rather than a hole
 
@@ -758,12 +792,15 @@ in this cut rather than reasoned about:
   left five mutations applied at once. A revert reachable only when nothing went
   wrong is missing exactly when it is needed. The existing sentence says a
   harness must "revert, and verify the revert"; it does not say from where.
-- **Never stage by wildcard while a mutation pass is running.** A
+- **Commit before a mutation pass, and never stage by wildcard during one.** A
   `git add -A && git commit` about a documentation change committed a mutated
-  `internal/admin/auth.go`. Nothing in this repository can catch that: `make test`
-  passes on the mutated commit's working tree, because the harness had already
-  restored it, and no test compares HEAD against the tree. "Commit early and
-  often" and "apply a mutation, then revert" are in tension and neither says so.
+  `internal/admin/auth.go`. The suite catches it - that commit fails four named
+  tests across two packages, and `make test` runs both - so this is a discipline
+  and not a hole; what makes it worth a line is that a pass leaves the tree dirty
+  **by design**, so the dangerous window is the one the discipline itself
+  creates, and the commit wears the message of whatever the author meant to
+  commit. "Commit early and often" and "apply a mutation, then revert" are in
+  tension and neither says so.
 
 ## 10. Follow-ups
 
@@ -824,17 +861,33 @@ measurement of the container's history rather than of a behaviour, after F40's
 counts, and nothing sweeps for a case whose request grows with the catalogue.
 
 **F207: a mutation harness whose revert is on the happy path leaves the tree
-mutated, and nothing in this repository can detect a mutation that got
-committed.** Both halves bit in this cut, an hour apart. The first version of the
-harness aborted under `set -u` before its revert and left five mutations applied
-at once (section 8.1); a `git add -A` issued while the pass was running committed
-one of them under a documentation subject (section 8.2). The second is the
-sharper of the two, because the tree cannot see it: `make test` passes on the
-mutated commit's working tree, and no test compares HEAD against the working
-tree. Two cheap things would close it - a revert on a `trap ... EXIT`, which this
-cut's harness now has, and a pre-commit check that refuses a commit while a
-mutation is applied. AGENTS.md says a harness must "revert, and verify the
-revert" and does not say from where; that is the sentence to sharpen.
+mutated, and a wildcard add during a pass commits that.** Both bit in this cut,
+about an hour apart. The first version of the harness aborted under `set -u`
+before its revert and left five mutations applied at once (section 8.1); a
+`git add -A && git commit` issued while the pass was running staged one of them
+under a documentation subject (section 8.2).
+
+**The entry is a discipline, not a detector, and that is a correction to this
+entry.** It first argued from "nothing in the repository can catch a committed
+mutation". Review checked that and refuted it, and so did re-running it here:
+`edeb841` fails `./internal/admin/` and `./internal/conformance/` on four named
+tests, and `make test` runs both. A killed mutation, committed, is a red suite by
+definition. Building a pre-commit detector would be building a trap for a hazard
+the suite already catches.
+
+What survives the correction is smaller and still worth having written down. A
+mutation pass leaves the tree dirty **by design**, so the window in which a
+wildcard add is destructive is exactly the window the discipline itself creates,
+and the resulting commit is mislabelled - it wears the message of whatever the
+author thought they were committing, which is what makes it easy to scroll past
+in a log. The exposure lasted hours here only because the session was running
+mutations rather than the suite. Two things close it and both are free: **the
+revert on a `trap ... EXIT`**, which this cut's harness now has, and **committing
+before the pass and naming paths during it**.
+
+AGENTS.md says a harness must "revert, and verify the revert" and does not say
+from where. That one sentence is worth sharpening; the rest of this entry is a
+record of the sequence, not a request to build anything.
 
 ## 11. Parity
 
