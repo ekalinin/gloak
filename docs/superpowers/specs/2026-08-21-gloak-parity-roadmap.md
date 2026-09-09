@@ -285,7 +285,62 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-08 (thirtieth fold).** `make conformance` reports **570 of
+**Updated 2026-09-09 (thirty-first fold).** `make conformance` reports **570 of
+622, no change** - and the flat number is correct rather than disappointing.
+Admin chapters count operations, all five the cut touched were already served,
+and **no golden moved**, which was predicted before the recording: all 413
+operations' worth of admin goldens authenticate as `admin-cli`, where the filter
+short-circuits.
+
+**F198 closed, and it was the second and larger of the two places Gloak was more
+permissive than Keycloak.** The mechanism was **established rather than
+assumed**, which was the brief's main demand: it is **not a check of its own**.
+A full administrator reaching the API through a flag-off client answers, **cell
+for cell over 79 routes**, what a caller holding no admin role answers; one
+through a client scoping `view-realm` alone answers cell for cell what a genuine
+`view-realm` holder answers. So no family's resolution order changes - the filter
+decides which roles the caller has, and each family then asks its own question in
+its own order.
+
+**Nothing in the token could have answered it.** `admin-cli` is lightweight: its
+token carries eight claims, no `realm_access`, no `resource_access`, no `aud`,
+and it drives the whole API. Two clients differing only in the flag mint
+identically shaped tokens and answer 200 and 403.
+
+**The corpus is a 2x2 and not a pair, and that is the reusable part.** Three
+clients one field apart; the third - flag off with `view-users` mapped - answers
+**404** on the user read and **403** on the client listing. "A flag-off client is
+refused outright" is right on one client and wrong on that one; "any mapping
+opens everything" is right on one route and wrong on the other. **A two-client
+corpus passes one of the two wrong readings.**
+
+**Two questions on this API read the roles the caller holds rather than the
+filtered set**, and neither is predictable from the guard beside it -
+`mayGrantRole`'s conferral closure and the whole `Workflows` family, the only one
+of 79 routes that does. That is why the route-guard half being nearly one line
+does not make the cut one line.
+
+**And a claim was retracted in review.** The handover said twice that a committed
+mutation is something *"the tree cannot see"* and that `make test` passes on the
+mutated commit. It does not: that commit fails **four named tests across two
+packages**, and the handover's own mutation table listed A1 as killed by exactly
+those four, two sections above the sentence denying it. The error was reasoning
+about the **working tree** - which the harness's trap had already restored - and
+writing the conclusion about the **commit**. F207 is now a discipline rather than
+a detector, and says so: building a pre-commit detector would be building a trap
+for a hazard the suite already catches. What survives is smaller and true - a
+mutation pass leaves the tree dirty **by design**, so the dangerous window is the
+one the discipline itself creates.
+
+**F208 is the third side of a shape this project has met twice in two days.** My
+own review mutation changed `authRealm.ID` to `authRealm.ID+""` and "survived",
+which says nothing; every mutation harness here guards against an empty diff by
+comparing bytes, so a change that alters text and not behaviour passes the guard
+and then passes the tests. With F174's assertion-set and input-set shapes, and
+the `full-scope` cut's fail-versus-wrong-consistently, all four are the same
+question about different objects: **what did this mutation actually prove?**
+
+**Earlier on 2026-09-08 (thirtieth fold).** `make conformance` reports **570 of
 622**. The number is the least of it: this is the first cut in weeks whose
 subject was **a place where Gloak was more permissive than Keycloak**, rather
 than a behaviour it did not serve. `fullScopeAllowed` was stored, read by

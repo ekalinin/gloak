@@ -115,11 +115,14 @@ derived reads are served, 18 of 40; the remaining refusals are eleven separate
 blockers rather than one, which F194 records so nobody plans them as one cut.
 `BCFKS` is refused where Keycloak answers a keystore, on purpose - see F171.
 
-One known divergence is worth stating rather than leaving in a follow-up: the
-**Admin API is scope-filtered on Keycloak and is not here**. A client with
-`fullScopeAllowed` off is refused `/admin/realms/{realm}`, `/admin/realms` and
-`/admin/serverinfo` there and served them by Gloak. It is the same defect the
-token path just closed, on a larger surface - see F198.
+The **Admin API is scope-filtered** as of 2026-09-09, which closes the one
+divergence this file used to state here: a client with `fullScopeAllowed` off
+was served admin routes Keycloak refuses. It is not a check of its own - the
+filter is the caller's role set,
+so a full administrator reaching the API through a client with `fullScopeAllowed`
+off answers, cell for cell over 79 routes, what a caller holding no admin role
+answers. `/admin/serverinfo` is the one of F198's three routes still open, and
+only because Gloak does not serve that endpoint at all - see F205.
 
 (This list carried `an organization's groups and members`, `workflows`, `DPoP`
 and `the rest of authorization services` until 2026-09-06, after all four had

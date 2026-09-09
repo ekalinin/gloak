@@ -2681,6 +2681,57 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   inert-mask ratchets give, and it is how `aud`'s bare-string form was noticed
   here.
 
+- **The Admin API is scope-filtered, and the filter is the caller's role set
+  rather than a check of its own.** A full administrator reaching the API through
+  a client with `fullScopeAllowed` off answers, **cell for cell over 79 routes**,
+  what a caller holding no admin role answers; one through a client scoping
+  `view-realm` alone answers cell for cell what a user genuinely holding
+  `view-realm` answers. So no family's resolution order changes: the filter
+  decides which roles the caller has and each family then asks its own question
+  in its own order. The refusal is the generic
+  `{"error":"HTTP 403 Forbidden"}`, `application/json` with no charset, and it
+  sits **behind** the realm resolution and behind `client-types`' 501 - an
+  unknown realm is still `Realm not found.` and `client-types` is still 501 - and
+  **in front of** nothing, because it is not a step.
+- **Nothing in the token could have answered it.** `admin-cli` is lightweight:
+  its token carries eight claims, no `realm_access`, no `resource_access` and no
+  `aud`, and it drives the whole API. Two lightweight clients differing only in
+  the flag mint **byte-identically shaped tokens** and answer 200 and 403. `aud`
+  is ruled out separately: the served `admin-cli` has none, a refused caller has
+  a bare string, a served one has an array. The server recomputes the granted set
+  - which is `internal/account`'s finding on a third surface.
+- **Two questions on this API read the roles the caller *holds*, not the filtered
+  set, and neither is predictable from the guard beside it.** `mayGrantRole`'s
+  conferral closure is one: a full administrator through a client scoping
+  `manage-users` alone hands out `master-realm`'s `manage-realm` and sees the
+  full available list, where a caller genuinely holding `manage-users` is refused
+  and sees seven - so one request asks two questions of two sets. The
+  `Workflows` family is the other, and it is the only family of 79 routes that
+  does: the same flag-off administrator is 403 everywhere else and 200 on all
+  nine of its operations, while a `manage-users` holder is 403 there through
+  either client. It is not "the realm roles escape the filter" - `create-realm`
+  is filtered, and a user holding only `admin` is 403 on the realm read and 200
+  on `/workflows`.
+- **The granted scope is an input.** An optional client scope carrying the admin
+  scope mappings opens the Admin API exactly when the token request named it -
+  one client, one user, two requests differing only in `scope`, 403 and 200.
+- **The filter is frozen at issuance and lives on the client session.** Flipping
+  a client's `fullScopeAllowed` on does not open an already-minted token, and
+  flipping it off does not close one; the same holds for adding and removing a
+  scope mapping. Gloak recomputes per request instead, which is observable only
+  by mutating a client while one of its tokens is alive. See F202.
+- **The filter reads the client of the token's issuing realm, never the addressed
+  realm's.** Measured with one `clientId` in two realms carrying opposite flags,
+  both ways round: a master token from the flag-off twin is refused another
+  realm's admin API although that realm's twin has the flag on, and the flag-on
+  twin is served there although that realm's has it off. Reading the path's realm
+  is the natural mistake.
+- **A token whose client the realm no longer has is a 401 on the Admin API**, not
+  a 403 and not a fall-open - measured by minting a token and deleting its
+  client, on a flag-on and a flag-off client alike. `internal/account`'s
+  equivalent branch refuses with an empty role set instead, which is that API's
+  own measured answer; the two surfaces do not share one.
+
 ## Boundaries
 
 | Package | Owns | Must not |
@@ -3043,6 +3094,22 @@ implementation** proves the rule is the right one. The second kind is what a
 review should look for first, and it is where both of this project's named
 failure shapes live - a set of assertions, and a set of inputs, that an incorrect
 implementation satisfies entirely.
+
+- **A mutation harness's revert belongs on a `trap ... EXIT`, not on the happy
+  path.** This one's first version built its package list with `mapfile`, which
+  macOS's bash 3.2 does not have, so `set -u` aborted **before** the revert and
+  left five mutations applied at once. A revert reachable only when nothing went
+  wrong is missing exactly when it is needed. The existing sentence says a
+  harness must "revert, and verify the revert"; it does not say from where.
+- **Commit before a mutation pass, and never stage by wildcard during one.** A
+  `git add -A && git commit` about a documentation change committed a mutated
+  `internal/admin/auth.go`. The suite catches it - that commit fails four named
+  tests across two packages, and `make test` runs both - so this is a discipline
+  and not a hole; what makes it worth a line is that a pass leaves the tree dirty
+  **by design**, so the dangerous window is the one the discipline itself
+  creates, and the commit wears the message of whatever the author meant to
+  commit. "Commit early and often" and "apply a mutation, then revert" are in
+  tension and neither says so.
 
 **Run each package separately.** A filtered `-run` has twice reported a survivor
 that a test outside the filter was killing, and once hidden a real survivor
