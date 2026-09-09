@@ -216,10 +216,16 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /realms/{realm}/clients-registrations/openid-connect/{clientId}", h.deleteRegisteredClient)
 	mux.HandleFunc("GET /realms/{realm}", h.realmInfo)
 	// The realm resource dispatcher, F184. Two patterns and one handler,
-	// covering everything under /realms/{realm} that no route above serves -
+	// covering everything under /realms/{realm} that no route serves -
 	// including the routes internal/account and any later package put on this
-	// same mux, which is why it is registered last and why nothing here needs
-	// to know what they are. See realmResourceDispatch for the measurements.
+	// same mux, which nothing here has to know about. See
+	// realmResourceDispatch for the measurements.
+	//
+	// It is written last for a reader rather than for the router: ServeMux
+	// gives a request to the most specific pattern that matches it, not to the
+	// first one registered, so the two packages can register in either order.
+	// TestTheRealmResourceDispatcherDoesNotSwallowAServedRoute is what checks
+	// that, on a mux holding both.
 	//
 	// All methods, deliberately: the realm is resolved before the method is
 	// dispatched on a live 26.7.1, so POST on a path only GET serves under an

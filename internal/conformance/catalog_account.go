@@ -52,7 +52,7 @@ import "net/http"
 // different resource, and the only 406-shaped thing on the surface is nothing
 // at all.
 //
-// # The enumeration: 16 route shapes, 112 verb cells, 41 counted behaviours
+// # The enumeration: 16 route shapes, 112 verb cells, 42 counted behaviours
 //
 // **The three numbers in this heading disagreed with each other and with the
 // slice until 2026-09-07.** The commit that added the chapter said 36, this
@@ -1209,13 +1209,17 @@ var accountCases = []Case{
 			Section:   "Account REST API: an unrouted path with Accept: application/json",
 			Retrieved: "2026-09-07",
 		},
-		Status: Recorded,
-		Reason: "Gloak has no route here, so its fallback answers the **unmatched-path** " +
-			"body with none of the five security headers where Keycloak answers " +
-			"`HTTP 404 Not Found` with all five - the account resource is reached " +
-			"through a sub-resource locator, so the request is inside the filter " +
-			"chain. It is F153's shape a third time and it is fixed by a wildcard " +
-			"dispatcher under /account, which is a cut of its own",
+		// Served since F184, and **not** by a dispatcher under /account: the
+		// account resource is reached through a sub-resource locator, so this
+		// is the realm resource's own 404 one level up, which
+		// internal/oidc's realmResourceDispatch answers for the whole tree.
+		// This case is what says the one catch-all covers a family another
+		// package registers.
+		//
+		// It carries a token because Keycloak's gate runs before its routing:
+		// see account/dispatch/unknown-subpath-unauthenticated for the cell
+		// where the two orders disagree.
+		Status:  Implemented,
 		Fixture: "account-user",
 		Request: Request{
 			Method: http.MethodGet,
@@ -1224,6 +1228,36 @@ var accountCases = []Case{
 				"Accept":        "application/json",
 				"Authorization": "Bearer {{user_token}}",
 			},
+		},
+		AssertHeaders: []string{
+			"Content-Type",
+			"Referrer-Policy",
+			"Strict-Transport-Security",
+			"X-Content-Type-Options",
+			"X-Frame-Options",
+			"X-Robots-Tag",
+		},
+	},
+	{
+		ID: "account/dispatch/unknown-subpath-unauthenticated",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs/26.7.1/server_admin/#account-api",
+			Section:   "Account REST API: an unrouted path with no bearer token",
+			Retrieved: "2026-09-09",
+		},
+		Status: Recorded,
+		Reason: "**the account gate runs before the account routing**, and this is the " +
+			"one cell under /realms/{realm} where F184's catch-all is wrong: the " +
+			"same path is 404 for the caller above and 401 for this one, measured " +
+			"2026-09-09 on one container minutes apart. realmResourceDispatch " +
+			"resolves the realm and stops, so Gloak answers the 404 here too. " +
+			"Reproducing it means a second dispatcher under /account that runs " +
+			"account.resolve first, which is a cut of its own and F209",
+		Fixture: "bootstrap",
+		Request: Request{
+			Method:  http.MethodGet,
+			Path:    "/realms/master/account/nosuchsub",
+			Headers: map[string]string{"Accept": "application/json"},
 		},
 		AssertHeaders: []string{
 			"Content-Type",

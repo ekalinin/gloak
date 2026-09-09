@@ -264,9 +264,11 @@ func TestNoReasonClaimsAServedEndpointIsUnserved(t *testing.T) {
 			http.MethodOptions,
 		} {
 			_, pattern := mux.Handler(httptest.NewRequest(method, path, nil))
-			// A method-less pattern is a dispatcher, and a dispatcher is
-			// exactly what "no route serves this" looks like from here.
-			if method, _, ok := strings.Cut(pattern, " "); ok && method != "" {
+			// A ServeMux pattern separates its method from its path with a
+			// space, and a path cannot hold one. A pattern without a method is
+			// a dispatcher, and a dispatcher is exactly what "no route serves
+			// this" looks like from here.
+			if strings.Contains(pattern, " ") {
 				return true
 			}
 		}
@@ -646,7 +648,10 @@ func TestPollutionGuardSeesEveryCreatedFamily(t *testing.T) {
 // the commit that added the chapter said 36, the file's heading said 41 and the
 // slice held 39. None of the three could fail.
 // 41 since F192, which added account/gate/scope-filtered-lightweight.
-const accountChapterCases = 41
+// 42 since F184, which added account/dispatch/unknown-subpath-unauthenticated:
+// the account gate runs before the account routing, and the realm resource
+// dispatcher that now serves this chapter's 404 does not run it.
+const accountChapterCases = 42
 
 // TestAccountChapterCountIsThePinnedNumber makes the heading's count an
 // assertion.
