@@ -16435,7 +16435,7 @@ var adminCases = []Case{
 			Method:  http.MethodPost,
 			Path:    "/admin/realms/gloak-probe-flow-new/authentication/flows",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
-			Body: []byte(`{"alias":"f103-gamma","description":"a created flow",` +
+			Body: []byte(`{"alias":"gloak-probe-f103-gamma","description":"a created flow",` +
 				`"providerId":"basic-flow","topLevel":true,"builtIn":false}`),
 		},
 		AssertHeaders:       []string{"Cache-Control", "Location"},
@@ -16482,7 +16482,7 @@ var adminCases = []Case{
 			Method:  http.MethodPost,
 			Path:    "/admin/realms/gloak-probe-flows/authentication/flows",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
-			Body:    []byte(`{"alias":"f103-no-provider"}`),
+			Body:    []byte(`{"alias":"gloak-probe-f103-no-provider"}`),
 		},
 		AssertHeaders:       []string{"Content-Type"},
 		AssertAbsentHeaders: []string{"Cache-Control"},
@@ -16526,7 +16526,7 @@ var adminCases = []Case{
 			Method:  http.MethodPost,
 			Path:    "/admin/realms/gloak-probe-flows/authentication/flows",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
-			Body:    []byte(`{"alias":"f103-bad","providerId":"basic-flow","topLevel":true,"zzz":1}`),
+			Body:    []byte(`{"alias":"gloak-probe-f103-bad","providerId":"basic-flow","topLevel":true,"zzz":1}`),
 		},
 		AssertHeaders:       []string{"Content-Type"},
 		AssertAbsentHeaders: []string{"Cache-Control"},
@@ -16652,7 +16652,7 @@ var adminCases = []Case{
 			Method:  http.MethodPost,
 			Path:    "/admin/realms/gloak-probe-flow-cpy/authentication/flows/docker%20auth/copy",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
-			Body:    []byte(`{"newName":"f103-copied"}`),
+			Body:    []byte(`{"newName":"gloak-probe-f103-copied"}`),
 		},
 		AssertHeaders:       []string{"Cache-Control", "Location"},
 		VolatileTailHeaders: []string{"Location"},
@@ -16673,7 +16673,7 @@ var adminCases = []Case{
 			Method:  http.MethodPost,
 			Path:    "/admin/realms/gloak-probe-flows/authentication/flows/f103-absent/copy",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
-			Body:    []byte(`{"newName":"f103-never"}`),
+			Body:    []byte(`{"newName":"gloak-probe-f103-never"}`),
 		},
 		AssertHeaders:       []string{"Content-Type"},
 		AssertAbsentHeaders: []string{"Cache-Control"},
@@ -16742,7 +16742,7 @@ var adminCases = []Case{
 			Path: "/admin/realms/gloak-probe-flow-sub/authentication/flows/" +
 				"docker%20auth/executions/flow",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
-			Body:    []byte(`{"alias":"f103-twiglet","type":"basic-flow","description":"a nested flow"}`),
+			Body:    []byte(`{"alias":"gloak-probe-f103-twiglet","type":"basic-flow","description":"a nested flow"}`),
 		},
 		AssertHeaders:       []string{"Content-Type"},
 		AssertAbsentHeaders: []string{"Cache-Control"},
@@ -16933,7 +16933,7 @@ var adminCases = []Case{
 			Path: "/admin/realms/gloak-probe-flow-xcf/authentication/executions/" +
 				"{{redirector_execution_id}}/config",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
-			Body:    []byte(`{"alias":"f103-redirect-config","config":{"defaultProvider":"f103-zeta"}}`),
+			Body:    []byte(`{"alias":"gloak-probe-f103-redirect-config","config":{"defaultProvider":"f103-zeta"}}`),
 		},
 		AssertHeaders:       []string{"Cache-Control", "Location"},
 		VolatileTailHeaders: []string{"Location"},
@@ -17017,7 +17017,7 @@ var adminCases = []Case{
 			Method:  http.MethodPost,
 			Path:    "/admin/realms/gloak-probe-flow-ncf/authentication/config",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
-			Body:    []byte(`{"alias":"f103-orphan-config","config":{"f103key":"f103value"}}`),
+			Body:    []byte(`{"alias":"gloak-probe-f103-orphan-config","config":{"f103key":"f103value"}}`),
 		},
 		AssertHeaders:       []string{"Cache-Control", "Location"},
 		VolatileTailHeaders: []string{"Location"},
@@ -17083,7 +17083,7 @@ var adminCases = []Case{
 		Request: Request{
 			Method: http.MethodPost,
 			Path: "/admin/realms/gloak-probe-flow-oax/authentication/flows/" +
-				"f103-host/executions/execution",
+				"gloak-probe-f103-host/executions/execution",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body:    []byte(`{"provider":"conditional-user-role"}`),
 		},
@@ -17103,9 +17103,9 @@ var adminCases = []Case{
 		Request: Request{
 			Method: http.MethodPost,
 			Path: "/admin/realms/gloak-probe-flow-osb/authentication/flows/" +
-				"f103-nest/executions/flow",
+				"gloak-probe-f103-nest/executions/flow",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
-			Body:    []byte(`{"alias":"f103-twiglet","type":"basic-flow","description":"a nested flow"}`),
+			Body:    []byte(`{"alias":"gloak-probe-f103-twiglet","type":"basic-flow","description":"a nested flow"}`),
 		},
 		AssertHeaders:       []string{"Cache-Control", "Location"},
 		VolatileTailHeaders: []string{"Location"},
@@ -17207,7 +17207,7 @@ var adminCases = []Case{
 			Path: "/admin/realms/gloak-probe-flow-ocf/authentication/executions/" +
 				"{{own_execution_id}}/config",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
-			Body:    []byte(`{"alias":"f103-own-config","config":{"defaultProvider":"f103-kappa"}}`),
+			Body:    []byte(`{"alias":"gloak-probe-f103-own-config","config":{"defaultProvider":"f103-kappa"}}`),
 		},
 		AssertHeaders:       []string{"Cache-Control", "Location"},
 		VolatileTailHeaders: []string{"Location"},
