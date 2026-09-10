@@ -1117,6 +1117,39 @@ func TestEveryDeclaredSpellingIsExercised(t *testing.T) {
 				"the recording sends one", spelling, family)
 		}
 	}
+
+	// The two lists must not overlap. A key in both is a contradiction that
+	// reads as a decision: objectSpellings says "this names the object" and
+	// spellingsThatAreNotIdentifiers says "this does not". Only the first is
+	// reached, so the second would sit there looking like an argument nobody
+	// has to re-read.
+	for family, spellings := range objectSpellings {
+		for _, spelling := range spellings {
+			if reason, both := spellingsThatAreNotIdentifiers[spelling]; both {
+				t.Errorf("%q is declared as a spelling of %q and also as not an "+
+					"identifier (%q); it cannot be both", spelling, family, reason)
+			}
+		}
+	}
+
+	// And the flow copy really is read as a flow. Emptying creationKeySpellings
+	// leaves every other test in this file green - the renamed aliases still
+	// carry the probe prefix and no golden holds the copy - so this claim has to
+	// be made directly rather than left to be implied.
+	copied := 0
+	for _, c := range Catalog {
+		for _, o := range objectsCreatedBy(c.Request, c.ID) {
+			if o.key == "alias" && bytes.Contains(c.Request.Body, []byte(`"newName":"`+o.name+`"`)) {
+				copied++
+			}
+		}
+	}
+	if copied == 0 {
+		t.Error("no case's `newName` body is read as an object of the `alias` family; " +
+			"POST .../authentication/flows/{alias}/copy creates a flow that every " +
+			"listing serves under `alias`, and creationKeySpellings is what makes " +
+			"createdObjects see it")
+	}
 }
 
 // TestNoGoldenSpellsAnAliasUnderAnUnwatchedKey is the sweep that found
