@@ -285,7 +285,52 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-09 (thirty-second fold).** `make conformance` reports **578 of
+**Updated 2026-09-10 (thirty-third fold).** `make conformance` reports **578 of
+631, no change** - the whole cut is inside the harness, and F195 is closed.
+
+**The finding is that F195's own remedy would not have closed it.** The entry
+prescribed adding `alias` to `createdKeys`, and all three of its predictions
+reproduced exactly three merges later. But the golden this family exists for
+spells an identity provider **`providerAlias`**, not `alias`:
+
+```
+                                     providerAlias-spelled   alias-spelled
+the remedy F195 prescribed                               0              31
+alias plus objectSpellings                              31              31
+```
+
+So a cut stopping where F195 stopped ships **a green tree, a closed follow-up,
+and a guard that still reads past the only golden anyone has caught this way**.
+`objectSpellings` and `creationKeySpellings` are the response and request sides
+of the same asymmetry, and both were found by **sweeping the goldens for a key
+whose value is a created object's name** rather than by reading the
+representations. **A key is not a spelling**, and F195 conflated them - the same
+mistake, one level up, as the blind spot it was about.
+
+**The positive control is what turned that up, and it was not optional.** The
+brief made it item five: a guard extended so that it reports nothing is
+indistinguishable from a guard extended correctly, if the corpus holds nothing it
+should report. `TestPollutionGuardSeesAnIdentityProviderInTheAccountListing`
+rebuilds the polluted body and requires the guard to name it. I re-ran it two
+ways in review - emptying `objectSpellings`, and removing `providerAlias` alone -
+and both turn the tree red.
+
+**And the same shape arrived from inside the cut.** Deleting the
+`/authentication/flows` read - the fix F195 explicitly asked for, not a
+hypothetical - **survived the whole guard suite**, because a realm
+representation binds the browser flow and `GET /admin/realms` witnesses that one
+alias by itself. Six of the seven bootstrapped flows are bound under keys nothing
+watches, so the read is load-bearing for six and redundant for the one the corpus
+exercises. The survivor was closed by making the claim direct rather than
+reported. **Read the mutated line before reporting a survivor, and the fix is
+usually in what you read.**
+
+**Seventeen aliases were renamed rather than exempted**, and the reason is worth
+keeping: seventeen `namedOutsideTheConvention` entries all reading "lives in its
+own realm" would have been a blanket wearing seventeen decisions' clothes. Two
+were exempted, each because the collision **is** the measurement.
+
+**Earlier on 2026-09-09 (thirty-second fold).** `make conformance` reports **578 of
 631**. F184 is closed - the fourth family of one shape, deferred three times, and
 each deferral had made the case stronger.
 

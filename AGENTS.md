@@ -2910,11 +2910,61 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
   the recorder rather than by marking one case and re-recording: marking alone
   produces the right bytes today purely because none of the eight pristine
   fixtures happens to create a realm role.
-- **`TestPristineRealmGoldensAreNotPolluted` watches four resource families**,
-  read out of the creation bodies themselves: clients by `clientId`, users by
-  `username`, realms by `realm`, roles and groups both by `name`. A fixture
-  creating a fifth kind of object named by some other key is invisible to it
-  until that key joins `createdKeys`. It watched `clientId` alone until
+- **The pollution guard watches five resource families now**, read out of the
+  creation bodies themselves: clients by `clientId`, users by `username`,
+  realms by `realm`, roles and groups by `name`, and identity providers,
+  authentication flows and authenticator configs by `alias`. The fifth was
+  added on 2026-09-10 after the blind spot this bullet described was hit for
+  real: `account/linked-accounts/none` recorded sixteen identity providers
+  other fixtures had created and the guard was silent.
+
+- **A key is not a spelling, and the guard needs both.** `createdKeys`' first
+  sentence - the key a creation body uses is the key a listing answers under -
+  is true of four families and **false of the fifth**. An identity provider is
+  created under `alias` and served under `providerAlias` by the account API,
+  `identityProviderAlias` on a mapper and `identityProvider` on a federated
+  identity; a flow is created under `alias`, copied under `newName` and bound
+  under `browserFlow`. Measured on 2026-09-10 by rebuilding the polluted
+  linked-accounts body from the aliases fixtures create today: **the `alias`
+  spelling reports 31 objects and the `providerAlias` spelling reports none.**
+  So adding the key alone - which is the whole of what F195 prescribed -
+  produces a guard that is green, reports the four things F195 predicted, and
+  still reads past the golden it exists for. `objectSpellings` is the response
+  side and `creationKeySpellings` the request side, and both were found by
+  **sweeping the goldens for a key whose value is a created object's name**
+  rather than by reading the representations.
+  `TestNoGoldenSpellsAnAliasUnderAnUnwatchedKey` keeps that sweep; it covers
+  `alias` alone, and the other four families report about thirty pairs. F216.
+
+- **`createdKeys`' order is a precedence and `alias` goes after `name`.** An
+  organization's create is the one body naming its object twice, and every
+  other body naming that organization - including the duplicate-name case's -
+  carries `name` alone, so recording it under `alias` breaks the ownership
+  match on four `admin/organizations` goldens. The rule the two orders are
+  really about: **the key an object is recorded under has to be the one every
+  body naming it agrees on.** Pinned by
+  `TestCreatedKeysReadAnOrganizationUnderItsName` through a seam that takes a
+  body, because the precedence is a property of one body and a test that can
+  only see the catalogue can only observe it through whichever bodies happen
+  to be in it.
+
+- **Extending a guard without a positive control is the failure shape this
+  project names, and it arrived from inside on this cut.** Deleting the
+  `/authentication/flows` read that F195 asked for - the fix, not a
+  hypothetical - survived the whole guard suite, because a realm
+  representation binds the browser flow and `GET /admin/realms` witnesses that
+  one alias on its own. The other six flows bootstrap ships are bound under
+  keys nothing watches, so the read is load-bearing for six of seven and
+  redundant for the one the corpus exercises. **Read the mutated line before
+  reporting a survivor, and the fix is usually in what you read.**
+
+- Two entries in `namedOutsideTheConvention` take a product name and only one
+  has ever been exercised → **three entries now, and two are exercised.**
+  `alias browser` is the third, and five committed goldens hold it, so
+  `TestPollutionGuardIgnoresTheBootstrappedFlowAlias` reads those five rather
+  than a synthetic body and fails if the count reaches zero. `name
+  manage-realm` is still the lucky one.
+  It watched `clientId` alone until
   2026-08-29, which is exactly how F40 got past it. Two things it reads that are
   easy to drop: a **case's own request** creates objects too - `admin/roles/create`
   POSTs `{"name":"gloak-probe-role-create"}` and that role is in the realm for
@@ -2999,8 +3049,13 @@ make oracle  # drives Gloak with kcadm.sh; needs Docker
   match. They are parked now. **A page carrying a per-request value cannot be
   `Recorded`**, whatever else is true of it, because `Recorded` is a promise the
   recorder has to be able to keep.
-- **Every object a fixture or a case creates is named `gloak-probe-*`, and
-  `TestEveryCreatedObjectCarriesTheProbePrefix` is what says so.** Six goldens'
+- **Every object a fixture or a case creates is named `gloak-probe-*`, and on
+  the flow family a bare `f103-*` name now means the opposite** - a name for
+  something that deliberately does **not** exist, which five goldens measure a
+  404 or a 409 against. Seventeen flow aliases were renamed into the convention
+  on 2026-09-10 rather than exempted, because seventeen entries reading "lives
+  in its own realm" would have been a blanket rather than seventeen decisions.
+  `TestEveryCreatedObjectCarriesTheProbePrefix` is what says so. Six goldens'
   windows rest on that convention and nothing enforced it:
   `admin/roles/list-realm-page-no-search` sends `first=1&max=2` and holds
   `create-realm` and `default-roles-master` only because no probe role sorts

@@ -5456,7 +5456,35 @@ mean opening the session model, the user-profile serialiser and a media-type
 parser in one branch. The entry is to record that the chapter's remaining parity
 is **not** a single unit of work, before somebody plans it as one.
 
-## F195: the pollution guard's fifth family is identity providers, and closing it is a cut
+## F195: the pollution guard's fifth family is identity providers, and closing it is a cut (fixed 2026-09-10)
+
+**Closed, and this entry's own remedy would not have closed it.** All three
+predictions here reproduced exactly on the tree three merges later - seventeen
+authentication-management reports, `browser` against five goldens,
+the organizations precedence against four. One report it does not have:
+`zzz-probe-broker`, from a broker fixture split after it was filed.
+
+**But adding `alias` to `createdKeys` - the whole of what this entry prescribed -
+leaves the guard reading past the golden it exists for.** The account API spells
+an identity provider `providerAlias`, not `alias`. Measured by rebuilding the
+polluted `linked-accounts` body from the aliases fixtures create today:
+
+```
+                                     providerAlias-spelled   alias-spelled
+the remedy this entry prescribed                         0              31
+alias plus objectSpellings                              31              31
+```
+
+So a cut stopping where this entry stopped ships a **green tree, a closed
+follow-up, and a guard that still misses the only golden anyone has caught this
+way**. `objectSpellings` is the response side and `creationKeySpellings` the
+request side; both were found by **sweeping the goldens** for a key whose value
+is a created object's name, not by reading the representations.
+
+**A key is not a spelling**, and the entry conflated them - which is the same
+mistake, one level up, as the blind spot it was about.
+
+## F195 (original): the entry as filed on 2026-09-08
 
 AGENTS.md already says the guard "watches four resource families ... A fixture
 creating a fifth kind of object named by some other key is invisible to it until
@@ -5903,3 +5931,89 @@ before somebody "fixes" this: Gloak registers `PUT` and `DELETE` on
 `.../users/{userID}`, so both already route to the locator and already answer
 `User not found`. It is `POST` alone that differs, which is why the case sends
 `POST`.
+
+## F216: the spelling sweep is `alias`-only, and the other four families report about thirty pairs
+
+`TestNoGoldenSpellsAnAliasUnderAnUnwatchedKey` reads every committed golden for
+a `"key":"value"` pair whose value is exactly a created object's name and whose
+key the guard does not match. Run over `alias` it is clean - the only two hits
+are `displayName` and `providerName`, both declared. Run over the other four
+families on 2026-09-10 it reports **ten family/key pairs covering 34 names**:
+
+```
+clientId  aud                  1   gloak-probe-narrow-peer
+clientId  azp                  3   in tokens
+clientId  client_id            3   in tokens and introspection bodies
+clientId  client               7   on scope-mapping and group-mapping rows
+clientId  name                10   authz resource servers, whose name is the client's id
+username  preferred_username   2   in tokens
+username  client_name          1   on an initial access token
+username  name                 1   gloak-probe-solo
+username  resourceName         4   on workflow rows
+realm     name                 2   an organization group and a workflow
+```
+
+They are not one answer. `azp`, `client_id` and `preferred_username` genuinely
+name the object; `name` on an authorization resource server is the same client
+under its own id; `client_name` on an initial access token and `resourceName` on
+a workflow row need reading before either is called an identifier; and some are
+the phantom `createdKeys` already refuses. Doing them inside an `alias` cut would
+have turned it into a sweep of the whole corpus - F181's shape, and the mistake
+AGENTS.md names about fixing a general rule inside a family branch. The entry is
+that the sweep already exists and already passes on one family; widening it is a
+cut with ten declarations and 34 goldens to read behind them.
+
+## F217: a `PUT` that renames an object creates a name the guard never sees
+
+`createdObjects` reads `POST` bodies alone, which is right for creates and wrong
+for renames. Two bodies in the catalogue rename an object into a name nothing
+watches:
+
+- `f103-docker-renamed`, a `PUT` on the built-in `docker auth` flow;
+- `f103-cfg-renamed`, a `PUT` on an authenticator config;
+- and `gloak-probe-renamed-action`, a `PUT` on a required action, which is
+  inside the convention by luck rather than by a check.
+
+Each leaves an object in a realm under a name `TestEveryCreatedObjectCarriesTheProbePrefix`
+never judges and `pollution` never matches. The first two are outside the
+convention today and nothing says so.
+
+It is not a straight widening: a `PUT` that renames also **removes** the old
+name, so reading `PUT` bodies the way `POST` bodies are read would record an
+object under two names of which only one exists. The entry is the question -
+does the guard want a third source with different semantics, or does the
+convention want extending to `PUT` bodies without the pollution match? - and the
+measurement is which committed goldens hold either name.
+
+## F218: `bootstrapListings` cannot fail on a family it does not read
+
+The function's doc comment claims it answers for "every family `createdKeys`
+names", and nothing checks that. Adding a sixth key to `createdKeys` without a
+matching read leaves the guard reporting every bootstrapped object of the new
+family as a fixture's - which is exactly what `browser` did for the two days
+between F195 being filed and this cut.
+
+The check is awkward rather than hard: the map from a family to the endpoint
+that enumerates it is not derivable, and organizations are the counterexample
+that makes it interesting - they are named by `name`, they are enumerable, and
+`GET /admin/realms/master/organizations` is `404 Organizations not enabled for
+this realm.` on a default install, so `bootstrapListings`' `get` would fatal on
+it. A per-family declaration with a "not enumerable on master, and why" arm is
+probably the shape. The entry is to write it before the sixth family is added,
+not after.
+
+## F219: `RequestLine` is written by the recorder and read by nobody
+
+`record_test.go` writes `# METHOD path` above every golden and `ParseGolden`
+reads it back into `Golden.RequestLine`, which no verifier compares. This cut's
+rename left two of them stale and no test could have said so; they were fixed
+because the re-record rewrote them, not because anything asked.
+
+That is benign for a recorded golden and not benign for a **hand-edited** one,
+which is the case the rule against hand-editing exists for. A cheap check -
+every golden's request line equals its case's method and path, after `Expand` -
+would turn the recorder's comment into an assertion and would fire on a golden
+somebody edited without re-recording. The reason it is a follow-up rather than
+part of this cut: the request line holds the *unexpanded* path for some cases
+and the expanded one for others, so the comparison needs measuring before it can
+be written.
