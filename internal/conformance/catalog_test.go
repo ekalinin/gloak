@@ -369,9 +369,17 @@ var createdKeys = []string{"clientId", "username", "realm", "name", "alias"}
 var creationKeySpellings = map[string]string{"newName": "alias"}
 
 // readKeys is the order createdObjects tries, and creationKeyFamily maps what
-// it found back onto a createdKeys family. The spellings go last so that a body
-// carrying both a family key and a spelling is read under the family key, which
-// is createdKeys' precedence rule applied one level out.
+// it found back onto a createdKeys family.
+//
+// The spellings go last so that a body carrying both a family key and a
+// spelling is read under the family key, which is createdKeys' precedence rule
+// applied one level out. **Unlike that rule, nothing exercises this one**: no
+// body in the recording carries `newName` beside one of the five, because the
+// only operation that takes a `newName` takes nothing else. Reversing the two
+// halves is a surviving mutation, and it is recorded as one rather than pinned
+// by a test built on an invented body - the organizations precedence has a real
+// body to argue from and this has none. See the alias handover's mutation
+// section.
 var readKeys = append(append([]string{}, createdKeys...), slices.Sorted(maps.Keys(creationKeySpellings))...)
 
 func creationKeyFamily(key string) string {
