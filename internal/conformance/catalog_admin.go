@@ -21136,6 +21136,12 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{narrow_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type"},
+		// No X-Frame-Options, because the **response** is `application/yaml` -
+		// the media-type rule, which the five other workflow reads already
+		// declare. This golden and admin/workflows/list-empty are identical
+		// byte for byte, headers included, and that one declared both absences
+		// while this one declared neither.
+		AssertAbsentHeaders: []string{"X-Frame-Options", "Cache-Control"},
 	},
 }
 
