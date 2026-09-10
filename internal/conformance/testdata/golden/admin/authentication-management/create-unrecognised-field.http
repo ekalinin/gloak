@@ -8,4 +8,4 @@ X-Content-Type-Options: nosniff
 X-Frame-Options: SAMEORIGIN
 X-Robots-Tag: none
 
-{"error":"Invalid json representation for AuthenticationFlowRepresentation. Unrecognized field \"zzz\" at line 1 column 70."}
+{"error":"Invalid json representation for AuthenticationFlowRepresentation. Unrecognized field \"zzz\" at line 1 column 82."}

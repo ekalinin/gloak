@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -319,20 +320,129 @@ func TestNoReasonClaimsAServedEndpointIsUnserved(t *testing.T) {
 // same keys the object comes back under when a listing enumerates it.
 //
 // One key per resource family a fixture creates: clients by clientId, users by
-// username, realms by realm, and roles and groups both by name. Reading the
-// pair rather than the bare value is what keeps "gloak-probe-group" from
-// matching the "gloak-probe-group-mapped" a sibling fixture creates, and what
-// keeps a name from matching inside a description.
+// username, realms by realm, roles and groups both by name, and identity
+// providers and authentication flows both by alias. Reading the pair rather
+// than the bare value is what keeps "gloak-probe-group" from matching the
+// "gloak-probe-group-mapped" a sibling fixture creates, and what keeps a name
+// from matching inside a description.
 //
 // **The order is the precedence, not decoration.** A creation body names its
-// object once, and `name` is last because it is the fallback for the three
-// families that have no key of their own - roles, groups and client scopes.
-// A body carrying one of the first three carries `name` in some other sense:
+// object once, and `name` is the fallback for the three families that have no
+// key of their own - roles, groups and client scopes. A body carrying one of
+// the first three carries `name` in some other sense:
 // `{"clientId":"gloak-probe-described","name":"A name",...}` creates a client
 // whose display name is "A name", and reading that as a role called "A name"
 // is a phantom object in a guard that exists to name real ones. See
 // createdObjects.
-var createdKeys = []string{"clientId", "username", "realm", "name"}
+//
+// **`alias` goes after `name`, and that is measured rather than tidy.** An
+// organization's create carries both -
+// `{"name":"gloak-probe-org-named","alias":"gloak-probe-org-alias",...}` - so
+// the two orders record it under two different keys. Every other body that
+// names an organization, including `admin/organizations/create-duplicate-name`'s
+// own `{"name":"gloak-probe-org-named"}`, carries only `name`, so recording the
+// fixture's organization under `alias` makes the fixture and the duplicate case
+// look like two objects, the ownership match misses, and four
+// `admin/organizations` goldens are reported as holding somebody else's object.
+// Measured on 2026-09-10: `list`, `list-full`, `read` and `read-brief-ignored`.
+// A flow's create and an identity provider's carry no `name` at all, so `alias`
+// is reached for exactly the two families that need it.
+// TestCreatedKeysReadAnOrganizationUnderItsName is what fails when the two
+// lines are swapped.
+var createdKeys = []string{"clientId", "username", "realm", "name", "alias"}
+
+// creationKeySpellings are the other JSON keys a *request* may create an object
+// under, mapped to the family in createdKeys the object belongs to.
+//
+// objectSpellings below is the same asymmetry on the response side; this is the
+// request side of it, and one operation needs it.
+// `POST .../authentication/flows/{alias}/copy` takes `{"newName":"..."}` and
+// creates a flow, which every listing then serves under `alias`. Read literally
+// the copy was invisible to createdObjects, so `admin/authentication-management/copy`
+// created a flow nothing watched - the same blind spot F195 is about, one key
+// further along, and not named there.
+//
+// The value is the family rather than a bare "also a creation key" flag,
+// because everything downstream is keyed by family: the probe-prefix
+// convention, namedOutsideTheConvention, the bootstrap filter and
+// objectSpellings all have to see one flow, not a flow and a newName.
+var creationKeySpellings = map[string]string{"newName": "alias"}
+
+// readKeys is the order createdObjects tries, and creationKeyFamily maps what
+// it found back onto a createdKeys family.
+//
+// The spellings go last so that a body carrying both a family key and a
+// spelling is read under the family key, which is createdKeys' precedence rule
+// applied one level out. **Unlike that rule, nothing exercises this one**: no
+// body in the recording carries `newName` beside one of the five, because the
+// only operation that takes a `newName` takes nothing else. Reversing the two
+// halves is a surviving mutation, and it is recorded as one rather than pinned
+// by a test built on an invented body - the organizations precedence has a real
+// body to argue from and this has none. See the alias handover's mutation
+// section.
+var readKeys = append(append([]string{}, createdKeys...), slices.Sorted(maps.Keys(creationKeySpellings))...)
+
+func creationKeyFamily(key string) string {
+	if family, ok := creationKeySpellings[key]; ok {
+		return family
+	}
+	return key
+}
+
+// objectSpellings are the other JSON keys a *response* may name an object
+// under, keyed by the key its *creation body* used.
+//
+// createdKeys' first sentence claims the creation key and the listing key are
+// the same, and for four families they are. **For `alias` they are not, and
+// that is the whole of why F195's remedy was not enough on its own.** The
+// golden that made this cut necessary -
+// `account/linked-accounts/none`, sixteen identity providers other fixtures
+// created - spells them `providerAlias`, so a guard matching `"alias":"..."`
+// reads straight past it. Measured on 2026-09-10 by rebuilding that body from
+// the aliases fixtures create today: the `alias` spelling reported 31 objects
+// and the `providerAlias` spelling reported **none**.
+//
+// Every entry was found by sweeping the committed goldens for a key whose value
+// is exactly a created object's name, rather than guessed from the
+// representations - TestNoGoldenSpellsAnAliasUnderAnUnwatchedKey is that sweep,
+// kept as a test so the next spelling fails here instead of going quiet.
+//
+// The list is a ratchet: TestEveryDeclaredSpellingIsExercised refuses an entry
+// no golden uses, for namedOutsideTheConvention's reason - an unexercised
+// spelling is a claim nobody has checked.
+var objectSpellings = map[string][]string{
+	"alias": {
+		// LinkedAccountRepresentation, GET .../account/linked-accounts. The
+		// account API's name for an identity provider.
+		"providerAlias",
+		// IdentityProviderMapperRepresentation. A mapper names the provider it
+		// hangs off, so a mapper listing holds the provider's alias too.
+		"identityProviderAlias",
+		// FederatedIdentityRepresentation, GET /users/{id}/federated-identity.
+		"identityProvider",
+		// RealmRepresentation's flow bindings name a flow by its alias. Only
+		// browserFlow is exercised, because `browser` is the one bound flow any
+		// body in this catalogue also creates; the other six bindings are left
+		// out rather than listed inert, and the sweep is what adds one the day a
+		// case binds a flow it made.
+		"browserFlow",
+	},
+}
+
+// spellingsThatAreNotIdentifiers are keys whose value equals a created object's
+// name and which still do not name that object, with the reason each is not an
+// identifier. TestNoGoldenSpellsAnAliasUnderAnUnwatchedKey reads it.
+//
+// This is the same judgement createdKeys makes about `ClientRepresentation.name`
+// and for the same reason: a guard that reports a display name reports a
+// phantom object, and a guard that reports the same object twice through two
+// keys of one row reports noise. Both are worse than the gap they close.
+var spellingsThatAreNotIdentifiers = map[string]string{
+	"displayName": "LinkedAccountRepresentation.displayName falls back to the alias when the " +
+		"provider has no display name; it is a label, not the key anything is addressed by",
+	"providerName": "LinkedAccountRepresentation carries the alias twice, and providerAlias is " +
+		"already matched - every row holding this holds that, so watching it reports nothing new",
+}
 
 // createdObject is one object the recording creates: the key its creation body
 // named it by, its name, and what made it - a fixture, or the case whose own
@@ -496,6 +606,21 @@ func bootstrapListings(t *testing.T) [][]byte {
 		get(realm + "/users"),
 		get(realm + "/groups"),
 		get(realm + "/client-scopes"),
+		// The two families `alias` names. Bootstrap ships eight authentication
+		// flows and no identity providers, and both are read because this
+		// function's claim is about every family createdKeys names rather than
+		// about every family that happens to be non-empty - `groups` has been
+		// empty here since it was added.
+		//
+		// The flows listing is the load-bearing one and it is what F195 said was
+		// missing: `admin/authentication-management/create-duplicate-alias`
+		// POSTs `{"alias":"browser"}` on purpose to measure a 409, so `browser`
+		// enters createdObjects, and without this read the guard reported it as
+		// polluting the four partial-export goldens and
+		// authentication-management/list - five goldens that hold a flow every
+		// install ships.
+		get(realm + "/authentication/flows"),
+		get(realm + "/identity-provider/instances"),
 	}
 	var rows []struct {
 		ID string `json:"id"`
@@ -540,15 +665,32 @@ func namesBootstrapShips(t *testing.T, created []createdObject) map[createdObjec
 		if out[key] {
 			continue
 		}
-		needle := []byte(`"` + o.key + `":"` + o.name + `"`)
 		for _, b := range bodies {
-			if bytes.Contains(b, needle) {
+			if mentions(b, o) {
 				out[key] = true
 				break
 			}
 		}
 	}
 	return out
+}
+
+// mentions is the one byte comparison both namesBootstrapShips and pollution
+// make: does raw name this object, under the key its creation body used or
+// under any spelling objectSpellings declares for that key?
+//
+// It is a function rather than two copies of a needle because the two callers
+// have to agree. If the bootstrap filter matched fewer spellings than the
+// reporter, a name bootstrap ships would be reported the moment a response
+// spelled it the other way - which is the false positive of 2026-09-07 with an
+// extra step in front of it.
+func mentions(raw []byte, o createdObject) bool {
+	for _, key := range append([]string{o.key}, objectSpellings[o.key]...) {
+		if bytes.Contains(raw, []byte(`"`+key+`":"`+o.name+`"`)) {
+			return true
+		}
+	}
+	return false
 }
 
 // pollution is every object in created that raw mentions and that something
@@ -598,7 +740,7 @@ func pollution(raw []byte, created []createdObject, shipped map[createdObject]bo
 		if mine[key] || shipped[key] {
 			continue
 		}
-		if bytes.Contains(raw, []byte(`"`+o.key+`":"`+o.name+`"`)) {
+		if mentions(raw, o) {
 			out = append(out, o)
 		}
 	}
@@ -730,6 +872,461 @@ func TestPollutionGuardIgnoresNamesBootstrapShips(t *testing.T) {
 	}
 }
 
+// TestPollutionGuardIgnoresTheBootstrappedFlowAlias is the same three claims one
+// family over, and it is the half of this cut that could most easily have been
+// green for nothing.
+//
+// `browser` reaches createdObjects because
+// admin/authentication-management/create-duplicate-alias POSTs it to measure a
+// 409, and five committed goldens hold the flow bootstrap ships under that
+// name: the four partial-exports and authentication-management/list. Before
+// bootstrapListings read /authentication/flows they were reported as holding a
+// fixture's object, with the same false message the account cut got about
+// `view-profile`.
+//
+// Unlike `name manage-realm`, whose entry AGENTS.md records as "lucky rather
+// than safe" because no golden holds it, this collision is exercised by the
+// corpus - so the third claim below reads the goldens rather than a synthetic
+// body.
+func TestPollutionGuardIgnoresTheBootstrappedFlowAlias(t *testing.T) {
+	created := createdObjects()
+	shipped := namesBootstrapShips(t, created)
+
+	flow := createdObject{key: "alias", name: "browser"}
+	if !slices.ContainsFunc(created, func(o createdObject) bool {
+		return o.key == flow.key && o.name == flow.name
+	}) {
+		t.Fatal("nothing in the recording creates the alias `browser` any more, so the " +
+			"bootstrapped-flow filter is never reached and this guard has stopped being tested")
+	}
+	if !shipped[flow] {
+		t.Error("bootstrap's listings do not report the `browser` flow; either " +
+			"bootstrapListings stopped reading /authentication/flows or bootstrap " +
+			"stopped shipping it")
+	}
+
+	// The five goldens that hold it, read rather than invented. A body naming
+	// the flow under either spelling has to come back clean.
+	held := 0
+	for _, c := range Catalog {
+		raw, err := os.ReadFile(GoldenPath(goldenDir, c.ID))
+		if err != nil || !mentions(raw, createdObject{key: "alias", name: "browser"}) {
+			continue
+		}
+		held++
+		for _, o := range pollution(raw, created, shipped, c.Fixture, c.ID) {
+			if o.name == "browser" {
+				t.Errorf("%q: the bootstrapped flow `browser` was reported as %q's object",
+					c.ID, o.creator)
+			}
+		}
+	}
+	if held == 0 {
+		t.Error("no committed golden names the `browser` flow, so this test proves " +
+			"nothing about the corpus - it is the `name manage-realm` situation, " +
+			"and the entry in namedOutsideTheConvention should say so")
+	}
+
+	// And the flows listing is load-bearing, which had to be asserted rather
+	// than assumed: **the mutation that deletes that read survived.**
+	//
+	// `browser` alone does not need it. A realm representation binds the browser
+	// flow, `browserFlow` is a declared spelling, and `GET /admin/realms`
+	// therefore witnesses that one alias on its own - so dropping the flows read
+	// left every other test here green. Measured: all seven top-level flows a
+	// default install ships are named by the realms listing, but six of them are
+	// bound under `registrationFlow`, `directGrantFlow` and the rest, which this
+	// guard does not watch and which section 2.1 of the handover explains are
+	// deliberately unlisted.
+	//
+	// So the flows listing is the only body that names those six, and a case
+	// POSTing `{"alias":"registration"}` to measure the same 409
+	// create-duplicate-alias measures on `browser` is one line away. This asserts
+	// the read carries something nothing else does.
+	bodies := bootstrapListings(t)
+	only := 0
+	for _, alias := range topLevelFlowAliases(t, bodies) {
+		witnesses := 0
+		for _, b := range bodies {
+			if mentions(b, createdObject{key: "alias", name: alias}) {
+				witnesses++
+			}
+		}
+		if witnesses == 1 {
+			only++
+		}
+	}
+	if only == 0 {
+		t.Error("every flow bootstrap ships is named by some listing other than " +
+			"/authentication/flows, so that read carries nothing and the guard " +
+			"would survive its deletion - which it did, before this claim existed")
+	}
+}
+
+// topLevelFlowAliases is the aliases of the flows bootstrap ships, read out of
+// whichever of bootstrapListings' bodies is the flow listing.
+//
+// It is found by shape rather than by index because bootstrapListings appends a
+// variable number of client-role bodies after the fixed ones, so a position
+// would be a constant that drifts the next time a listing is added.
+func topLevelFlowAliases(t *testing.T, bodies [][]byte) []string {
+	t.Helper()
+	for _, b := range bodies {
+		var rows []struct {
+			Alias    string `json:"alias"`
+			TopLevel *bool  `json:"topLevel"`
+		}
+		if err := json.Unmarshal(b, &rows); err != nil || len(rows) == 0 {
+			continue
+		}
+		out := make([]string, 0, len(rows))
+		for _, r := range rows {
+			if r.TopLevel == nil || r.Alias == "" {
+				out = nil
+				break
+			}
+			out = append(out, r.Alias)
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	t.Fatal("none of bootstrapListings' bodies is a flow listing; either the read " +
+		"was dropped or bootstrap stopped shipping flows")
+	return nil
+}
+
+// TestPollutionGuardSeesAnIdentityProviderInTheAccountListing is this cut's
+// positive control, and it is not optional.
+//
+// A guard extended so that it reports nothing is indistinguishable from a guard
+// extended correctly, if the corpus holds nothing it should report. Every other
+// test here says the guard stays quiet where it should; this one reproduces the
+// golden that made the family necessary and requires it to speak.
+//
+// The shape is `account/linked-accounts/none`'s first recording: sixteen
+// identity providers that the admin chapter's fixtures create in master, in a
+// body belonging to a case that creates none of them. It is rebuilt from the
+// aliases fixtures create **today** rather than pasted, so it cannot rot into a
+// body about objects nothing makes any more.
+//
+// **It fails without objectSpellings**, and that is the finding this cut turns
+// into a test. The account API serves an identity provider as `providerAlias`,
+// so `alias` in createdKeys is not enough on its own: measured on 2026-09-10,
+// the same body reported 31 objects spelled `alias` and none spelled
+// `providerAlias`. F195 named the key and not the spelling.
+func TestPollutionGuardSeesAnIdentityProviderInTheAccountListing(t *testing.T) {
+	created := createdObjects()
+
+	// The providers the account chapter's own fixture makes. They are the ones
+	// the polluted golden could legitimately have held, so they are excluded:
+	// what is left is what another fixture made.
+	const owner = "account-user-brokers"
+	var strangers []createdObject
+	for _, o := range created {
+		if o.key == "alias" && o.creator != owner && strings.Contains(o.name, "idp") {
+			strangers = append(strangers, o)
+		}
+	}
+	if len(strangers) == 0 {
+		t.Fatal("no fixture outside the account chapter creates an identity provider, " +
+			"so the body this test builds is empty and it asserts nothing")
+	}
+
+	// LinkedAccountRepresentation, exactly as account/linked-accounts/providers
+	// records it.
+	rows := make([]string, 0, len(strangers))
+	for _, o := range strangers {
+		rows = append(rows, `{"connected":false,"providerAlias":"`+o.name+
+			`","providerName":"`+o.name+`","displayName":"`+o.name+`","social":false}`)
+	}
+	body := []byte("[" + strings.Join(rows, ",") + "]")
+
+	got := pollution(body, created, nil, owner)
+	if len(got) < len(strangers) {
+		t.Errorf("a linked-accounts golden holding %d identity providers other fixtures "+
+			"created was reported as holding %d of them - this is the body "+
+			"account/linked-accounts/none recorded, and the guard has to name it",
+			len(strangers), len(got))
+	}
+
+	// And the account chapter's own providers in the same shape stay clean, so
+	// the control is a scalpel rather than a body that reports everything.
+	var mine []string
+	for _, o := range created {
+		if o.key == "alias" && o.creator == owner {
+			mine = append(mine, `{"connected":false,"providerAlias":"`+o.name+
+				`","providerName":"`+o.name+`","displayName":"`+o.name+`","social":false}`)
+		}
+	}
+	if len(mine) == 0 {
+		t.Fatalf("%q creates no identity provider, so the owner half of this control "+
+			"asserts nothing", owner)
+	}
+	clean := []byte("[" + strings.Join(mine, ",") + "]")
+	if got := pollution(clean, created, nil, owner); len(got) != 0 {
+		t.Errorf("the case's own providers were reported as pollution: %v", got)
+	}
+}
+
+// TestCreatedKeysReadAnOrganizationUnderItsName pins createdKeys' precedence
+// where it is decided rather than where it happens to be written.
+//
+// An organization is the one family whose create names it twice, and F195
+// measured what swapping the two lines costs: `admin/organizations` list,
+// list-full, read and read-brief-ignored are reported as holding an object
+// their own fixture made, because the fixture's organization goes into the set
+// under `alias` while every other body naming it - including
+// admin/organizations/create-duplicate-name's `{"name":"gloak-probe-org-named"}` -
+// uses `name`. Re-measured on 2026-09-10 and unchanged.
+//
+// The three claims are separate because each fails on its own: the precedence
+// itself, the family that has no `name` and needs `alias` reached, and the
+// consequence the precedence exists for. A test asserting the literal contents
+// of createdKeys would fail on the swap too and would say nothing about why.
+func TestCreatedKeysReadAnOrganizationUnderItsName(t *testing.T) {
+	post := func(body string) Request {
+		return Request{Method: http.MethodPost, Body: []byte(body)}
+	}
+
+	// An organization carries both keys, and `name` is the one it is addressed
+	// by.
+	org := objectsCreatedBy(post(`{"name":"gloak-probe-org-named",`+
+		`"alias":"gloak-probe-org-alias","description":"a description"}`), "fixture")
+	if len(org) != 1 {
+		t.Fatalf("an organization's create read as %d objects, want 1: %v", len(org), org)
+	}
+	if org[0].key != "name" {
+		t.Errorf("an organization's create was read under %q; it has to be %q, because "+
+			"every other body naming that organization carries only `name` and the "+
+			"ownership match compares the pair - move `alias` back after `name` in "+
+			"createdKeys", org[0].key, "name")
+	}
+
+	// A flow's create carries no `name`, so `alias` is reached.
+	flow := objectsCreatedBy(post(`{"alias":"gloak-probe-f103-gamma",`+
+		`"description":"a flow","providerId":"basic-flow"}`), "fixture")
+	if len(flow) != 1 || flow[0].key != "alias" {
+		t.Errorf("a flow's create read as %v; `alias` has to be in createdKeys, or the "+
+			"fifth resource family is unwatched again", flow)
+	}
+
+	// And the consequence, which is what the precedence is for. The fixture's
+	// organization and the duplicate-name case's are the same object; a listing
+	// holding it must be clean for the fixture that made it.
+	created := append(
+		objectsCreatedBy(post(`{"name":"gloak-probe-org-named","alias":"gloak-probe-org-alias"}`), "fixture"),
+		objectsCreatedBy(post(`{"name":"gloak-probe-org-named"}`), "duplicate-case")...)
+	listing := []byte(`[{"id":"x","name":"gloak-probe-org-named",` +
+		`"alias":"gloak-probe-org-alias","enabled":true}]`)
+	if got := pollution(listing, created, nil, "fixture"); len(got) != 0 {
+		t.Errorf("admin/organizations/list's shape was reported as holding %v, which its "+
+			"own fixture created - this is the four-golden failure F195 measured", got)
+	}
+}
+
+// TestEveryDeclaredSpellingIsExercised is objectSpellings' and
+// creationKeySpellings' ratchet, and it is namedOutsideTheConvention's bargain:
+// a declared exception has to be one somebody checked.
+//
+// A spelling nothing uses is a claim about a representation that nobody has
+// read against a golden, and it is worse than a gap, because the list is the
+// answer to "which keys name an object" and a reader takes it as complete.
+// This is also what keeps the seven realm flow bindings out: `browserFlow` is
+// in because a golden uses it, and the other six would fail here.
+func TestEveryDeclaredSpellingIsExercised(t *testing.T) {
+	created := createdObjects()
+
+	corpus, err := goldenCorpus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for family, spellings := range objectSpellings {
+		for _, spelling := range spellings {
+			used := false
+			for _, o := range created {
+				if o.key != family {
+					continue
+				}
+				needle := []byte(`"` + spelling + `":"` + o.name + `"`)
+				for _, raw := range corpus {
+					if bytes.Contains(raw, needle) {
+						used = true
+						break
+					}
+				}
+				if used {
+					break
+				}
+			}
+			if !used {
+				t.Errorf("objectSpellings declares that a %q is also named by %q and no "+
+					"committed golden spells one that way; drop the entry rather than "+
+					"leaving a reading of a representation nobody has checked",
+					family, spelling)
+			}
+		}
+	}
+
+	for spelling, family := range creationKeySpellings {
+		if !slices.Contains(createdKeys, family) {
+			t.Errorf("creationKeySpellings maps %q onto %q, which is not a family in "+
+				"createdKeys", spelling, family)
+		}
+		used := false
+		for _, c := range Catalog {
+			if bytes.Contains(c.Request.Body, []byte(`"`+spelling+`":"`)) {
+				used = true
+				break
+			}
+		}
+		for name, f := range Fixtures {
+			_ = name
+			for _, s := range f.Steps {
+				if bytes.Contains(s.Request.Body, []byte(`"`+spelling+`":"`)) {
+					used = true
+				}
+			}
+		}
+		if !used {
+			t.Errorf("creationKeySpellings declares that %q creates a %q and nothing in "+
+				"the recording sends one", spelling, family)
+		}
+	}
+
+	// The two lists must not overlap. A key in both is a contradiction that
+	// reads as a decision: objectSpellings says "this names the object" and
+	// spellingsThatAreNotIdentifiers says "this does not". Only the first is
+	// reached, so the second would sit there looking like an argument nobody
+	// has to re-read.
+	for family, spellings := range objectSpellings {
+		for _, spelling := range spellings {
+			if reason, both := spellingsThatAreNotIdentifiers[spelling]; both {
+				t.Errorf("%q is declared as a spelling of %q and also as not an "+
+					"identifier (%q); it cannot be both", spelling, family, reason)
+			}
+		}
+	}
+
+	// And the flow copy really is read as a flow. Emptying creationKeySpellings
+	// leaves every other test in this file green - the renamed aliases still
+	// carry the probe prefix and no golden holds the copy - so this claim has to
+	// be made directly rather than left to be implied.
+	copied := 0
+	for _, c := range Catalog {
+		for _, o := range objectsCreatedBy(c.Request, c.ID) {
+			if o.key == "alias" && bytes.Contains(c.Request.Body, []byte(`"newName":"`+o.name+`"`)) {
+				copied++
+			}
+		}
+	}
+	if copied == 0 {
+		t.Error("no case's `newName` body is read as an object of the `alias` family; " +
+			"POST .../authentication/flows/{alias}/copy creates a flow that every " +
+			"listing serves under `alias`, and creationKeySpellings is what makes " +
+			"createdObjects see it")
+	}
+}
+
+// TestNoGoldenSpellsAnAliasUnderAnUnwatchedKey is the sweep that found
+// objectSpellings, kept as a test so the next spelling fails here rather than
+// going quiet the way `providerAlias` did.
+//
+// For every object created under `alias`, every committed golden is read for a
+// `"key":"value"` pair whose value is exactly that name. The key must be one
+// the guard already matches, or be declared in spellingsThatAreNotIdentifiers
+// with the reason it names something other than the object.
+//
+// **It covers `alias` alone, and that is a boundary rather than an oversight.**
+// The same sweep run over the other four families reports about thirty pairs -
+// `client_id` and `azp` in tokens, `client` on a scope-mapping row,
+// `preferred_username`, `resourceName` on a workflow, and a client's own
+// `clientId` echoed as an authorization resource server's `name`. Each needs a
+// reason read off the golden it appears in, several are genuine and several are
+// the phantom this file already refuses, and doing them here would make an
+// `alias` cut into a sweep of the whole corpus. F216 is the entry.
+func TestNoGoldenSpellsAnAliasUnderAnUnwatchedKey(t *testing.T) {
+	created := createdObjects()
+	names := map[string]bool{}
+	for _, o := range created {
+		if o.key == "alias" {
+			names[o.name] = true
+		}
+	}
+	if len(names) == 0 {
+		t.Fatal("nothing in the recording creates an object named by `alias`, so this " +
+			"sweep reads an empty set")
+	}
+	watched := map[string]bool{"alias": true}
+	for _, spelling := range objectSpellings["alias"] {
+		watched[spelling] = true
+	}
+
+	corpus, err := goldenCorpus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair := regexp.MustCompile(`"([A-Za-z_]+)"\s*:\s*"([^"]+)"`)
+	reported := map[string]bool{}
+	for id, raw := range corpus {
+		for _, m := range pair.FindAllSubmatch(raw, -1) {
+			key, value := string(m[1]), string(m[2])
+			if !names[value] || watched[key] || reported[key] {
+				continue
+			}
+			if _, declared := spellingsThatAreNotIdentifiers[key]; declared {
+				continue
+			}
+			reported[key] = true
+			t.Errorf("%q names the alias %q under the key %q, which the pollution guard "+
+				"does not match - add %q to objectSpellings[\"alias\"] if it names the "+
+				"provider or the flow, or to spellingsThatAreNotIdentifiers with the "+
+				"reason it does not", id, value, key, key)
+		}
+	}
+
+	// The declared non-identifiers are a ratchet too: one that stops appearing
+	// is a reason nobody has re-read.
+	for key := range spellingsThatAreNotIdentifiers {
+		seen := false
+		for _, raw := range corpus {
+			for _, m := range pair.FindAllSubmatch(raw, -1) {
+				if string(m[1]) == key && names[string(m[2])] {
+					seen = true
+					break
+				}
+			}
+			if seen {
+				break
+			}
+		}
+		if !seen {
+			t.Errorf("spellingsThatAreNotIdentifiers excuses %q and no golden spells an "+
+				"alias that way any more; drop the entry rather than leaving a reason "+
+				"nobody has re-read", key)
+		}
+	}
+}
+
+// goldenCorpus is every committed golden, keyed by the path it lives at. Three
+// tests read all of them and reading the tree once per test is the difference
+// between a sweep and a slow sweep.
+func goldenCorpus() (map[string][]byte, error) {
+	out := map[string][]byte{}
+	err := filepath.WalkDir(goldenDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		out[p] = raw
+		return nil
+	})
+	return out, err
+}
+
 // TestPollutionGuardReadsTheCataloguesOwnCreates proves the second of
 // createdObjects' two sources is wired.
 //
@@ -824,6 +1421,34 @@ var namedOutsideTheConvention = map[string]string{
 	// namesBootstrapShips. This entry is the argument for the *collision* being
 	// deliberate, and the guard is what handles its consequences.
 	"name view-profile": "account-user-realm-role-collision: a realm role deliberately named after an account role",
+
+	// The third instance of that same shape, and the first on `alias`.
+	// admin/authentication-management/create-duplicate-alias POSTs
+	// `{"alias":"browser"}` at a realm that already has the flow every install
+	// ships, to measure `409 Flow browser already exists`. The product's name is
+	// the input: renaming it to gloak-probe-f103-browser builds a case that
+	// creates a flow and measures a 201.
+	//
+	// It is also the entry that made bootstrapListings read
+	// /authentication/flows. Until this cut, `browser` was in createdObjects and
+	// in no bootstrap listing, so the guard reported it as a fixture's object
+	// polluting the four partial-export goldens and authentication-management/list -
+	// five goldens that hold a flow the verifier reproduces from bootstrap.
+	// Unlike `name manage-realm`, this collision is exercised: those five goldens
+	// hold it today, so the filter is load-bearing rather than lucky.
+	"alias browser": "admin/authentication-management/create-duplicate-alias: a bootstrapped flow alias, POSTed to measure the 409",
+
+	// The group-search fixture's shape, one API over: the sort position **is**
+	// the measurement. accountBrokerFixture's comment lays the table out - this
+	// provider sorts last by alias and first by display name, so
+	// account/linked-accounts/providers refutes a listing sorted by display name
+	// only because `zzz-` sorts after every `gloak-probe-` sibling. A shared
+	// prefix would sort it among them and the case would measure nothing.
+	//
+	// It is the reason F58's warning is worth repeating on this family: `zzz-`
+	// takes the *last* place the way `aa-gloak-srch-kid` takes the first, and
+	// both are deliberate.
+	"alias zzz-probe-broker": "account-user-brokers: sorts last by alias and first by display name, which is what the listing's order measures",
 }
 
 // TestEveryCreatedObjectCarriesTheProbePrefix turns six written arguments into
@@ -1067,51 +1692,13 @@ func TestSecondRealmGoldenGuardCanFail(t *testing.T) {
 func createdObjects() []createdObject {
 	seen := map[createdObject]bool{}
 	var out []createdObject
-	// walk records every JSON object in v, most-specific-key-first, and
-	// recurses into nested objects and arrays.
-	var walk func(v any, creator string)
-	walk = func(v any, creator string) {
-		switch t := v.(type) {
-		case map[string]any:
-			for _, key := range createdKeys {
-				name, ok := t[key].(string)
-				if !ok {
-					continue
-				}
-				// An empty name creates nothing - admin/client-scopes/create-empty-name
-				// sends one on purpose and is measured answering 400 - and a
-				// {{name}} is a reference a step captures, so no golden holds it
-				// literally. Neither is an object anything could later find.
-				o := createdObject{key: key, name: name, creator: creator}
-				if name != "" && !strings.Contains(name, "{{") && !seen[o] {
-					seen[o] = true
-					out = append(out, o)
-				}
-				break
-			}
-			for _, nested := range t {
-				walk(nested, creator)
-			}
-		case []any:
-			for _, nested := range t {
-				walk(nested, creator)
-			}
-		}
-	}
 	collect := func(r Request, creator string) {
-		body := bytes.TrimSpace(r.Body)
-		if r.Method != http.MethodPost || len(body) == 0 || body[0] != '{' {
-			return
+		for _, o := range objectsCreatedBy(r, creator) {
+			if !seen[o] {
+				seen[o] = true
+				out = append(out, o)
+			}
 		}
-		var doc any
-		if err := json.Unmarshal(body, &doc); err != nil {
-			// A body that does not parse creates nothing, and that is a
-			// measurement rather than a gap: admin/users/create-malformed sends
-			// one on purpose and Keycloak answers 400. Skipping it is the true
-			// answer, not a guard quietly looking away.
-			return
-		}
-		walk(doc, creator)
 	}
 	for name, f := range Fixtures {
 		for _, s := range f.Steps {
@@ -1133,6 +1720,62 @@ func createdObjects() []createdObject {
 		}
 		return out[i].creator < out[j].creator
 	})
+	return out
+}
+
+// objectsCreatedBy is createdObjects for one request, and it is a function of
+// its own so that a test can hand it a body and ask what the reader makes of
+// it. createdKeys' precedence is a property of one body rather than of the
+// catalogue, and a test that can only see the catalogue can only observe the
+// precedence through whichever bodies happen to be in it.
+func objectsCreatedBy(r Request, creator string) []createdObject {
+	body := bytes.TrimSpace(r.Body)
+	if r.Method != http.MethodPost || len(body) == 0 || body[0] != '{' {
+		return nil
+	}
+	var doc any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		// A body that does not parse creates nothing, and that is a
+		// measurement rather than a gap: admin/users/create-malformed sends
+		// one on purpose and Keycloak answers 400. Skipping it is the true
+		// answer, not a guard quietly looking away.
+		return nil
+	}
+	var out []createdObject
+	// walk records every JSON object in v, most-specific-key-first, and
+	// recurses into nested objects and arrays.
+	var walk func(v any)
+	walk = func(v any) {
+		switch t := v.(type) {
+		case map[string]any:
+			for _, key := range readKeys {
+				name, ok := t[key].(string)
+				if !ok {
+					continue
+				}
+				// An empty name creates nothing - admin/client-scopes/create-empty-name
+				// sends one on purpose and is measured answering 400 - and a
+				// {{name}} is a reference a step captures, so no golden holds it
+				// literally. Neither is an object anything could later find.
+				if name != "" && !strings.Contains(name, "{{") {
+					out = append(out, createdObject{
+						key:     creationKeyFamily(key),
+						name:    name,
+						creator: creator,
+					})
+				}
+				break
+			}
+			for _, nested := range t {
+				walk(nested)
+			}
+		case []any:
+			for _, nested := range t {
+				walk(nested)
+			}
+		}
+	}
+	walk(doc)
 	return out
 }
 

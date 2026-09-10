@@ -1,4 +1,4 @@
-# POST /admin/realms/gloak-probe-flow-osb/authentication/flows/f103-nest/executions/flow
+# POST /admin/realms/gloak-probe-flow-osb/authentication/flows/gloak-probe-f103-nest/executions/flow
 HTTP/1.1 201 Created
 Cache-Control: no-cache
 Content-Length: {{volatile}}

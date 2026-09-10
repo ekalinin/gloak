@@ -1477,13 +1477,13 @@ var Fixtures = map[string]Fixture{
 	// The six successes, each on a flow the caller made, because a built-in
 	// flow refuses all six. Every alias differs from every other and from every
 	// seeded one.
-	"auth-flows-own-add":   authFlowOwnFlowFixture(probeFlowOwnAddRealm, "f103-host"),
-	"auth-flows-own-sub":   authFlowOwnFlowFixture(probeFlowOwnSubRealm, "f103-nest"),
-	"auth-flows-own-new":   authFlowOwnFlowFixture(probeFlowOwnNewRealm, "f103-plot"),
-	"auth-flows-own-del":   authFlowOwnExecutionFixture(probeFlowOwnDelRealm, "f103-shed", "deny-access-authenticator"),
-	"auth-flows-own-cfg":   authFlowOwnExecutionFixture(probeFlowOwnCfgRealm, "f103-vane", "identity-provider-redirector"),
-	"auth-flows-own-raise": authFlowOwnPairFixture(probeFlowOwnRaiseRealm, "f103-pair"),
-	"auth-flows-own-lower": authFlowOwnPairFixture(probeFlowOwnLowerRealm, "f103-duet"),
+	"auth-flows-own-add":   authFlowOwnFlowFixture(probeFlowOwnAddRealm, "gloak-probe-f103-host"),
+	"auth-flows-own-sub":   authFlowOwnFlowFixture(probeFlowOwnSubRealm, "gloak-probe-f103-nest"),
+	"auth-flows-own-new":   authFlowOwnFlowFixture(probeFlowOwnNewRealm, "gloak-probe-f103-plot"),
+	"auth-flows-own-del":   authFlowOwnExecutionFixture(probeFlowOwnDelRealm, "gloak-probe-f103-shed", "deny-access-authenticator"),
+	"auth-flows-own-cfg":   authFlowOwnExecutionFixture(probeFlowOwnCfgRealm, "gloak-probe-f103-vane", "identity-provider-redirector"),
+	"auth-flows-own-raise": authFlowOwnPairFixture(probeFlowOwnRaiseRealm, "gloak-probe-f103-pair"),
+	"auth-flows-own-lower": authFlowOwnPairFixture(probeFlowOwnLowerRealm, "gloak-probe-f103-duet"),
 
 	// The scope evaluator. It addresses the default install's own state -
 	// `account` and the bootstrapped administrator - rather than a purpose-made
@@ -7562,7 +7562,7 @@ func authFlowDeleteFixture() Fixture {
 				Method:  http.MethodPost,
 				Path:    "/admin/realms/" + probeFlowDeleteRealm + "/authentication/flows",
 				Headers: authFlowJSONHeaders(),
-				Body: []byte(`{"alias":"f103-doomed","description":"a flow made to be deleted",` +
+				Body: []byte(`{"alias":"gloak-probe-f103-doomed","description":"a flow made to be deleted",` +
 					`"providerId":"basic-flow","topLevel":true,"builtIn":false}`),
 			},
 			ExpectStatus: idempotentCreate,
