@@ -918,6 +918,74 @@ func TestPollutionGuardIgnoresTheBootstrappedFlowAlias(t *testing.T) {
 			"nothing about the corpus - it is the `name manage-realm` situation, " +
 			"and the entry in namedOutsideTheConvention should say so")
 	}
+
+	// And the flows listing is load-bearing, which had to be asserted rather
+	// than assumed: **the mutation that deletes that read survived.**
+	//
+	// `browser` alone does not need it. A realm representation binds the browser
+	// flow, `browserFlow` is a declared spelling, and `GET /admin/realms`
+	// therefore witnesses that one alias on its own - so dropping the flows read
+	// left every other test here green. Measured: all seven top-level flows a
+	// default install ships are named by the realms listing, but six of them are
+	// bound under `registrationFlow`, `directGrantFlow` and the rest, which this
+	// guard does not watch and which section 2.1 of the handover explains are
+	// deliberately unlisted.
+	//
+	// So the flows listing is the only body that names those six, and a case
+	// POSTing `{"alias":"registration"}` to measure the same 409
+	// create-duplicate-alias measures on `browser` is one line away. This asserts
+	// the read carries something nothing else does.
+	bodies := bootstrapListings(t)
+	only := 0
+	for _, alias := range topLevelFlowAliases(t, bodies) {
+		witnesses := 0
+		for _, b := range bodies {
+			if mentions(b, createdObject{key: "alias", name: alias}) {
+				witnesses++
+			}
+		}
+		if witnesses == 1 {
+			only++
+		}
+	}
+	if only == 0 {
+		t.Error("every flow bootstrap ships is named by some listing other than " +
+			"/authentication/flows, so that read carries nothing and the guard " +
+			"would survive its deletion - which it did, before this claim existed")
+	}
+}
+
+// topLevelFlowAliases is the aliases of the flows bootstrap ships, read out of
+// whichever of bootstrapListings' bodies is the flow listing.
+//
+// It is found by shape rather than by index because bootstrapListings appends a
+// variable number of client-role bodies after the fixed ones, so a position
+// would be a constant that drifts the next time a listing is added.
+func topLevelFlowAliases(t *testing.T, bodies [][]byte) []string {
+	t.Helper()
+	for _, b := range bodies {
+		var rows []struct {
+			Alias    string `json:"alias"`
+			TopLevel *bool  `json:"topLevel"`
+		}
+		if err := json.Unmarshal(b, &rows); err != nil || len(rows) == 0 {
+			continue
+		}
+		out := make([]string, 0, len(rows))
+		for _, r := range rows {
+			if r.TopLevel == nil || r.Alias == "" {
+				out = nil
+				break
+			}
+			out = append(out, r.Alias)
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	t.Fatal("none of bootstrapListings' bodies is a flow listing; either the read " +
+		"was dropped or bootstrap stopped shipping flows")
+	return nil
 }
 
 // TestPollutionGuardSeesAnIdentityProviderInTheAccountListing is this cut's
