@@ -301,6 +301,12 @@ var adminCases = []Case{
 			Path:    "/admin/realms/master/clients/{{client_uuid}}",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
+		// No X-Frame-Options: the 204 is empty-bodied and this DELETE declares
+		// no Content-Type, so the request media type is outside the allow-list
+		// of three WriteNoContent reads. This is the first of the four deletes
+		// P2 measured, and the one its wrong rule - "a successful DELETE's 204
+		// omits it" - was generalised from.
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
 	},
 	{
 		ID: "admin/clients/delete-unknown",
@@ -10780,8 +10786,13 @@ var adminCases = []Case{
 			Path:    "/admin/realms/master/identity-provider/instances/gloak-probe-idp-min/export",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
-		AssertHeaders:       []string{"Cache-Control"},
-		AssertAbsentHeaders: []string{"Content-Type"},
+		AssertHeaders: []string{"Cache-Control"},
+		// No X-Frame-Options: the response is empty-bodied and the request
+		// declared no Content-Type, so it is outside the three-media-type
+		// allow-list WriteEmptyStatus reads. The delete two cases up declares
+		// exactly this and this one did not - the same rule, the same fixture,
+		// one case apart.
+		AssertAbsentHeaders: []string{"Content-Type", "X-Frame-Options"},
 	},
 	{
 		// **The body is the bare JSON `false`**, on every provider type. It
@@ -16696,6 +16707,9 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Cache-Control"},
+		// No X-Frame-Options: an empty-bodied response whose request declared
+		// no Content-Type is outside WriteNoContent's allow-list of three.
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
 	},
 	{
 		// **A built-in flow is a 400 with a body**, not a 403 and not a 409 -
@@ -17141,6 +17155,9 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Cache-Control"},
+		// No X-Frame-Options: an empty-bodied response whose request declared
+		// no Content-Type is outside WriteNoContent's allow-list of three.
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
 	},
 
 	// The six writes a built-in flow refuses, done against a flow the caller
@@ -17210,6 +17227,9 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Cache-Control"},
+		// No X-Frame-Options: an empty-bodied response whose request declared
+		// no Content-Type is outside WriteNoContent's allow-list of three.
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
 	},
 	{
 		// The alias-free create, taking its parent by **id in the body** where
@@ -17254,6 +17274,10 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Cache-Control"},
+		// No X-Frame-Options. It is a **POST** with no body and so no
+		// Content-Type, which is the same cell the credential moves are in -
+		// the rule is the request's media type, never the method.
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
 	},
 	{
 		ID: "admin/authentication-management/execution-lower-priority",
@@ -17272,6 +17296,9 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Cache-Control"},
+		// No X-Frame-Options, for raise-priority's reason: a POST with no body
+		// declares no Content-Type.
+		AssertAbsentHeaders: []string{"X-Frame-Options"},
 	},
 	{
 		// The config create against a row the caller owns, which is what says
