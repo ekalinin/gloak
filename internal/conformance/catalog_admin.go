@@ -7743,6 +7743,14 @@ var adminCases = []Case{
 		// The same id, aimed at a container that does not hold it. Same route,
 		// same status, a different body - which is the half of the follow-up's
 		// claim that survived.
+		//
+		// **And a different header set.** This body is
+		// `Duplicate resource error`, so it is in AGENTS.md's fifth exception
+		// and sends none of the five; `-same-container`, one field of the
+		// request away, answers the name conflict and sends all five. The two
+		// are one of the pairs
+		// TestTheDuplicateResourceErrorSplitIsNotDecidedByTheVerb computes
+		// over. See F147.
 		ID: "admin/protocol-mappers/duplicate-id-other-container",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -7762,6 +7770,10 @@ var adminCases = []Case{
 				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}`),
 		},
 		AssertHeaders: []string{"Content-Type"},
+		AssertAbsentHeaders: []string{
+			"Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
+		},
 	},
 	{
 		// **The cell that refutes "the location decides".** Same container,
@@ -7794,6 +7806,14 @@ var adminCases = []Case{
 		// answering identically is what a 2x2 is for; without it the batch
 		// route's answer could still be read as "the location decides, and this
 		// route's local answer happens to be the generic one".
+		//
+		// **The header sets are not twins.** This one and
+		// `-same-container` are the same route, the same verb and the same 67
+		// bytes, and one sends none of the five where the other sends all
+		// five - the pair AGENTS.md's fifth exception cites by name. Declaring
+		// the absence is what keeps that pair asserted from both sides: without
+		// it, a Gloak that started sending the five here "for consistency"
+		// would look like a pass. See F147.
 		ID: "admin/protocol-mappers/add-models-duplicate-id-other-container",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -7813,6 +7833,10 @@ var adminCases = []Case{
 				`"protocol":"openid-connect","protocolMapper":"oidc-usermodel-attribute-mapper"}]`),
 		},
 		AssertHeaders: []string{"Content-Type"},
+		AssertAbsentHeaders: []string{
+			"Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
+		},
 	},
 	{
 		// **A body wrong in both ways at once, and the name answers.** The id
@@ -7868,6 +7892,12 @@ var adminCases = []Case{
 	},
 	{
 		// A create whose nested mapper carries an id another container holds.
+		//
+		// `Duplicate resource error`, so none of the five security headers -
+		// AGENTS.md's fifth exception, on a third route and a third family. The
+		// sibling below, `-in-body`, answers the *name* conflict for a body
+		// whose two mappers share an id and sends all five, which is the same
+		// split one case apart. See F147.
 		ID: "admin/client-scopes/create-duplicate-mapper-id",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -7887,6 +7917,10 @@ var adminCases = []Case{
 				`"protocolMappers":[` + f78HeldMapper + `]}`),
 		},
 		AssertHeaders: []string{"Content-Type"},
+		AssertAbsentHeaders: []string{
+			"Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
+		},
 	},
 	{
 		// The refused create left nothing behind. Without this the 409 above is
@@ -7939,6 +7973,10 @@ var adminCases = []Case{
 		// The client create's two cells, the same pair over the other kind of
 		// container. Its local message names the clientId where the scope's
 		// names the scope.
+		//
+		// This cell is the generic `Duplicate resource error`, so it sends none
+		// of the five - AGENTS.md's fifth exception - and `-in-body` below,
+		// which answers the local message, sends all five. See F147.
 		ID: "admin/clients/create-duplicate-mapper-id",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -7958,6 +7996,10 @@ var adminCases = []Case{
 				`"protocolMappers":[` + f78HeldMapper + `]}`),
 		},
 		AssertHeaders: []string{"Content-Type"},
+		AssertAbsentHeaders: []string{
+			"Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
+		},
 	},
 	{
 		ID: "admin/clients/create-duplicate-mapper-id-in-body",
@@ -7988,6 +8030,11 @@ var adminCases = []Case{
 		// mapper is in another *realm* and the create is still a 409, so the
 		// uniqueness is server-wide. A realm-wide index answers this one 201
 		// and passes every other case in this family.
+		//
+		// It is the `Duplicate resource error` body, so none of the five
+		// security headers - AGENTS.md's fifth exception, and the one golden of
+		// the family recorded against a realm other than master, which rules
+		// the realm out as the thing that decides the header set. See F147.
 		ID: "admin/client-scopes/create-duplicate-mapper-id-across-realms",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -8007,10 +8054,18 @@ var adminCases = []Case{
 				`"protocolMappers":[` + f78HeldMapper + `]}`),
 		},
 		AssertHeaders: []string{"Content-Type"},
+		AssertAbsentHeaders: []string{
+			"Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
+		},
 	},
 	{
 		// The fifth route. An id another container holds is the generic 409
-		// here as everywhere else.
+		// here as everywhere else - and, with it, none of the five security
+		// headers. It is one of the `PUT`s
+		// TestTheDuplicateResourceErrorSplitIsNotDecidedByTheVerb counts on the
+		// "none" side, and that verb answers this body both ways, which is the
+		// claim the test asserts. See F147.
 		ID: "admin/clients/update-duplicate-mapper-id",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -8029,6 +8084,10 @@ var adminCases = []Case{
 			Body: []byte(`{"protocolMappers":[` + f78HeldMapper + `]}`),
 		},
 		AssertHeaders: []string{"Content-Type"},
+		AssertAbsentHeaders: []string{
+			"Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
+		},
 	},
 	{
 		// **A sixth body, and it is not a 409 at all.** Two entries sharing an
@@ -9504,7 +9563,11 @@ var adminCases = []Case{
 		// endpoint and it was wrong.
 		//
 		// The 409 also **drops the five security headers**, which the strict
-		// 400 and the bad-enum 400 on this same route do not.
+		// 400 and the bad-enum 400 on this same route do not. The body is
+		// `Duplicate resource error`, so this is AGENTS.md's fifth exception
+		// rather than anything about this route - see F147. Two of the five
+		// were declared here and the sentence above claimed all five; the
+		// mirror rule is what made the other three visible.
 		ID: "admin/authz-resource-server/put-no-decision-strategy",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -9522,8 +9585,11 @@ var adminCases = []Case{
 			},
 			Body: []byte(`{"name":"gloak-probe-authz-conflict"}`),
 		},
-		AssertHeaders:       []string{"Content-Type"},
-		AssertAbsentHeaders: []string{"X-Frame-Options", "Referrer-Policy"},
+		AssertHeaders: []string{"Content-Type"},
+		AssertAbsentHeaders: []string{
+			"Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
+		},
 	},
 	{
 		// The gate. A client without authorizationServicesEnabled answers this
@@ -11227,7 +11293,9 @@ var adminCases = []Case{
 		// **The update's 409 is `Duplicate resource error` and carries none of
 		// the five security headers**, where the create's names the resource
 		// and carries all five. The two cases above and this one are the
-		// assertion; any one of them alone is a body.
+		// assertion; any one of them alone is a body. AGENTS.md's fifth
+		// exception, F147 - and one of the five was declared here against a
+		// sentence claiming all five, until the mirror rule counted them.
 		ID: "admin/authz-resource-server/resource-put-conflict",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
@@ -11246,8 +11314,11 @@ var adminCases = []Case{
 			},
 			Body: []byte(`{"name":"gloak-probe-yankee"}`),
 		},
-		AssertHeaders:       []string{"Content-Type"},
-		AssertAbsentHeaders: []string{"X-Frame-Options", "Cache-Control"},
+		AssertHeaders: []string{"Content-Type"},
+		AssertAbsentHeaders: []string{
+			"Cache-Control", "Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
+		},
 	},
 	{
 		// The delete's 204: **no Cache-Control**, a ninth measured delete, and
@@ -12314,6 +12385,13 @@ var adminCases = []Case{
 				`"identityProviderMapper":"oidc-username-idp-mapper"}`),
 		},
 		AssertHeaders: []string{"Content-Type"},
+		// The comment above said "none of the five" and nothing asserted it,
+		// which is what the mirror rule is for: the sentence was written when
+		// this case was, and the declaration was not.
+		AssertAbsentHeaders: []string{
+			"Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
+		},
 	},
 	{
 		// **A name the alias already holds is a 400, not a 409**, and the
@@ -16484,8 +16562,13 @@ var adminCases = []Case{
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}", "Content-Type": "application/json"},
 			Body:    []byte(`{"alias":"gloak-probe-f103-no-provider"}`),
 		},
-		AssertHeaders:       []string{"Content-Type"},
-		AssertAbsentHeaders: []string{"Cache-Control"},
+		AssertHeaders: []string{"Content-Type"},
+		// The five are AGENTS.md's fifth exception - see F147. Only
+		// Cache-Control was declared, against a comment claiming the five.
+		AssertAbsentHeaders: []string{
+			"Cache-Control", "Referrer-Policy", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
+		},
 	},
 	{
 		// A taken alias, naming it in the message. It names a **seeded** alias,
