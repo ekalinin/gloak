@@ -656,18 +656,23 @@ var samlCases = []Case{
 			Section:   "SAML endpoint: an AuthnRequest whose Destination is not this server",
 			Retrieved: "2026-09-11",
 		},
-		// The Destination rung. The message names port 8080 and the server is
-		// on neither 8080 nor whatever testcontainers mapped, so this request
-		// is refused on **both** sides for the same reason and carries no port
-		// dependency of its own.
+		// The Destination rung, and the spelling is chosen so that it is wrong
+		// on **both** sides for two different reasons. The message names
+		// `http://localhost:8080/realms/master/protocol/saml/descriptor`: the
+		// recorder's container is on a mapped port, so the host is wrong there;
+		// the harness serves on localhost:8080, so the host is **right** here
+		// and the path is what refuses it. A handler comparing only the origin
+		// would pass this case under the harness, which is the half a literal
+		// naming a wrong port could not pin.
 		//
-		// Two things are pinned here that nothing else pins. The comparison is
-		// **exact**: a trailing slash, `https` for `http`, `127.0.0.1` for
+		// The comparison is **exact**, measured one cell at a time on
+		// 2026-09-11: a trailing slash, `https` for `http`, `127.0.0.1` for
 		// `localhost`, the port left off, a query appended, another realm and
-		// another path were each measured refused on 2026-09-11. And the page
-		// **names the client**, where the `Invalid Request` at the Issuer rung
-		// does not - one sentence, two bodies, and the golden is what tells
-		// them apart.
+		// another path are all refused.
+		//
+		// And the page **names the client**, where the `Invalid Request` at the
+		// Issuer rung does not - one sentence, two bodies, and the golden is
+		// what tells them apart.
 		//
 		// Implemented since 2026-09-11 by handler.samlEndpoint.
 		Status:  Implemented,
@@ -1297,11 +1302,11 @@ const probeAuthnRequestBearerOnlyClient = "fI%2BxSgRBDIZfZUk%2FZ3YKwXC7cHDNgDYqF
 	"cVGNJxgnQ8vRXNH6fN9MwwvLD5ojJB3CEMyb1xEq9Z6gQR423AuzCOz2MkREJ8hbn%2FTz1p" +
 	"c3eF7go%2F%2B3DmbGz7m%2BvQ7%2FS38vwdAAD%2F%2Fw%3D%3D"
 
-const probeAuthnRequestWrongDestination = "fJDPSsRADIdfpcy9O9MeZA3bwkIvBb2oePCyxBq2xWlSJxnw8WVHhPWyx%2Fz5yJffQXGNGx" +
-	"yzzfxEX5nUqu81skIZdC4nBkFdFBhXUrAJno%2BPD9DuAmxJTCaJ7gq5TaAqJVuEXTUOnRuH" +
-	"0zkKfp62JO%2FkqldKugh3rt0FV42qmUZWQ7bOtaG9q8N93TQvTQshQAhvrhpIbWG0Qs1mG3" +
-	"gfZcI4ixrswz74RBhX9SuqUfJ%2Fzv4i6%2FryP5RLqS8udXGpL%2F06sy5npo%2BDv177rf" +
-	"6H1v8EAAD%2F%2Fw%3D%3D"
+const probeAuthnRequestWrongDestination = "fJBNS8NAEIb%2FSth7upscpA5NoJBLQC8qHryUNR2axc1MnJmAP1%2B6ItSLx%2Fl4eB%2Fe" +
+	"g8Ylr3DcbKYn%2FNxQrfpaMimUQ%2Bc2IeCoSYHiggo2wfPx8QHaXYBV2Hji7G6Q%2F4moim" +
+	"KJyVXj0LlxOF0yx4%2FTKvyOrnpF0cTUuXYXXDWqbjiSWiTrXBvauzrc103z0rQQAoTw5qoB" +
+	"1RJFK9RstoL3maeYZ1aDfdgHLxjzon6Jaij%2B19lfZf0ZdZK0GovrSxVQQqUvWnXRqq%2F7" +
+	"eiNNF8Lzwd%2B%2B%2FUx%2F%2B%2Bu%2FAwAA%2F%2F8%3D"
 
 const probeAuthnRequestNoAssertionConsumer = "fI%2FBSgQxDIZfZci9a6YHwbAzsLCXgl5UPHhZ6hrWYicZmxZ8fLFexssek%2FzfR%2F69xS" +
 	"WvdGj1Qx75q7HV4XvJYtQPE7QipNGSkcSFjeqZng4P9%2BR3SGvRqmfNsEGuE9GMS00qMITj" +
