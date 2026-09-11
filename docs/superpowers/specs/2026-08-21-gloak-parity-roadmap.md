@@ -285,7 +285,48 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-10 (thirty-third fold).** `make conformance` reports **578 of
+**Updated 2026-09-11 (thirty-fourth fold).** `make conformance` reports **578 of
+631, no change**. F181 is closed, and the header bullet's table is gone from
+AGENTS.md.
+
+**The brief's number was wrong, and that is the finding.** I told the cut the
+rule fires on 87 goldens. It fires on **18**: over 1089 goldens, 134 omit at
+least one of the five and **116 already declared every omission**. 87 is
+AGENTS.md's own table cell - `no Content-Type … 87 four of five` - computed over
+921 goldens on 2026-09-06, counting something else, and by 2026-09-11 that cell
+had itself moved to 98. **I read the number instead of the list and wrote it into
+an instruction**, which is exactly the rot F181 existed to stop. The table has
+been replaced by a pointer to the test that computes it.
+
+**The rule is demonstrated rather than assumed.** The same deletion of a
+declaration is killed by the new rule and **survives the old one** - I reproduced
+both rows. Every one of the 18 fits a declared bucket, none did not, and bucket
+F's control has no off-diagonal cell: 105 empty-bodied goldens whose request
+media type is allow-listed all carry `X-Frame-Options`, and the 98 whose is not
+all omit it.
+
+**It found a divergence on its first full run**, which is what a rule of this
+shape is for. `admin/identity-providers/mappers-create-no-name` records a 409
+with none of the five and Gloak sends all five: one call site of thirteen writes
+through `httpx.WriteOAuthError` instead of `writeDuplicateResource`. Older than
+the cut, invisible until a declaration was asked for, parked with a ratchet
+rather than fixed - because a test sweep does not carry a handler fix. F226.
+
+**And the eighth correction to that bullet.** `GET /auth`'s and `GET /logout`'s
+redirects are **not** a per-endpoint rule: across ten request media types on one
+302 with a byte-identical `Location`, they follow the same allow-list of three
+with parameters cut untrimmed as every other empty-bodied response. The sweep
+that wrote "per endpoint" sent seven rejections and **no `Content-Type` on any of
+them** - P2's Task 11's mistake in a second place, five months apart. Gloak
+deletes the header unconditionally, so it is a divergence, and F220 records that
+the fix needs a recorded case before the handler can move.
+
+**One survivor, found and closed by the cut itself.** Dropping
+`http.CanonicalHeaderKey` from both sides passed the whole suite, because every
+golden and every declaration is spelled canonically and nothing exercised the
+folding. Read rather than reported, and killed.
+
+**Earlier on 2026-09-10 (thirty-third fold).** `make conformance` reports **578 of
 631, no change** - the whole cut is inside the harness, and F195 is closed.
 
 **The finding is that F195's own remedy would not have closed it.** The entry

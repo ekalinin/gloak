@@ -163,20 +163,22 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   with its feature off, which is `CLIENT_TYPES`' situation - the constant is the
   contract.
 - **They are not five headers with one rule. They are four with one rule and
-  `X-Frame-Options` with its own.** Computed over all 921 committed goldens on
-  2026-09-06:
-
-  ```
-  application/json    693 all five,  14 none
-  text/html            15 all five
-  text/plain            7 four of five, missing X-Frame-Options
-  no Content-Type     105 all five,  87 four of five, missing X-Frame-Options
-  ```
-
-  **No golden carries a partial set except one missing exactly
-  `X-Frame-Options`.** That single fact is what says the grouping was wrong, and
-  it took a recount because the first one counted the presence of *one* header
-  and was written up as a statement about five.
+  `X-Frame-Options` with its own.** **No golden carries a partial set except one
+  missing exactly `X-Frame-Options`**, and that is computed rather than written
+  here: `TestEveryGoldenMissingASecurityHeaderDeclaresItAbsent` requires every
+  omission in the tree to be declared on its case, so the omissions are a
+  **catalogue rather than a paragraph**.
+  **The numbers that used to be here are gone on purpose.** They were computed
+  over 921 goldens on 2026-09-06; the tree holds 1089, and on 2026-09-11 one of
+  the table's cells - `no Content-Type … 87 four of five` - was read by a later
+  cut as a count of *undeclared* omissions and written into a brief as one. It
+  is not that: the real figure was **18**, and the cell itself had moved to 98.
+  A count in prose beside the list it counts will rot, and this one rotted into
+  an instruction. The list is the answer.
+  The partial-set fact is what says the grouping was wrong, and it took a
+  recount to get, because the first one counted the presence of *one* header and
+  was written up as a statement about five. That is the same defect the vanished
+  table went on to commit a second time.
 
   **`Referrer-Policy`, `Strict-Transport-Security`, `X-Content-Type-Options` and
   `X-Robots-Tag` are on everything**, with three exceptions:
@@ -219,6 +221,12 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
     cases is what pins it: `AssertHeaders` can only check a header that is named,
     so without the negative, the day Gloak starts sending the five here "for
     consistency" looks like a pass;
+
+    A comment claiming a header is absent is not an assertion. Four cases carried
+    a sentence saying "none of the five" while declaring one or two of them, and
+    nothing in the repository compared the sentence to the list. One of them was
+    describing a response Gloak had never sent - F226 - and the prose had been
+    right and unchecked for nine days.
   - **the `Duplicate resource error` family** gets none, and nobody has explained
     why. `TestTheDuplicateResourceErrorSplitIsNotDecidedByTheVerb` computes the
     tally rather than this bullet carrying it. Ruled out by goldens already here:
@@ -1002,15 +1010,23 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `state=` comes back as `state=`; an absent `state` comes back as three keys
   rather than an empty fourth. `nonce`, `login_hint` and `ui_locales` are not
   echoed at all.
-- **`GET /auth`'s redirect back to the client is the one response in the
-  browser flow that omits `X-Frame-Options`,** measured across seven different
-  rejections including the one that sets cookies, and it omits
-  `Content-Security-Policy` with it. It is not "errors omit them":
-  `POST /login-actions/authenticate`'s *error* redirect, to the same URI with
-  the same status, carries all six. It is not "302s omit them", for the same
-  reason. It is not "failures omit them": `prompt=none` with a live session
-  redirects with a real code and omits them too. RP-initiated logout's redirect
-  behaves the same way, so the rule is per endpoint.
+- **`GET /auth`'s and `GET /logout`'s redirects back to the client obey the
+  empty-body rule, not a rule of their own.** They were recorded as "this
+  endpoint's redirect" from a sweep of seven rejections that all sent no
+  request `Content-Type` - which is P2's Task 11's mistake in a second place.
+  Measured 2026-09-11 on one 302 with a byte-identical `Location`
+  across ten request media types: `application/json`, `application/xml`,
+  `application/x-www-form-urlencoded` and `application/json;charset=UTF-8`
+  carry `X-Frame-Options`; absent, `application/yaml`, `application/ld+json`,
+  `text/plain`, `*/*` and `application/json ; charset=UTF-8` do not. That is the
+  allow-list of three with parameters cut untrimmed. **Gloak deletes the header
+  unconditionally in `WriteAuthorizationRedirect` and `WriteLogoutRedirect`,
+  which is a divergence, not a copy** - F220.
+- **`Content-Security-Policy` on those redirects is a separate rule and it is
+  one media type wide.** Only `application/x-www-form-urlencoded` gets it;
+  `application/json` carries `X-Frame-Options` and not this. The two headers
+  move together in every committed golden because the corpus holds only the two
+  extreme cells - F221.
 - **`response_mode` moves the parameters and changes the status.** `query` and
   absent use the query, `fragment` the fragment, and `form_post` answers **200**
   with an auto-submitting form whose `Content-Type` is `text/html` with **no
