@@ -12396,13 +12396,15 @@ var adminCases = []Case{
 				`"identityProviderMapper":"oidc-username-idp-mapper"}`),
 		},
 		AssertHeaders: []string{"Content-Type"},
-		// The comment above said "none of the five" and nothing asserted it,
-		// which is what the mirror rule is for: the sentence was written when
-		// this case was, and the declaration was not.
-		AssertAbsentHeaders: []string{
-			"Referrer-Policy", "Strict-Transport-Security",
-			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
-		},
+		// **The five are deliberately not declared here, and that is a
+		// divergence rather than an omission.** The golden records none of
+		// them; Gloak sends all five, because createIdentityProviderMapper
+		// writes this 409 through httpx.WriteOAuthError where the other twelve
+		// goldens of the family go through internal/admin's
+		// writeDuplicateResource, which deletes them. Declaring the absence is
+		// what the mirror rule asks for and it turns this case red, so the
+		// entry lives in omissionsGloakStillSends in catalog_test.go with the
+		// reason and comes out with the fix. See F226.
 	},
 	{
 		// **A name the alias already holds is a 400, not a 409**, and the

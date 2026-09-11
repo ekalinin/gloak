@@ -3,6 +3,7 @@ package conformance
 import (
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -57,7 +58,12 @@ func TestEveryGoldenMissingASecurityHeaderDeclaresItAbsent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the corpus: %v", err)
 	}
+	excused := map[string]bool{}
 	for _, f := range findings {
+		if _, listed := omissionsGloakStillSends[caseIDOf(f.path)]; listed {
+			excused[caseIDOf(f.path)] = true
+			continue
+		}
 		t.Errorf("%s does not carry %s and no case declares %s absent.\n"+
 			"Every golden missing one of the five security headers must say so in\n"+
 			"AssertAbsentHeaders, with a comment naming which of AGENTS.md's measured\n"+
@@ -66,13 +72,61 @@ func TestEveryGoldenMissingASecurityHeaderDeclaresItAbsent(t *testing.T) {
 			f.path, strings.Join(f.undeclared, ", "), plural(len(f.undeclared)))
 	}
 
+	// The ratchet. An entry nothing uses is a reason nobody has re-read, and the
+	// way this list empties is that somebody fixes the handler and writes the
+	// declaration - at which point the entry stops matching and has to go.
+	stale := make([]string, 0, len(omissionsGloakStillSends))
+	for id := range omissionsGloakStillSends {
+		if !excused[id] {
+			stale = append(stale, id)
+		}
+	}
+	sort.Strings(stale)
+	for _, id := range stale {
+		t.Errorf("omissionsGloakStillSends excuses %q and its golden's omissions are "+
+			"declared now; drop the entry and let the mirror rule hold it", id)
+	}
+
 	// A sweep that read nothing and a sweep that found nothing are the same
 	// colour otherwise, and a -run selector naming the wrong package has already
 	// produced the first one in this project.
 	if read == 0 {
 		t.Fatal("read no goldens at all, so this test asserted nothing")
 	}
-	t.Logf("checked %d goldens", read)
+	t.Logf("checked %d goldens, %d excused", read, len(excused))
+}
+
+// omissionsGloakStillSends is every golden whose omission is measured, real and
+// **not declarable today**, because Gloak sends the header where the recording
+// has none. Declaring one of these is correct and turns TestConformance red, so
+// the entry buys the rule its coverage of everything else at the price of a
+// reason somebody has to read.
+//
+// It is namedOutsideTheConvention's bargain and inertMasksLeftInPlace's: a list
+// with a ratchet over it, refusing an entry no golden uses. What it must never
+// become is a place to put an omission nobody has explained - those are findings
+// and belong in a handover, which is why each value here names the divergence,
+// the two call sites that differ and the follow-up that closes it.
+//
+// Keyed by case ID rather than by path, because the reader of the entry wants
+// the case.
+var omissionsGloakStillSends = map[string]string{
+	"admin/identity-providers/mappers-create-no-name": "F226. The golden records " +
+		"a 409 `Duplicate resource error` with none of the five, which is AGENTS.md's " +
+		"fifth exception, and the case's own comment has said so since 2026-09-02. " +
+		"Gloak sends all five: createIdentityProviderMapper writes this 409 through " +
+		"httpx.WriteOAuthError, where the other twelve goldens carrying this body go " +
+		"through internal/admin's writeDuplicateResource, which deletes them first. " +
+		"The divergence is older than this list and was invisible until the mirror " +
+		"rule asked for the declaration. Fixing it is a handler change and does not " +
+		"belong in the sweep that found it.",
+}
+
+// caseIDOf turns a golden's path back into the case ID that names it, which is
+// GoldenPath run backwards. Every path the sweep reports came from the corpus
+// walk, so this is a display concern rather than a parse that can fail.
+func caseIDOf(path string) string {
+	return strings.TrimSuffix(filepath.ToSlash(strings.TrimPrefix(path, goldenDir+string(filepath.Separator))), ".http")
 }
 
 // securityHeaderOmission is one golden that omits a security header its case
