@@ -213,4 +213,24 @@ func TestTheMirrorHeaderRuleCanFail(t *testing.T) {
 	if _, got, _ := undeclaredSecurityHeaderOmissions(part, declared); len(got) != 1 || len(got[0].undeclared) != 5 {
 		t.Errorf("a golden the catalogue does not name was excused: %+v", got)
 	}
+
+	// Both sides are canonicalised, and **nothing in the committed tree tests
+	// it**: every golden spells its headers canonically because recordedHeaders
+	// reads Go's header map, whose keys are canonical by construction, and every
+	// declaration in the catalogue is written that way too. Dropping the
+	// canonicalisation was a mutation that survived the whole suite. The
+	// dangerous direction is the golden's: a head spelling `x-frame-options`
+	// would look to a raw comparison like a header that is not there, and the
+	// omission it really is would go unreported.
+	lower := map[string][]byte{"c.http": []byte("# GET /probe\n" +
+		"HTTP/1.1 200 OK\n" +
+		"referrer-policy: no-referrer\n" +
+		"strict-transport-security: max-age=31536000; includeSubDomains\n" +
+		"x-content-type-options: nosniff\n" +
+		"x-frame-options: SAMEORIGIN\n" +
+		"x-robots-tag: none\n" +
+		"\n")}
+	if _, got, _ := undeclaredSecurityHeaderOmissions(lower, nil); len(got) != 0 {
+		t.Errorf("a golden spelling its headers in lower case was read as omitting them: %+v", got)
+	}
 }
