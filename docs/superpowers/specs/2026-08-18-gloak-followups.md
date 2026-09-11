@@ -5222,7 +5222,40 @@ removal, and the same answer: the guard has to be a package test over a real
 repository is asserted anywhere, so building it for SAML alone leaves the other
 producers unguarded.
 
-## F181: an absent-header declaration removed is invisible, and the mirror rule sweeps the tree
+## F181: an absent-header declaration removed is invisible, and the mirror rule sweeps the tree (fixed 2026-09-11)
+
+**Closed, and the sweep was six times smaller than this entry said.** The rule
+fires on **18 goldens, not 87**: over 1089 goldens, 134 omit at least one of the
+five and **116 already declared every header they omit**.
+
+**Where 87 came from is the point.** It is AGENTS.md's own table cell -
+`no Content-Type … 87 four of five` - computed over 921 goldens on 2026-09-06,
+counting something else entirely, and by 2026-09-11 that cell had itself moved
+to 98. A brief read the number instead of the list and wrote it in as an
+instruction. **That is precisely the rot this entry existed to stop**, committed
+by the entry's own follow-through. The table is gone from AGENTS.md now.
+
+**Demonstrated rather than assumed**: the same deletion of a declaration is
+killed by the new rule and **survives the old one**, which is the hole this entry
+named. Every one of the 18 fits a declared bucket - **none did not fit** - and
+the bucket F control has no off-diagonal cell: 105 empty-bodied goldens whose
+request media type is allow-listed all carry `X-Frame-Options`, and the 98 whose
+is not all omit it.
+
+**The rule found a divergence on its first full run.**
+`admin/identity-providers/mappers-create-no-name` records a 409 with none of the
+five and Gloak sends all five - one call site of thirteen writes the body through
+`httpx.WriteOAuthError` instead of `writeDuplicateResource`. Older than the cut
+and invisible until a declaration was asked for. Parked with a ratchet, F226.
+
+**And an eighth correction to the header bullet**, measured: `GET /auth`'s and
+`GET /logout`'s redirects are **not** a per-endpoint rule. They follow the same
+allow-list of three request media types, parameters cut untrimmed, as every other
+empty-bodied response. The sweep that wrote "per endpoint" sent seven rejections
+and no `Content-Type` on any of them - P2's Task 11's mistake in a second place.
+Gloak deletes the header unconditionally, so that is a divergence: F220.
+
+## F181 (original): the entry as filed on 2026-09-07
 
 `TestAssertAbsentHeadersAgreeWithTheGolden` checks every absent-header
 declaration against the recorded bytes and **cannot catch one being deleted** - a
@@ -6017,3 +6050,116 @@ somebody edited without re-recording. The reason it is a follow-up rather than
 part of this cut: the request line holds the *unexpanded* path for some cases
 and the expanded one for others, so the comparison needs measuring before it can
 be written.
+
+## F220: `GET /auth` and `GET /logout` omit `X-Frame-Options` by request media type, and Gloak omits it always
+
+Section 5 is the measurement. Gloak's `WriteAuthorizationRedirect` and
+`WriteLogoutRedirect` call `Del("X-Frame-Options")` unconditionally; Keycloak
+deletes it only when the request's media type is outside the allow-list of three.
+
+The fix is the two writers taking `*http.Request` and reusing
+`framedRequestMediaTypes`, which is the check `WriteNoContent` and
+`WriteEmptyStatus` already share - so it is a shared predicate gaining a third
+and fourth caller rather than new logic. What makes it a cut rather than a
+one-liner is the golden: **no committed case sends a `Content-Type` on a `GET` to
+either endpoint**, so the change is unassertable today. It needs one new case per
+endpoint sending `Content-Type: application/json`, recorded, before the handler
+moves - otherwise the fix is a change no test can distinguish from the bug.
+
+Worth doing in the same cut: the six `POST {{login_action}}` 302s carry the
+header today for the right reason by accident, and nothing says so.
+
+## F221: `Content-Security-Policy` on the client redirect is one media type wide
+
+Section 5.1. `application/x-www-form-urlencoded` gets it and `application/json`
+does not, on a response whose `Location` is byte-identical either way. Gloak
+sends it on neither.
+
+This is stranger than F220 and should not be folded into it. `X-Frame-Options`
+follows a three-member allow-list that eight other measured cells agree with;
+this follows a one-member list that nothing else in the project matches. The
+entry is to measure it on a second endpoint before believing it is a rule at all
+- `GET /logout` already agrees, so the third should be outside the browser flow,
+and `POST /login-actions/authenticate` with a JSON `Content-Type` is the sharpest
+because it sends the header today.
+
+## F222: the `OPTIONS` 200 cell says "no golden records it" and two do
+
+AGENTS.md's bullet reads *"on an `OPTIONS` 200 (measured on four endpoints, no
+golden records it)"*. `saml/descriptor/options` and `account/dispatch/options`
+record it, both declared. The parenthesis is stale rather than wrong, and it is
+the kind of stale that makes a reader go and measure something the tree already
+holds.
+
+The entry is one sentence, and it is filed rather than folded because the same
+paragraph needs F220's rewrite and the two should land together.
+
+## F223: the empty-body 2x2 is computed here and asserted nowhere
+
+Section 2.5 computes it: 105 goldens whose request media type is allow-listed
+carry `X-Frame-Options`, 98 whose is not omit it, and there is no off-diagonal
+cell. The mirror rule asserts the second column - every omission is declared - and
+**nothing asserts the first**. A new golden landing in the wrong cell of the
+first column is caught by its own case's `AssertHeaders` only if somebody
+remembered to name the header there, which is the asymmetry
+`AssertAbsentHeaders`' doc comment is about, pointing the other way.
+
+The shape is the one `TestTheDuplicateResourceErrorSplitIsNotDecidedByTheVerb`
+already uses: compute the 2x2 over the tree and assert the claim rather than the
+counts, so a cut that adds a golden moves the numbers and leaves the claim
+standing. The reason it is not in this cut: it needs the request's media type,
+which means joining the catalogue to the corpus for a property the goldens do not
+record, and it wants deciding whether a `Pending` case's request counts.
+
+## F224: `TestTheDuplicateResourceErrorSplit...` does not pin the size of the set
+
+M8 removed `X-Frame-Options` from `theFiveSecurityHeaders` and that test stayed
+green. It counts headers present and compares against `len(theFiveSecurityHeaders)`,
+so the slice shrinking to four re-labels "four of five" as "all of them" and every
+tally still lands in a bucket it recognises. The mirror rule's guard does kill
+M8, so the set's size is pinned in the package - by the wrong test.
+
+A one-line `if len(theFiveSecurityHeaders) != 5` in `headersplit_test.go` closes
+it. It is filed rather than done because it belongs to that test's cut and this
+one had no business editing it.
+
+## F226: `createIdentityProviderMapper`'s 409 sends the five where Keycloak sends none
+
+Section 4.5. The thirteenth call site of a 409 `Duplicate resource error` in
+`internal/admin`, and the only one that does not go through
+`writeDuplicateResource`:
+
+```go
+// internal/admin/identityprovidermappers.go
+if body.Name == "" {
+    httpx.WriteOAuthError(w, http.StatusConflict, "conflict", "Duplicate resource error")
+    return
+}
+```
+
+The measurement is the committed golden,
+`admin/identity-providers/mappers-create-no-name`, recorded from a live 26.7.1 by
+this project's own recorder, and the case's comment describes it: the 409 sends
+none of the five while the duplicate-name 400 and the empty-body 500 on the same
+route, same verb and same request `Content-Type` send all five.
+
+The fix is `writeDuplicateResource(w)` - same package, already exported to the
+file's neighbours, already carrying the doc comment that explains why the delete
+is there. Two things to do with it rather than just the one line:
+
+- **take the entry out of `omissionsGloakStillSends` and write the declaration**,
+  or the ratchet will say so anyway;
+- **ask whether the other twelve reached `writeDuplicateResource` by rule or by
+  luck.** Twelve of thirteen is the ratio that suggests a convention nobody
+  wrote down. If there is one, `internal/admin` wants a single writer for this
+  body rather than a helper somebody has to remember; if there is not, the
+  thirteen want a test that enumerates them.
+
+## F225: `TestAssertAbsentHeadersAgreeWithTheGolden` has M7 unclosed
+
+Section 4.4 closed the canonicalisation survivor for the mirror rule. The test on
+the other side of the mirror canonicalises identically and has the same untested
+folding, and its exposure is the same: a golden hand-edited to spell a header in
+lower case would make a declaration that contradicts it read as agreeing.
+
+The fix is the same one cell. It is filed rather than done for F224's reason.
