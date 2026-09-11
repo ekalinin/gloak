@@ -706,6 +706,35 @@ func writeThemeHTMLPolicy(w http.ResponseWriter, status int, cacheControl, body,
 	suppressDate(w)
 	SetSecurityHeaders(w)
 	w.Header().Set("Content-Security-Policy", policy)
+	writeThemeHTMLBody(w, status, cacheControl, body)
+}
+
+// WriteThemeErrorPageBare writes the theme error page **without** the five
+// security headers and without a Content-Security-Policy.
+//
+// That set is not a variant anybody would invent; it is measured, and it is the
+// sharpest instance of the rule AGENTS.md records as having been wrong six
+// times. `GET /realms/{realm}/protocol/saml` and
+// `GET /realms/{realm}/protocol/openid-connect/auth` answer the **byte-identical**
+// 3572-byte page and their header sets are complementary: the SAML one sends a
+// Cache-Control and nothing else, the OIDC one sends all six and no
+// Cache-Control. One path segment further down,
+// `/protocol/saml/clients/{name}` answers the same template with all six again -
+// so this is a property of the one endpoint and not of SAML, and
+// WriteThemeErrorPage is what that neighbour uses.
+//
+// Re-measured 2026-09-11 at socket level on every rung of that endpoint's
+// ladder - Invalid Request, Login requester not enabled, Wrong client protocol.,
+// Bearer-only…, Invalid requester and Invalid redirect uri - and all six carry
+// the same three headers and no others.
+func WriteThemeErrorPageBare(w http.ResponseWriter, status int, cacheControl string,
+	c ThemeChrome, instruction string) {
+	suppressDate(w)
+	writeThemeHTMLBody(w, status, cacheControl, themeErrorPageBody(c, instruction))
+}
+
+// writeThemeHTMLBody is the part of the envelope both header sets share.
+func writeThemeHTMLBody(w http.ResponseWriter, status int, cacheControl, body string) {
 	if cacheControl != "" {
 		w.Header().Set("Cache-Control", cacheControl)
 	}
