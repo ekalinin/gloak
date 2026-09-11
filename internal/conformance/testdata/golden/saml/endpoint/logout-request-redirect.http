@@ -1,0 +1,7 @@
+# GET /realms/master/protocol/saml
+HTTP/1.1 500 Internal Server Error
+Cache-Control: no-store, must-revalidate, max-age=0
+Content-Length: {{volatile}}
+Content-Type: application/json
+
+{"error":"unknown_error","error_description":"For more on this error consult the server log."}
