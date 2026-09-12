@@ -252,6 +252,30 @@ func TestRedirectSignatureVerifies(t *testing.T) {
 	if verifyRedirectSignature(client, tampered) {
 		t.Fatal("a signature over a different message was accepted")
 	}
+
+	// **The escaping is not normalised, in both directions.** The signed bytes
+	// are the query as sent, so a RelayState spelled with `%20` verifies against
+	// a signature made over `%20` and the same query with `+` does not - measured
+	// on a live 26.7.1 on 2026-09-11, and it is the input a mutation pass needed:
+	// a verifier that decoded the parameters and re-encoded them with
+	// url.QueryEscape would write `+` for both and get the first wrong.
+	//
+	// The accepting half is a golden as well -
+	// saml/endpoint/redirect-binding-signature-over-a-relay-state - and the
+	// refusing half is only here, because its answer is byte-identical to the
+	// tampered case's.
+	escaped := "SAMLRequest=" + url.QueryEscape(message) +
+		"&RelayState=gloak%20relay%20state" +
+		"&SigAlg=" + url.QueryEscape(samlSHA256SigAlg)
+	if !verifyRedirectSignature(client, escaped+"&Signature="+
+		url.QueryEscape(samlSign(t, key, escaped))) {
+		t.Error("a RelayState spelled with %20 and signed over %20 was refused")
+	}
+	if verifyRedirectSignature(client,
+		strings.ReplaceAll(escaped, "%20", "+")+"&Signature="+
+			url.QueryEscape(samlSign(t, key, escaped))) {
+		t.Error("a RelayState respelled with + was accepted against the %20 signature")
+	}
 }
 
 // TestRedirectSignatureAcceptsExactlyTheMeasuredSigAlgs pins the set, which is

@@ -768,6 +768,7 @@ func TestThemeResourceAppearsOnlyInTheThemePages(t *testing.T) {
 		"saml/endpoint/unregistered-assertion-consumer-url":             7,
 		"saml/endpoint/saml-response-parameter":                         7,
 		"saml/endpoint/redirect-binding-signature-accepted":             7,
+		"saml/endpoint/redirect-binding-signature-over-a-relay-state":   7,
 		"saml/endpoint/redirect-binding-signature-over-another-message": 7,
 		"saml/idp-initiated/unclaimed-name":                             7,
 		"saml/idp-initiated/client-id-is-not-the-name":                  7,

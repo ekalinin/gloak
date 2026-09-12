@@ -857,6 +857,52 @@ var samlCases = []Case{
 		},
 	},
 	{
+		ID: "saml/endpoint/redirect-binding-signature-over-a-relay-state",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/saml/index",
+			Section:   "SAML endpoint: a signed AuthnRequest carrying a RelayState",
+			Retrieved: "2026-09-11",
+		},
+		// **The case a mutation pass asked for**, and the one that says the
+		// signed bytes are the query **as sent** rather than a re-encoding of
+		// the decoded values.
+		//
+		// The `RelayState` here is `gloak%20relay%20state`, and the signature was
+		// made over that exact spelling. `url.QueryEscape` writes a space as
+		// `+`, so an implementation that decoded the parameters and re-encoded
+		// them would hash `RelayState=gloak+relay+state` and fail - which is
+		// precisely the implementation the pass produced and which every other
+		// case in this chapter satisfied, because the literals they carry were
+		// escaped by Go in the first place.
+		//
+		// Both directions are measured on one container on 2026-09-11:
+		//
+		//	RelayState=gloak%20relay%20state, signed over it   accepted
+		//	the same query and signature with `+` for `%20`    Invalid requester
+		//
+		// So Keycloak is not normalising either, and the second half is asserted
+		// in TestRedirectSignatureVerifies rather than as a second golden,
+		// because its answer is byte-identical to the case below's.
+		//
+		// Implemented since 2026-09-11 by handler.samlEndpoint.
+		Status:  Implemented,
+		Fixture: "saml-signed-client",
+		Request: Request{
+			Method:   http.MethodGet,
+			Path:     "/realms/master/protocol/saml",
+			RawQuery: probeAuthnRequestSignedRelayState,
+		},
+		AssertHeaders: []string{"Cache-Control", "Content-Language", "Content-Type"},
+		AssertAbsentHeaders: []string{
+			"Content-Security-Policy",
+			"Referrer-Policy",
+			"Strict-Transport-Security",
+			"X-Content-Type-Options",
+			"X-Frame-Options",
+			"X-Robots-Tag",
+		},
+	},
+	{
 		ID: "saml/endpoint/redirect-binding-signature-over-another-message",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/securing-apps/saml/index",
@@ -1258,41 +1304,53 @@ var samlCases = []Case{
 const samlSignedClientCertificate = "MIICvzCCAaegAwIBAgIBATANBgkqhkiG9w0BAQsFADAiMSAwHgYDVQQDExdnbG9hay1wcm9i" +
 	"ZS1zYW1sLXNpZ25lZDAgFw0yNjAxMDEwMDAwMDBaGA8yMTI2MDEwMTAwMDAwMFowIjEgMB4G" +
 	"A1UEAxMXZ2xvYWstcHJvYmUtc2FtbC1zaWduZWQwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAw" +
-	"ggEKAoIBAQD6I7XO9q4uEGy5oXcCjQmte2EIg5yigqSXrsB0Y8wUJkpkuAs6eDLjg7vgh7y9" +
-	"tRF70Wc1kfN11qVwcsp8MdFxQRbumTR7qv8IKetoDrhDoBnzdxRoEJyd69JzGChBT328282D" +
-	"QaXnP0p2wt3r6bZqnF7rteJl7ne3+WXkNoSTM3DjvZ9Eeb7ySNqL2XMFbRmPInf4St5GikB1" +
-	"4BbJ0aQK8uud5Ck6+vwF2qGLzoEgXJ0TgOkNPtL1C+ITSidoy2FC7A4MyGhUHOagsFhdcmgF" +
-	"F3/Ffvt0g9RetSXHzSvTKS1kzCKup7FA0rP0EqCrwhKi3XS3CFc5VJx3Ytv5Oc8JAgMBAAEw" +
-	"DQYJKoZIhvcNAQELBQADggEBACdyE4qZ1JsPPY7y8AxCyyH3eNSNxGZ/PrcUkQwmkvHHoiQc" +
-	"wpAWaW2x8b3shHPwHR/xf4ZXhWd0g/4VnSxAvXotE7m26Qp7X6byrN/anhUDtKwpY6EOVmgD" +
-	"FpD8cpFyFh+N9MNUMAYvfcp7VVFckILeHUlqx9aqYkWHNfCiQnNzJQW+orHiP9yJ1mEz1aDn" +
-	"2UHlIlg/GKIuOvTJpl7DKi/9OPIsW979RDf9Vw4KVqDQiFpUKLkS/Dhk7q1wuCQgpNynBqhW" +
-	"KUmjirionW5wFIphFzzmMRnpctvDyoFjy+psZ6TM3SE4lFzRRRVfNdkaxnOjB4dmlMy/4Sh6" +
-	"KDCQm+M="
+	"ggEKAoIBAQDUE2DjFDgTaUNM3BJ/NhWiYArAHPpaoHqYpmgGHjYVW+F0zClWRln32a9G1co+" +
+	"XqPQ4lUMDNCSPluwR3SLQIHH4nmaCNY1vZCSRzwxFkxIKt/waZFu3hYtva4RH+ki7mxam+GS" +
+	"xbYE3MqA6y7nuBMSnu1cyA2kWMvZ9mVrfBucTYqGVtidi1Ybx1ZTNabbICQai//w7QZF6Xdi" +
+	"9Gu75kKoMPg4sUMjDb5jismhUqxaclqhAU64UkglWT+KiQzhxn1523MYW+3c9vZUzd+nM3hR" +
+	"sWFZjFIT9IDQ/965CXmRliDcP4BNcMtUrEZaR/bcwOri05dcKHuXCHroCBDRUXsLAgMBAAEw" +
+	"DQYJKoZIhvcNAQELBQADggEBAJ3y1wqyG/rEaEnoKltFdwHzMAcSyVThqo9lUPwVr4UbdRud" +
+	"4u14ld0sMivJIfbCs3uGpyzdf0w5s0MirXq+2tadU9phPLRK6QdnVwSE2C8YWXJy1YyNiIvU" +
+	"+lCQmieLRd07u7G08DchV1EDtqPgALk9kK2+btzsoYerbPHRDeT5hMMXF0Kr3zPXhUm5XPhA" +
+	"wy+lelyoKHhP4qx1TT2RX4fGiE4/nyi5HwJxv/4uEev+aMNxSP6HdAdn0lEUyksre/11tUoh" +
+	"uhfrI9ndOsjnEoPDxie9wizuTdK1Z05XADPPzt/ciqOo1fTVlA8V832Nak8TLZqjhCjAG+eU" +
+	"OYDZXIc="
 
 const probeAuthnRequestSignedQuery = "SAMLRequest=fI%2FBSgQxDIZfZci9a6YHwbAzsLCXgl5UPHhZ6hrWYicZmxZ8fLFexssek%" +
 	"2FzfR%2F69xSWvdGj1Qx75q7HV4XvJYtQPE7QipNGSkcSFjeqZng4P9%2BR3SGvRqmfNsEGu" +
 	"E9GMS00qMITjBOF4umSNn6e16BvD8MLFksoEfocwBLPGQaxGqRN49LcO79w4Po%2BeEAnxFe" +
 	"b%2BP%2FVkmbvLdZf73TtLF%2BH3%2Fc029Df9rzz%2FBAAA%2F%2F8%3D&SigAlg=http%3" +
-	"A%2F%2Fwww.w3.org%2F2001%2F04%2Fxmldsig-more%23rsa-sha256&Signature=IeO%" +
-	"2FBHFIDpp%2Fkyzpu7aEgyGZmiHj1BTup178wY7j2lRhjDpBBDdLcI0%2FgIKLu8Zb7Lrsuz" +
-	"ocFi7YP5ivFAT9SQbng7sBhMw%2FxP3nA6jCo9hTfzi2g0ynlZxy9%2FTXKN%2F90JPLrAde" +
-	"%2BMK%2FHSivW2D%2FCW3tLC%2FFSlP0g9l8lOd44HUnDEdwboTiEwv4jaSTpdkw8AQ9D5ii" +
-	"vyR9eZr1IgObbLOvR8YxaStNEc6uuu95P6wubdptB7yT4McO1k53Y40lkZkJ4GZi1aBDMUU7" +
-	"rUcqkfclcEULlF7rFTNvLOTUBs6GNsBQtvO7Gzaevl8VALKWa8lBvPGgmBP6dzG5eEVqgg%3" +
-	"D%3D"
+	"A%2F%2Fwww.w3.org%2F2001%2F04%2Fxmldsig-more%23rsa-sha256&Signature=a3VE" +
+	"LlWEy5KbbUT0bjnjUkjnvh0aC%2FESZw22J%2FiwALYG7VPo1I9fJcu3in%2B%2FFUgAbKKu" +
+	"4o5moLGShLLOWlpiRFk5DrY7S0c2KV%2Fvejt7m5U6n4sKC0WbUtbY6xhpVJN9jKfc%2BH%2" +
+	"FPgrW0jfBJR%2FDsmnT79h1%2FxgCEKNmavYz%2BXaSyD%2BfmQRSPLa%2FtnP03KRWwCjYB" +
+	"OGGuXdvWj1gW8%2FixFJCBRKw2i7KiBVTcXKiCQkCOU5LMum9OsHdWu8cH%2BfZcIhgw1JlX" +
+	"rC0p%2Fd7wapS0W2AZmliQyHstpyYjd1R4ar%2BGzVutEcYTR7NXLlqo98bj5Y7kV2fbBm%2" +
+	"B6Ksgo5NmHew%3D%3D"
+
+const probeAuthnRequestSignedRelayState = "SAMLRequest=fI%2FBSgQxDIZfZci9a6YHwbAzsLCXgl5UPHhZ6hrWYicZmxZ8fLFexssek%" +
+	"2FzfR%2F69xSWvdGj1Qx75q7HV4XvJYtQPE7QipNGSkcSFjeqZng4P9%2BR3SGvRqmfNsEGu" +
+	"E9GMS00qMITjBOF4umSNn6e16BvD8MLFksoEfocwBLPGQaxGqRN49LcO79w4Po%2BeEAnxFe" +
+	"b%2BP%2FVkmbvLdZf73TtLF%2BH3%2Fc029Df9rzz%2FBAAA%2F%2F8%3D&RelayState=gl" +
+	"oak%20relay%20state&SigAlg=http%3A%2F%2Fwww.w3.org%2F2001%2F04%2Fxmldsig" +
+	"-more%23rsa-sha256&Signature=xZ4rBd%2BZ27GGptGpNiwx9MIJEa%2FlAzpqneJtgmH" +
+	"B23gb3Pjm1pr37A2bpIUGmIiqdvJr50TtKh%2BlLgWosD%2Bkn9ttwa4KXcmeuYGrLYJZr3r" +
+	"A9HfzI7%2BplklpNX1JHOwKXiMxPkM7iwRStSi2Uu%2BzoO46reLEQwjfZsAMLfPrT%2Fs2t" +
+	"eydTHqoLbmb9TCvCAYiMZBHZH0k1BrjevWUCYvpFPm2Y3%2FfaUNOEsMNuPAgDKvmXPlN9oU" +
+	"rKHMUKcXLy8wHanuVVOhXvcNeeQe4Vq2g6TYO4Gu2pAIsYbMRhkYNzIEW09P%2FalJuPWhZX" +
+	"dZh3KkUs2Uuw8Mzy0bYEXMWBfsFOw%3D%3D"
 
 const probeAuthnRequestSignatureOverAnotherMessage = "SAMLRequest=fI%2FBSgNBDIZfZcl9anYOgqG7UOhlQC8qIl7KWEMdnE3WyQz4%2BNLxUi89" +
 	"Jvm%2Fj%2Fxbi0teadfqpzzyd2Orw8%2BSxagfJmhFSKMlI4kLG9UjPe0e7slvkNaiVY%2Ba" +
 	"4QK5TkQzLjWpwBD2E4T94ZQ1fh3Wou%2BvMLxwsaQygd8gDMGscRCrUeoEHv2twzs3js%2Bj" +
 	"J0RCfIO5%2F089WebucmcXu%2FPeWToJf2xvLkN%2F0%2F%2FK828AAAD%2F%2Fw%3D%3D&S" +
 	"igAlg=http%3A%2F%2Fwww.w3.org%2F2001%2F04%2Fxmldsig-more%23rsa-sha256&Si" +
-	"gnature=IeO%2FBHFIDpp%2Fkyzpu7aEgyGZmiHj1BTup178wY7j2lRhjDpBBDdLcI0%2FgI" +
-	"KLu8Zb7LrsuzocFi7YP5ivFAT9SQbng7sBhMw%2FxP3nA6jCo9hTfzi2g0ynlZxy9%2FTXKN" +
-	"%2F90JPLrAde%2BMK%2FHSivW2D%2FCW3tLC%2FFSlP0g9l8lOd44HUnDEdwboTiEwv4jaST" +
-	"pdkw8AQ9D5iivyR9eZr1IgObbLOvR8YxaStNEc6uuu95P6wubdptB7yT4McO1k53Y40lkZkJ" +
-	"4GZi1aBDMUU7rUcqkfclcEULlF7rFTNvLOTUBs6GNsBQtvO7Gzaevl8VALKWa8lBvPGgmBP6" +
-	"dzG5eEVqgg%3D%3D"
+	"gnature=a3VELlWEy5KbbUT0bjnjUkjnvh0aC%2FESZw22J%2FiwALYG7VPo1I9fJcu3in%2" +
+	"B%2FFUgAbKKu4o5moLGShLLOWlpiRFk5DrY7S0c2KV%2Fvejt7m5U6n4sKC0WbUtbY6xhpVJ" +
+	"N9jKfc%2BH%2FPgrW0jfBJR%2FDsmnT79h1%2FxgCEKNmavYz%2BXaSyD%2BfmQRSPLa%2Ft" +
+	"nP03KRWwCjYBOGGuXdvWj1gW8%2FixFJCBRKw2i7KiBVTcXKiCQkCOU5LMum9OsHdWu8cH%2" +
+	"BfZcIhgw1JlXrC0p%2Fd7wapS0W2AZmliQyHstpyYjd1R4ar%2BGzVutEcYTR7NXLlqo98bj" +
+	"5Y7kV2fbBm%2B6Ksgo5NmHew%3D%3D"
 
 const probeAuthnRequestDisabledClient = "fI%2FBSgQxDIZfZci9a6YHwbAzsLCXgl5UPHhZurtBi51kbFrw8cV6GS8ek%2FzfR%2F69xS" +
 	"WvdGj1XR75s7HV4WvJYtQPE7QipNGSkcSFjeqFng4P9%2BR3SGvRqhfNsEH%2BJ6IZl5pUYA" +
