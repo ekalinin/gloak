@@ -293,6 +293,44 @@ func TestRedirectSignatureAcceptsExactlyTheMeasuredSigAlgs(t *testing.T) {
 	}
 }
 
+// TestSigAlgHashesAndNewSigAlgHashAgree makes the two halves of the SigAlg gate
+// one claim instead of two.
+//
+// **It exists because a mutation that added rsa-sha384 to `sigAlgHashes` alone
+// survived the whole tree, and correctly so**: newSigAlgHash's switch does not
+// know that digest, so it hands back nil and verifyRedirectSignature refuses the
+// request anyway. The edit changed text and not behaviour, which is F208's shape
+// - it passes every empty-diff guard a harness can have and then passes the
+// tests, and lands in a report in the same column as a real finding.
+//
+// The ratchet is cheap and it is the only thing that can catch that edit: a
+// digest named in the map must be one this build can hash with, and a digest
+// this build can hash with must be one the map names. With both directions
+// asserted, adding to either list alone fails and adding to both is a real
+// mutation that TestRedirectSignatureAcceptsExactlyTheMeasuredSigAlgs kills.
+func TestSigAlgHashesAndNewSigAlgHashAgree(t *testing.T) {
+	named := map[crypto.Hash]bool{}
+	for alg, digest := range sigAlgHashes {
+		if newSigAlgHash(digest) == nil {
+			t.Errorf("%s names %v and newSigAlgHash cannot build it", alg, digest)
+		}
+		named[digest] = true
+	}
+	// The other direction. Every digest newSigAlgHash answers must be one the
+	// map names, or the switch is advertising a capability no SigAlg reaches.
+	for _, digest := range []crypto.Hash{
+		crypto.SHA1, crypto.SHA224, crypto.SHA256, crypto.SHA384, crypto.SHA512,
+	} {
+		if newSigAlgHash(digest) != nil && !named[digest] {
+			t.Errorf("newSigAlgHash builds %v and no SigAlg in sigAlgHashes names it", digest)
+		}
+	}
+	if len(sigAlgHashes) != 3 {
+		t.Errorf("sigAlgHashes holds %d entries; three were measured accepted, "+
+			"and rsa-sha384 was measured refused", len(sigAlgHashes))
+	}
+}
+
 // TestClientRequiresSignatureComparesTheExactString pins the case-sensitive
 // equality.
 //

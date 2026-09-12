@@ -1103,12 +1103,14 @@ var samlCases = []Case{
 		// same page as well, which saml/endpoint/disabled-client's declarations
 		// and this one's spell out side by side.
 		//
-		// The check runs before the protocol one: this client's protocol is
-		// `saml`, and its enabled flag is what answers, but a **disabled
-		// openid-connect** client carrying the same kind of attribute was
-		// measured answering `Client disabled.` too rather than
-		// `Wrong client protocol.`, so the order is enabled-then-protocol on
-		// this route as on the endpoint.
+		// **The client is an `openid-connect` one, and that is what makes this
+		// case worth having.** It answers `Client disabled.` rather than
+		// `Wrong client protocol.`, so the enabled check really does run first.
+		// The fixture created a SAML client until a mutation pass swapped the
+		// two checks and survived: with the protocol right, a protocol-first
+		// ladder reaches the enabled check anyway and gives the same answer. A
+		// disabled client whose protocol is **wrong** is the only input that
+		// separates the two orders.
 		//
 		// Implemented since 2026-09-11 by handler.samlIdPInitiated.
 		Status:  Implemented,

@@ -3,7 +3,7 @@ package oidc
 import (
 	"crypto"
 	"crypto/rsa"
-	"crypto/sha1" //nolint:gosec // SHA-1 is one of the four SigAlg values SAML defines; see sigAlgHashes.
+	"crypto/sha1" //nolint:gosec // SHA-1 is one of the three SigAlg values measured accepted; see sigAlgHashes.
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/x509"
@@ -92,6 +92,14 @@ import (
 //
 // A `SigAlg` naming sha256 with a sha512 signature under it is refused too, so
 // the URI decides the digest rather than being advisory.
+//
+// **This map is half the gate and newSigAlgHash's switch is the other half**,
+// and the asymmetry is worth naming because a mutation pass walked into it:
+// adding rsa-sha384 *here* alone changes nothing observable, because the switch
+// then hands back a nil hash and the request is refused anyway. That is a
+// textual edit with no behaviour behind it - F208's shape - and it passed every
+// test in the tree. TestSigAlgHashesAndNewSigAlgHashAgree is the ratchet that
+// makes the two lists one claim, so the same edit now fails.
 var sigAlgHashes = map[string]crypto.Hash{
 	"http://www.w3.org/2000/09/xmldsig#rsa-sha1":        crypto.SHA1,
 	"http://www.w3.org/2001/04/xmldsig-more#rsa-sha256": crypto.SHA256,
@@ -101,6 +109,9 @@ var sigAlgHashes = map[string]crypto.Hash{
 // newSigAlgHash is crypto.Hash.New without the import of every digest into the
 // call site. crypto.Hash.New panics for a hash whose package is not linked in,
 // so the three packages are imported above and this switch is what links them.
+//
+// It is deliberately a switch over the three and not `h.New()`, so that a
+// SigAlg naming a digest this build does not link cannot panic a request.
 func newSigAlgHash(h crypto.Hash) hash.Hash {
 	switch h {
 	case crypto.SHA1:

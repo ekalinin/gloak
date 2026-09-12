@@ -1687,16 +1687,24 @@ var Fixtures = map[string]Fixture{
 		`{"clientId":"gloak-probe-saml-bearer","protocol":"openid-connect","enabled":true,`+
 			`"bearerOnly":true}`),
 
-	// The two clients that claim an IdP-initiated SSO name and cannot use it.
+	// The two clients that claim an IdP-initiated SSO name and cannot use it,
+	// and **both are `openid-connect`**.
 	//
-	// One is a **disabled** SAML client, which answers `Client disabled.` here
-	// and `Login requester not enabled` on /protocol/saml one path segment up -
-	// one client, one state, two sentences. The other is an enabled
-	// **openid-connect** client, which answers `Wrong client protocol.` rather
-	// than `Client not found.`, so the name is looked up across protocols and
-	// the protocol check is a rung of its own.
+	// That is the same trick saml-refused-clients plays and it is here because a
+	// mutation pass found the hole. The disabled one was a SAML client first,
+	// and swapping the route's enabled and protocol checks then **survived**:
+	// with the protocol right, a protocol-first ladder reaches the enabled check
+	// anyway and answers `Client disabled.` all the same. A **disabled
+	// openid-connect** client is the input that separates the two orders, and it
+	// was measured answering `Client disabled.` and not `Wrong client
+	// protocol.`, so the enabled check really does run first.
+	//
+	// The enabled one answers `Wrong client protocol.` rather than
+	// `Client not found.`, which is what says the name is looked up across
+	// protocols and the protocol check is a rung of its own.
 	"saml-idp-initiated-clients": samlClientsFixture(
-		`{"clientId":"gloak-probe-sso-disabled-client","protocol":"saml","enabled":false,`+
+		`{"clientId":"gloak-probe-sso-disabled-client","protocol":"openid-connect",`+
+			`"enabled":false,`+
 			`"attributes":{"saml_idp_initiated_sso_url_name":"gloak-probe-sso-disabled"}}`,
 		`{"clientId":"gloak-probe-sso-oidc-client","protocol":"openid-connect","enabled":true,`+
 			`"attributes":{"saml_idp_initiated_sso_url_name":"gloak-probe-sso-oidc"}}`),
