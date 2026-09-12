@@ -223,7 +223,7 @@ operations is allocated below; none is left unassigned.
 | P10 third cut | The resource family, **done 2026-09-01** | P10 second cut | `admin/authz-resource-server` 13->22 - the whole resource family, listing and search included. **The "permanently-`[]` listings" were not permanently `[]`**: they were empty because nothing had been created, and `GET /resource` is served by the real store here. Nine remain: policy 4, permission 4, import 1, and they need the **typed per-provider representation** that `GET .../permission` uses and `GET .../policy` does not - not the "provider model before `POST` means anything" F129 claimed, since a policy needs a `type` and nothing else | 9 ops |
 | P10 fourth cut | Policy, permission and import, **done 2026-09-02** | P10 third cut | `admin/authz-resource-server` 22->29. **The nine policy types have eight representations over one stored map** - a projection table, not nine structures - which is what F129 meant by "a provider model" and did not say. Two operations remain, the `evaluate` pair, and they need an RPT from `internal/token`: F148 | 7 ops |
 | P10 first cut | The resource server and the twelve refusals | P5 | `admin/authz-resource-server` 0->5, and **three chapters closed outright**: `admin/roles` 28/28, `admin/roles-by-id` 10/10, `admin/groups` 11/11. The gate is the **client's** `authorizationServicesEnabled` and it runs **before** authorization - a fourth gate shape in four families | 17 ops |
-| **P11** | SAML 2.0, **first cut done 2026-09-07** | P4 | descriptors, SSO and SLO bindings. The chapter had no denominator at all; it has one now - **72 measured pairs over five route shapes**, of which 18 are counted and one is served. The second cut is the SSO flow and it needs F175 | +18 to the denominator |
+| **P11** | SAML 2.0, **first cut done 2026-09-07, SSO ladder done 2026-09-12** | P4 | descriptors, SSO and SLO bindings. The chapter had no denominator at all; it has one now - **72 measured pairs over five route shapes**, of which 31 are counted and **25 served**. The second cut took the SSO endpoint's whole seven-rung ladder and the IdP-initiated route; **F175 was refuted rather than built**, and what remains is the assertion builder and the SAML session store, F227 | +31 to the denominator, 25 ops |
 | **P12** | Organizations and Workflows, **first cut done 2026-08-31** | P4 | Organizations 36, Workflows 9. **The row's 45 is 56**: eleven more operations live under `/organizations/{org-id}/groups/.../role-mappings` and are counted under `Role Mapper` and `Client Role Mappings`, so building this unlocks them. 47 operations live under `/organizations` in all | 56 ops |
 | P12 second cut | Members, invitations and linked brokers, **done 2026-09-02** | P12 first cut | `admin/organizations` 6->24. A member **is a user**, addressed by the user id, and `POST .../members` takes it as **raw bytes rather than JSON**. Nineteen routes, five different role conjunctions, and no single role opens any of them. **F120 is unblocked** - the hidden root group's name and path are the organization's own id - leaving the eleven group operations as ordinary work. One operation is left, F153: it overlaps a sibling on one path and `ServeMux` panics | 18 ops |
 | P12 third cut | Organization groups and their role mappings, **done 2026-09-03** | P12 second cut | `admin/organizations` 24->35, and **`admin/role-mapper` 12->18 and `admin/client-role-mappings` 10->15 are complete** - the third locator of two tags served twice before. **Only three of the eleven group operations behave like the realm group family's**, and the key sets are disjoint. F120 closed. One operation is left, F153's member route | 22 ops |
@@ -250,11 +250,11 @@ operations is allocated below; none is left unassigned.
 | Partial export | `partial-export` and `partialImport`, **done 2026-09-06** | P14 | `admin/realms-admin` 42->44. The export is `GET /admin/realms/{realm}` **spliced**, not transcribed, so `realmrep.go` stays the one truth. Answers F163: the parse code separates **syntax from binding**, not shapes | 2 ops |
 | Certificate remainder | The `Client Attribute Certificate` tag's last three, **done 2026-09-06** | F161, F38 | `admin/client-attribute-certificate` 4->5, and **+1 counted, +3 served**: `download` and `generate-and-download` are built and uncounted, because no golden can hold a keystore. The dependency question **inverted** - `x/crypto/pkcs12` is already direct and cannot read Keycloak's BouncyCastle BER, so `internal/keystore` was written and no module added. BCFKS is a deliberate divergence, F171 | 1 op |
 
-Denominator today: **413 Admin API operations plus 218 protocol and account
-behaviours, 631 enumerated**, plus **two** chapters (parts of P13 and P14) whose
+Denominator today: **413 Admin API operations plus 231 protocol and account
+behaviours, 644 enumerated**, plus **two** chapters (parts of P13 and P14) whose
 surface is not counted and which the report says so about - P11 left that list on
-2026-09-07 and the account API on 2026-09-08. Served: **578 of 631** after the realm
-resource's 404, and **P2, P4 and P5 are complete** -
+2026-09-07 and the account API on 2026-09-08. Served: **598 of 644** after P11's
+second cut, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -285,7 +285,50 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-11 (thirty-fourth fold).** `make conformance` reports **578 of
+**Updated 2026-09-12 (thirty-fifth fold).** `make conformance` reports **598 of
+644**, +20 - the largest single move since the account chapter, and the first in
+four folds where the meter moved at all.
+
+**The ladder is seven rungs, not five, and two of them are not where a reader
+would put them.** The disabled and bearer-only checks run **before** the protocol
+check - measurable only with `openid-connect` clients, which is the one input
+that separates the orders. The first cut's "client, protocol, signature" put two
+checks on the wrong side, and that bullet is corrected here.
+
+**`Fixture.SAMLRequests` is refuted, not deferred, and that is the round's
+lesson.** F175 rested on two premises and both measured false: an `AuthnRequest`
+needs **no `Destination`** - absent and empty both reach the login page, only a
+non-empty one is compared, and only a message carrying a `Signature` parameter is
+required to have one - and a signing key is a spellable client attribute. So the
+port comes out of the message, a literal `AuthnRequest` works on whatever port
+testcontainers maps, and the field was never needed.
+
+The entry was careful in exactly the right way and still wrong: it said a field
+with one consumer is machinery with no consumer wearing a coat, and it deferred
+rather than declined. What nobody did - not its author, not the reviewer who
+confirmed the deferral - was check the premise the deferral rested on. **A
+deferral inherits every assumption of the thing it defers.**
+
+**The verifier has a positive control and the killer is a golden.** A signature
+verifier that rejects everything passes every test whose inputs are all
+rejections, which is this project's named failure shape at its worst, and the
+brief said so. It is killed by
+`saml/endpoint/redirect-binding-signature-accepted` - **a recording of Keycloak,
+not a restatement of Gloak** - and I reproduced both directions.
+
+**F208 got its first exception.** A digest added to `sigAlgHashes` alone is a null
+edit, because `newSigAlgHash`'s switch is the other half of the gate - the cut
+caught that in its own pass, **before reporting it**, and closed it with a ratchet
+that makes the two halves agree. I confirmed the ratchet fires. My own review
+then produced a fourth null-edit mutation of my own, which is three times now.
+
+**The escaping is not normalised in either direction.** `RelayState=gloak%20relay%20state`
+signed over that spelling is accepted and the same query with `+` is
+`Invalid requester`, so a verifier that decodes and re-encodes with
+`url.QueryEscape` gets it wrong. One case in the tree sees that, and it exists
+because a mutation pass asked for it.
+
+**Earlier on 2026-09-11 (thirty-fourth fold).** `make conformance` reports **578 of
 631, no change**. F181 is closed, and the header bullet's table is gone from
 AGENTS.md.
 

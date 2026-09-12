@@ -5061,7 +5061,34 @@ documentation edited and **not committed**, and the mutation harness's
 mutation pass will revert" is not advice about tidiness: a harness that reverts
 to HEAD silently eats the work that explains why the mutation matters.
 
-## F175: `Fixture.SAMLRequests`, deferred to the cut that would use it
+## F175: `Fixture.SAMLRequests`, deferred to the cut that would use it (**refuted** 2026-09-12)
+
+**Not built, and not because the cut ran out of room - both halves of the
+argument below measured false.**
+
+- **An `AuthnRequest` needs no `Destination`.** No attribute at all, and
+  `Destination=""`, both reach the login page; only a **non-empty** one is
+  compared, and only a message carrying a `Signature` parameter is required to
+  have one. So the port comes out of the message, a literal `AuthnRequest` works
+  on whatever port testcontainers maps, and the reason no literal could be
+  written was never true.
+- **A signing key is spellable too.** `saml.signing.certificate` is an ordinary
+  client attribute; the fixture pins one and the catalogue carries three queries
+  signed offline against it.
+
+`saml/endpoint/login-page` is still `Pending`, for the blocker that was always
+the real one - a per-request `tab_id` and `session_code`, F113 - but it is now
+**sendable**, which is exactly the unlock this entry predicted and the field was
+not needed to get.
+
+**Worth keeping for the shape.** The entry was careful in the right way: it said a
+field with one consumer is machinery with no consumer wearing a coat, and it
+deferred rather than declined. What it did not do was check the premise the
+deferral rested on. **A deferral inherits every assumption of the thing it
+defers**, and this one was confirmed twice - once by its author and once by a
+reviewer - without either asking whether `Destination` was mandatory.
+
+## F175 (original): the entry as filed on 2026-09-07
 
 `saml/endpoint/login-page` is measured and **unsendable**. An `AuthnRequest` has
 to name the server's own base URL in its `Destination`, and it is
@@ -6163,3 +6190,167 @@ folding, and its exposure is the same: a golden hand-edited to spell a header in
 lower case would make a declaration that contradicts it read as agreeing.
 
 The fix is the same one cell. It is filed rather than done for F224's reason.
+
+## F227: the SAML assertion builder and the SAML session store, which are one cut
+
+Everything left in this chapter is behind one thing: Gloak can read a SAML
+request and refuse it correctly, and cannot answer one. Three behaviours need the
+same two pieces.
+
+- **`saml/endpoint/login-page`.** A request that passes every rung answers a
+  login page over the HTTP-Redirect binding and a **302 into
+  `/login-actions/authenticate`** over the HTTP-POST binding - measured
+  2026-09-11, and the two bindings really do differ there, which is a second
+  finding the first cut's 72 pairs did not hold. Finishing the flow means an
+  authentication session carrying the request's `ID`, its `RelayState` and its
+  resolved assertion consumer URL, and an ending that builds a signed
+  `samlp:Response` and posts it.
+- **The two `LogoutRequest` 500s.** They are Keycloak failing to end a session
+  that does not exist. Serving them means having sessions that can exist.
+- **The signed-request `Destination`.** A signed message must name the server's
+  own URL, so a catalogue case that walks past the `Destination` rung **with** a
+  signature needs a signature computed against the recorder's base URL - which is
+  F175's field, with a consumer this time. It is filed here rather than left open
+  as F175 because the argument for it is now a different argument: not "no
+  literal works", but "no literal works *for the signed case above the
+  `Destination` rung*". Nothing today needs that, and the day something does it
+  should be built then.
+
+The order matters: the assertion builder is what makes the login page's ending
+true, and the session store is what makes the logout 500s true. Neither is
+worth building without the other.
+
+## F228: `saml.force.post.binding` and the response bindings were not measured
+
+Every created SAML client carries `saml.force.post.binding: "true"`, and the
+descriptor advertises four `SingleSignOnService` bindings. Nothing in this cut
+sent a request that reaches the point where the response binding is chosen,
+because that point is past the login page.
+
+It is filed rather than swept because the attribute is on by default, so
+whatever it does is what a default client gets, and a builder written without
+measuring it will be wrong on every client nobody configured.
+
+## F229: the HTTP-POST binding's XML signature is not verified
+
+`verifySAMLSignature` reports a POST **unverified** rather than refused, so a
+POST carrying a `<ds:Signature>` from a client requiring one falls through to the
+404 rather than getting `Invalid requester`. Every unsigned POST is answered
+correctly, which is why `saml/endpoint/post-binding-saml-client` is served and
+matches.
+
+The gap is exclusive canonicalisation. Before reaching for a module, the rule at
+the top of AGENTS.md applies as the first cut applied it to `encoding/xml`:
+**prove with bytes** that the standard library cannot do it, and make the
+refutation a test. The shape is `TestEncodingXMLCannotEmitTheDescriptor`'s.
+
+The measured input this needs is one nobody has sent: a **correctly signed**
+HTTP-POST `AuthnRequest`. This cut signed the redirect binding and did not sign
+the POST one, so what Keycloak answers a valid POST signature is measured by
+inference only - the client's `saml.client.signature` is one flag for both
+bindings and an unsigned POST is `Invalid requester`, which says the check runs,
+and nothing says what passing it looks like.
+
+## F230: a golden that moves between recorder runs, and a shared `internalId` space
+
+`admin/identity-providers/mapper-types-unsupported` recorded a 500 on one
+`make record` run and a 200 on the next, on the same tree. Reverted; §4 has the
+diff and the third draw.
+
+**The third draw says the golden is wrong.** Ten requests across three
+containers, one of them brand new with the request as the first thing to touch
+the provider, all answered 200 with six mapper types for
+`linkedin-openid-connect`. `openshift-v4` answers the 500 on four draws. The
+case's comment claims both providers do.
+
+The mechanism to look at first is that the identity-provider fixtures share one
+`internalId` space with literal collisions:
+`1de07000-0000-4000-8000-000000000020` and `…021` are minted both by
+`idp-mt-oidc`/`idp-mt-saml` and by the listing fixture's `strand`/`zzz` loop,
+and every one of those creates accepts a 409 through `idempotentCreate`. A
+fixture whose create silently collides leaves a different resource behind than
+the case thinks, and which one wins is decided by the order the recorder happens
+to run in.
+
+Two things to settle, in this order: whether the 500 can be reproduced at all on
+a container where nothing else ran, and whether the collisions are the reason.
+The second is cheap to test - give every fixture its own suffix and re-record.
+
+## F231: a malformed percent-escape is a 400 with no body, and it is the whole server's
+
+`?x=%%%%` and `?x=%zz` answer `400` with an **empty body and no headers at all**,
+measured on `/protocol/saml`, `/protocol/saml/descriptor` and
+`/protocol/openid-connect/auth`. It is the request line being rejected before
+anything routes, which puts it beside `missingNormalization` rather than beside
+this chapter.
+
+It is not SAML's and was not built here, for the reason the first cut gave F177
+and F178: a rule of the whole surface fixed inside a SAML branch is a change
+reaching every path for one instance of it. What to measure first is whether it
+reaches the Admin API and whether the malformed escape has to be in the query -
+a malformed escape in the **path** is a different code path and was not sent.
+
+## Dispositions from P11's second cut (2026-09-12)
+### F175: refuted, not deferred
+
+See §2.1. Both halves of its argument were measured false. The entry should be
+closed with the measurement rather than carried: an `AuthnRequest` needs no
+`Destination`, and a client's signing certificate is an ordinary attribute a
+fixture can install, so both the message and a signature over it are literals.
+
+F227's third bullet is the one thing a run-time field would still buy, and it has
+no consumer today.
+
+### F208: not closed, but its first exception is recorded
+
+M9 in §5.4 is F208's shape and it is **not** an instance of F208's conclusion.
+The entry says a mutation that changes text without changing behaviour passes
+every empty-diff guard and then passes the tests, and that only a reader can rule
+it out. That is right in general.
+
+This one was null because two lists had to agree and nothing compared them, and
+a ratchet catches it. So the entry gains a question rather than a closure:
+**before filing a null edit under F208, check whether its nullity is an invariant
+nobody wrote down.** If it is, the ratchet is cheap and the next pass gets a real
+answer instead of a shrug.
+
+### F113: unchanged, and applied three more times
+
+`saml/endpoint/login-page` stays `Pending` under it - the page carries a
+per-request `tab_id` and a `session_code`. `saml/artifact-resolution/request-
+denied` is unchanged. And the rule was **checked and found not to apply** to
+every one of the sixteen pages this cut serves: none of them holds a `tab_id`, a
+`session_code` or an `execution`, and two fetches a second apart are
+byte-identical, which is what `TestThemeResourceAppearsOnlyInTheThemePages`'
+seven-segment count now records for nineteen SAML goldens.
+
+### F31: unchanged, and one cell narrowed
+
+`saml/descriptor/options` is still `Recorded`. The routes this cut adds are
+registered `GET` and `POST` explicitly rather than as a bare pattern, so `PUT`,
+`DELETE`, `PATCH` and `OPTIONS` on `/protocol/saml` still reach
+`protocolDispatch` and answer exactly what they answered before.
+
+### F122: not met from a third side after all
+
+The first cut filed the login page as F122's boundary met a third time: a value
+the harness cannot mint. It is not. The value did not need minting; the
+measurement that said it did was wrong. The two sides F122 really has - CIBA's
+inbound callout and the back-channel logout - are unchanged.
+
+---
+
+## 9. What is left
+
+- **The success path of both routes**, which is F227 and is the whole of what
+  `saml/endpoint` and `saml/idp-initiated` still cannot answer. Seventeen of
+  twenty and five of five are served; the three left are one page that cannot
+  be recorded and two 500s that must not be sent.
+- **The artifact resolution service**, unchanged and for an unchanged reason:
+  §2.4.
+- **The ECP flow.** `saml.allow.ecp.flow` is `"false"` on every created SAML
+  client and nothing was sent to it, as in the first cut.
+- **`saml.force.post.binding` and the response bindings**, F228 - the first thing
+  an assertion builder will have to measure.
+- **F230's recorder instability**, which is not SAML's and is the one thing in
+  this cut's record diff that a reader should not take at face value.

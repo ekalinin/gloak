@@ -99,7 +99,7 @@ Working today:
   Gloak's responses byte-for-byte against bytes recorded from a live
   Keycloak 26.7.1
 - a parity meter whose denominator comes from Keycloak's own OpenAPI description
-  rather than from a hand-kept list: **578 of 631 enumerated behaviours served**,
+  rather than from a hand-kept list: **598 of 644 enumerated behaviours served**,
   plus two chapters whose surface has not been counted
 - an external oracle: `make oracle` drives Gloak with `kcadm.sh`, Keycloak's own
   admin CLI, which asks for things no recorded case asks for
@@ -107,10 +107,13 @@ Working today:
 Not implemented yet: the login page's own markup (the flow is served, the theme
 is not), the authentication flow engine - Gloak stores the flow model and reads
 it on three bindings, but walks a hard-coded flow - CIBA, user federation,
-identity brokering, the admin console. SAML is **enumerated and one behaviour of
-it is served**, the IdP metadata descriptor; the rest of the chapter is measured
-and deliberately not served, because its rejection ladder is five deep and the
-fifth rung is a 200. The **account API** is enumerated and its gate and two
+identity brokering, the admin console. **SAML is 25 of its 31 enumerated
+behaviours**: the IdP metadata descriptor, the IdP-initiated route, and the SSO
+endpoint's **whole seven-rung rejection ladder**, stopping one below the success
+path - serving that needs an authentication session carrying the SAML request id
+and a signed assertion builder, and adding those with nothing consuming them is
+machinery with no consumer. The redirect binding's signature is really verified,
+against three of the four `SigAlg`s SAML defines. The **account API** is enumerated and its gate and two
 derived reads are served, 18 of 40; the remaining refusals are eleven separate
 blockers rather than one, which F194 records so nobody plans them as one cut.
 `BCFKS` is refused where Keycloak answers a keystore, on purpose - see F171.
@@ -249,10 +252,10 @@ and stay out of the total rather than being dropped from it silently, which
 would inflate the percentage by hiding the parts nobody has counted. It reads:
 
 ```
-total: 578 of 631 enumerated behaviours served; 2 chapters not enumerated
+total: 598 of 644 enumerated behaviours served; 2 chapters not enumerated
 ```
 
-The denominator is 631 rather than 413 plus a fixed number because the protocol
+The denominator is 644 rather than 413 plus a fixed number because the protocol
 chapters have no OpenAPI source and are counted case by case, so they grow as
 measurements find behaviours nobody had named. It moved from 485 on 2026-08-29
 for the first time since it was set, and again the next day when the logout
