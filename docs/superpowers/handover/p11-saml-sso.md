@@ -7,7 +7,7 @@ handler answering the four rejections without walking to it is right on every
 case in the catalogue and wrong on the only request a SAML client ever sends.
 
 This cut walks the ladder. It is **seven rungs, not five**, and the two extra
-ones sit where nobody would have put them. Sixteen of the endpoint's nineteen
+ones sit where nobody would have put them. Seventeen of the endpoint's twenty
 enumerated behaviours are now served, and all five of the IdP-initiated route's.
 
 Two of the first cut's own measurements are corrected here, and both were
@@ -480,13 +480,41 @@ it. The exception is expressed where it belongs, in the writer of the one page
 family that has it, and `securityHeaders` is now one map so that setting and
 clearing cannot come to disagree about which headers "the five" are.
 
-### 2.6 Two `openid-connect` clients in a SAML fixture, on purpose
+### 2.6 Four `openid-connect` clients in the SAML fixtures, on purpose
 
-`saml-refused-clients` creates a disabled one and a bearer-only one, and both
-cases that use it are on `/protocol/saml`. Making them SAML clients would have
-been the obvious choice and would have left §1.1's ordering unpinned: a ladder
-with the protocol check first answers those two clients correctly when their
-protocol is right. The whole value of the pair is that their protocol is wrong.
+`saml-refused-clients` creates a disabled one and a bearer-only one;
+`saml-idp-initiated-clients` creates a disabled one and an enabled one. All four
+cases that use them are SAML cases.
+
+Making them SAML clients would have been the obvious choice and would have left
+§1.1's and §1.8's orderings unpinned: a ladder with the protocol check first
+answers a disabled SAML client correctly, because it passes the protocol check and
+reaches the enabled one anyway. The whole value of these clients is that their
+protocol is wrong.
+
+**The IdP-initiated pair was written the obvious way first and the mutation pass
+caught it** - M3 in §5.4. That is the same lesson the endpoint side already had,
+arrived at from the other direction, and it is worth keeping because the fixture
+that makes a case prove something is not the fixture the case's own sentence
+suggests.
+
+### 2.7 `admin/clients/evaluate-example-saml-response`'s reason was narrowed, not promoted
+
+Its first reason read *"Gloak has no SAML assertion builder and no saml-protocol
+issuance path"*, qualified by *"it is no longer true that it serves no SAML at
+all: `GET .../protocol/saml/descriptor` is served, and it is deliberately the one
+SAML response that needs neither"*.
+
+The core of that is still true and is now the whole of it. What expired is the
+parenthesis: Gloak serves **twenty-four** SAML responses rather than one. The
+comment now says so and says why none of them helps - the descriptor is a pure
+function of the realm, and every one of the others is a refusal, a theme page or a
+404, which is precisely the class of answer that needs no assertion.
+
+**Reasons 2 and 3 are untouched and are what actually keep the case `Pending`**:
+no mask in this harness reaches inside a JSON string, and the body carries two
+`ID_<uuid>` attributes and four timestamps. Neither is affected by anything in
+this cut, and the case is not promoted.
 
 ---
 
@@ -509,8 +537,11 @@ protocol is right. The whole value of the pair is that their protocol is wrong.
 
 ## 4. The record diff, file by file
 
-`make record` was run twice: once when the twelve new cases were added, and once
-after the `destination-mismatch` literal changed. Both runs are read here.
+`make record` was run **four** times: once when the twelve new cases were added,
+once after the `destination-mismatch` literal changed, once after the
+IdP-initiated fixture's disabled client changed protocol, and once after the
+mutation pass asked for the signed-RelayState case. All four are read here,
+because the second one is the interesting one.
 
 ### Run 1: twelve new goldens and nothing else
 
@@ -578,6 +609,34 @@ space and at least two values literally collide -
 the creates accept a 409 through `idempotentCreate`. It is not this cut's case
 and not this cut's change; F230.
 
+### Runs 3 and 4, and a fourth draw on the same golden
+
+```
+run 3  (after the IdP-initiated fixture's client changed protocol)   no diff at all
+run 4  (after the signed-RelayState case)
+       saml/endpoint/redirect-binding-signature-over-a-relay-state   new
+```
+
+Run 3 is worth stating because it changed a fixture and moved nothing:
+`saml/idp-initiated/disabled-client`'s client went from `protocol: saml` to
+`protocol: openid-connect`, and its golden is **byte-identical** either way -
+3573 bytes, because the page names no client. So a case that proved nothing about
+the ladder's order now proves it, with no byte moving. §5.4 is why that matters.
+
+And the four runs are four draws on `mapper-types-unsupported`:
+
+```
+run 1   500, agrees with the committed golden
+run 2   200, the diff above
+run 3   500
+run 4   500
+```
+
+One anomalous run in four, from inside the recorder, against ten direct draws
+that say 200. Both halves are in F230, because neither on its own is the finding:
+the recorder's 500 is not reproducible outside it, and the committed golden
+claims a sentence the endpoint does not send.
+
 ---
 
 ## 5. The mutation pass
@@ -594,7 +653,178 @@ Running the three packages concurrently is not the filtered `-run` that rule
 warns about: every test in every package still runs, and the three invocations
 are separate processes reading a tree nothing writes to while they run.
 
-<!-- MUTATION-RESULTS -->
+**Twenty-nine mutations. Three survived, two would not build, and all five are
+fixed and now killed - there are no standing survivors.** Each of the three
+survivors named a missing input or a missing ratchet, and §5.4 is what was done
+about each.
+
+### The ladder's order and the client lookup
+
+| # | Mutation | Result |
+|---|---|---|
+| M1 | the protocol check moves ahead of the enabled one | killed by `saml/endpoint/disabled-client` and `TestSAMLEndpointWalksTheLadderInTheMeasuredOrder` |
+| M2 | the protocol check moves ahead of the bearer-only one alone | killed by `saml/endpoint/bearer-only-client` |
+| M3 | the IdP-initiated route checks the protocol before the enabled flag | **survived; fixed** - see §5.4 |
+| M4 | the IdP-initiated lookup uses the `clientId` | killed by `saml/idp-initiated/client-id-is-not-the-name` |
+| M5 | the IdP-initiated lookup filters by protocol | killed by `saml/idp-initiated/wrong-protocol` |
+| M26 | the chrome names the client on every rung | killed by `redirect-binding-wrong-protocol`, `disabled-client` and `bearer-only-client` |
+| M27 | the chrome names no client on the signature rung | killed by `redirect-binding-saml-client` and both signature cases |
+
+### The signature
+
+| # | Mutation | Result |
+|---|---|---|
+| M6 | `saml.client.signature` read the way `Boolean.parseBoolean` does | killed by `TestClientRequiresSignatureComparesTheExactString` |
+| M7 | **the verifier refuses every signature** | killed by `saml/endpoint/redirect-binding-signature-accepted`, `TestRedirectSignatureVerifies` and `TestRedirectSignatureAcceptsExactlyTheMeasuredSigAlgs` |
+| M8 | the verifier accepts any request carrying both parameters | killed by `redirect-binding-signature-over-another-message` and `TestRedirectSignatureVerifies` |
+| M9 | `rsa-sha384` added to `sigAlgHashes` alone | **survived; ratchet added** - see §5.4 |
+| M9b | `rsa-sha384` added to **both** the map and `newSigAlgHash`'s switch | killed by `TestRedirectSignatureAcceptsExactlyTheMeasuredSigAlgs` |
+| M10 | the signed string rebuilt from decoded values | **survived; case added** - see §5.4 |
+| M28 | the POST binding reports its signature verified | killed by `saml/endpoint/post-binding-saml-client` |
+
+**M7 is the one the brief asked about by name.** A verifier that rejects
+everything is the worst case for "a set of assertions an incorrect implementation
+satisfies entirely", and the answer is that **three** things die when
+verification is disabled: the golden
+`saml/endpoint/redirect-binding-signature-accepted`, and the two package tests
+`TestRedirectSignatureVerifies` and
+`TestRedirectSignatureAcceptsExactlyTheMeasuredSigAlgs`. The golden is the one
+that matters, because it is a recording of Keycloak rather than a restatement of
+Gloak: a correctly signed request answers `Invalid Request` with the client
+named, and a reject-everything verifier answers `Invalid requester`, which is a
+different 3606-byte page.
+
+M8 is its mirror and says which assertion does which job: an
+accept-everything verifier passes M7's case and fails M8's.
+
+### The `Destination` and the assertion consumer URL
+
+| # | Mutation | Result |
+|---|---|---|
+| M11 | a `Destination` is always required | killed by `saml/endpoint/no-assertion-consumer-url` and two package tests |
+| M12 | a `Destination` is never required | killed by `saml/endpoint/redirect-binding-signature-accepted` and `TestSAMLDestinationIsRequiredOnlyWhenTheRequestIsSigned` |
+| M13 | the `Destination` compared by origin rather than in full | killed by `saml/endpoint/destination-mismatch` |
+| M14 | a named assertion consumer URL is ignored | killed by three package tests, **and by no golden** |
+| M15 | an unmatched named ACS falls back to the attribute | killed by `TestSAMLAssertionConsumerURLCrossesItsTwoSources`, **and by no golden** |
+| M16 | a named assertion consumer URL accepted unchecked | killed by `saml/endpoint/unregistered-assertion-consumer-url` |
+| M25 | a request that passes every rung is refused instead of falling through | killed by `TestSAMLEndpointDoesNotRefuseARequestItCannotServe`, **and by no golden** |
+
+M14, M15 and M25 are the three that no golden catches, and they are the same
+hole stated three ways: **every case in this chapter is a rejection**, so an
+implementation that refuses more than Keycloak does satisfies all of them. That
+is why those three tests exist and why §2.2's fall-through is a package test
+rather than a case.
+
+### The parser and the bindings
+
+| # | Mutation | Result |
+|---|---|---|
+| M17 | the first `Issuer` wins rather than the last | killed by `TestParseSAMLMessageAcceptsWhatKeycloakAccepts` |
+| M18 | the `Version` attribute is not checked | killed by `TestParseSAMLMessageRefusesWhatKeycloakRefuses` |
+| M19 | a nested `Issuer` is found | killed by the same |
+| M20 | `SAMLResponse` is read when `SAMLRequest` is absent | killed by `saml/endpoint/saml-response-parameter` |
+| M21 | the POST binding decodes the redirect binding's spelling | killed by `saml/endpoint/post-binding-saml-client` |
+
+### The page writers
+
+| # | Mutation | Result |
+|---|---|---|
+| M22 | the endpoint's page keeps the five security headers | killed by every `saml/endpoint` page golden |
+| M23 | both verbs answer one `Cache-Control` | killed by `post-no-parameters`, `post-binding-saml-client` and `TestSAMLPagesSendTheirMeasuredHeaderSets` |
+| M24 | the IdP-initiated page uses the endpoint's header set | killed by all five `saml/idp-initiated` goldens and the same test |
+
+### 5.4 The three survivors, and what was done about each
+
+**M3 - a disabled SAML client cannot tell the IdP-initiated route's two orders
+apart.** Swapping the route's enabled and protocol checks survived the whole
+tree. Reading the mutated lines says why: `saml/idp-initiated/disabled-client`
+used a **SAML** client, so a protocol-first ladder passes the protocol check and
+reaches the enabled one anyway and gives the same sentence; and
+`wrong-protocol`'s client is enabled, so it never reaches the enabled check under
+either order. An implementation satisfying both is one that checks the protocol
+first - which is wrong on exactly one input, a disabled client whose protocol is
+also wrong.
+
+Fixed by giving the fixture's disabled client `protocol: openid-connect`, which
+is the input §1.8 measured answering `Client disabled.` **The golden did not
+change** - 3573 bytes either way, because the page names no client - so this is a
+case that went from proving nothing to proving the order without a single byte
+moving, which is worth knowing for the next reader of it. M3 is now killed by
+`saml/idp-initiated/disabled-client`.
+
+The endpoint side already had this right, and not by luck:
+`saml-refused-clients` creates two `openid-connect` clients on purpose, and M1
+and M2 die on them. The IdP-initiated fixture was written the obvious way and the
+pass is what caught the difference.
+
+**M9 - `sigAlgHashes` is half the gate and nothing said so.** Adding `rsa-sha384`
+to the map alone survived, and it survived *correctly*: `newSigAlgHash`'s switch
+does not know SHA-384, hands back a nil hash, and `verifyRedirectSignature`
+refuses the request anyway. The edit changed text and not behaviour.
+
+**That is F208's shape**, and it is the one a mutation pass is least able to
+report honestly - it lands in the survivor column looking like a coverage hole
+when it is not one. The first cut met the same thing as its M25 and concluded no
+check could catch it. That is true of a semantically null edit in general and
+**not** true of this one, because here the nullity has a cause: two lists that
+have to agree and nothing comparing them.
+
+`TestSigAlgHashesAndNewSigAlgHashAgree` is the ratchet, and it asserts both
+directions - a digest the map names must be one this build can hash with, and a
+digest this build can hash with must be one the map names - plus the count, which
+is the measurement. M9 is now killed by it, and M9b, which adds the digest to
+**both** halves and is therefore a real mutation, is killed by
+`TestRedirectSignatureAcceptsExactlyTheMeasuredSigAlgs`.
+
+So the pair is the useful result: the null edit is now caught by a ratchet and
+the real edit by the measurement, and they are caught by different tests.
+
+**M10 - every signed literal in the catalogue was escaped by Go, so a Go
+re-encoding reproduced all of them.** Rebuilding the signed string from
+`url.ParseQuery` + `url.QueryEscape` instead of from the raw query survived.
+Reading the mutated lines says exactly what an implementation satisfying it looks
+like: one that round-trips the percent-encoding through Go's own escaper, which
+is right for every client whose escaping matches Go's and wrong for every client
+whose does not. The sharp character is a space - `url.QueryEscape` writes `+`
+where a great many clients write `%20` - and the parameter a space realistically
+appears in is `RelayState`.
+
+Measured, both directions, on one container:
+
+```
+RelayState=gloak%20relay%20state, signature made over that spelling   accepted
+the same query and signature with `+` substituted for `%20`           Invalid requester
+```
+
+So Keycloak does not normalise either, and the input that kills M10 is a signed
+`RelayState` spelled with `%20`. Added as
+`saml/endpoint/redirect-binding-signature-over-a-relay-state`, with the refusing
+half asserted in `TestRedirectSignatureVerifies` rather than as a second golden
+because its bytes are the tampered case's. M10 is now killed by both.
+
+### 5.5 Two mutations that would not build, and one harness rule earned
+
+M7 and M11 were first written as `return false` and `return false`, which left
+`crypto/rsa` and a local variable unused. The harness **refused** them - it
+builds before it tests, for the reason AGENTS.md records - and both were rewritten
+to keep the reference and then killed. A build failure reported as a survivor
+would have been the fifth false-pass shape this project has collected.
+
+**The harness earned one new rule, and it earned it by firing.** The pass aborted
+at M1 with `revert failed`, and the cause was me: the handover document was being
+written into the tree while the pass was running, so `git status --porcelain`
+after the revert was not clean. The mutation itself had been reverted correctly by
+the exit hook; what the check caught was a *different* edit to the tree.
+
+That is AGENTS.md's "a pass leaves the tree dirty **by design**, so the dangerous
+window is the one the discipline itself creates" met from the other side. The
+existing rule says commit before the pass and do not stage by wildcard during one;
+the new half is **do not write to the tree during one at all, including files the
+pass has nothing to do with** - and the check that catches it is comparing the
+*whole* tree rather than the mutated file, which is what this harness already did
+and what made the abort a stop rather than a wrong result.
+
+Nothing was lost, because everything up to that point was committed.
 
 ---
 
@@ -604,10 +834,10 @@ Measured with the procedure AGENTS.md documents, against the merge base
 `3626de0`:
 
 ```
-Parity: 578 -> 597 of 643 (+19)
+Parity: 578 -> 598 of 644 (+20)
 
 chapter                         before  after  delta
-saml/endpoint                        2     16    +14
+saml/endpoint                        2     17    +15
 saml/idp-initiated                   0      5     +5
 ```
 
@@ -616,28 +846,37 @@ The chapter table:
 ```
 chapter                              served  recorded  documented  source
 saml/descriptor                           3         1           4  catalogue
-saml/endpoint                            16         2          19  catalogue
+saml/endpoint                            17         2          20  catalogue
 saml/idp-initiated                        5         0           5  catalogue
 saml/artifact-resolution                  0         1           2  catalogue
 
-total: 597 of 643 enumerated behaviours served; 2 chapters not enumerated
+total: 598 of 644 enumerated behaviours served; 2 chapters not enumerated
 ```
 
-**The denominator moved by 12 and the numerator by 19**, and the arithmetic is
+**The denominator moved by 13 and the numerator by 20**, and the arithmetic is
 worth setting out because the two do not obviously reconcile:
 
 - **nine promotions** from `Recorded` to `Implemented` - six on the endpoint,
   three on the IdP-initiated route - which move the numerator and not the
   denominator;
-- **ten new served cases**, which move both;
+- **eleven new served cases**, which move both;
 - **two new `Recorded` cases**, the LogoutRequest 500s, which move the
   denominator alone.
 
-9 + 10 = 19 on the numerator; 10 + 2 = 12 on the denominator.
+9 + 11 = 20 on the numerator; 11 + 2 = 13 on the denominator.
 
-`saml/idp-initiated` is the first SAML chapter at 5 of 5. `saml/endpoint` is 16
-of 19: the three left are the login page, which cannot be recorded, and the two
+The eleventh served case is
+`saml/endpoint/redirect-binding-signature-over-a-relay-state`, which the mutation
+pass asked for rather than the enumeration: it is the input that kills M10, and
+§5.4 is why it exists.
+
+`saml/idp-initiated` is the first SAML chapter at 5 of 5. `saml/endpoint` is 17
+of 20: the three left are the login page, which cannot be recorded, and the two
 LogoutRequests, which are refused with their measurement.
+
+Measured with `cmd/parity` **built** rather than `go run`, which AGENTS.md gives
+the reason for: `go run` collapses exit 2 down to 1 and would make a real parity
+decrease indistinguishable from a report it could not read. Exit code 0.
 
 ---
 
@@ -686,9 +925,15 @@ LogoutRequests, which are refused with their measurement.
 > correct URI, a correct digest and the same certificate the sha256 request
 > verified against, and the client's own `saml.signature.algorithm` does not
 > change it. A `SigAlg` naming sha256 with a SHA-512 signature under it is
-> refused too, so the URI decides the digest. The bytes signed are the raw query
-> parameters **as sent**, joined with `&` in the order SAMLRequest, RelayState,
-> SigAlg - never a re-encoding of the decoded values.
+> refused too, so the URI decides the digest. **The bytes signed are the raw query
+> parameters as sent**, joined with `&` in the order SAMLRequest, RelayState,
+> SigAlg, and the escaping is not normalised in either direction:
+> `RelayState=gloak%20relay%20state` signed over that spelling is accepted and the
+> same query and signature with `+` for `%20` is `Invalid requester`. A verifier
+> that decodes the parameters and re-encodes them with `url.QueryEscape` writes
+> `+` for both and gets the first wrong -
+> `saml/endpoint/redirect-binding-signature-over-a-relay-state` is the only case
+> in the tree that sees it, and it exists because a mutation pass asked for it.
 > **`saml.client.signature` is compared to the exact string `"true"`,
 > case-sensitively.** `"TRUE"`, `"True"`, `" true"`, `"0"`, `"no"`, `""` and the
 > attribute absent are all **off**. `strconv.ParseBool` is wrong on `"TRUE"` -
@@ -770,6 +1015,30 @@ LogoutRequests, which are refused with their measurement.
 > verifies one binding and reports the other unverified rather than refused - a
 > POST carrying a signature falls through to the 404 instead of being told its
 > signature is bad. See F229.
+
+### For the mutation-discipline paragraph, two halves
+
+> **Do not write to the tree during a mutation pass at all, including files the
+> pass has nothing to do with.** The existing rules are "commit before the pass"
+> and "never stage by wildcard during one"; this is the third and it is the one
+> that fires. P11's pass aborted at its first mutation with `revert failed`
+> because a handover document was being written while it ran, so the tree was
+> dirty after a revert that had worked perfectly. The check that caught it
+> compares the **whole** tree rather than the mutated file, which is what turned a
+> wrong result into a stop - and nothing was lost, because everything up to that
+> point was committed.
+
+> **F208's null edit sometimes has a cause, and then a ratchet can catch it.**
+> Adding a fourth digest to `sigAlgHashes` changed text and not behaviour, because
+> `newSigAlgHash`'s switch is the other half of the gate and does not know it -
+> so the mutation "survived" correctly and uselessly, in the same column as a real
+> finding. The general rule stands: a semantically null edit is a mutation only a
+> reader can rule out. But **this** one was null for a reason - two lists that have
+> to agree and nothing comparing them - and
+> `TestSigAlgHashesAndNewSigAlgHashAgree` makes the pair one claim, after which
+> the null edit fails and the edit that changes both halves is a real mutation a
+> measurement kills. Before filing a null edit under F208, check whether its
+> nullity is an invariant nobody wrote down.
 
 ### A correction to the SAML client bullet
 
@@ -890,6 +1159,19 @@ fixture can install, so both the message and a signature over it are literals.
 F227's third bullet is the one thing a run-time field would still buy, and it has
 no consumer today.
 
+### F208 - not closed, but its first exception is recorded
+
+M9 in §5.4 is F208's shape and it is **not** an instance of F208's conclusion.
+The entry says a mutation that changes text without changing behaviour passes
+every empty-diff guard and then passes the tests, and that only a reader can rule
+it out. That is right in general.
+
+This one was null because two lists had to agree and nothing compared them, and
+a ratchet catches it. So the entry gains a question rather than a closure:
+**before filing a null edit under F208, check whether its nullity is an invariant
+nobody wrote down.** If it is, the ratchet is cheap and the next pass gets a real
+answer instead of a shrug.
+
 ### F113 - unchanged, and applied three more times
 
 `saml/endpoint/login-page` stays `Pending` under it - the page carries a
@@ -919,8 +1201,8 @@ inbound callout and the back-channel logout - are unchanged.
 ## 9. What is left
 
 - **The success path of both routes**, which is F227 and is the whole of what
-  `saml/endpoint` and `saml/idp-initiated` still cannot answer. Sixteen of
-  nineteen and five of five are served; the three left are one page that cannot
+  `saml/endpoint` and `saml/idp-initiated` still cannot answer. Seventeen of
+  twenty and five of five are served; the three left are one page that cannot
   be recorded and two 500s that must not be sent.
 - **The artifact resolution service**, unchanged and for an unchanged reason:
   §2.4.
