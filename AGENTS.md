@@ -2583,16 +2583,36 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   client is `Invalid requester`. Note the direction against the scope evaluator,
   which serves **both** protocols on one route and where refusing the mismatch is
   wrong on four operations: two families, one question, opposite answers.
-- **`Invalid requester` means the requester was not authenticated, not that it is
-  unknown - and the success path is one client attribute away.** `POST /clients`
-  with `{"protocol":"saml"}` produces a client carrying
-  **`saml.client.signature: "true"`** among fifteen generated attributes. Turn it
-  off and the same `AuthnRequest` that answered `Invalid requester` answers
-  **200 with the login page**. So the rejection ladder is **five deep** - client,
-  protocol, signature, `Destination`, assertion consumer URL - and a handler
-  serving the three rejections without walking it is right on every case in this
-  catalogue and wrong on the only request the endpoint exists for. That is why
-  `saml/endpoint/*` is `Recorded` rather than served.
+- **The SAML endpoint's rejection ladder is seven rungs and two of them are not
+  where a reader would put them.** In order: the message will not decode or parse
+  (`Invalid Request`), its `Issuer` names no client (`Invalid Request`), the
+  client is **disabled** (`Login requester not enabled`, no full stop), the
+  client is **bearer-only** (`Bearer-only applications are not allowed to
+  initiate browser login`), its protocol is not `saml` (`Wrong client
+  protocol.`), the signature does not verify (`Invalid requester`), the
+  `Destination` is wrong (`Invalid Request`), no assertion consumer URL resolves
+  (`Invalid redirect uri`), and then the login page. **The disabled and
+  bearer-only rungs run *before* the protocol check** - measured on a disabled
+  `openid-connect` client and a bearer-only one, both of which answer their own
+  sentence rather than `Wrong client protocol.` - so a ladder written as "client,
+  protocol, signature" puts two checks on the wrong side. The page's chrome names
+  the client from the signature rung up and on no rung below it, although the
+  three rungs below have resolved one.
+- **An `AuthnRequest` needs no `Destination`, and the predicate is the request's
+  `Signature` parameter rather than the client's flag.** A message with no
+  `Destination` attribute, and one with `Destination=""`, both reach the login
+  page; one naming the wrong port is `Invalid Request`. A message carrying a
+  `Signature` parameter must have a non-empty one - measured on a client with
+  `saml.client.signature` **off** sent a junk signature, which answers the
+  `Destination` sentence and not `Invalid requester`, so the signature is not
+  even looked at and the `Destination` is demanded anyway. When it is compared it
+  is compared as a string: a trailing slash, `https` for `http`, `127.0.0.1` for
+  `localhost`, the port left off, an appended query, another realm and another
+  path are all refused. **This is what makes the endpoint reachable from a
+  catalogue at all** - the port comes out of the message, so a literal
+  `AuthnRequest` works on whatever port testcontainers maps, and F175's fixture
+  field was refuted rather than built.
+- 
 - **The segment under `/protocol/saml/clients/` is
   `saml_idp_initiated_sso_url_name`, not a `clientId`.** A handler looking clients
   up by `clientId` answers an unclaimed name correctly **by accident** and the
