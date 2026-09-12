@@ -17625,19 +17625,26 @@ var adminCases = []Case{
 		// generators with token-shaped bodies. The protocol decides the
 		// content and never whether the route answers.
 		//
-		// Three reasons it is Pending, any one sufficient. **Reason 1 was
-		// rewritten by P11 and narrowed; 2 and 3 are untouched and are what
-		// actually keep this case Pending.**
+		// Three reasons it is Pending, any one sufficient. **Reason 1 has now
+		// been narrowed twice by P11 and is down to the one thing it was always
+		// about; 2 and 3 are untouched and are what actually keep this case
+		// Pending.**
 		//
 		//  1. Gloak has no SAML **assertion** builder and no saml-protocol
-		//     issuance path. It is no longer true that it "serves no SAML at
-		//     all": GET /realms/{realm}/protocol/saml/descriptor is served, and
-		//     it is deliberately the one SAML response that needs neither - it
-		//     is a pure function of the realm and its signing key. Nothing in
-		//     the descriptor is reusable here; an assertion needs a subject, a
-		//     session, an XML signature and the scope evaluator's role
-		//     resolution, and writing that inside internal/admin is a whole
-		//     protocol in the admin package.
+		//     issuance path. It has not been true since 2026-09-07 that it
+		//     "serves no SAML at all", and since 2026-09-11 it serves
+		//     twenty-four SAML responses: the descriptor, and the whole
+		//     rejection ladder of /realms/{realm}/protocol/saml and its
+		//     IdP-initiated route. **None of them is reusable here and the
+		//     reason is uniform.** The descriptor is a pure function of the
+		//     realm and its signing key; every one of the others is a refusal,
+		//     a theme page or a 404, and a refusal is precisely the answer that
+		//     needs no assertion. An assertion needs a subject, a session, an
+		//     XML signature and the scope evaluator's role resolution - which is
+		//     why P11's second cut stopped one rung below it and answered the
+		//     protocol dispatcher's 404 rather than inventing one. Writing that
+		//     inside internal/admin would be a whole protocol in the admin
+		//     package; see F227.
 		//  2. No golden can hold it. The body is a JSON **string** holding
 		//     XML, and no mask in this harness reaches inside a JSON string;
 		//     masking the whole value asserts its type and nothing else, which

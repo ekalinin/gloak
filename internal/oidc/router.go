@@ -169,13 +169,25 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/userinfo", h.userinfo)
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/token/introspect", h.introspect)
 	mux.HandleFunc("POST /realms/{realm}/protocol/openid-connect/revoke", h.revoke)
-	// The SAML IdP metadata descriptor, and the only SAML behaviour Gloak
-	// serves. The rest of the surface under /protocol/saml is enumerated and
-	// measured in the catalogue's `saml/*` chapters and deliberately not built:
-	// see docs/superpowers/handover/p11-saml-descriptor.md. The descriptor is
-	// the one SAML response that is a pure function of the realm and needs
-	// neither an assertion builder nor a browser.
+	// The SAML IdP metadata descriptor. It is the one SAML response that is a
+	// pure function of the realm and needs neither an assertion builder nor a
+	// browser.
 	mux.HandleFunc("GET /realms/{realm}/protocol/saml/descriptor", h.samlDescriptorEndpoint)
+	// The SSO binding endpoint and the IdP-initiated route, both of which serve
+	// their measured rejection ladders and neither of which serves its success
+	// path - that needs a signed SAML assertion and there is no assertion
+	// builder here. See internal/oidc/samlendpoint.go for the ladders and for
+	// what a request that passes every rung is answered with, and
+	// docs/superpowers/handover/p11-saml-sso.md for the measurements.
+	//
+	// **GET and POST are registered separately rather than as a bare pattern**,
+	// because the other four verbs are not this endpoint's: PUT, DELETE and
+	// PATCH answer a real 405 and OPTIONS a 200 with an Allow, all of which are
+	// F31's standing divergence, and leaving them to protocolDispatch keeps
+	// Gloak's answer to them exactly what it was.
+	mux.HandleFunc("GET /realms/{realm}/protocol/saml", h.samlEndpoint)
+	mux.HandleFunc("POST /realms/{realm}/protocol/saml", h.samlEndpoint)
+	mux.HandleFunc("GET /realms/{realm}/protocol/saml/clients/{name}", h.samlIdPInitiated)
 	// The protocol dispatcher. Three patterns and one handler, covering
 	// everything under /realms/{realm}/protocol that no route above serves.
 	// See protocolDispatch for what each of them answers and why.

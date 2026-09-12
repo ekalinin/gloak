@@ -28,11 +28,38 @@ import (
 // so callers set them explicitly rather than getting them on every response.
 func SetSecurityHeaders(w http.ResponseWriter) {
 	h := w.Header()
-	h.Set("Referrer-Policy", "no-referrer")
-	h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("X-Frame-Options", "SAMEORIGIN")
-	h.Set("X-Robots-Tag", "none")
+	for name, value := range securityHeaders {
+		h.Set(name, value)
+	}
+}
+
+// securityHeaders is the five and their values, in one place so that
+// SetSecurityHeaders and ClearSecurityHeaders cannot come to disagree about
+// which headers "the five" are.
+var securityHeaders = map[string]string{
+	"Referrer-Policy":           "no-referrer",
+	"Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+	"X-Content-Type-Options":    "nosniff",
+	"X-Frame-Options":           "SAMEORIGIN",
+	"X-Robots-Tag":              "none",
+}
+
+// ClearSecurityHeaders removes the five, for the one route measured to send a
+// real body without them.
+//
+// It exists because Gloak sets them in `WithKeycloakFallbacks` - at the point
+// that distinguishes a request which reached Keycloak's filter chain from one
+// which did not - and `GET /realms/{realm}/protocol/saml` **is** a matched
+// route, answers 405 to PUT and 200 with an Allow to OPTIONS, and still sends
+// none of them. So the exception cannot be expressed by not setting them; it
+// has to be expressed by taking them off, and the alternative - teaching the
+// middleware about one path - would put a SAML fact in the fallback wrapper.
+func ClearSecurityHeaders(w http.ResponseWriter) {
+	h := w.Header()
+	for name := range securityHeaders {
+		h.Del(name)
+	}
+	h.Del("Content-Security-Policy")
 }
 
 // ContentSecurityPolicy is the value every page the login theme renders sends,
@@ -706,6 +733,36 @@ func writeThemeHTMLPolicy(w http.ResponseWriter, status int, cacheControl, body,
 	suppressDate(w)
 	SetSecurityHeaders(w)
 	w.Header().Set("Content-Security-Policy", policy)
+	writeThemeHTMLBody(w, status, cacheControl, body)
+}
+
+// WriteThemeErrorPageBare writes the theme error page **without** the five
+// security headers and without a Content-Security-Policy.
+//
+// That set is not a variant anybody would invent; it is measured, and it is the
+// sharpest instance of the rule AGENTS.md records as having been wrong six
+// times. `GET /realms/{realm}/protocol/saml` and
+// `GET /realms/{realm}/protocol/openid-connect/auth` answer the **byte-identical**
+// 3572-byte page and their header sets are complementary: the SAML one sends a
+// Cache-Control and nothing else, the OIDC one sends all six and no
+// Cache-Control. One path segment further down,
+// `/protocol/saml/clients/{name}` answers the same template with all six again -
+// so this is a property of the one endpoint and not of SAML, and
+// WriteThemeErrorPage is what that neighbour uses.
+//
+// Re-measured 2026-09-11 at socket level on every rung of that endpoint's
+// ladder - Invalid Request, Login requester not enabled, Wrong client protocol.,
+// Bearer-only…, Invalid requester and Invalid redirect uri - and all six carry
+// the same three headers and no others.
+func WriteThemeErrorPageBare(w http.ResponseWriter, status int, cacheControl string,
+	c ThemeChrome, instruction string) {
+	suppressDate(w)
+	ClearSecurityHeaders(w)
+	writeThemeHTMLBody(w, status, cacheControl, themeErrorPageBody(c, instruction))
+}
+
+// writeThemeHTMLBody is the part of the envelope both header sets share.
+func writeThemeHTMLBody(w http.ResponseWriter, status int, cacheControl, body string) {
 	if cacheControl != "" {
 		w.Header().Set("Cache-Control", cacheControl)
 	}

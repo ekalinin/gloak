@@ -1,0 +1,5 @@
+# POST /realms/master/protocol/saml
+HTTP/1.1 500 Internal Server Error
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+

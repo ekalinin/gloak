@@ -733,34 +733,48 @@ func TestThemeResourceAppearsOnlyInTheThemePages(t *testing.T) {
 		// browser carrying a live session. The block follows the flow the render
 		// happens in and not whether the browser is signed in.
 		"oidc/logout/frontchannel": 7,
-		// The SAML surface's nine pages, all **seven**, all Recorded. They are
-		// theme pages that nothing in their path says are theme pages, which is
-		// what this guard is for: /realms/{realm}/protocol/saml answers the
-		// login theme's error template, and so does the IdP-initiated route one
-		// segment down.
+		// The SAML surface's pages, all **seven**, and since 2026-09-11 all
+		// **served** rather than Recorded. They are theme pages that nothing in
+		// their path says are theme pages, which is what this guard is for:
+		// /realms/{realm}/protocol/saml answers the login theme's error
+		// template, and so does the IdP-initiated route one segment down.
 		//
 		// Seven puts them in the "rendered from outside the authentication flow"
 		// group with oidc/logout/frontchannel and the four /login-actions pages
 		// - no checkAuthSession block - and that is consistent with the rest of
-		// what they carry: measured on 2026-09-07, none of the three distinct
-		// SAML pages holds a tab_id, a session_code or an execution, and two
-		// fetches a second apart are byte-identical. That is why nine SAML cases
-		// can be Recorded where F146's nine theme pages cannot.
+		// what they carry: measured on 2026-09-07 and again on 2026-09-11 across
+		// every rung of the ladder, no SAML page holds a tab_id, a session_code
+		// or an execution, and two fetches a second apart are byte-identical.
+		// That is why these can carry goldens where F146's nine theme pages
+		// cannot, and it is exactly what saml/endpoint/login-page does **not**
+		// have: the page above the top rung carries both.
 		//
-		// The six on /protocol/saml are one template with three instructions -
-		// Invalid Request, Wrong client protocol., Invalid requester - and the
-		// three under /clients/ are the same template with two more. The
+		// The eleven on /protocol/saml are one template with six instructions -
+		// Invalid Request, Login requester not enabled, Bearer-only…, Wrong
+		// client protocol., Invalid requester and Invalid redirect uri - and the
+		// five under /clients/ are the same template with two more. The
 		// /resources/ count does not move with the instruction, because it is a
 		// property of the head.
-		"saml/endpoint/no-parameters":                        7,
-		"saml/endpoint/post-no-parameters":                   7,
-		"saml/endpoint/redirect-binding-unregistered-issuer": 7,
-		"saml/endpoint/redirect-binding-wrong-protocol":      7,
-		"saml/endpoint/redirect-binding-saml-client":         7,
-		"saml/endpoint/post-binding-saml-client":             7,
-		"saml/idp-initiated/unclaimed-name":                  7,
-		"saml/idp-initiated/client-id-is-not-the-name":       7,
-		"saml/idp-initiated/claimed-name":                    7,
+		"saml/endpoint/no-parameters":                                   7,
+		"saml/endpoint/post-no-parameters":                              7,
+		"saml/endpoint/redirect-binding-unregistered-issuer":            7,
+		"saml/endpoint/redirect-binding-wrong-protocol":                 7,
+		"saml/endpoint/redirect-binding-saml-client":                    7,
+		"saml/endpoint/post-binding-saml-client":                        7,
+		"saml/endpoint/disabled-client":                                 7,
+		"saml/endpoint/bearer-only-client":                              7,
+		"saml/endpoint/destination-mismatch":                            7,
+		"saml/endpoint/no-assertion-consumer-url":                       7,
+		"saml/endpoint/unregistered-assertion-consumer-url":             7,
+		"saml/endpoint/saml-response-parameter":                         7,
+		"saml/endpoint/redirect-binding-signature-accepted":             7,
+		"saml/endpoint/redirect-binding-signature-over-a-relay-state":   7,
+		"saml/endpoint/redirect-binding-signature-over-another-message": 7,
+		"saml/idp-initiated/unclaimed-name":                             7,
+		"saml/idp-initiated/client-id-is-not-the-name":                  7,
+		"saml/idp-initiated/claimed-name":                               7,
+		"saml/idp-initiated/disabled-client":                            7,
+		"saml/idp-initiated/wrong-protocol":                             7,
 		// The account console, and it is **not** a theme page in the sense the
 		// eleven above are: it is not the login theme's error template, it
 		// carries no chrome, no message and no form, and its whole body is a

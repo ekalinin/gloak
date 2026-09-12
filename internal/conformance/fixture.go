@@ -1646,14 +1646,68 @@ var Fixtures = map[string]Fixture{
 	// The same client with `saml.client.signature` off, which is the one
 	// attribute between a refused AuthnRequest and a login page.
 	//
-	// It is named by a Pending case and therefore never run, and it is here
-	// anyway because the alternative is a Reason that describes a state nobody
-	// can reach. saml/endpoint/login-page says the success path is one attribute
-	// away and this is the attribute; the day the harness can mint an
-	// AuthnRequest naming its own server, the fixture the case needs is already
-	// written and already says which flag it turns off.
+	// **It was named by one Pending case that never ran until 2026-09-11**, and
+	// it now carries six of the endpoint's rungs: the Destination check, the
+	// assertion-consumer check and its distinguishing input, the SAMLResponse
+	// parameter, and both LogoutRequests. What changed is a measurement rather
+	// than the harness - an AuthnRequest needs no Destination, so a literal one
+	// works on whatever port testcontainers maps - and the fixture was already
+	// written and already said which flag it turns off.
 	"saml-service-provider-unsigned": samlServiceProviderFixture("gloak-probe-saml-unsigned",
 		"gloak-probe-sso-unsigned", false),
+
+	// A SAML client requiring a signature, with the **certificate pinned** so
+	// that a signature over it can be a literal in the catalogue.
+	//
+	// This is what makes the signature check testable in both directions. The
+	// key was generated once, the certificate is samlSignedClientCertificate in
+	// catalog_saml.go, and the two queries beside it were signed offline with
+	// its private half - so saml/endpoint/redirect-binding-signature-accepted
+	// sends a genuinely valid signature and its sibling sends the same
+	// signature over a different message. Nothing is minted at run time.
+	//
+	// **It registers no redirectUris on purpose.** The accepted request then
+	// stops at the Destination rung rather than reaching a login page, which is
+	// a 400 a golden can hold; a client with redirect URIs would answer 200 with
+	// a page carrying a per-request tab_id, which F113 bars.
+	"saml-signed-client": samlClientsFixture(`{"clientId":"gloak-probe-saml-signed",` +
+		`"protocol":"saml","enabled":true,"attributes":{"saml.client.signature":"true",` +
+		`"saml.signing.certificate":"` + samlSignedClientCertificate + `"}}`),
+
+	// The two clients the endpoint's ladder refuses **before** it looks at the
+	// protocol, and both are `openid-connect` for exactly that reason.
+	//
+	// A disabled one answers `Login requester not enabled` and a bearer-only one
+	// answers the bearer-only sentence, where a reader would expect
+	// `Wrong client protocol.` from both. Making them SAML clients would leave
+	// the order unpinned, which is the whole point of the two cases that use
+	// them.
+	"saml-refused-clients": samlClientsFixture(
+		`{"clientId":"gloak-probe-saml-disabled","protocol":"openid-connect","enabled":false}`,
+		`{"clientId":"gloak-probe-saml-bearer","protocol":"openid-connect","enabled":true,`+
+			`"bearerOnly":true}`),
+
+	// The two clients that claim an IdP-initiated SSO name and cannot use it,
+	// and **both are `openid-connect`**.
+	//
+	// That is the same trick saml-refused-clients plays and it is here because a
+	// mutation pass found the hole. The disabled one was a SAML client first,
+	// and swapping the route's enabled and protocol checks then **survived**:
+	// with the protocol right, a protocol-first ladder reaches the enabled check
+	// anyway and answers `Client disabled.` all the same. A **disabled
+	// openid-connect** client is the input that separates the two orders, and it
+	// was measured answering `Client disabled.` and not `Wrong client
+	// protocol.`, so the enabled check really does run first.
+	//
+	// The enabled one answers `Wrong client protocol.` rather than
+	// `Client not found.`, which is what says the name is looked up across
+	// protocols and the protocol check is a rung of its own.
+	"saml-idp-initiated-clients": samlClientsFixture(
+		`{"clientId":"gloak-probe-sso-disabled-client","protocol":"openid-connect",`+
+			`"enabled":false,`+
+			`"attributes":{"saml_idp_initiated_sso_url_name":"gloak-probe-sso-disabled"}}`,
+		`{"clientId":"gloak-probe-sso-oidc-client","protocol":"openid-connect","enabled":true,`+
+			`"attributes":{"saml_idp_initiated_sso_url_name":"gloak-probe-sso-oidc"}}`),
 
 	// --- The account API ---
 	//
@@ -1753,27 +1807,38 @@ func samlServiceProviderFixture(clientID, ssoName string, requireSignature bool)
 	if requireSignature {
 		signature = "true"
 	}
-	return Fixture{
-		State: "bootstrap",
-		Steps: []Step{
-			adminTokenStep(),
-			{
-				Request: Request{
-					Method: http.MethodPost,
-					Path:   "/admin/realms/master/clients",
-					Headers: map[string]string{
-						"Authorization": "Bearer {{access_token}}",
-						"Content-Type":  "application/json",
-					},
-					Body: []byte(`{"clientId":"` + clientID + `","protocol":"saml",` +
-						`"enabled":true,"redirectUris":["http://localhost:9999/*"],` +
-						`"attributes":{"saml_idp_initiated_sso_url_name":"` + ssoName + `",` +
-						`"saml.client.signature":"` + signature + `"}}`),
+	return samlClientsFixture(`{"clientId":"` + clientID + `","protocol":"saml",` +
+		`"enabled":true,"redirectUris":["http://localhost:9999/*"],` +
+		`"attributes":{"saml_idp_initiated_sso_url_name":"` + ssoName + `",` +
+		`"saml.client.signature":"` + signature + `"}}`)
+}
+
+// samlClientsFixture creates one client per body.
+//
+// Several of the SAML ladder's rungs need a client in a state nothing else in
+// this file produces - disabled, bearer-only, carrying a pinned signing
+// certificate, carrying an IdP-initiated name on the **wrong** protocol - and
+// the rungs come in pairs that share one state, so the fixtures come in pairs
+// too. One helper taking whole bodies is what keeps that from being four
+// near-copies of the same six lines; each caller's comment says what its bodies
+// are for.
+func samlClientsFixture(bodies ...string) Fixture {
+	f := Fixture{State: "bootstrap", Steps: []Step{adminTokenStep()}}
+	for _, body := range bodies {
+		f.Steps = append(f.Steps, Step{
+			Request: Request{
+				Method: http.MethodPost,
+				Path:   "/admin/realms/master/clients",
+				Headers: map[string]string{
+					"Authorization": "Bearer {{access_token}}",
+					"Content-Type":  "application/json",
 				},
-				ExpectStatus: idempotentCreate,
+				Body: []byte(body),
 			},
-		},
+			ExpectStatus: idempotentCreate,
+		})
 	}
+	return f
 }
 
 // authzClientFixture creates one client with authorization services on and
