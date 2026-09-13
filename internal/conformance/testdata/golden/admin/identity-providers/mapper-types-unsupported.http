@@ -1,4 +1,4 @@
-# GET /admin/realms/master/identity-provider/instances/gloak-probe-mt-broker-li/mapper-types
+# GET /admin/realms/master/identity-provider/instances/gloak-probe-mt-broker-os/mapper-types
 HTTP/1.1 500 Internal Server Error
 Content-Length: {{volatile}}
 Content-Type: application/json
