@@ -755,7 +755,47 @@ func TestNoTwoFixturesMintOneIdentityProviderID(t *testing.T) {
 // Apache's route planner - `Target host is not specified` - before a socket is
 // opened. A bare `openshift-v4` instance therefore answers the same 500 on any
 // host, including one with no network at all.
+//
+// **The list is the claim; the loop below is only how the claim is checked.**
+// Emptying it left TestNoMapperTypesCaseAsksAProviderThatFetchesOnConstruction
+// green - its guard counts the fixtures it visited, which is still three, while
+// the comparison inside runs zero times. So the set is pinned in
+// TestTheProviderThatFetchesOnConstructionIsTheOneMeasured as well, and that is
+// the test that dies when somebody empties this.
 var identityProvidersFetchingOnConstruction = []string{"linkedin-openid-connect"}
+
+// TestTheProviderThatFetchesOnConstructionIsTheOneMeasured pins the set above
+// whole, in the shape internal/model already uses for the providers with no
+// mapper set: compare the **list**, not the membership of one id, so that an
+// entry arriving and an entry leaving each fail on their own.
+//
+// **The obvious guard is the wrong one here.** The mirror of
+// TestEveryDeclaredSpellingIsExercised - every declared entry is used by
+// something in the tree - cannot be written, because no fixture creates a
+// `linkedin-openid-connect` instance and none should: the entry exists to say
+// that one must never be created for a `mapper-types` case. An entry nothing
+// exercises is exactly what this list is for, which is why it is pinned against
+// the measurement instead of against a usage.
+//
+// To re-measure: create an instance of each candidate provider on a live 26.7.1
+// and ask it for `mapper-types` on a host with **no** route to the provider's
+// own metadata address. A 500 whose logged cause names a socket or a handshake
+// belongs in this list; one whose cause is `Target host is not specified` does
+// not, because that failure needs no network.
+func TestTheProviderThatFetchesOnConstructionIsTheOneMeasured(t *testing.T) {
+	want := []string{"linkedin-openid-connect"}
+	got := identityProvidersFetchingOnConstruction
+	if len(got) != len(want) {
+		t.Fatalf("the measured set is %q, want %q: emptying or extending this "+
+			"list silences TestNoMapperTypesCaseAsksAProviderThatFetchesOnConstruction "+
+			"without failing it, so the list is asserted here. See F230.", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("the measured set is %q, want %q", got, want)
+		}
+	}
+}
 
 // TestNoMapperTypesCaseAsksAProviderThatFetchesOnConstruction is the other
 // ratchet F230 earned, and it exists because a mutation survived.
@@ -777,6 +817,16 @@ var identityProvidersFetchingOnConstruction = []string{"linkedin-openid-connect"
 // which time the golden has moved and somebody is reading the diff wondering
 // which of the two is wrong. For the third time.
 func TestNoMapperTypesCaseAsksAProviderThatFetchesOnConstruction(t *testing.T) {
+	// **Two vacuity guards, because there are two ways to go quiet and the
+	// first version only had one.** The count below guards the outer loop -
+	// that this visited some fixtures - and it is satisfied by three visits
+	// whatever the comparison does. Emptying the list leaves it satisfied and
+	// runs the comparison zero times, which passed. So the list is guarded
+	// here too, and pinned against its measurement one test up.
+	if len(identityProvidersFetchingOnConstruction) == 0 {
+		t.Fatal("the measured set is empty, so this test compares nothing and " +
+			"would pass whatever the fixtures name. See F230.")
+	}
 	checked := 0
 	for _, c := range Catalog {
 		if !strings.HasSuffix(c.Request.Path, "/mapper-types") {
