@@ -285,7 +285,53 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-12 (thirty-fifth fold).** `make conformance` reports **598 of
+**Updated 2026-09-13 (thirty-sixth fold).** `make conformance` reports **598 of
+644, no change** - the whole cut is one golden and two ratchets, and it is the
+first here whose subject was *whether a committed golden is true*.
+
+**F230 is settled and the answer is none of the four hypotheses it was framed
+with.** The golden was right, the ten draws that disagreed were right, and
+**neither was measuring Keycloak**. `GET .../mapper-types` instantiates the
+provider, and LinkedIn's factory fetches
+`.well-known/openid-configuration` **from the public internet** while doing so,
+so the status is the recording host's egress.
+
+**A mechanism settled it, not a count**, and that retires half a rule this file
+carried. F179 said "telling them apart needs a third draw"; here **ten draws on
+one side and four on the other did not tell them apart**, and reading one stack
+trace did. *A disagreement is settled by a mechanism or it is not settled* - a
+count on either side is how long you looked, not what you found. The rule is
+corrected in AGENTS.md rather than quietly dropped.
+
+The step that turned a plausible story into a measurement was reproducing the 200
+half **without leaving the container**: `openshift-v4` reads its metadata URL out
+of `baseUrl`, so the same provider on the same endpoint gave 500 with no config
+and 200 with six mapper types with `baseUrl` pointed at the container's own
+document. Six is the number the ten draws saw. That step was the one that could
+most easily have been skipped.
+
+**The collision sweep is the half worth more than the finding.** It reaches
+**zero cases**, and what holds it at zero is `PristineRealm: true` on an
+unrelated case, set for F40's reason by somebody who did not know it was
+load-bearing. Two fixtures mint `…020` and `…021` twice over; a duplicate create
+is a 409 naming the alias that does *not* exist, `idempotentCreate` swallows it,
+the fixture passes having created nothing, and the case gets a 404. Clear that
+flag and two committed 200 goldens silently become 404s. **A trap held shut by a
+coincidence is a trap.**
+
+**And a third way for a golden to record the recorder.** F40's counts and F206's
+oversized request are functions of the container's **history** and `PristineRealm`
+cures both. This is a function of the host's **environment** - a fresh container
+with one request on it is exactly where it happens, and two honest recordings on
+two honest machines disagree while both are right.
+
+**Review found one gap and it was in the guard, not the finding.** The ratchet's
+vacuity check counted what the sweep *visited* rather than what it *compared*, so
+emptying the declared list left it green and asserting nothing. *A vacuity guard
+has to cover the claim, not the traversal.* The list is pinned whole now and
+fails in both directions - I reproduced both.
+
+**Earlier on 2026-09-12 (thirty-fifth fold).** `make conformance` reports **598 of
 644**, +20 - the largest single move since the account chapter, and the first in
 four folds where the meter moved at all.
 

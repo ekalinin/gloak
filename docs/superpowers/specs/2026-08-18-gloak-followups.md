@@ -6251,7 +6251,47 @@ inference only - the client's `saml.client.signature` is one flag for both
 bindings and an unsigned POST is `Invalid requester`, which says the check runs,
 and nothing says what passing it looks like.
 
-## F230: a golden that moves between recorder runs, and a shared `internalId` space
+## F230: a golden that moves between recorder runs (settled 2026-09-13 - it was the recorder's network)
+
+**None of the four hypotheses this entry framed.** The golden was right, the ten
+draws that disagreed with it were right, and **neither was measuring Keycloak**.
+
+`GET .../mapper-types` **instantiates the provider**, and
+`LinkedInOIDCIdentityProviderFactory.create` fetches
+`https://www.linkedin.com/oauth/.well-known/openid-configuration` from the public
+internet while doing so. The status is the recording host's egress: 500 where the
+fetch fails, 200 with six mapper types where it succeeds.
+
+**What settled it was a mechanism, not a count.** The first draw on a cold
+container answered 500 - refuting the previous cut's strongest evidence and
+making the tally on either side worthless. The container's stack trace named the
+URL and the call path. The 200 half was then reproduced **without leaving the
+container**, using `openshift-v4`, which reads its metadata URL out of `baseUrl`:
+same provider, same endpoint, same container, 500 with no config and **200 with
+six mapper types** with `baseUrl` pointed at the container's own document. Six is
+the number the ten draws saw for LinkedIn, which closes the loop.
+
+The case asks `openshift-v4` now, whose 500 comes from Apache's route planner -
+`Target host is not specified`, before a socket exists - and is reproducible
+air-gapped.
+
+**The `internalId` collision was not the mechanism, and the sweep is the more
+important half.** It reaches **zero cases**, and what holds it at zero is
+`PristineRealm: true` on `update-strands-the-row`, set for F40's reason by
+somebody who did not know it was load-bearing. `…020` and `…021` really are
+minted twice; a duplicate create is a **409 naming the alias that does not
+exist**, `idempotentCreate` swallows it, the fixture passes having created
+nothing, and the case gets a 404. Clear that flag, or add one non-pristine case
+naming `idp-stranded`, and two committed 200 goldens become 404s with every test
+still green. **A trap held shut by a coincidence is a trap**, and
+`TestNoTwoFixturesMintOneIdentityProviderID` turns the coincidence into an
+invariant. F234 records that the other id spaces have the same shape.
+
+Two containers, both cold and created with `docker run` rather than restarted -
+recorded because "three containers" and "three starts of one" are different
+evidence.
+
+## F230 (original): the entry as filed on 2026-09-12
 
 `admin/identity-providers/mapper-types-unsupported` recorded a 500 on one
 `make record` run and a 200 on the next, on the same tree. Reverted; §4 has the
@@ -6354,3 +6394,67 @@ inbound callout and the back-channel logout - are unchanged.
   an assertion builder will have to measure.
 - **F230's recorder instability**, which is not SAML's and is the one thing in
   this cut's record diff that a reader should not take at face value.
+
+## F232: Gloak's mapper-types 500 is unconditional where Keycloak's is not
+
+Measured in section 1.5. Keycloak answers `openshift-v4` with 200 and six mapper
+types once `baseUrl` resolves, and with a 500 otherwise; Gloak answers 500 for
+`openshift-v4` and `linkedin-openid-connect` whatever the config holds. Nothing
+in the tree asserts either direction, and the six types are recorded in section
+1.5 rather than in a golden.
+
+Not fixed here, for two reasons. It needs the six type definitions in full, not
+their ids, and the serving path would have to make a decision Gloak has no
+machinery for - **Keycloak's answer depends on an outbound fetch**, which Gloak
+must not make. The honest shape is probably that Gloak serves the 500 and the
+divergence is recorded as deliberate, which is a decision rather than a patch.
+What to measure first: whether `linkedin-openid-connect` offers the same six, on
+a host that can reach LinkedIn.
+
+## F233: a case whose status depends on the public internet has no disposition
+
+`linkedin-openid-connect`'s `mapper-types` cannot be recorded reproducibly, and
+the catalogue's vocabulary has no word for that. `Pending` is for a body nothing
+can reproduce, and the reason is F113. This is a status nothing can reproduce,
+and the cause is outside the machine.
+
+It matters beyond this one cell: **nothing stops the next such case**. A
+`Pending` case is declared in `parkedGoldens` with a reason; there is no
+equivalent declaration for "this value is a function of the recording host", and
+the only thing that caught this one was a golden moving between runs and two cuts
+reading it opposite ways.
+
+Section 1.6 is why this is worth a number of its own rather than a line on F113.
+F40 and F206 are the same family and both are cured by a fresh container; this
+one is not, because the fresh container is where it happens. The cheap half is to
+enumerate the routes on which Keycloak makes an **outbound** request while
+serving - this one is the only one anybody here has met, and nobody went looking.
+The expensive half is deciding what the catalogue should call such a case.
+
+## F234: the fixture id spaces share one prefix and nothing enumerates them
+
+`1de07000-0000-4000-8000-0000000000XX` carries identity providers, identity
+provider mappers, authz policies, resources and scopes, and the organization
+brokers, in overlapping suffix ranges kept apart by convention and comments. The
+new ratchet covers one of those families. The others have the same shape -
+global id spaces, `idempotentCreate` over the top - and the sweep in section 3
+was hand-done because nothing enumerates them.
+
+What to do first is the cheap half: generalise
+`TestNoTwoFixturesMintOneIdentityProviderID` over the families whose creates
+carry a literal id, and report how many duplicates exist before deciding whether
+any of them can fire.
+
+## F235: `make record` has no way to report that a golden moved for an external reason
+
+F230 took three cuts: one recorded the flap and reverted it, one drew ten times
+and concluded the golden was wrong, and this one found the cause. Every one of
+them read the same diff. F166 records the same shape for a different cause - "a
+recurring hand-revert is a defect report that nobody has anywhere to file" - and
+the remedy it found was per-case (`PristineRealm`).
+
+The general question is whether `make record` can say **which** goldens moved
+against what they held, in a form that survives the revert, so the second cut
+starts from the first's diff instead of re-deriving it. Nothing is proposed here;
+the observation is that two cuts spent a session each on one cell and the
+information that would have saved the second was in the first's working tree.
