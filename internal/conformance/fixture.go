@@ -1245,9 +1245,35 @@ var Fixtures = map[string]Fixture{
 	//
 	// The three mapper-types fixtures create brokers of three different
 	// `providerId`s, because that is the only input that route has.
-	"idp-mt-oidc":     identityProviderFixture(`{"alias":"gloak-probe-mt-broker-oidc","internalId":"1de07000-0000-4000-8000-000000000020","providerId":"oidc"}`),
-	"idp-mt-saml":     identityProviderFixture(`{"alias":"gloak-probe-mt-broker-saml","internalId":"1de07000-0000-4000-8000-000000000021","providerId":"saml"}`),
-	"idp-mt-linkedin": identityProviderFixture(`{"alias":"gloak-probe-mt-broker-li","internalId":"1de07000-0000-4000-8000-000000000022","providerId":"linkedin-openid-connect"}`),
+	//
+	// **The third one is `openshift-v4` rather than `linkedin-openid-connect`,
+	// and the difference is whether the 500 needs the network.** That route
+	// instantiates the provider, so whatever the factory does on construction
+	// decides the status. `LinkedInOIDCIdentityProviderFactory.create` fetches
+	// `https://www.linkedin.com/oauth/.well-known/openid-configuration` from
+	// the public internet, so a Keycloak that can reach LinkedIn answers 200
+	// with six mapper types and one that cannot answers the 500 - the recording
+	// host's egress, not Keycloak. `openshift-v4` reads its metadata URL out of
+	// `baseUrl`, which a bare create does not carry, so it fails in Apache's
+	// route planner with `Target host is not specified` before any socket is
+	// opened. Same status, same bytes, and reproducible on an air-gapped host.
+	// See the handover for the measurement and F232 for what is still unpinned.
+	//
+	// **These three were `…020`, `…021` and `…022` and are now `…05X`, because
+	// the first two collided with identityProviderStrandedFixture.** An
+	// internalId is the primary key and it is global, so the second create of a
+	// shared id is a 409 that `idempotentCreate` accepts, and the case
+	// addressing the losing alias gets a 404 from a fixture that reported
+	// success. Nothing was broken: the case naming the stranded fixture is
+	// PristineRealm and lands on a container of its own, so the two never met -
+	// but that is a flag set because the case enumerates the realm, holding off
+	// a 404 it was not set for. The stranded ids are the ones asserted in a
+	// golden, `update-strands-the-row`, so this side is the side that moves.
+	// `…05X` is clear of the strand loop's growth path as well as of its two
+	// current values. TestNoTwoFixturesMintOneIdentityProviderID is the ratchet.
+	"idp-mt-oidc":      identityProviderFixture(`{"alias":"gloak-probe-mt-broker-oidc","internalId":"1de07000-0000-4000-8000-000000000050","providerId":"oidc"}`),
+	"idp-mt-saml":      identityProviderFixture(`{"alias":"gloak-probe-mt-broker-saml","internalId":"1de07000-0000-4000-8000-000000000051","providerId":"saml"}`),
+	"idp-mt-openshift": identityProviderFixture(`{"alias":"gloak-probe-mt-broker-os","internalId":"1de07000-0000-4000-8000-000000000052","providerId":"openshift-v4"}`),
 
 	// One broker holding one mapper. Its config carries four keys whose order
 	// the SizedKeyOrder serialiser has to place, and one of them is undeclared

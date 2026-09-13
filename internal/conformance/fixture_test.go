@@ -1,9 +1,11 @@
 package conformance
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -664,6 +666,91 @@ func TestFixturesAreWellFormed(t *testing.T) {
 	if _, ok := Fixtures["bootstrap"]; !ok {
 		t.Error(`Fixtures must contain "bootstrap"`)
 	}
+}
+
+// TestNoTwoFixturesMintOneIdentityProviderID is the ratchet F230 earned.
+//
+// **An identity provider's internalId is its primary key and it is global**, so
+// two fixtures naming one id are fine apart and collide on the shared container
+// the recorder uses. The collision is silent in the worst possible way: the
+// second create answers
+// `409 {"errorMessage":"Identity Provider <new alias> already exists"}` -
+// naming the alias that does **not** exist - `idempotentCreate` accepts the 409,
+// and the case that addresses that alias gets a 404 from a fixture that reported
+// success. Measured on a cold container 2026-09-13.
+//
+// Three values in this tree were duplicated when this test was written and none
+// of them reached a case: `…0002`, where idp-minimal and idp-taken mint one id
+// **for one alias** and the 409 therefore leaves exactly the resource the case
+// wants, and `…0020` and `…0021`, where identityProviderStrandedFixture and the
+// two mapper-types fixtures disagree about the alias and are held apart only by
+// PristineRealm on the case naming the first - a flag set because that case
+// enumerates the realm, for a reason with nothing to do with ids. Clearing it,
+// or adding one non-pristine case naming idp-stranded, turns two 200 goldens
+// into 404s with no fixture reporting a failure. That is too load-bearing for a
+// flag nobody set for the purpose, so the invariant is asserted here instead:
+// **one internalId may be minted twice only for one alias.**
+func TestNoTwoFixturesMintOneIdentityProviderID(t *testing.T) {
+	// minters maps an internalId to the "fixture:alias" of every create that
+	// names it. The alias is in the key because sharing an id **and** an alias
+	// is the one harmless case, and reporting it would train people to ignore
+	// this test.
+	minters := map[string]map[string][]string{}
+	for name, f := range Fixtures {
+		for _, s := range f.Steps {
+			if s.Request.Method != http.MethodPost ||
+				!strings.HasSuffix(s.Request.Path, "/identity-provider/instances") {
+				continue
+			}
+			id := jsonStringField(s.Request.Body, "internalId")
+			if id == "" {
+				// A create with no internalId gets a server-minted UUID, which
+				// cannot collide with this tree's literals. Nothing to check.
+				continue
+			}
+			alias := jsonStringField(s.Request.Body, "alias")
+			if minters[id] == nil {
+				minters[id] = map[string][]string{}
+			}
+			minters[id][alias] = append(minters[id][alias], name)
+		}
+	}
+	for id, byAlias := range minters {
+		if len(byAlias) < 2 {
+			continue
+		}
+		var where []string
+		for alias, fixtures := range byAlias {
+			for _, f := range fixtures {
+				where = append(where, f+" as "+alias)
+			}
+		}
+		sort.Strings(where)
+		t.Errorf("internalId %s is minted for %d different aliases: %s\n"+
+			"\tthe second create on a shared container is a 409 idempotentCreate "+
+			"swallows, and the case addressing the losing alias gets a 404",
+			id, len(byAlias), strings.Join(where, ", "))
+	}
+}
+
+// jsonStringField reads one top-level string field out of a fixture body.
+//
+// A full unmarshal would do, and this does not use one on purpose: the bodies
+// here are literals written to be read, several carry a `config` object whose
+// value types differ between providers, and a decode into a typed struct is a
+// second place to keep a field list in step. What the caller needs is one
+// string, and the bodies are flat enough at the top level for the key to be
+// found by name.
+func jsonStringField(body []byte, field string) string {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(body, &m); err != nil {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(m[field], &s); err != nil {
+		return ""
+	}
+	return s
 }
 
 func TestCatalogFixturesExist(t *testing.T) {
