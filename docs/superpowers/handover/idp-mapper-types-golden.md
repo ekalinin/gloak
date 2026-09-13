@@ -145,6 +145,33 @@ configures a `baseUrl` gets a 500 from Gloak and a 200 from Keycloak. That is a
 real divergence, it is newly measured, and nothing in the tree asserts either
 way: **F232**.
 
+### 1.6 This is the third way a golden can record the recorder
+
+The right frame for this entry is not "one provider reaches out". It is that
+**the golden was recording the recording machine**, and this repository already
+has two entries of that family:
+
+- **F40**, a count that is a function of everything the recorder did to the
+  realm before it arrived. The remedy is `PristineRealm`.
+- **F206**, a request that grows with the catalogue until Keycloak answers
+  `431 Request Header Fields Too Large` - filed there as "the second known way
+  for a golden to be a measurement of the container's history rather than of a
+  behaviour".
+
+**This is the third, and it is on a new axis.** The first two are measurements of
+the container's *history*: what the recorder did, in what order, before the case
+ran. This one is a measurement of the host's *environment*, and the recorder did
+nothing at all to cause it. A fresh container with one request on it is the
+condition F40 and F206 are cured by, and it is the exact condition under which
+this golden gives two different answers on two different machines.
+
+That matters for what to sweep for next. `PristineRealm` cannot reach it, an
+ordering rule cannot reach it, and re-recording cannot reach it - two honest
+recordings on two honest machines disagree, and both are right. The only thing
+that separates them is a fact about Keycloak that has to be known before the
+recording is read: **this route makes an outbound request.** Nothing enumerates
+the routes that do. That is F233.
+
 ## 2. Containers
 
 **Two containers, both genuinely fresh, plus the recorder's own.**
@@ -407,6 +434,14 @@ per-provider catalogue.
   a new axis: that one is about a body carrying per-request values, this one is
   about a **status** carrying the recording host's network. Both are cases
   `make record` cannot settle.
+- **There are now three ways for a golden to record the recorder, and the third
+  is not cured by a fresh container.** F40's counts and F206's oversized request
+  are functions of the container's **history** - what the recorder did before the
+  case ran - and `PristineRealm` is the remedy for both. F230 is a function of
+  the host's **environment**: a fresh container with one request on it is exactly
+  where it happens, and two honest recordings on two honest machines disagree
+  while both are right. Before concluding that a moving golden means somebody
+  recorded it wrong, ask whether the route reaches outside the container.
 - **F179's rule needs its sample-size half removed.** "A recording that
   disagrees with a golden is not evidence that the golden was wrong" is right,
   and "telling them apart needs a third draw" is not - ten draws on one side and
@@ -443,6 +478,13 @@ It matters beyond this one cell: **nothing stops the next such case**. A
 equivalent declaration for "this value is a function of the recording host", and
 the only thing that caught this one was a golden moving between runs and two cuts
 reading it opposite ways.
+
+Section 1.6 is why this is worth a number of its own rather than a line on F113.
+F40 and F206 are the same family and both are cured by a fresh container; this
+one is not, because the fresh container is where it happens. The cheap half is to
+enumerate the routes on which Keycloak makes an **outbound** request while
+serving - this one is the only one anybody here has met, and nobody went looking.
+The expensive half is deciding what the catalogue should call such a case.
 
 ### F234: the fixture id spaces share one prefix and nothing enumerates them
 
