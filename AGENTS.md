@@ -2321,7 +2321,13 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   was not. "Two recordings agreeing is never evidence of stability" is already
   here; its other side is that **a recording that disagrees with a golden is not
   evidence that the golden was wrong** - it is evidence that one of the two is
-  unstable, and telling them apart needs a third draw. See F179.
+  unstable. See F179.
+  **The "third draw" half of that rule is wrong and was removed on 2026-09-13.**
+  It read "telling them apart needs a third draw", and F230 settled a
+  disagreement where **ten draws on one side and four on the other had not**:
+  what settled it was reading one stack trace. **A disagreement is settled by a
+  mechanism or it is not settled** - a count on either side is how long you
+  looked, not what you found.
 - **An unrecognised keystore format has three answers in one tag.** The two
   downloads answer **406** for a spelling that is not a format and **500** for a
   real format spelled wrongly; `POST .../upload` answers **400 `error loading
@@ -2847,6 +2853,67 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   were found by **running the route table rather than reading the
   documentation**. Before adding a `{rest...}` or a trailing-slash subtree
   pattern, send every verb at the subtree root and look at the status.
+
+- **`GET .../identity-provider/instances/{alias}/mapper-types` instantiates the
+  provider, so a factory that does I/O on construction decides the status.** Two
+  of the seventeen answer a 500 and **the two 500s do not have one cause**.
+  `openshift-v4` reads its metadata URL out of `baseUrl`, which a bare create
+  does not carry, and Apache's route planner refuses with `Target host is not
+  specified` before a socket exists - reproducible on an air-gapped host, on
+  every draw anyone has taken. `linkedin-openid-connect`'s URL is **hard-coded to
+  `https://www.linkedin.com/oauth/.well-known/openid-configuration`**, so its
+  answer is the recording host's egress to a third party: 500 where the fetch
+  fails, measured three times on a cold container and once on a second, and 200
+  with six mapper types where it succeeds, which is what ten draws on a
+  better-connected host saw. `admin/identity-providers/mapper-types-unsupported`
+  asks `openshift-v4` for that reason and must not be pointed back.
+- **The 500 is a property of the instance, not of the provider id.** The same
+  `openshift-v4` alias given a `baseUrl` that resolves answers 200 with six
+  mapper types, one of them `openshift-v4-user-attribute-mapper`. So the sentence
+  "they are exactly the two the catalogue has no mapper set for" is true of
+  **Gloak's** catalogue and false of Keycloak's, and the claim in
+  `internal/model/providercatalogue.go` that the two conditions are one set is a
+  correct statement about the code resting on a wrong statement about Keycloak.
+  Gloak answers the 500 unconditionally: F232.
+- **An identity provider's `internalId` is global, a duplicate create is a 409
+  naming the alias that does *not* exist, and `idempotentCreate` accepts it.** So
+  the fixture reports success, creates nothing, and the case addressing the
+  losing alias gets a 404. The alias-clearing `PUT` does not free the id.
+  **This is the entry to fold as prominently as F230 itself, and it is not about
+  identity providers.** Two fixtures in this tree minted `…020` and `…021` twice
+  over, and the only thing that kept two committed 200 goldens from silently
+  becoming 404s was **`PristineRealm: true` on a third, unrelated case** - a flag
+  set because that case enumerates the realm, which is F40's reason and has
+  nothing to do with ids. Nobody chose that protection and nobody knew it was
+  load-bearing; clearing the flag, or adding one non-pristine case naming
+  `idp-stranded`, would have sprung it with every test still green.
+  A trap held shut by a coincidence is a trap.
+  `TestNoTwoFixturesMintOneIdentityProviderID` turns the coincidence into an
+  invariant, keyed on one id for **one alias** rather than on uniqueness, because
+  `idp-minimal` and `idp-taken` share both on purpose and a test that reported
+  them is a test people learn to ignore. The other id spaces in
+  `internal/conformance` have the same shape - global keys, `idempotentCreate`
+  over the top - and nothing enumerates them: F234.
+- **A vacuity guard has to cover the claim, not the traversal.** Counting what a
+  sweep visited says nothing about what it compared. Both of this cut's ratchets
+  had a guard on the loop and one of them still passed with its comparison
+  emptied out, found in review rather than by the author. Where a ratchet reads a
+  declared list, the list is the claim and it is pinned whole - the shape
+  `internal/model` already uses for the providers with no mapper set, where an
+  entry arriving and an entry leaving each fail on their own.
+- **A golden whose value depends on reaching a host on the public internet is
+  not a contract**, however many times it has been drawn. This is F113's rule on
+  a new axis: that one is about a body carrying per-request values, this one is
+  about a **status** carrying the recording host's network. Both are cases
+  `make record` cannot settle.
+- **There are now three ways for a golden to record the recorder, and the third
+  is not cured by a fresh container.** F40's counts and F206's oversized request
+  are functions of the container's **history** - what the recorder did before the
+  case ran - and `PristineRealm` is the remedy for both. F230 is a function of
+  the host's **environment**: a fresh container with one request on it is exactly
+  where it happens, and two honest recordings on two honest machines disagree
+  while both are right. Before concluding that a moving golden means somebody
+  recorded it wrong, ask whether the route reaches outside the container.
 
 ## Boundaries
 
