@@ -435,6 +435,71 @@ func TestNoTwoFixturesMintOneObjectID(t *testing.T) {
 	}
 }
 
+// TestContainerOfSeparatesWhatACollisionWouldSeparate pins containerOf
+// directly, and it exists because the tree cannot pin it.
+//
+// containerOf is what turns "one id, one name" into "one id, one object". Every
+// distinction it draws is about a collision the tree **does not currently
+// have**: no id is minted in two realms, under two resource servers or in two
+// containers today, so neutering the whole function to a constant leaves
+// TestNoTwoFixturesMintOneObjectID green. That is the inert-guard shape this
+// project keeps meeting - a mechanism with no positive control is a mechanism
+// nobody will notice losing - so the claims are asserted here against what was
+// measured rather than against what the fixtures happen to hold.
+func TestContainerOfSeparatesWhatACollisionWouldSeparate(t *testing.T) {
+	plain := idRoute{http.MethodPost, `/components$`, "", "id", "name", ""}
+	nested := idRoute{http.MethodPost, `/clients$`, "protocolMappers", "id", "name", "clientId"}
+	captured := idRoute{http.MethodPost, `/authz/resource-server/scope$`, "", "id", "name", ""}
+	for _, tc := range []struct {
+		what       string
+		aF, aP, aB string
+		bF, bP, bB string
+		route      idRoute
+		same       bool
+		because    string
+	}{
+		{
+			what: "two realms",
+			aF:   "one", aP: "/admin/realms/ra/components", aB: `{"id":"x","name":"n"}`,
+			bF: "two", bP: "/admin/realms/rb/components", bB: `{"id":"x","name":"n"}`,
+			route: plain, same: false,
+			because: "a component id is global across realms, so the second create is a 409 and the loser is stranded",
+		},
+		{
+			what: "one realm, one route",
+			aF:   "one", aP: "/admin/realms/ra/components", aB: `{"id":"x","name":"n"}`,
+			bF: "two", bP: "/admin/realms/ra/components", bB: `{"id":"x","name":"n"}`,
+			route: plain, same: true,
+			because: "two fixtures building the same component is the deliberate case five pairs in this tree rely on",
+		},
+		{
+			what: "two clients, one nested mapper name",
+			aF:   "one", aP: "/admin/realms/ra/clients", aB: `{"clientId":"ca","protocolMappers":[{"id":"x","name":"n"}]}`,
+			bF: "one", bP: "/admin/realms/ra/clients", bB: `{"clientId":"cb","protocolMappers":[{"id":"x","name":"n"}]}`,
+			route: nested, same: false,
+			because: "the path is the same for both creates and the container is named in the body",
+		},
+		{
+			what: "two fixtures, one captured parent",
+			aF:   "one", aP: "/admin/realms/ra/clients/{{client_uuid}}/authz/resource-server/scope", aB: `{"id":"x","name":"n"}`,
+			bF: "two", bP: "/admin/realms/ra/clients/{{client_uuid}}/authz/resource-server/scope", bB: `{"id":"x","name":"n"}`,
+			route: captured, same: false,
+			because: "every authz fixture creates its own resource server, so one path string is two parents",
+		},
+	} {
+		a := containerOf(tc.aF, tc.aP, []byte(tc.aB), tc.route)
+		b := containerOf(tc.bF, tc.bP, []byte(tc.bB), tc.route)
+		if (a == b) != tc.same {
+			verb := "must differ"
+			if tc.same {
+				verb = "must agree"
+			}
+			t.Errorf("%s: containerOf %s - %s\n\tgot %q and %q",
+				tc.what, verb, tc.because, a, b)
+		}
+	}
+}
+
 // TestTheFixtureIDSpacesAreTheOnesMeasured pins the table whole, in the shape
 // TestTheProviderThatFetchesOnConstructionIsTheOneMeasured uses: compare the
 // **list**, not the membership of one row, so that an entry arriving and an
