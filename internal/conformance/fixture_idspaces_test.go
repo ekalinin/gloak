@@ -1,0 +1,581 @@
+package conformance
+
+import (
+	"encoding/json"
+	"net/http"
+	"regexp"
+	"sort"
+	"strings"
+	"testing"
+)
+
+// F234: the fixture id spaces, and one sweep over all of them.
+//
+// F230 found the shape in the identity providers and
+// TestNoTwoFixturesMintOneIdentityProviderID closed it for that one family.
+// F234 is the observation that nothing enumerated the others. This file is the
+// enumeration and the sweep.
+//
+// **Every space below is global, and none of them is the same space as any
+// other.** Both halves were measured against a live Keycloak 26.7.1 on
+// 2026-09-13 rather than reasoned about: one id was offered to all nine
+// families in one realm and all nine creates answered 201, so the per-family
+// id prefixes the fixtures use are tidiness and not a requirement - and a
+// client id, a client scope id and a component id are each global across
+// realms, although all three objects live inside one.
+//
+// **What a collision answers is not shared, and assuming it was is the mistake
+// this file exists to stop.** Three of the nine do not answer 409: the
+// identity provider answers a **500** across realms, and the two authz stores
+// that own a row answer **201 and silently rename it**.
+//
+// The reason a global id space is dangerous here and nowhere else is the
+// recorder: `make record` drives almost every case against one shared
+// container, so two fixtures that are fine apart meet. A create that loses the
+// race answers a status `idempotentCreate` accepts, the fixture reports
+// success having created nothing, and the case addressing the losing object
+// measures a server it never reached. Nothing in the tree fails.
+
+// idRoute is one create route that mints into an id space.
+//
+// A space can have several: a protocol mapper id is minted by five routes and
+// they are one space, which is why the sweep pools a space's routes into one
+// map instead of running per route.
+type idRoute struct {
+	Method string
+	// Path is a regular expression matched against the request path. It is not
+	// a plain suffix because two of these routes end in a path parameter -
+	// `PUT .../clients/{uuid}` and `POST .../instances/{alias}/mappers` - and a
+	// suffix cannot say "one more segment".
+	Path string
+	// Nested says where the creates are in the body:
+	//
+	//	""   the body is itself one create
+	//	"."  the body is an **array** of creates - the batch route
+	//	else the name of the body field holding an array of nested creates
+	//
+	// A nested create is a real create: POST /clients with a protocolMappers
+	// array creates a client *and* its mappers, and they outlive the request
+	// the same way. That is the pollution guard's rule arriving here.
+	Nested string
+	// IDKey is the key holding the id and NameKey the key holding the name, at
+	// the level Nested names.
+	IDKey   string
+	NameKey string
+}
+
+// idSpace is one family of objects a fixture mints a **literal** id for.
+//
+// A create carrying no id gets a server-minted UUID, which cannot collide with
+// this tree's literals, so only the literals are in scope.
+type idSpace struct {
+	// Object names the family, for the failure message.
+	Object string
+	Routes []idRoute
+	// Collision is what a colliding create answers on a live 26.7.1, measured.
+	// It is in the failure message because the answer differs per family and
+	// reading the identity provider's into another one is exactly what F234
+	// warned against.
+	Collision string
+	// Floor is the number of distinct literal ids the sweep must find in this
+	// space.
+	//
+	// A sweep that matches nothing passes, and a passing sweep that matched
+	// nothing is indistinguishable from a correct one. One floor over the whole
+	// table would be satisfied by the eight spaces that still match while the
+	// ninth went quiet, so the floor is **per space**.
+	Floor int
+}
+
+// fixtureIDSpaces is the enumeration F234 asked for: nine spaces over thirteen
+// routes.
+//
+// **NameKey is what makes the sweep worth reading.** Two fixtures may share an
+// id deliberately, and they do - idp-minimal and idp-taken mint one internalId
+// for one alias on purpose. A uniqueness check would report them, and a test
+// that reports something deliberate is a test people learn to ignore. One id
+// for one name is the harmless case, because the loser's refusal leaves
+// exactly the object the case wanted; one id for two names is the trap.
+//
+// See docs/superpowers/handover/fixture-id-spaces.md for the probes.
+var fixtureIDSpaces = []idSpace{
+	{
+		Object: "client",
+		Routes: []idRoute{{http.MethodPost, `/clients$`, "", "id", "clientId"}},
+		// Two bodies, decided by which realm holds the winner. In the same
+		// realm it is 409 `Duplicate resource error`; in another realm it is
+		// 409 `Client <the new clientId> already exists` - naming the client
+		// that does **not** exist, which is the identity provider's shape
+		// turning up on a second family. idempotentCreate accepts both.
+		Collision: "409; in another realm the body names the client that does not exist",
+		Floor:     47,
+	},
+	{
+		Object: "client scope",
+		Routes: []idRoute{{http.MethodPost, `/client-scopes$`, "", "id", "name"}},
+		// 409 `Client Scope <the new name> already exists` in the same realm
+		// and in another one alike - again naming the scope that does not
+		// exist. Neither loser is in either realm afterwards.
+		Collision: "409 naming the client scope that does not exist",
+		Floor:     45,
+	},
+	{
+		Object: "protocol mapper",
+		// **Five routes, one space.** F78 measured that a protocol mapper id is
+		// unique across the server; this cut added the PUT after measuring that
+		// it mints - see the note on the last route.
+		Routes: []idRoute{
+			{http.MethodPost, `/clients$`, "protocolMappers", "id", "name"},
+			{http.MethodPost, `/client-scopes$`, "protocolMappers", "id", "name"},
+			{http.MethodPost, `/protocol-mappers/models$`, "", "id", "name"},
+			{http.MethodPost, `/protocol-mappers/add-models$`, ".", "id", "name"},
+			// **A PUT on a client mints here, measured 2026-09-13.** Keycloak
+			// matches the body's mappers to the client's by (protocol, name)
+			// and keeps the id it already had - which is what
+			// mapperRenamedByPutFixture measures, and it is why this looked
+			// like an update rather than a mint. For a name the client does
+			// **not** hold, the same PUT creates the mapper at the body's id:
+			// 204, and the id is then taken server-wide. A PUT naming an id
+			// another client holds is a 409.
+			{http.MethodPut, `/clients/[^/]+$`, "protocolMappers", "id", "name"},
+		},
+		// F78's four cells: the single create answers the *name* conflict for
+		// an id its own container holds and `Duplicate resource error` for one
+		// another container holds; the batch route answers the generic body for
+		// both. The enclosing create is rolled back either way, so a nested
+		// collision strands the **client or client scope** as well as the
+		// mapper - measured, and pinned by mapperIDRollbackFixture.
+		Collision: "409, F78's two bodies by route and holder, and the enclosing create is rolled back",
+		Floor:     22,
+	},
+	{
+		Object: "component",
+		Routes: []idRoute{{http.MethodPost, `/components$`, "", "id", "name"}},
+		// 409 `Duplicate resource error`, in the same realm and in another one.
+		// The **header set** of that 409 is not stable on the first occurrence -
+		// see the note on the component-dup-id fixture and F147 - but the
+		// status and the body are.
+		Collision: "409 Duplicate resource error, across realms too",
+		Floor:     8,
+	},
+	{
+		Object: "identity provider",
+		Routes: []idRoute{{http.MethodPost, `/identity-provider/instances$`, "", "internalId", "alias"}},
+		// F230's family. The cross-realm cell is **not** a 409:
+		// `ModelException: Identity Provider with internal id [...] does not
+		// belong to realm [...]` comes out as a 500, which idempotentCreate
+		// does not accept - so a cross-realm collision here is loud and a
+		// same-realm one is silent. The four organization broker fixtures are
+		// the ones that would meet it.
+		Collision: "409 naming the alias that does not exist; in another realm a 500",
+		Floor:     22,
+	},
+	{
+		Object: "identity provider mapper",
+		Routes: []idRoute{{http.MethodPost, `/identity-provider/instances/[^/]+/mappers$`, "", "id", "name"}},
+		// Global across identity providers and across realms alike. A repeat
+		// carrying the same **name** is a 400 `Failed to add mapper '<name>' to
+		// identity provider [<providerId>].` with or without an id, which is
+		// why idempotentCreate cannot cover this create.
+		Collision: "409 Duplicate resource error; a repeat of one name is a 400, not a 409",
+		Floor:     7,
+	},
+	{
+		Object: "authz resource",
+		Routes: []idRoute{{http.MethodPost, `/authz/resource-server/resource$`, "", "_id", "name"}},
+		// **The worst cell measured, and it is not a refusal.** On the resource
+		// server that owns the row a colliding create answers **201** and
+		// silently renames it: a listing holding `res-one` holds `res-two`
+		// afterwards and the first name is gone. No status can catch it,
+		// because there is no error, and the winner is the **last** create
+		// rather than the first. On another resource server, and in another
+		// realm, it is 409 `Duplicate resource error` and the owner is intact.
+		Collision: "201 on the owning resource server - a silent rename; 409 elsewhere",
+		Floor:     57,
+	},
+	{
+		Object:    "authz scope",
+		Routes:    []idRoute{{http.MethodPost, `/authz/resource-server/scope$`, "", "id", "name"}},
+		Collision: "201 on the owning resource server - a silent rename; 409 elsewhere",
+		Floor:     69,
+	},
+	{
+		Object: "authz policy",
+		Routes: []idRoute{{http.MethodPost, `/authz/resource-server/policy$`, "", "id", "name"}},
+		// The sibling that refuses where the two above overwrite: same path
+		// prefix, same verb, same question, and the first row survives. Three
+		// stores under one resource server and one of them disagrees.
+		Collision: "409 Duplicate resource error everywhere, and the first row survives",
+		Floor:     32,
+	},
+}
+
+// literalIDExemptions are the places a fixture body carries a UUID that is
+// **not** a create's own id.
+//
+// A reference to an object that already exists cannot collide: two permissions
+// naming one scope is what naming a scope means. The key is
+// `<method> <path regexp> <json pointer>`, with array indices written `*`.
+//
+// It is a declared list rather than a rule about key names, because `id`,
+// `_id` and `internalId` all mint somewhere and `id` also refers somewhere, so
+// no spelling decides it.
+var literalIDExemptions = map[string]string{
+	`POST /authz/resource-server/resource$ /scopes/*/id`: "a resource naming a scope the fixture already created",
+	`POST /authz/resource-server/policy$ /scopes/*`:      "a scope permission naming the scopes it covers",
+	`POST /authz/resource-server/policy$ /resources/*`:   "a resource permission naming the resources it covers",
+	`PUT /protocol-mappers/models/[^/]+$ /id`:            "an update, addressed by the same id in the path",
+}
+
+// fixtureUUID is the shape of every literal id in this tree. It is not RFC 4122
+// validation; it is "this looks like an id somebody wrote down".
+var fixtureUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// routeMatches reports whether a fixture step is on a declared route.
+func routeMatches(method, pattern, stepMethod, path string) bool {
+	if method != stepMethod {
+		return false
+	}
+	ok, err := regexp.MatchString(pattern, path)
+	return err == nil && ok
+}
+
+// expectsFailure reports whether a step declares that it means to be refused.
+//
+// **This is the data-side answer to "is this collision deliberate".**
+// componentCollideStep and mapperIDRollbackFixture's second create both say
+// `ExpectStatus: []int{http.StatusConflict}`, which is a fixture declaring that
+// it means to lose - and both are real one-id-two-names collisions that a plain
+// sweep would report. A comment saying the same thing would not be checkable,
+// so the declaration has to be the one the fixture runner already reads.
+//
+// "Would not accept a 201" is the wrong predicate and was the first one tried:
+// `POST .../protocol-mappers/add-models` answers **204**, so a route's success
+// code is not 201 everywhere. Any 2xx is.
+func expectsFailure(s Step) bool {
+	if len(s.ExpectStatus) == 0 {
+		// Empty means any 2xx - see acceptedStatus.
+		return false
+	}
+	for _, c := range s.ExpectStatus {
+		if c >= 200 && c < 300 {
+			return false
+		}
+	}
+	return true
+}
+
+// idMint is one literal id a fixture step puts into the store.
+type idMint struct {
+	fixture string
+	name    string
+}
+
+// mintsIn pools every literal id one space's routes carry, keyed by id.
+func mintsIn(sp idSpace) map[string][]idMint {
+	out := map[string][]idMint{}
+	for name, f := range Fixtures {
+		for _, s := range f.Steps {
+			if expectsFailure(s) {
+				continue
+			}
+			for _, r := range sp.Routes {
+				if !routeMatches(r.Method, r.Path, s.Request.Method, s.Request.Path) {
+					continue
+				}
+				for _, create := range createsIn(s.Request.Body, r.Nested) {
+					id := jsonStringOf(create, r.IDKey)
+					if !fixtureUUID.MatchString(id) {
+						continue
+					}
+					out[id] = append(out[id], idMint{fixture: name, name: jsonStringOf(create, r.NameKey)})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// createsIn pulls the create objects out of one request body, per idRoute.Nested.
+func createsIn(body []byte, nested string) []map[string]json.RawMessage {
+	switch nested {
+	case "":
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(body, &m); err != nil {
+			return nil
+		}
+		return []map[string]json.RawMessage{m}
+	case ".":
+		var a []map[string]json.RawMessage
+		if err := json.Unmarshal(body, &a); err != nil {
+			return nil
+		}
+		return a
+	default:
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(body, &m); err != nil {
+			return nil
+		}
+		var a []map[string]json.RawMessage
+		if err := json.Unmarshal(m[nested], &a); err != nil {
+			return nil
+		}
+		return a
+	}
+}
+
+// jsonStringOf reads one string field out of an already-decoded create.
+func jsonStringOf(m map[string]json.RawMessage, field string) string {
+	var s string
+	if err := json.Unmarshal(m[field], &s); err != nil {
+		return ""
+	}
+	return s
+}
+
+// sweepIDSpace is the ratchet: one id may be minted more than once only for one
+// name.
+func sweepIDSpace(t *testing.T, sp idSpace) {
+	t.Helper()
+	minters := mintsIn(sp)
+	if len(minters) < sp.Floor {
+		t.Fatalf("%s: the sweep found %d literal ids, want at least %d - it is "+
+			"matching less than it did and would pass whatever the fixtures hold. "+
+			"See F234.", sp.Object, len(minters), sp.Floor)
+	}
+	for id, mints := range minters {
+		names := map[string][]string{}
+		for _, m := range mints {
+			names[m.name] = append(names[m.name], m.fixture)
+		}
+		if len(names) < 2 {
+			continue
+		}
+		var where []string
+		for n, fixtures := range names {
+			for _, f := range fixtures {
+				where = append(where, f+" as "+n)
+			}
+		}
+		sort.Strings(where)
+		t.Errorf("%s id %s is minted for %d different names: %s\n"+
+			"\tthe recorder shares one container, so the second create answers: %s.\n"+
+			"\tThe fixture that loses reports success having created nothing, and the "+
+			"case addressing the losing object measures a server it never reached.",
+			sp.Object, id, len(names), strings.Join(where, ", "), sp.Collision)
+	}
+}
+
+// TestNoTwoFixturesMintOneObjectID is F234's sweep over every id space.
+func TestNoTwoFixturesMintOneObjectID(t *testing.T) {
+	for _, sp := range fixtureIDSpaces {
+		t.Run(strings.ReplaceAll(sp.Object, " ", "-"), func(t *testing.T) {
+			sweepIDSpace(t, sp)
+		})
+	}
+}
+
+// TestTheFixtureIDSpacesAreTheOnesMeasured pins the table whole, in the shape
+// TestTheProviderThatFetchesOnConstructionIsTheOneMeasured uses: compare the
+// **list**, not the membership of one row, so that an entry arriving and an
+// entry leaving each fail on their own.
+//
+// The lesson this cut inherited is that a guard counting what a sweep *visited*
+// is not a guard on what it *compared*. The sweep reads NameKey, and a NameKey
+// changed to the IDKey maps every id to exactly one "name", silences that space
+// for ever, and leaves every floor satisfied - a coherent wrong table rather
+// than a broken one. That mutation dies here and nowhere else.
+func TestTheFixtureIDSpacesAreTheOnesMeasured(t *testing.T) {
+	want := []struct {
+		object string
+		routes []idRoute
+	}{
+		{"client", []idRoute{{"POST", `/clients$`, "", "id", "clientId"}}},
+		{"client scope", []idRoute{{"POST", `/client-scopes$`, "", "id", "name"}}},
+		{"protocol mapper", []idRoute{
+			{"POST", `/clients$`, "protocolMappers", "id", "name"},
+			{"POST", `/client-scopes$`, "protocolMappers", "id", "name"},
+			{"POST", `/protocol-mappers/models$`, "", "id", "name"},
+			{"POST", `/protocol-mappers/add-models$`, ".", "id", "name"},
+			{"PUT", `/clients/[^/]+$`, "protocolMappers", "id", "name"},
+		}},
+		{"component", []idRoute{{"POST", `/components$`, "", "id", "name"}}},
+		{"identity provider", []idRoute{
+			{"POST", `/identity-provider/instances$`, "", "internalId", "alias"}}},
+		{"identity provider mapper", []idRoute{
+			{"POST", `/identity-provider/instances/[^/]+/mappers$`, "", "id", "name"}}},
+		{"authz resource", []idRoute{
+			{"POST", `/authz/resource-server/resource$`, "", "_id", "name"}}},
+		{"authz scope", []idRoute{
+			{"POST", `/authz/resource-server/scope$`, "", "id", "name"}}},
+		{"authz policy", []idRoute{
+			{"POST", `/authz/resource-server/policy$`, "", "id", "name"}}},
+	}
+	if len(fixtureIDSpaces) != len(want) {
+		t.Fatalf("the table holds %d id spaces, want %d: adding or removing one "+
+			"silences or invents a whole family's sweep, so the list is asserted "+
+			"here rather than only counted. See F234.", len(fixtureIDSpaces), len(want))
+	}
+	for i, w := range want {
+		got := fixtureIDSpaces[i]
+		if got.Object != w.object {
+			t.Errorf("id space %d is %q, want %q", i, got.Object, w.object)
+			continue
+		}
+		if len(got.Routes) != len(w.routes) {
+			t.Errorf("%s has %d routes, want %d: a protocol mapper id is one space "+
+				"over five routes, and dropping one leaves the ids it mints unswept",
+				w.object, len(got.Routes), len(w.routes))
+			continue
+		}
+		for j, wr := range w.routes {
+			if got.Routes[j] != wr {
+				t.Errorf("%s route %d is %+v, want %+v", w.object, j, got.Routes[j], wr)
+			}
+		}
+		if got.Collision == "" {
+			t.Errorf("%s records no collision answer: the whole point of the table "+
+				"is that the answer differs per family", w.object)
+		}
+		if got.Floor < 1 {
+			t.Errorf("%s has floor %d: a space with no floor passes when it matches "+
+				"nothing", w.object, got.Floor)
+		}
+	}
+}
+
+// TestEveryLiteralIDInAFixtureBodyIsInADeclaredSpace is the half of F234 that
+// is about the **next** family rather than about the nine here.
+//
+// F234's complaint was not that a collision existed; it was that nothing
+// enumerated the spaces, so the sweep that found one had to be done by hand. A
+// table alone does not fix that: a tenth family arriving with a literal id and
+// no row would be exactly as invisible as the nine were. This walks the other
+// way - every UUID-shaped literal in a fixture's request body has to be a
+// declared space's id or a declared exemption - so the table cannot fall behind
+// the fixtures.
+//
+// It reads **every** method rather than POST alone, and that is not caution:
+// sweeping the PUTs is what found that `PUT /clients/{uuid}` mints into the
+// protocol mapper space, which the first version of this file had written off
+// as an update on the strength of mapperRenamedByPutFixture's comment.
+func TestEveryLiteralIDInAFixtureBodyIsInADeclaredSpace(t *testing.T) {
+	declared := map[string]bool{}
+	for _, sp := range fixtureIDSpaces {
+		for _, r := range sp.Routes {
+			declared[r.Method+" "+r.Path+" "+pointerOf(r)] = true
+		}
+	}
+	seenExemption := map[string]bool{}
+	checked := 0
+	for name, f := range Fixtures {
+		for _, s := range f.Steps {
+			var body any
+			if err := json.Unmarshal(s.Request.Body, &body); err != nil {
+				continue
+			}
+			for _, found := range uuidPointers(body, "") {
+				checked++
+				if claimedBy(declared, s.Request.Method, s.Request.Path, found.pointer) {
+					continue
+				}
+				if key, ok := exemptionFor(s.Request.Method, s.Request.Path, found.pointer); ok {
+					seenExemption[key] = true
+					continue
+				}
+				t.Errorf("fixture %q: %s %s carries the literal id %s at %s, and no "+
+					"idSpace and no exemption claims it - so nothing sweeps it for "+
+					"collisions. Either add a route to fixtureIDSpaces, with what a "+
+					"colliding create there answers **measured**, or exempt it with "+
+					"the reason it cannot collide. See F234.",
+					name, s.Request.Method, s.Request.Path, found.value, found.pointer)
+			}
+		}
+	}
+	// Two vacuity guards, because there are two ways for this to go quiet. The
+	// first is the sweep finding no literals at all. The second is an exemption
+	// ceasing to match, which leaves a claim about a tree that no longer holds
+	// it - and, worse, would let the same pointer come back as a real mint
+	// unnoticed.
+	if checked < 345 {
+		t.Fatalf("the sweep found %d literal ids in fixture bodies, want at least "+
+			"345: it is matching nothing and would pass whatever the fixtures hold",
+			checked)
+	}
+	for key, why := range literalIDExemptions {
+		if !seenExemption[key] {
+			t.Errorf("the exemption %q (%s) matches nothing in the tree: an exemption "+
+				"nothing exercises is a claim nobody checks. Remove it or fix it.", key, why)
+		}
+	}
+}
+
+// pointerOf spells the JSON pointer an idRoute's id sits at, in the notation
+// uuidPointers produces.
+func pointerOf(r idRoute) string {
+	switch r.Nested {
+	case "":
+		return "/" + r.IDKey
+	case ".":
+		return "/*/" + r.IDKey
+	default:
+		return "/" + r.Nested + "/*/" + r.IDKey
+	}
+}
+
+func claimedBy(declared map[string]bool, method, path, pointer string) bool {
+	for key := range declared {
+		parts := strings.SplitN(key, " ", 3)
+		if len(parts) != 3 || parts[2] != pointer {
+			continue
+		}
+		if routeMatches(parts[0], parts[1], method, path) {
+			return true
+		}
+	}
+	return false
+}
+
+func exemptionFor(method, path, pointer string) (string, bool) {
+	for key := range literalIDExemptions {
+		parts := strings.SplitN(key, " ", 3)
+		if len(parts) != 3 || parts[2] != pointer {
+			continue
+		}
+		if routeMatches(parts[0], parts[1], method, path) {
+			return key, true
+		}
+	}
+	return "", false
+}
+
+// uuidFound is one UUID-shaped literal and the JSON pointer it sits at, with
+// array indices written `*` so two elements of one array are one place.
+type uuidFound struct {
+	pointer string
+	value   string
+}
+
+func uuidPointers(v any, at string) []uuidFound {
+	var out []uuidFound
+	switch t := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			out = append(out, uuidPointers(t[k], at+"/"+k)...)
+		}
+	case []any:
+		for _, e := range t {
+			out = append(out, uuidPointers(e, at+"/*")...)
+		}
+	case string:
+		if fixtureUUID.MatchString(t) {
+			out = append(out, uuidFound{pointer: at, value: t})
+		}
+	}
+	return out
+}

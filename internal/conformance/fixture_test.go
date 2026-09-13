@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"sort"
 	"strings"
 	"testing"
 )
@@ -690,55 +689,27 @@ func TestFixturesAreWellFormed(t *testing.T) {
 // into 404s with no fixture reporting a failure. That is too load-bearing for a
 // flag nobody set for the purpose, so the invariant is asserted here instead:
 // **one internalId may be minted twice only for one alias.**
+//
+// **F234 generalised the sweep and this test keeps its name**, because F230
+// cites it and the entry is in a spec file. It is the identity provider's row
+// of fixtureIDSpaces and nothing else: one implementation, so the two cannot
+// drift, and one name, so the follow-up still points at something.
 func TestNoTwoFixturesMintOneIdentityProviderID(t *testing.T) {
-	// minters maps an internalId to the "fixture:alias" of every create that
-	// names it. The alias is in the key because sharing an id **and** an alias
-	// is the one harmless case, and reporting it would train people to ignore
-	// this test.
-	minters := map[string]map[string][]string{}
-	for name, f := range Fixtures {
-		for _, s := range f.Steps {
-			if s.Request.Method != http.MethodPost ||
-				!strings.HasSuffix(s.Request.Path, "/identity-provider/instances") {
-				continue
-			}
-			id := jsonStringField(s.Request.Body, "internalId")
-			if id == "" {
-				// A create with no internalId gets a server-minted UUID, which
-				// cannot collide with this tree's literals. Nothing to check.
-				continue
-			}
-			alias := jsonStringField(s.Request.Body, "alias")
-			if minters[id] == nil {
-				minters[id] = map[string][]string{}
-			}
-			minters[id][alias] = append(minters[id][alias], name)
+	sweepIDSpace(t, idSpaceNamed(t, "identity provider"))
+}
+
+// idSpaceNamed finds one row of fixtureIDSpaces, and fails rather than
+// returning a zero value: a sweep over a space that is not there would find no
+// ids, hit no floor of its own and pass.
+func idSpaceNamed(t *testing.T, object string) idSpace {
+	t.Helper()
+	for _, sp := range fixtureIDSpaces {
+		if sp.Object == object {
+			return sp
 		}
 	}
-	// A sweep that matched nothing passes, and a passing sweep that matched
-	// nothing is indistinguishable from a correct one. The tree held 23 creates
-	// carrying a literal internalId when this was written; the floor is what
-	// fails if the path suffix, the method or jsonStringField stops matching.
-	if len(minters) < 20 {
-		t.Fatalf("the sweep found %d identity provider ids, want at least 20: "+
-			"it is matching nothing and would pass whatever the fixtures hold", len(minters))
-	}
-	for id, byAlias := range minters {
-		if len(byAlias) < 2 {
-			continue
-		}
-		var where []string
-		for alias, fixtures := range byAlias {
-			for _, f := range fixtures {
-				where = append(where, f+" as "+alias)
-			}
-		}
-		sort.Strings(where)
-		t.Errorf("internalId %s is minted for %d different aliases: %s\n"+
-			"\tthe second create on a shared container is a 409 idempotentCreate "+
-			"swallows, and the case addressing the losing alias gets a 404",
-			id, len(byAlias), strings.Join(where, ", "))
-	}
+	t.Fatalf("fixtureIDSpaces holds no %q space, so this test sweeps nothing", object)
+	return idSpace{}
 }
 
 // identityProvidersFetchingOnConstruction is the measured set of provider ids
