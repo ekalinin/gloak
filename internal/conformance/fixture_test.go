@@ -715,6 +715,14 @@ func TestNoTwoFixturesMintOneIdentityProviderID(t *testing.T) {
 			minters[id][alias] = append(minters[id][alias], name)
 		}
 	}
+	// A sweep that matched nothing passes, and a passing sweep that matched
+	// nothing is indistinguishable from a correct one. The tree held 23 creates
+	// carrying a literal internalId when this was written; the floor is what
+	// fails if the path suffix, the method or jsonStringField stops matching.
+	if len(minters) < 20 {
+		t.Fatalf("the sweep found %d identity provider ids, want at least 20: "+
+			"it is matching nothing and would pass whatever the fixtures hold", len(minters))
+	}
 	for id, byAlias := range minters {
 		if len(byAlias) < 2 {
 			continue
@@ -730,6 +738,78 @@ func TestNoTwoFixturesMintOneIdentityProviderID(t *testing.T) {
 			"\tthe second create on a shared container is a 409 idempotentCreate "+
 			"swallows, and the case addressing the losing alias gets a 404",
 			id, len(byAlias), strings.Join(where, ", "))
+	}
+}
+
+// identityProvidersFetchingOnConstruction is the measured set of provider ids
+// whose factory performs an **outbound HTTP request** while Keycloak constructs
+// the provider.
+//
+// `linkedin-openid-connect` is the one in it:
+// `LinkedInOIDCIdentityProviderFactory.create` fetches
+// `https://www.linkedin.com/oauth/.well-known/openid-configuration` from the
+// public internet. Measured 2026-09-13 off the container's own stack trace.
+//
+// `openshift-v4` is deliberately **not** in it. It fetches too, but from the
+// `baseUrl` in its own config, and a create that does not carry one fails in
+// Apache's route planner - `Target host is not specified` - before a socket is
+// opened. A bare `openshift-v4` instance therefore answers the same 500 on any
+// host, including one with no network at all.
+var identityProvidersFetchingOnConstruction = []string{"linkedin-openid-connect"}
+
+// TestNoMapperTypesCaseAsksAProviderThatFetchesOnConstruction is the other
+// ratchet F230 earned, and it exists because a mutation survived.
+//
+// `GET .../mapper-types` **instantiates the provider** -
+// `IdentityProviderResource.getMapperTypes` calls
+// `createIdentityProviderInstance` - so a provider in the set above answers this
+// route with whatever the recording host's egress is: a 500 where the fetch
+// fails, which is three measured draws on a cold container and one on a second,
+// and a 200 with six mapper types where it succeeds, which is what ten draws on
+// a better-connected host saw. That is the whole of F230: one golden, two cuts,
+// four `make record` runs and fourteen direct draws, and the value was a
+// property of the network rather than of Keycloak.
+//
+// Nothing else in the tree can catch a relapse. Pointing the fixture back at
+// `linkedin-openid-connect` leaves every test green, because Gloak answers the
+// 500 for both ids whatever the config says, so the verifier compares equal and
+// only a `make record` on a host that can reach LinkedIn would show it - by
+// which time the golden has moved and somebody is reading the diff wondering
+// which of the two is wrong. For the third time.
+func TestNoMapperTypesCaseAsksAProviderThatFetchesOnConstruction(t *testing.T) {
+	checked := 0
+	for _, c := range Catalog {
+		if !strings.HasSuffix(c.Request.Path, "/mapper-types") {
+			continue
+		}
+		f, ok := Fixtures[c.Fixture]
+		if !ok {
+			// TestCatalogFixturesExist is what reports this.
+			continue
+		}
+		for _, s := range f.Steps {
+			if s.Request.Method != http.MethodPost ||
+				!strings.HasSuffix(s.Request.Path, "/identity-provider/instances") {
+				continue
+			}
+			checked++
+			provider := jsonStringField(s.Request.Body, "providerId")
+			for _, fetches := range identityProvidersFetchingOnConstruction {
+				if provider != fetches {
+					continue
+				}
+				t.Errorf("%s: its fixture %q creates a %q instance, whose factory "+
+					"fetches over the network while this route constructs it - so the "+
+					"recorded status is the recording host's egress and not Keycloak's "+
+					"answer. See F230.", c.ID, c.Fixture, provider)
+			}
+		}
+	}
+	// The vacuity guard TestNoTwoFixturesMintOneIdentityProviderID needs, for
+	// the same reason: three mapper-types cases create a provider between them.
+	if checked < 3 {
+		t.Fatalf("checked %d mapper-types fixtures, want at least 3: "+
+			"this test is matching nothing", checked)
 	}
 }
 
