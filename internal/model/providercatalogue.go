@@ -110,8 +110,17 @@ func IdentityProviderCatalogue(providerID string) (IdentityProviderCatalogueEntr
 // so its answer is the server's egress to a third party.
 //
 // Gloak answers the 500 for both ids whatever the instance's config holds, which
-// is a divergence rather than a copy. It is deliberate for now - Gloak must not
-// make an outbound request to answer an admin read - and it is F232 in
+// is a divergence rather than a copy, and it is **deliberate rather than
+// unfinished**. Do not "complete" it by adding the fetch.
+//
+// The reason is the whole point rather than a caveat. Matching Keycloak here
+// means issuing an outbound HTTP request to a third party in order to answer an
+// admin read, and the answer then stops being a function of this server's state
+// and becomes a function of its connectivity. **This is the one place where
+// copying 26.7.1 byte for byte stops**: a behaviour that reaches the public
+// internet is not a conformance target, it is a dependency on somebody else's
+// uptime, and reproducing it would import into Gloak the exact defect that made
+// the golden beside it unrecordable. F232 in
 // docs/superpowers/handover/idp-mapper-types-golden.md.
 //
 // That is asserted rather than implemented. There used to be an

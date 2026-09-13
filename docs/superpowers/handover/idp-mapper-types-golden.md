@@ -306,7 +306,10 @@ and `idp-taken` would be a test people learn to ignore.
 
 ## 5. The mutation pass
 
-Eight mutations, **one survivor, fixed and now killed**. The tree was committed
+Eleven mutations, **two survivors, both fixed and now killed, and there are no
+standing survivors.** Eight were the author's and three came from review; the
+second survivor is one the author could not have found, because it is a hole in
+the ratchet the first survivor earned. The tree was committed
 and clean before each one, the revert is on a `trap … EXIT` rather than the
 happy path so it runs through a panic or a timeout kill, the diff is checked
 non-empty before the tests run, and `git status --porcelain` is checked after
@@ -324,6 +327,9 @@ test fails.
 | M6 | M4 again, against the ratchet M4 earned | killed, `TestNoMapperTypesCaseAsksAProviderThatFetchesOnConstruction` |
 | M7 | the case's own path back to the old alias | killed, `TestConformance/…/mapper-types-unsupported` |
 | M8 | the sweep's path suffix gains a trailing slash | killed, the vacuity guard |
+| W2 | `identityProvidersFetchingOnConstruction` emptied to `[]string{}` | **survived**, found in review |
+| W2b | W2 again, against the guards W2 earned | killed, **both** ratchets |
+| W3 | a second id added to that list | killed, `TestTheProviderThatFetchesOnConstructionIsTheOneMeasured` |
 
 None of the eight is a text-only edit, which is the F208 trap: M1, M2 and M8
 change bytes that decide a match, M3 and M7 change a route, M4 and M6 change
@@ -366,6 +372,45 @@ This is F208's disposition applied as the SAML cut wrote it: **before filing a
 null edit under F208, check whether its nullity is an invariant nobody wrote
 down.** It was, the ratchet is cheap, and it is the only thing in the tree that
 would stop this happening a third time.
+
+### 5.2 The second survivor, and the one the author could not have found
+
+W2 came from review, and it is the more instructive of the two: **the ratchet M4
+earned could itself be silenced without failing.**
+
+`identityProvidersFetchingOnConstruction` is emptied to `[]string{}`. The guard
+added in section 5 counts the mapper-types fixtures the test visited - still
+three - so it is satisfied, the comparison inside runs zero times, and the test
+passes asserting nothing. **The guard covered the loop and the claim is the
+list.**
+
+The coherent wrong implementation is not hypothetical and it is not malicious: a
+future reader decides LinkedIn no longer fetches, empties the list, and the
+ratchet goes quiet instead of going red. That is the same failure as a mask that
+changes no byte - a thing that reads as an assertion and asserts nothing.
+
+**The obvious guard is the wrong one, and this is worth writing down because it
+is the one a reader will reach for.** The pollution-guard cut closed the mirror
+image with `TestEveryDeclaredSpellingIsExercised`, which refuses an entry no
+golden uses. That cannot be written here: **no fixture creates a
+`linkedin-openid-connect` instance and none should**, because the entry exists to
+say one must never be created for a `mapper-types` case. An entry nothing
+exercises is exactly what this list is for. So it is pinned against its
+**measurement** rather than against a usage, in the shape
+`internal/model` already uses for the providers with no mapper set - compare the
+whole list, so an entry arriving and an entry leaving each fail on their own.
+
+Two tests die when the list is emptied, and they die for different reasons:
+
+```
+TestTheProviderThatFetchesOnConstructionIsTheOneMeasured   the set is pinned whole
+TestNoMapperTypesCaseAsksAProviderThatFetchesOnConstruction  refuses an empty list
+```
+
+W3 is the other direction - a second id added - and the pin kills it alone.
+
+The general lesson is one line: **a vacuity guard has to cover the claim, not the
+traversal.** Counting what a test visited says nothing about what it compared.
 
 ## 6. Parity
 
@@ -422,13 +467,32 @@ per-provider catalogue.
   `internal/model/providercatalogue.go` that the two conditions are one set is a
   correct statement about the code resting on a wrong statement about Keycloak.
   Gloak answers the 500 unconditionally: F232.
-- **An identity provider's `internalId` is global, and a duplicate create is a
-  409 naming the alias that does not exist.** `idempotentCreate` accepts it, so
-  the fixture passes and the case addressing the losing alias gets a 404. The
-  alias-clearing `PUT` does not free the id.
-  `TestNoTwoFixturesMintOneIdentityProviderID` is the ratchet, and it is keyed on
-  one id for one alias rather than on uniqueness, because `idp-minimal` and
-  `idp-taken` share both on purpose.
+- **An identity provider's `internalId` is global, a duplicate create is a 409
+  naming the alias that does *not* exist, and `idempotentCreate` accepts it.** So
+  the fixture reports success, creates nothing, and the case addressing the
+  losing alias gets a 404. The alias-clearing `PUT` does not free the id.
+  **This is the entry to fold as prominently as F230 itself, and it is not about
+  identity providers.** Two fixtures in this tree minted `…020` and `…021` twice
+  over, and the only thing that kept two committed 200 goldens from silently
+  becoming 404s was **`PristineRealm: true` on a third, unrelated case** - a flag
+  set because that case enumerates the realm, which is F40's reason and has
+  nothing to do with ids. Nobody chose that protection and nobody knew it was
+  load-bearing; clearing the flag, or adding one non-pristine case naming
+  `idp-stranded`, would have sprung it with every test still green.
+  A trap held shut by a coincidence is a trap.
+  `TestNoTwoFixturesMintOneIdentityProviderID` turns the coincidence into an
+  invariant, keyed on one id for **one alias** rather than on uniqueness, because
+  `idp-minimal` and `idp-taken` share both on purpose and a test that reported
+  them is a test people learn to ignore. The other id spaces in
+  `internal/conformance` have the same shape - global keys, `idempotentCreate`
+  over the top - and nothing enumerates them: F234.
+- **A vacuity guard has to cover the claim, not the traversal.** Counting what a
+  sweep visited says nothing about what it compared. Both of this cut's ratchets
+  had a guard on the loop and one of them still passed with its comparison
+  emptied out, found in review rather than by the author. Where a ratchet reads a
+  declared list, the list is the claim and it is pinned whole - the shape
+  `internal/model` already uses for the providers with no mapper set, where an
+  entry arriving and an entry leaving each fail on their own.
 - **A golden whose value depends on reaching a host on the public internet is
   not a contract**, however many times it has been drawn. This is F113's rule on
   a new axis: that one is about a body carrying per-request values, this one is
