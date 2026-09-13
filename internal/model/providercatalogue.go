@@ -99,6 +99,21 @@ func IdentityProviderCatalogue(providerID string) (IdentityProviderCatalogueEntr
 // family. So "this provider has no mapper set" and "this provider answers a
 // 500" are one condition, and a caller needs one branch rather than two.
 //
+// **That is a fact about this map and not about Keycloak, and the difference was
+// measured on 2026-09-13.** Neither 500 means the provider has no mapper types.
+// `GET .../mapper-types` **instantiates the provider**, and both of these two
+// fetch metadata over HTTP while being constructed, so the 500 is a failed
+// fetch. Give an `openshift-v4` instance a `baseUrl` that resolves and the same
+// route answers **200 with six mapper types**, one of them
+// `openshift-v4-user-attribute-mapper`. `linkedin-openid-connect`'s URL is
+// hard-coded to `https://www.linkedin.com/oauth/.well-known/openid-configuration`,
+// so its answer is the server's egress to a third party.
+//
+// Gloak answers the 500 for both ids whatever the instance's config holds, which
+// is a divergence rather than a copy. It is deliberate for now - Gloak must not
+// make an outbound request to answer an admin read - and it is F232 in
+// docs/superpowers/handover/idp-mapper-types-golden.md.
+//
 // That is asserted rather than implemented. There used to be an
 // IdentityProviderMapperTypesFail predicate and a branch in the serving path
 // that consulted it, and **deleting all four of those lines changed no byte of

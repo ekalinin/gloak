@@ -164,6 +164,11 @@ func (m identityProviderMapperTypes) MarshalJSON() ([]byte, error) {
 // `openshift-v4`. Reproduced rather than smoothed into an empty map, because a
 // caller asking for those two gets a 500 and that is the observable.
 //
+// **Keycloak's 500 there is a failed metadata fetch, not a missing mapper set**,
+// and this handler answers it unconditionally where Keycloak's depends on the
+// instance's config and on the server's network. See
+// model.IdentityProviderMapperTypes' doc comment and F232.
+//
 // The set is per provider and ranges from four types to eleven. The four a
 // `kubernetes`, `oauth2` or `jwt-authorization-grant` instance offers are the
 // base set every provider has; `saml` swaps six of its ten for SAML spellings
