@@ -191,7 +191,9 @@ freed the id. It does not - create, strand, then the colliding create is still a
 
 ### 3.2 Every fixture-minted provider id in the tree
 
-`1de07000-0000-4000-8000-0000000000XX`, from the four helpers and the literals:
+`1de07000-0000-4000-8000-0000000000XX`, from the four helpers and the literals.
+**This is the tree as found**, before section 4.2 moved three of them; the sweep
+was done on `main` at `9ad6fd6`:
 
 | id | minted by | alias |
 |---|---|---|
@@ -277,11 +279,95 @@ and `idp-taken` would be a test people learn to ignore.
 
 ## 5. The mutation pass
 
-_Filled in below._
+Eight mutations, **one survivor, fixed and now killed**. The tree was committed
+and clean before each one, the revert is on a `trap … EXIT` rather than the
+happy path so it runs through a panic or a timeout kill, the diff is checked
+non-empty before the tests run, and `git status --porcelain` is checked after
+every revert. `internal/conformance` is the only package this cut touches and it
+runs whole; the `-run` filter appears only where the claim is that a **named**
+test fails.
+
+| | mutation | outcome |
+|---|---|---|
+| M1 | `idp-mt-oidc`'s internalId back to `…020` | killed, `TestNoTwoFixturesMintOneIdentityProviderID` |
+| M2 | `idp-mt-saml`'s internalId back to `…021` | killed, same test |
+| M3 | the fixture's alias is not the one the case asks | killed, `TestConformance/admin/identity-providers/mapper-types-unsupported` |
+| M4 | the fixture's `providerId` back to `linkedin-openid-connect` | **survived the whole package** |
+| M5 | `jsonStringField` finds nothing | killed, the vacuity guard |
+| M6 | M4 again, against the ratchet M4 earned | killed, `TestNoMapperTypesCaseAsksAProviderThatFetchesOnConstruction` |
+| M7 | the case's own path back to the old alias | killed, `TestConformance/…/mapper-types-unsupported` |
+| M8 | the sweep's path suffix gains a trailing slash | killed, the vacuity guard |
+
+None of the eight is a text-only edit, which is the F208 trap: M1, M2 and M8
+change bytes that decide a match, M3 and M7 change a route, M4 and M6 change
+which provider is built, and M5 inverts a condition.
+
+M5 and M8 are the pair AGENTS.md distinguishes, and they are on the **guard**
+rather than on the rule: both make the sweep match nothing, which is "the
+function fails" and not "the function is wrong consistently". They are worth
+running exactly because the failure they model is silent - a sweep matching
+nothing passes. The rule itself is tested by M1, M2, M3, M4, M6 and M7.
+
+### 5.1 The survivor, and what an implementation satisfying it looks like
+
+M4 changed one literal: `idp-mt-openshift`'s body from
+`"providerId":"openshift-v4"` to `"providerId":"linkedin-openid-connect"`,
+leaving the alias and the internalId alone. The whole package passed in 320
+seconds.
+
+It passes because **Gloak answers the 500 for both ids whatever the config
+says** - one branch, the catalogue's missing entry, section 1.5 - so the fixture
+builds a LinkedIn broker under the openshift alias, the verifier asks for it, and
+the bytes compare equal.
+
+An implementation satisfying the mutated tree is **exactly the tree before this
+cut**, with the fixture renamed. Every symptom returns: `make record` on a
+connected host rewrites the golden to a 200, a reader sees a golden move for no
+reason in the diff, and the next cut re-derives section 1 from scratch. The
+suite could not tell the difference, and neither could a reviewer reading the
+diff, because the only thing that separates the two providers is a measurement
+that lived in a handover.
+
+So the ratchet carries the measurement rather than the literal:
+`identityProvidersFetchingOnConstruction` is the set of provider ids whose
+factory fetches while the provider is built, and
+`TestNoMapperTypesCaseAsksAProviderThatFetchesOnConstruction` fails when a
+`mapper-types` case's fixture names one. M6 is the same mutation against it, and
+it is killed.
+
+This is F208's disposition applied as the SAML cut wrote it: **before filing a
+null edit under F208, check whether its nullity is an invariant nobody wrote
+down.** It was, the ratchet is cheap, and it is the only thing in the tree that
+would stop this happening a third time.
 
 ## 6. Parity
 
-_Filled in below._
+```
+before   598 of 644 enumerated behaviours served; 2 chapters not enumerated
+after    598 of 644 enumerated behaviours served; 2 chapters not enumerated
+```
+
+**The meter does not move, and it should not.** The case stays `Implemented`,
+because Gloak serves those bytes and a live Keycloak 26.7.1 answers them - the
+change is which provider can be relied on to produce them. Nothing was demoted to
+`Recorded` and nothing needed to be.
+
+The re-record is the evidence rather than the argument. A full `make record`,
+803 seconds, exit 0, moved **one line in one golden**:
+
+```
+-# GET …/identity-provider/instances/gloak-probe-mt-broker-li/mapper-types
++# GET …/identity-provider/instances/gloak-probe-mt-broker-os/mapper-types
+```
+
+The status line, the `Content-Length` mask, `Content-Type`, the four security
+headers, `X-Frame-Options` and the body are byte-identical. So the contract is
+unchanged and is now reproducible on a host with no route to LinkedIn - which is
+the only thing this cut set out to do to it.
+
+That run is also the third and fourth independent measurement of the 500: the
+recorder builds its own containers, one shared and one per asserted
+`PristineRealm` case, and forty such cases are declared.
 
 ## 7. What belongs in AGENTS.md
 

@@ -766,9 +766,9 @@ var identityProvidersFetchingOnConstruction = []string{"linkedin-openid-connect"
 // route with whatever the recording host's egress is: a 500 where the fetch
 // fails, which is three measured draws on a cold container and one on a second,
 // and a 200 with six mapper types where it succeeds, which is what ten draws on
-// a better-connected host saw. That is the whole of F230: one golden, two cuts,
-// four `make record` runs and fourteen direct draws, and the value was a
-// property of the network rather than of Keycloak.
+// a better-connected host saw. That is the whole of F230: one golden that four
+// `make record` runs and two cuts' worth of direct draws could not agree on,
+// because the value was a property of the network rather than of Keycloak.
 //
 // Nothing else in the tree can catch a relapse. Pointing the fixture back at
 // `linkedin-openid-connect` leaves every test green, because Gloak answers the
