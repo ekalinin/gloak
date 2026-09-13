@@ -12254,17 +12254,39 @@ var adminCases = []Case{
 		// every other route in the family - `linkedin-openid-connect` and
 		// `openshift-v4`. Reproduced rather than smoothed into an empty map,
 		// because what a caller gets is the 500.
+		//
+		// **The two 500s do not have one cause, and only one of them is
+		// Keycloak's.** This route instantiates the provider -
+		// `IdentityProviderResource.getMapperTypes` calls
+		// `createIdentityProviderInstance` - so the factory's constructor
+		// decides the status. LinkedIn's fetches
+		// `https://www.linkedin.com/oauth/.well-known/openid-configuration`
+		// from the public internet, so its answer is whatever the recording
+		// host's egress is: 500 on a host that cannot reach LinkedIn, measured
+		// three times on a cold container, and 200 with six mapper types on one
+		// that can. That is why this golden moved between `make record` runs -
+		// F230. `openshift-v4` reads its metadata URL out of `baseUrl`, which a
+		// bare create does not carry, so it fails with Apache's
+		// `Target host is not specified` before a socket is opened. Identical
+		// status, identical bytes, and no third party in the loop, which is why
+		// the case asks that provider and not the other one.
+		//
+		// **The status is a property of the instance, not of the provider id.**
+		// The same `openshift-v4` alias given a `baseUrl` that resolves answers
+		// 200 with six mapper types, measured on the same container as the 500
+		// beside it. Gloak answers the 500 for both ids whatever the config
+		// says, which is a divergence nothing here asserts: F232.
 		ID: "admin/identity-providers/mapper-types-unsupported",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
 			Section:   "Identity Providers: an instance whose mapper types cannot be listed",
-			Retrieved: "2026-09-02",
+			Retrieved: "2026-09-13",
 		},
 		Status:  Implemented,
-		Fixture: "idp-mt-linkedin",
+		Fixture: "idp-mt-openshift",
 		Request: Request{
 			Method:  http.MethodGet,
-			Path:    "/admin/realms/master/identity-provider/instances/gloak-probe-mt-broker-li/mapper-types",
+			Path:    "/admin/realms/master/identity-provider/instances/gloak-probe-mt-broker-os/mapper-types",
 			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
 		},
 		AssertHeaders: []string{"Content-Type"},

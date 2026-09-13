@@ -99,6 +99,30 @@ func IdentityProviderCatalogue(providerID string) (IdentityProviderCatalogueEntr
 // family. So "this provider has no mapper set" and "this provider answers a
 // 500" are one condition, and a caller needs one branch rather than two.
 //
+// **That is a fact about this map and not about Keycloak, and the difference was
+// measured on 2026-09-13.** Neither 500 means the provider has no mapper types.
+// `GET .../mapper-types` **instantiates the provider**, and both of these two
+// fetch metadata over HTTP while being constructed, so the 500 is a failed
+// fetch. Give an `openshift-v4` instance a `baseUrl` that resolves and the same
+// route answers **200 with six mapper types**, one of them
+// `openshift-v4-user-attribute-mapper`. `linkedin-openid-connect`'s URL is
+// hard-coded to `https://www.linkedin.com/oauth/.well-known/openid-configuration`,
+// so its answer is the server's egress to a third party.
+//
+// Gloak answers the 500 for both ids whatever the instance's config holds, which
+// is a divergence rather than a copy, and it is **deliberate rather than
+// unfinished**. Do not "complete" it by adding the fetch.
+//
+// The reason is the whole point rather than a caveat. Matching Keycloak here
+// means issuing an outbound HTTP request to a third party in order to answer an
+// admin read, and the answer then stops being a function of this server's state
+// and becomes a function of its connectivity. **This is the one place where
+// copying 26.7.1 byte for byte stops**: a behaviour that reaches the public
+// internet is not a conformance target, it is a dependency on somebody else's
+// uptime, and reproducing it would import into Gloak the exact defect that made
+// the golden beside it unrecordable. F232 in
+// docs/superpowers/handover/idp-mapper-types-golden.md.
+//
 // That is asserted rather than implemented. There used to be an
 // IdentityProviderMapperTypesFail predicate and a branch in the serving path
 // that consulted it, and **deleting all four of those lines changed no byte of

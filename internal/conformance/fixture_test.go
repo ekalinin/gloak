@@ -1,9 +1,11 @@
 package conformance
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -664,6 +666,221 @@ func TestFixturesAreWellFormed(t *testing.T) {
 	if _, ok := Fixtures["bootstrap"]; !ok {
 		t.Error(`Fixtures must contain "bootstrap"`)
 	}
+}
+
+// TestNoTwoFixturesMintOneIdentityProviderID is the ratchet F230 earned.
+//
+// **An identity provider's internalId is its primary key and it is global**, so
+// two fixtures naming one id are fine apart and collide on the shared container
+// the recorder uses. The collision is silent in the worst possible way: the
+// second create answers
+// `409 {"errorMessage":"Identity Provider <new alias> already exists"}` -
+// naming the alias that does **not** exist - `idempotentCreate` accepts the 409,
+// and the case that addresses that alias gets a 404 from a fixture that reported
+// success. Measured on a cold container 2026-09-13.
+//
+// Three values in this tree were duplicated when this test was written and none
+// of them reached a case: `…0002`, where idp-minimal and idp-taken mint one id
+// **for one alias** and the 409 therefore leaves exactly the resource the case
+// wants, and `…0020` and `…0021`, where identityProviderStrandedFixture and the
+// two mapper-types fixtures disagree about the alias and are held apart only by
+// PristineRealm on the case naming the first - a flag set because that case
+// enumerates the realm, for a reason with nothing to do with ids. Clearing it,
+// or adding one non-pristine case naming idp-stranded, turns two 200 goldens
+// into 404s with no fixture reporting a failure. That is too load-bearing for a
+// flag nobody set for the purpose, so the invariant is asserted here instead:
+// **one internalId may be minted twice only for one alias.**
+func TestNoTwoFixturesMintOneIdentityProviderID(t *testing.T) {
+	// minters maps an internalId to the "fixture:alias" of every create that
+	// names it. The alias is in the key because sharing an id **and** an alias
+	// is the one harmless case, and reporting it would train people to ignore
+	// this test.
+	minters := map[string]map[string][]string{}
+	for name, f := range Fixtures {
+		for _, s := range f.Steps {
+			if s.Request.Method != http.MethodPost ||
+				!strings.HasSuffix(s.Request.Path, "/identity-provider/instances") {
+				continue
+			}
+			id := jsonStringField(s.Request.Body, "internalId")
+			if id == "" {
+				// A create with no internalId gets a server-minted UUID, which
+				// cannot collide with this tree's literals. Nothing to check.
+				continue
+			}
+			alias := jsonStringField(s.Request.Body, "alias")
+			if minters[id] == nil {
+				minters[id] = map[string][]string{}
+			}
+			minters[id][alias] = append(minters[id][alias], name)
+		}
+	}
+	// A sweep that matched nothing passes, and a passing sweep that matched
+	// nothing is indistinguishable from a correct one. The tree held 23 creates
+	// carrying a literal internalId when this was written; the floor is what
+	// fails if the path suffix, the method or jsonStringField stops matching.
+	if len(minters) < 20 {
+		t.Fatalf("the sweep found %d identity provider ids, want at least 20: "+
+			"it is matching nothing and would pass whatever the fixtures hold", len(minters))
+	}
+	for id, byAlias := range minters {
+		if len(byAlias) < 2 {
+			continue
+		}
+		var where []string
+		for alias, fixtures := range byAlias {
+			for _, f := range fixtures {
+				where = append(where, f+" as "+alias)
+			}
+		}
+		sort.Strings(where)
+		t.Errorf("internalId %s is minted for %d different aliases: %s\n"+
+			"\tthe second create on a shared container is a 409 idempotentCreate "+
+			"swallows, and the case addressing the losing alias gets a 404",
+			id, len(byAlias), strings.Join(where, ", "))
+	}
+}
+
+// identityProvidersFetchingOnConstruction is the measured set of provider ids
+// whose factory performs an **outbound HTTP request** while Keycloak constructs
+// the provider.
+//
+// `linkedin-openid-connect` is the one in it:
+// `LinkedInOIDCIdentityProviderFactory.create` fetches
+// `https://www.linkedin.com/oauth/.well-known/openid-configuration` from the
+// public internet. Measured 2026-09-13 off the container's own stack trace.
+//
+// `openshift-v4` is deliberately **not** in it. It fetches too, but from the
+// `baseUrl` in its own config, and a create that does not carry one fails in
+// Apache's route planner - `Target host is not specified` - before a socket is
+// opened. A bare `openshift-v4` instance therefore answers the same 500 on any
+// host, including one with no network at all.
+//
+// **The list is the claim; the loop below is only how the claim is checked.**
+// Emptying it left TestNoMapperTypesCaseAsksAProviderThatFetchesOnConstruction
+// green - its guard counts the fixtures it visited, which is still three, while
+// the comparison inside runs zero times. So the set is pinned in
+// TestTheProviderThatFetchesOnConstructionIsTheOneMeasured as well, and that is
+// the test that dies when somebody empties this.
+var identityProvidersFetchingOnConstruction = []string{"linkedin-openid-connect"}
+
+// TestTheProviderThatFetchesOnConstructionIsTheOneMeasured pins the set above
+// whole, in the shape internal/model already uses for the providers with no
+// mapper set: compare the **list**, not the membership of one id, so that an
+// entry arriving and an entry leaving each fail on their own.
+//
+// **The obvious guard is the wrong one here.** The mirror of
+// TestEveryDeclaredSpellingIsExercised - every declared entry is used by
+// something in the tree - cannot be written, because no fixture creates a
+// `linkedin-openid-connect` instance and none should: the entry exists to say
+// that one must never be created for a `mapper-types` case. An entry nothing
+// exercises is exactly what this list is for, which is why it is pinned against
+// the measurement instead of against a usage.
+//
+// To re-measure: create an instance of each candidate provider on a live 26.7.1
+// and ask it for `mapper-types` on a host with **no** route to the provider's
+// own metadata address. A 500 whose logged cause names a socket or a handshake
+// belongs in this list; one whose cause is `Target host is not specified` does
+// not, because that failure needs no network.
+func TestTheProviderThatFetchesOnConstructionIsTheOneMeasured(t *testing.T) {
+	want := []string{"linkedin-openid-connect"}
+	got := identityProvidersFetchingOnConstruction
+	if len(got) != len(want) {
+		t.Fatalf("the measured set is %q, want %q: emptying or extending this "+
+			"list silences TestNoMapperTypesCaseAsksAProviderThatFetchesOnConstruction "+
+			"without failing it, so the list is asserted here. See F230.", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("the measured set is %q, want %q", got, want)
+		}
+	}
+}
+
+// TestNoMapperTypesCaseAsksAProviderThatFetchesOnConstruction is the other
+// ratchet F230 earned, and it exists because a mutation survived.
+//
+// `GET .../mapper-types` **instantiates the provider** -
+// `IdentityProviderResource.getMapperTypes` calls
+// `createIdentityProviderInstance` - so a provider in the set above answers this
+// route with whatever the recording host's egress is: a 500 where the fetch
+// fails, which is three measured draws on a cold container and one on a second,
+// and a 200 with six mapper types where it succeeds, which is what ten draws on
+// a better-connected host saw. That is the whole of F230: one golden that four
+// `make record` runs and two cuts' worth of direct draws could not agree on,
+// because the value was a property of the network rather than of Keycloak.
+//
+// Nothing else in the tree can catch a relapse. Pointing the fixture back at
+// `linkedin-openid-connect` leaves every test green, because Gloak answers the
+// 500 for both ids whatever the config says, so the verifier compares equal and
+// only a `make record` on a host that can reach LinkedIn would show it - by
+// which time the golden has moved and somebody is reading the diff wondering
+// which of the two is wrong. For the third time.
+func TestNoMapperTypesCaseAsksAProviderThatFetchesOnConstruction(t *testing.T) {
+	// **Two vacuity guards, because there are two ways to go quiet and the
+	// first version only had one.** The count below guards the outer loop -
+	// that this visited some fixtures - and it is satisfied by three visits
+	// whatever the comparison does. Emptying the list leaves it satisfied and
+	// runs the comparison zero times, which passed. So the list is guarded
+	// here too, and pinned against its measurement one test up.
+	if len(identityProvidersFetchingOnConstruction) == 0 {
+		t.Fatal("the measured set is empty, so this test compares nothing and " +
+			"would pass whatever the fixtures name. See F230.")
+	}
+	checked := 0
+	for _, c := range Catalog {
+		if !strings.HasSuffix(c.Request.Path, "/mapper-types") {
+			continue
+		}
+		f, ok := Fixtures[c.Fixture]
+		if !ok {
+			// TestCatalogFixturesExist is what reports this.
+			continue
+		}
+		for _, s := range f.Steps {
+			if s.Request.Method != http.MethodPost ||
+				!strings.HasSuffix(s.Request.Path, "/identity-provider/instances") {
+				continue
+			}
+			checked++
+			provider := jsonStringField(s.Request.Body, "providerId")
+			for _, fetches := range identityProvidersFetchingOnConstruction {
+				if provider != fetches {
+					continue
+				}
+				t.Errorf("%s: its fixture %q creates a %q instance, whose factory "+
+					"fetches over the network while this route constructs it - so the "+
+					"recorded status is the recording host's egress and not Keycloak's "+
+					"answer. See F230.", c.ID, c.Fixture, provider)
+			}
+		}
+	}
+	// The vacuity guard TestNoTwoFixturesMintOneIdentityProviderID needs, for
+	// the same reason: three mapper-types cases create a provider between them.
+	if checked < 3 {
+		t.Fatalf("checked %d mapper-types fixtures, want at least 3: "+
+			"this test is matching nothing", checked)
+	}
+}
+
+// jsonStringField reads one top-level string field out of a fixture body.
+//
+// A full unmarshal would do, and this does not use one on purpose: the bodies
+// here are literals written to be read, several carry a `config` object whose
+// value types differ between providers, and a decode into a typed struct is a
+// second place to keep a field list in step. What the caller needs is one
+// string, and the bodies are flat enough at the top level for the key to be
+// found by name.
+func jsonStringField(body []byte, field string) string {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(body, &m); err != nil {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(m[field], &s); err != nil {
+		return ""
+	}
+	return s
 }
 
 func TestCatalogFixturesExist(t *testing.T) {
