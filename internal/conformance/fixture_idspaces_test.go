@@ -62,6 +62,15 @@ type idRoute struct {
 	// the level Nested names.
 	IDKey   string
 	NameKey string
+	// EnclosingNameKey names the **container** of a nested create, and is empty
+	// when the path already identifies it.
+	//
+	// It is here because "one id for one name is harmless" is only true when
+	// the two mints are the same object, and two mappers called
+	// `gloak-probe-mapper` under two different clients are not. The path says
+	// which client for `.../models` and for the PUT; for a mapper nested inside
+	// its client's own create, the body does.
+	EnclosingNameKey string
 }
 
 // idSpace is one family of objects a fixture mints a **literal** id for.
@@ -91,17 +100,24 @@ type idSpace struct {
 // routes.
 //
 // **NameKey is what makes the sweep worth reading.** Two fixtures may share an
-// id deliberately, and they do - idp-minimal and idp-taken mint one internalId
-// for one alias on purpose. A uniqueness check would report them, and a test
-// that reports something deliberate is a test people learn to ignore. One id
-// for one name is the harmless case, because the loser's refusal leaves
-// exactly the object the case wanted; one id for two names is the trap.
+// id deliberately, and five pairs in this tree do - idp-minimal and idp-taken
+// mint one internalId for one alias on purpose. A uniqueness check would report
+// all five, and a test that reports something deliberate is a test people learn
+// to ignore.
+//
+// The harmless case is not "one id, one name"; it is **one id, one object** -
+// the same route, the same container and the same name, so that the two
+// fixtures are building the same thing and the loser's refusal leaves exactly
+// what the case wanted. The difference is not pedantry: one name in two
+// **realms** is one name and two objects, the loser is stranded in eight of the
+// nine spaces, and the fixture families that keep one realm per case are one
+// copy-paste from it. See containerOf.
 //
 // See docs/superpowers/handover/fixture-id-spaces.md for the probes.
 var fixtureIDSpaces = []idSpace{
 	{
 		Object: "client",
-		Routes: []idRoute{{http.MethodPost, `/clients$`, "", "id", "clientId"}},
+		Routes: []idRoute{{http.MethodPost, `/clients$`, "", "id", "clientId", ""}},
 		// Two bodies, decided by which realm holds the winner. In the same
 		// realm it is 409 `Duplicate resource error`; in another realm it is
 		// 409 `Client <the new clientId> already exists` - naming the client
@@ -112,7 +128,7 @@ var fixtureIDSpaces = []idSpace{
 	},
 	{
 		Object: "client scope",
-		Routes: []idRoute{{http.MethodPost, `/client-scopes$`, "", "id", "name"}},
+		Routes: []idRoute{{http.MethodPost, `/client-scopes$`, "", "id", "name", ""}},
 		// 409 `Client Scope <the new name> already exists` in the same realm
 		// and in another one alike - again naming the scope that does not
 		// exist. Neither loser is in either realm afterwards.
@@ -125,10 +141,10 @@ var fixtureIDSpaces = []idSpace{
 		// unique across the server; this cut added the PUT after measuring that
 		// it mints - see the note on the last route.
 		Routes: []idRoute{
-			{http.MethodPost, `/clients$`, "protocolMappers", "id", "name"},
-			{http.MethodPost, `/client-scopes$`, "protocolMappers", "id", "name"},
-			{http.MethodPost, `/protocol-mappers/models$`, "", "id", "name"},
-			{http.MethodPost, `/protocol-mappers/add-models$`, ".", "id", "name"},
+			{http.MethodPost, `/clients$`, "protocolMappers", "id", "name", "clientId"},
+			{http.MethodPost, `/client-scopes$`, "protocolMappers", "id", "name", "name"},
+			{http.MethodPost, `/protocol-mappers/models$`, "", "id", "name", ""},
+			{http.MethodPost, `/protocol-mappers/add-models$`, ".", "id", "name", ""},
 			// **A PUT on a client mints here, measured 2026-09-13.** Keycloak
 			// matches the body's mappers to the client's by (protocol, name)
 			// and keeps the id it already had - which is what
@@ -137,7 +153,7 @@ var fixtureIDSpaces = []idSpace{
 			// **not** hold, the same PUT creates the mapper at the body's id:
 			// 204, and the id is then taken server-wide. A PUT naming an id
 			// another client holds is a 409.
-			{http.MethodPut, `/clients/[^/]+$`, "protocolMappers", "id", "name"},
+			{http.MethodPut, `/clients/[^/]+$`, "protocolMappers", "id", "name", ""},
 		},
 		// F78's four cells: the single create answers the *name* conflict for
 		// an id its own container holds and `Duplicate resource error` for one
@@ -150,7 +166,7 @@ var fixtureIDSpaces = []idSpace{
 	},
 	{
 		Object: "component",
-		Routes: []idRoute{{http.MethodPost, `/components$`, "", "id", "name"}},
+		Routes: []idRoute{{http.MethodPost, `/components$`, "", "id", "name", ""}},
 		// 409 `Duplicate resource error`, in the same realm and in another one.
 		// The **header set** of that 409 is not stable on the first occurrence -
 		// see the note on the component-dup-id fixture and F147 - but the
@@ -160,7 +176,7 @@ var fixtureIDSpaces = []idSpace{
 	},
 	{
 		Object: "identity provider",
-		Routes: []idRoute{{http.MethodPost, `/identity-provider/instances$`, "", "internalId", "alias"}},
+		Routes: []idRoute{{http.MethodPost, `/identity-provider/instances$`, "", "internalId", "alias", ""}},
 		// F230's family. The cross-realm cell is **not** a 409:
 		// `ModelException: Identity Provider with internal id [...] does not
 		// belong to realm [...]` comes out as a 500, which idempotentCreate
@@ -172,7 +188,7 @@ var fixtureIDSpaces = []idSpace{
 	},
 	{
 		Object: "identity provider mapper",
-		Routes: []idRoute{{http.MethodPost, `/identity-provider/instances/[^/]+/mappers$`, "", "id", "name"}},
+		Routes: []idRoute{{http.MethodPost, `/identity-provider/instances/[^/]+/mappers$`, "", "id", "name", ""}},
 		// Global across identity providers and across realms alike. A repeat
 		// carrying the same **name** is a 400 `Failed to add mapper '<name>' to
 		// identity provider [<providerId>].` with or without an id, which is
@@ -182,7 +198,7 @@ var fixtureIDSpaces = []idSpace{
 	},
 	{
 		Object: "authz resource",
-		Routes: []idRoute{{http.MethodPost, `/authz/resource-server/resource$`, "", "_id", "name"}},
+		Routes: []idRoute{{http.MethodPost, `/authz/resource-server/resource$`, "", "_id", "name", ""}},
 		// **The worst cell measured, and it is not a refusal.** On the resource
 		// server that owns the row a colliding create answers **201** and
 		// silently renames it: a listing holding `res-one` holds `res-two`
@@ -195,13 +211,13 @@ var fixtureIDSpaces = []idSpace{
 	},
 	{
 		Object:    "authz scope",
-		Routes:    []idRoute{{http.MethodPost, `/authz/resource-server/scope$`, "", "id", "name"}},
+		Routes:    []idRoute{{http.MethodPost, `/authz/resource-server/scope$`, "", "id", "name", ""}},
 		Collision: "201 on the owning resource server - a silent rename; 409 elsewhere",
 		Floor:     69,
 	},
 	{
 		Object: "authz policy",
-		Routes: []idRoute{{http.MethodPost, `/authz/resource-server/policy$`, "", "id", "name"}},
+		Routes: []idRoute{{http.MethodPost, `/authz/resource-server/policy$`, "", "id", "name", ""}},
 		// The sibling that refuses where the two above overwrite: same path
 		// prefix, same verb, same question, and the first row survives. Three
 		// stores under one resource server and one of them disagrees.
@@ -268,13 +284,19 @@ func expectsFailure(s Step) bool {
 // idMint is one literal id a fixture step puts into the store.
 type idMint struct {
 	fixture string
-	name    string
+	// object identifies **which object** the mint is: the route it is on, the
+	// container it is in, and its name. Two mints of one id are harmless
+	// exactly when this is equal, because then they are two fixtures building
+	// the same thing and the loser's refusal leaves what the case wanted.
+	object string
+	// describe is the same thing spelled for a human.
+	describe string
 }
 
 // mintsIn pools every literal id one space's routes carry, keyed by id.
 func mintsIn(sp idSpace) map[string][]idMint {
 	out := map[string][]idMint{}
-	for name, f := range Fixtures {
+	for fname, f := range Fixtures {
 		for _, s := range f.Steps {
 			if expectsFailure(s) {
 				continue
@@ -283,17 +305,53 @@ func mintsIn(sp idSpace) map[string][]idMint {
 				if !routeMatches(r.Method, r.Path, s.Request.Method, s.Request.Path) {
 					continue
 				}
-				for _, create := range createsIn(s.Request.Body, r.Nested) {
+				body := createsIn(s.Request.Body, r.Nested)
+				where := containerOf(fname, s.Request.Path, s.Request.Body, r)
+				for _, create := range body {
 					id := jsonStringOf(create, r.IDKey)
 					if !fixtureUUID.MatchString(id) {
 						continue
 					}
-					out[id] = append(out[id], idMint{fixture: name, name: jsonStringOf(create, r.NameKey)})
+					name := jsonStringOf(create, r.NameKey)
+					out[id] = append(out[id], idMint{
+						fixture:  fname,
+						object:   where + "\x00" + name,
+						describe: fname + ": " + name + " in " + where,
+					})
 				}
 			}
 		}
 	}
 	return out
+}
+
+// containerOf spells the container a create lands in.
+//
+// **The request path is not enough on its own, twice over.** A path holding a
+// `{{capture}}` means a different parent in every fixture - each authz fixture
+// creates its own resource server and they all POST to
+// `.../clients/{{client_uuid}}/authz/...` - so the fixture name is part of the
+// container there. And a nested create's container is named in the **body**,
+// not in the path, because the container is being created by the same request.
+//
+// The rule this protects is the one that is easy to get wrong: an id minted
+// twice under one *name* in two different **realms** is a collision, not a
+// shared object. The tree has none today; the eight spaces that answer a
+// colliding create with a 409 would each strand the loser silently, and the
+// fixture families that keep one realm per case are one copy-paste away from it.
+func containerOf(fixture, path string, body []byte, r idRoute) string {
+	where := path
+	if strings.Contains(path, "{{") {
+		where = fixture + " " + path
+	}
+	if r.EnclosingNameKey == "" {
+		return where
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(body, &m); err != nil {
+		return where
+	}
+	return where + "/" + jsonStringOf(m, r.EnclosingNameKey)
 }
 
 // createsIn pulls the create objects out of one request body, per idRoute.Nested.
@@ -344,29 +402,31 @@ func sweepIDSpace(t *testing.T, sp idSpace) {
 			"See F234.", sp.Object, len(minters), sp.Floor)
 	}
 	for id, mints := range minters {
-		names := map[string][]string{}
+		objects := map[string]bool{}
+		var where []string
 		for _, m := range mints {
-			names[m.name] = append(names[m.name], m.fixture)
+			if objects[m.object] {
+				continue
+			}
+			objects[m.object] = true
+			where = append(where, m.describe)
 		}
-		if len(names) < 2 {
+		if len(objects) < 2 {
 			continue
 		}
-		var where []string
-		for n, fixtures := range names {
-			for _, f := range fixtures {
-				where = append(where, f+" as "+n)
-			}
-		}
 		sort.Strings(where)
-		t.Errorf("%s id %s is minted for %d different names: %s\n"+
+		t.Errorf("%s id %s is minted for %d different objects:\n\t\t%s\n"+
 			"\tthe recorder shares one container, so the second create answers: %s.\n"+
 			"\tThe fixture that loses reports success having created nothing, and the "+
-			"case addressing the losing object measures a server it never reached.",
-			sp.Object, id, len(names), strings.Join(where, ", "), sp.Collision)
+			"case addressing the losing object measures a server it never reached. See F234.",
+			sp.Object, id, len(objects), strings.Join(where, "\n\t\t"), sp.Collision)
 	}
 }
 
 // TestNoTwoFixturesMintOneObjectID is F234's sweep over every id space.
+//
+// **It is keyed on one id for one object, not on uniqueness**, for the reason
+// the comment on fixtureIDSpaces gives.
 func TestNoTwoFixturesMintOneObjectID(t *testing.T) {
 	for _, sp := range fixtureIDSpaces {
 		t.Run(strings.ReplaceAll(sp.Object, " ", "-"), func(t *testing.T) {
@@ -390,26 +450,26 @@ func TestTheFixtureIDSpacesAreTheOnesMeasured(t *testing.T) {
 		object string
 		routes []idRoute
 	}{
-		{"client", []idRoute{{"POST", `/clients$`, "", "id", "clientId"}}},
-		{"client scope", []idRoute{{"POST", `/client-scopes$`, "", "id", "name"}}},
+		{"client", []idRoute{{"POST", `/clients$`, "", "id", "clientId", ""}}},
+		{"client scope", []idRoute{{"POST", `/client-scopes$`, "", "id", "name", ""}}},
 		{"protocol mapper", []idRoute{
-			{"POST", `/clients$`, "protocolMappers", "id", "name"},
-			{"POST", `/client-scopes$`, "protocolMappers", "id", "name"},
-			{"POST", `/protocol-mappers/models$`, "", "id", "name"},
-			{"POST", `/protocol-mappers/add-models$`, ".", "id", "name"},
-			{"PUT", `/clients/[^/]+$`, "protocolMappers", "id", "name"},
+			{"POST", `/clients$`, "protocolMappers", "id", "name", "clientId"},
+			{"POST", `/client-scopes$`, "protocolMappers", "id", "name", "name"},
+			{"POST", `/protocol-mappers/models$`, "", "id", "name", ""},
+			{"POST", `/protocol-mappers/add-models$`, ".", "id", "name", ""},
+			{"PUT", `/clients/[^/]+$`, "protocolMappers", "id", "name", ""},
 		}},
-		{"component", []idRoute{{"POST", `/components$`, "", "id", "name"}}},
+		{"component", []idRoute{{"POST", `/components$`, "", "id", "name", ""}}},
 		{"identity provider", []idRoute{
-			{"POST", `/identity-provider/instances$`, "", "internalId", "alias"}}},
+			{"POST", `/identity-provider/instances$`, "", "internalId", "alias", ""}}},
 		{"identity provider mapper", []idRoute{
-			{"POST", `/identity-provider/instances/[^/]+/mappers$`, "", "id", "name"}}},
+			{"POST", `/identity-provider/instances/[^/]+/mappers$`, "", "id", "name", ""}}},
 		{"authz resource", []idRoute{
-			{"POST", `/authz/resource-server/resource$`, "", "_id", "name"}}},
+			{"POST", `/authz/resource-server/resource$`, "", "_id", "name", ""}}},
 		{"authz scope", []idRoute{
-			{"POST", `/authz/resource-server/scope$`, "", "id", "name"}}},
+			{"POST", `/authz/resource-server/scope$`, "", "id", "name", ""}}},
 		{"authz policy", []idRoute{
-			{"POST", `/authz/resource-server/policy$`, "", "id", "name"}}},
+			{"POST", `/authz/resource-server/policy$`, "", "id", "name", ""}}},
 	}
 	if len(fixtureIDSpaces) != len(want) {
 		t.Fatalf("the table holds %d id spaces, want %d: adding or removing one "+
