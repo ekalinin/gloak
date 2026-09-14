@@ -316,6 +316,11 @@ Four tests and one table, all in `internal/conformance/fixture_idspaces_test.go`
   it**. Every distinction it draws is about a collision no fixture makes today,
   so neutering the whole function to a constant leaves the sweep green. M3b
   below is that, demonstrated.
+- **`TestTheSweepReportsACollisionItIsGiven`** - the positive control on the
+  comparison itself, per space, added after a review found the survivor in
+  §5.5. The floor covers the traversal and the pinned table covers the table;
+  until this, **nothing covered the line that reads a name**, and rewriting it
+  to read the id instead silenced all nine spaces with every other test green.
 
 `TestNoTwoFixturesMintOneIdentityProviderID` **keeps its name** and becomes the
 identity provider's row of the same sweep. F230 cites it and F230 is in a spec
@@ -327,12 +332,14 @@ No fixture, no case and no golden was touched, so no golden was re-recorded.
 
 ## 5. The mutation pass
 
-Twenty-one mutations in two passes, each run against `internal/conformance`
+Twenty-four mutations in three passes, each run against `internal/conformance`
 **whole** - no `-run` filter - from a committed and clean tree, with the revert
 on a `trap … EXIT` rather than on the happy path, the diff checked non-empty
 before each run, and `git status --porcelain` checked empty after each revert.
 `internal/conformance` is the only package this cut touches.
-**No survivors in either pass.**
+
+**One survivor, found by the review and not by me**, in §5.5. It is closed and
+the closing test is the most load-bearing thing in this cut.
 
 ### 5.1 Pass A: does anything catch it
 
@@ -438,6 +445,56 @@ invisible to every planted collision that does not also drop an id count, and
 the sweep silently narrows from "one id, one object" back to "one id, one
 name" - the rule that cannot see the cross-realm trap. That is F236.
 
+### 5.5 The review's survivor, and the answer it forced
+
+A review planted its own client collision and mutated the sweep at the **reading
+site** rather than in the table:
+
+```go
+name := jsonStringOf(create, r.NameKey)   ->   r.IDKey
+```
+
+**It survived.** Every id then maps to exactly one "name" - itself - so every id
+is one object and no collision can ever be reported, in any of the nine spaces.
+`TestTheFixtureIDSpacesAreTheOnesMeasured` pins that the table **says**
+`NameKey: "clientId"`; it cannot see what the consumer does with it. M6 mutated
+the table and died there correctly. This mutates the consumer, which the pinned
+table is structurally unable to reach. It is last round's shape one level along:
+**the claim was pinned and the use of the claim was not.**
+
+The review also asked the better question: is the floor a backstop for it, or
+did it catch that planting by coincidence? Three runs settle it.
+
+| | mutation | collision reported | floor fired | what died |
+|---|---|---|---|---|
+| X2 | the name lookup reads `IDKey` | no | no | `TestTheSweepReportsACollisionItIsGiven`, all nine subtests, **and nothing else** |
+| X2b | X2 **and** a collision planted additively | **no** | **no** | the same test alone (plus a golden the planted alias moves) |
+| X2c | that same collision **without** X2 | yes | no | `…MintOneObjectID/identity-provider` and `TestNoTwoFixturesMintOneIdentityProviderID` |
+
+**It is a coincidence.** X2b is the answer in one row: the collision is not
+reported, the floor is silent, and before the fix the suite was green. The floor
+fired on the review's planting only because reassigning an id to make a
+collision also **removes** one. A collision that arrives the way a real one
+would - two independently written fixtures each choosing the same literal - adds
+a mint and takes nothing away, so the count never moves. X2c is the control that
+says X2b's silence is X2's doing and not the planting's.
+
+That is the same defect as §5.2, found twice in one cut by two people: the floor
+covers the **traversal** and was being read as cover for the **comparison**.
+
+The fix is `TestTheSweepReportsACollisionItIsGiven`: for every space, hand
+`mintsIn` and `collisionsIn` two synthetic fixtures that collide and require
+exactly one report, then two that build the same object and require none, then
+two that share a name across containers and require one. `mintsIn` takes the
+fixture map as an argument for this and for nothing else. X2 dies in all nine.
+
+**The control reported its own scaffolding on the first run**, which is the best
+argument for having built it: `PUT .../clients/{uuid}` is a nested route whose
+container is the client in its **path**, and the helper had assumed nesting
+implied a body-named container, so it gave both synthetic fixtures one path and
+two clients looked like one. Nesting does not decide where the container is
+named; `EnclosingNameKey` does.
+
 ## 6. Containers
 
 **Two containers. Both created with `docker run` from
@@ -539,6 +596,17 @@ Two more for the closing mutation-discipline paragraph, both earned here:
   name without taking any id out of the space - it should be, because then the
   floor cannot fire at all and the collision message is the only thing that can
   kill it.
+- **A vacuity guard covers the traversal; the comparison needs its own, and
+  pinning the declaration is not it.** This cut pinned a table of id spaces
+  whole, gave every space a floor, and still shipped a sweep in which rewriting
+  one line - the one that reads a name - made every collision unreportable with
+  every test green. The table pins what the declaration **says**; nothing pinned
+  what the consumer **does with it**, and a floor cannot stand in for that
+  because the collision that arrives naturally *adds* a mint and never moves the
+  count. The remedy is a **positive control**: hand the comparison a collision
+  it must report, an identical pair it must not, and a same-name-two-containers
+  pair it must. Both halves of this were found by mutation and neither by
+  reading. See F234 and the survivor in `fixture-id-spaces.md` §5.5.
 - **A mutation pass's dirty check must be scoped to the package it mutates.**
   This one aborted after its first mutation because a handover file written in
   another window made a whole-tree `git status --porcelain` non-empty. The trap
@@ -549,38 +617,53 @@ Two more for the closing mutation-discipline paragraph, both earned here:
 
 ## 9. Follow-ups
 
-### F236: `containerOf`'s distinctions have no witness in the corpus
+### F236: the sweep's mechanisms have no witness in the corpus, and a unit test is where that stops
 
 Every distinction `containerOf` draws - realm from realm, resource server from
 resource server, container from container - is about a collision no fixture
-makes. P9 is the demonstration: neutering it to a constant and planting a real
-cross-realm collision leaves the sweep **silent about the collision**, and the
-only thing that fires for the right reason is
-`TestContainerOfSeparatesWhatACollisionWouldSeparate`, which asserts the
-function against the measurements rather than against the tree.
+makes, and the same is true of the line that reads a name. P9 and X2b are the
+two demonstrations: neuter either and the sweep goes **silent about a real
+planted collision** with nothing else in the tree failing.
 
-That is strictly weaker than a corpus that exercises it, and the same shape as
-`identityProvidersFetchingOnConstruction`: a thing pinned against a measurement
-because no usage can pin it. The open question is whether the harness should
-grow a **negative fixture** - a pair of fixtures that really do collide, run
-against a real container once and asserted to fail - or whether a unit test on
-the predicate is where this correctly stops. Nothing is proposed; the
-observation is that this repository now has several guards in that category and
-none of them knows about the others.
+**This is closed rather than deferred, and the reason is worth recording so the
+next person does not read it as unfinished.** The obvious next step is a
+*negative fixture* - a pair of fixtures that really do collide, run against a
+container once and asserted to fail - and it is the wrong step. **A fixture that
+exists only to witness a guard is a fixture with no measurement behind it**, and
+this corpus is measurements: every other fixture here is there because some case
+measures what Keycloak does with it. A synthetic pair proves something about the
+harness, which is what a unit test is for.
 
-### F237: the authz upsert is a divergence Gloak has not been asked about
+So the stop is `TestContainerOfSeparatesWhatACollisionWouldSeparate` and
+`TestTheSweepReportsACollisionItIsGiven`: the mechanisms asserted against the
+measurements and against known inputs, in the same shape as
+`identityProvidersFetchingOnConstruction`, which is pinned against a measurement
+because no usage can pin it. The entry stays open only as a **pointer**: this
+repository now has several guards in that category and none of them knows about
+the others, so the next one will be built from scratch again.
+
+### F237: an authz create answers 201 and destroys the previous row
 
 `POST .../authz/resource-server/resource` and `.../scope` answer **201** to an
-id their own resource server already holds, and rename the row. Nothing in the
-tree measures that: there is no case for it, Gloak's behaviour on that input is
-unknown, and the two goldens nearest to it are creates with fresh ids.
+id their own resource server already holds, and **rename the row that was
+there**. The listing that held `res-one` holds `res-two` afterwards and the
+first name is gone. Measured on three independent clean resource servers on one
+container and one on another; `.../policy`, one path segment away, answers 409
+and keeps the first row.
 
-It is worth a case for a reason beyond coverage: it is the only measured create
-in this repository where **repeating a request destroys information**, which
-makes it the one place `idempotentCreate`'s whole premise - "the object is
-already there, the state the case needs is reached either way" - is false while
-looking true. What to measure first is whether the `PUT` on the same row does
-the same thing, and whether `owner` or `type` survive the rename.
+Nothing in the tree measures it: there is no case, Gloak's behaviour on that
+input is unknown, and the two goldens nearest to it are creates with fresh ids.
+
+It is the sharpest of this cut's four, and the reason is exactly those words:
+**it is the only measured request in this repository where repeating something
+loses information.** Every other repeat here is refused, and the whole harness -
+`idempotentCreate`, the recorder's shared container, the rule that a fixture two
+cases name runs twice - is built on repeats being refused. This is the one place
+that premise is false while looking true, and it answers 201 while being false.
+
+What to measure first is whether the `PUT` on the same row does the same thing,
+and whether `owner`, `type` and `uris` survive the rename or are replaced by the
+second body's.
 
 ### F238: an authz collision leaves reads that depend on what ran before
 
@@ -592,25 +675,37 @@ fresh realms with the same ordering on container A; not provoked when the scope
 probes ran alone.
 
 This is the F40/F206/F230 family - a value that is a function of what else the
-recorder did - arriving in a place none of them reaches, because the fresh
-**realm** does not clear it. What to measure first is which of the two requests
-poisons it, and whether a fresh container does clear it; the cheap half is that
-no golden under `admin/authz` should be recorded after a collision case in
-catalogue order.
+recorder did - **arriving in a place none of their remedies reaches**. F40's
+answer is a fresh realm and F47's is a per-case container; a fresh realm does
+not clear this, because what is poisoned is a resource-server cache entry that
+outlived the realm boundary. That makes it more than a defect in one listing: it
+is a gap in the isolation mechanism this project relies on everywhere, and the
+only reason it has not bitten a golden is that no `admin/authz` case currently
+follows a collision in catalogue order.
 
-### F239: `idempotentCreate` is one constant for nine different refusals
+What to measure first is which of the two requests poisons it - the cross-server
+409 alone did not, in the one probe that isolated it - and whether a fresh
+container clears it. The cheap half in the meantime is that no golden under
+`admin/authz` may be recorded after a collision case.
 
-The nine spaces answer a repeat with a 409, a 400, a 500 and a 201 between
-them, and `idempotentCreate` is `{201, 409}` on every create that carries it -
-101 steps. On the identity provider's cross-realm cell and the mapper's
-same-name cell it is already wrong in the safe direction: the step fails loudly.
-On the authz pair it is wrong in the unsafe one, because there is nothing to
-swallow.
+### F239: `idempotentCreate`'s name is a claim, and in two spaces it is false and unchecked
 
-The observation is not that the constant should be widened - AGENTS.md already
+**Record it; do not change it.** One constant over nine different refusals
+across 101 steps is fine, and widening it would be worse - AGENTS.md already
 records that widening one to accept a 400 would also accept `Issuer is
-required` - but that there is **no way to say which repeat a step expects**. A
-step saying `idempotentCreate` today claims "a repeat of this is harmless", and
-in two of the nine spaces that claim is unchecked and false. Whether that wants
-a per-space constant, or a field, or nothing at all, is a design question this
-cut did not need to answer.
+required`, a fixture that passes while creating nothing.
+
+The problem is the **name**, because the name is what the next person will
+trust. `idempotentCreate` says "a repeat of this is harmless". In two of the
+nine spaces that is false and nothing checks it: on
+`POST .../authz/resource-server/resource` and `.../scope` a repeat answers 201
+and **destroys the row that was there**, so there is no status to swallow and
+the step reports success for a request that lost information. (In the other
+direction it is already wrong safely: the identity provider's cross-realm 500
+and the mapper's same-name 400 are outside `{201, 409}`, so those steps fail
+loudly.)
+
+Nothing is proposed. Whether the answer is a per-space constant, a field, or a
+sentence on the constant's doc comment saying which two spaces it lies about, is
+a design question this cut did not need to answer - but the two spaces it lies
+about are named here so that the next reader of that constant has them.
