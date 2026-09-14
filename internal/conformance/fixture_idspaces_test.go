@@ -392,12 +392,19 @@ func jsonStringOf(m map[string]json.RawMessage, field string) string {
 }
 
 // sweepIDSpace is the ratchet: one id may be minted more than once only for one
-// name.
+// object.
+//
+// **The floor reports and does not stop.** It was a `t.Fatalf` first, which is
+// the precedent's shape, and the mutation pass showed what that costs: giving
+// one fixture another's id both removes an id from the space and creates a
+// collision, so the floor fired, the subtest ended, and the collision the
+// mutation existed to plant was never reported. A guard against looking at
+// nothing must not hide what was looked at.
 func sweepIDSpace(t *testing.T, sp idSpace) {
 	t.Helper()
 	minters := mintsIn(sp)
 	if len(minters) < sp.Floor {
-		t.Fatalf("%s: the sweep found %d literal ids, want at least %d - it is "+
+		t.Errorf("%s: the sweep found %d literal ids, want at least %d - it is "+
 			"matching less than it did and would pass whatever the fixtures hold. "+
 			"See F234.", sp.Object, len(minters), sp.Floor)
 	}
