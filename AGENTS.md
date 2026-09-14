@@ -2915,6 +2915,56 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   while both are right. Before concluding that a moving golden means somebody
   recorded it wrong, ask whether the route reaches outside the container.
 
+- **A fixture id space is global, on all nine of them, and the URL says
+  nothing about it.** A client, a client scope and a component live inside a
+  realm; a resource, a scope and a policy live inside a resource server; a
+  protocol mapper lives inside a client or a client scope. **None of their ids
+  is scoped to its parent**, and one id can be all nine objects at once -
+  measured, nine creates, nine 201s, one realm. The per-family prefixes in
+  `fixture.go` are tidiness, not a constraint. `fixtureIDSpaces` is the
+  enumeration and `TestEveryLiteralIDInAFixtureBodyIsInADeclaredSpace` is what
+  stops the tenth family arriving unswept.
+- **What a colliding create answers is different per family, and three of the
+  nine do not answer 409.** An identity provider id taken in another realm is a
+  **500** - `ModelException: … does not belong to realm …` - which
+  `idempotentCreate` does not accept, so that one cell is loud where its
+  same-realm neighbour is silent. An identity provider mapper repeated under
+  one name is a **400**. And `POST .../authz/resource-server/resource` and
+  `.../scope` answer **201 and silently rename the row that was there**: no
+  error, the **last** create wins, and nothing in the harness can catch it.
+  `.../policy` beside them answers 409 and keeps the first row. Reading one
+  family's answer into another is the mistake F234 was filed about.
+- **The 409 several of these send names the object that does **not** exist.**
+  `Client <the new clientId> already exists` across realms,
+  `Client Scope <the new name> already exists` in both cells, and the identity
+  provider's `Identity Provider <the new alias> already exists`. A reader
+  debugging one of these looks for the wrong object first, every time.
+- **A nested create's collision strands the object around it.** A
+  `POST /client-scopes` whose `protocolMappers` entry carries a taken id is a
+  409 and the **client scope** is not created either - 404
+  `Could not find client scope`. So the blast radius is the enclosing object,
+  and the case that fails is the one addressing that.
+- **`PUT .../clients/{uuid}` mints protocol mapper ids.** It matches the body's
+  mappers to the client's by `(protocol, name)` and keeps the id it had - which
+  is true, is what `mapperRenamedByPutFixture` measures, and is only half the
+  behaviour. For a name the client does **not** hold, the same `PUT` creates
+  the mapper at the body's id and that id is then taken server-wide. A true
+  measurement of a different input is the most convincing way to be wrong about
+  a route.
+- **Two fixtures sharing an id is safe only when they build the same
+  object.** The same route, the same container and the same name. One name in
+  two **realms** is two objects, and the loser is stranded silently in eight of
+  the nine spaces. `TestNoTwoFixturesMintOneObjectID` keys on the object for
+  that reason, and `containerOf` counts a `{{capture}}` in the path as
+  fixture-local, because every authz fixture POSTs to one path string and means
+  a different resource server.
+- **A deliberate collision declares itself with `ExpectStatus`.** A step
+  accepting no 2xx means to lose; `idempotentCreate` accepts one and does not.
+  That is the only thing separating `componentCollideStep` and
+  `mapperIDRollbackFixture` from a defect, and it is a field rather than a
+  comment on purpose. "Would not accept a 201" is the wrong spelling of it:
+  `add-models` answers 204.
+
 ## Boundaries
 
 | Package | Owns | Must not |
@@ -3348,6 +3398,36 @@ implementation satisfies entirely.
   creates, and the commit wears the message of whatever the author meant to
   commit. "Commit early and often" and "apply a mutation, then revert" are in
   tension and neither says so.
+
+- **A vacuity floor that is a `t.Fatalf` can hide the thing the mutation was
+  planted to find.** Planting a collision by giving one fixture another's id
+  necessarily removes an id from the space, so the floor fires first and the
+  subtest ends before the collision loop runs. Five mutations in this cut were
+  recorded "killed by the sweep" when the message was the count guard. **Read
+  the failure message, not the test name** - the existing rule says to read the
+  mutated line before reporting a survivor, and this is its mirror for a kill.
+  Where a mutation can be made **additive** - giving an existing id a second
+  name without taking any id out of the space - it should be, because then the
+  floor cannot fire at all and the collision message is the only thing that can
+  kill it.
+- **A vacuity guard covers the traversal; the comparison needs its own, and
+  pinning the declaration is not it.** This cut pinned a table of id spaces
+  whole, gave every space a floor, and still shipped a sweep in which rewriting
+  one line - the one that reads a name - made every collision unreportable with
+  every test green. The table pins what the declaration **says**; nothing pinned
+  what the consumer **does with it**, and a floor cannot stand in for that
+  because the collision that arrives naturally *adds* a mint and never moves the
+  count. The remedy is a **positive control**: hand the comparison a collision
+  it must report, an identical pair it must not, and a same-name-two-containers
+  pair it must. Both halves of this were found by mutation and neither by
+  reading. See F234 and the survivor in `fixture-id-spaces.md` §5.5.
+- **A mutation pass's dirty check must be scoped to the package it mutates.**
+  This one aborted after its first mutation because a handover file written in
+  another window made a whole-tree `git status --porcelain` non-empty. The trap
+  reverted correctly and nothing was lost, but the run was wasted. It is the
+  same "the dangerous window is the one the discipline itself creates" that the
+  wildcard-staging rule already names, arriving from the other side: the check
+  that protects the pass also aborts it.
 
 **Run each package separately.** A filtered `-run` has twice reported a survivor
 that a test outside the filter was killing, and once hidden a real survivor
