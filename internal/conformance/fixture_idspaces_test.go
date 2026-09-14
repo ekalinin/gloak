@@ -967,16 +967,6 @@ func TestNoAuthzIDReachesTwoResourceServers(t *testing.T) {
 // loop compares nothing and passes, which is the shape that shipped a silent
 // sweep once already - see F234 and the survivor in fixture-id-spaces.md.
 func TestOverwritesIsOnlyDeclaredWhereARepeatWins(t *testing.T) {
-	overwriting := map[string]bool{}
-	for _, sp := range fixtureIDSpaces {
-		if sp.RepeatIsHarmless {
-			continue
-		}
-		for _, r := range sp.Routes {
-			overwriting[r.Method+" "+r.Path] = true
-		}
-	}
-
 	declared := 0
 	for name, f := range Fixtures {
 		for _, s := range f.Steps {
@@ -984,14 +974,7 @@ func TestOverwritesIsOnlyDeclaredWhereARepeatWins(t *testing.T) {
 				continue
 			}
 			declared++
-			onAnOverwritingRoute := false
-			for key := range overwriting {
-				method, pattern, _ := strings.Cut(key, " ")
-				if routeMatches(method, pattern, s.Request.Method, s.Request.Path) {
-					onAnOverwritingRoute = true
-				}
-			}
-			if !onAnOverwritingRoute {
+			if !onAnOverwritingRoute(fixtureIDSpaces, s.Request.Method, s.Request.Path) {
 				t.Errorf("fixture %q declares Overwrites on %s %s, which is not one "+
 					"of the routes where a repeat wins. That flag takes the step out "+
 					"of the collision sweep, so on any other route it hides a real "+
@@ -1012,6 +995,61 @@ func TestOverwritesIsOnlyDeclaredWhereARepeatWins(t *testing.T) {
 			"pass whatever the fixtures hold. The destructive repeat is measured by " +
 			"admin/authz-resource-server/scope-create-repeat-read, whose fixture " +
 			"needs the flag; if that case is gone, this guard should go with it.")
+	}
+}
+
+// onAnOverwritingRoute reports whether a request is on one of the routes where
+// a repeat wins, and so whether Step.Overwrites is a truthful declaration on it.
+//
+// It is a function rather than four lines inside the test because the test's
+// floor cannot cover it. **A vacuity guard covers the traversal; the comparison
+// needs its own** - the lesson F234 paid for twice - and a floor counting the
+// steps that declare Overwrites is satisfied by a predicate that returns true
+// for everything. TestOnAnOverwritingRouteSeparatesWhatItMustSeparate is the
+// positive control, and it is the only thing in this file that can kill a
+// predicate rewritten to be permissive.
+func onAnOverwritingRoute(spaces []idSpace, method, path string) bool {
+	for _, sp := range spaces {
+		if sp.RepeatIsHarmless {
+			continue
+		}
+		for _, r := range sp.Routes {
+			if routeMatches(r.Method, r.Path, method, path) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestOnAnOverwritingRouteSeparatesWhatItMustSeparate hands the predicate the
+// three answers it has to get right, with the table it really runs on.
+//
+// The first is the case that exists; the second and third are the two ways a
+// permissive predicate goes wrong - a sibling route one path segment away that
+// refuses its repeat, and a create in another family entirely. Both would be
+// exempted from the collision sweep by a predicate that said yes to everything,
+// and nothing else in this file would notice.
+func TestOnAnOverwritingRouteSeparatesWhatItMustSeparate(t *testing.T) {
+	const authz = "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server"
+	for _, tc := range []struct {
+		what   string
+		method string
+		path   string
+		want   bool
+	}{
+		{"the scope create, where a repeat wins", http.MethodPost, authz + "/scope", true},
+		{"the resource create, where a repeat wins", http.MethodPost, authz + "/resource", true},
+		{"the policy create, one segment away, which refuses", http.MethodPost, authz + "/policy", false},
+		{"the permission create, same store as the policy", http.MethodPost, authz + "/permission", false},
+		{"the scope PUT, which is a replace and not a repeat", http.MethodPut, authz + "/scope/x", false},
+		{"a client create, another family", http.MethodPost, "/admin/realms/master/clients", false},
+		{"a component create, another family", http.MethodPost, "/admin/realms/master/components", false},
+	} {
+		if got := onAnOverwritingRoute(fixtureIDSpaces, tc.method, tc.path); got != tc.want {
+			t.Errorf("onAnOverwritingRoute(%s %s) = %v, want %v - %s",
+				tc.method, tc.path, got, tc.want, tc.what)
+		}
 	}
 }
 
