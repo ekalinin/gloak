@@ -11108,6 +11108,41 @@ var adminCases = []Case{
 		AssertAbsentHeaders: []string{"Location"},
 	},
 	{
+		// **The input that separates "absent means unchanged" from "the body
+		// cannot change them".** The case above sends no `attributes` and pins
+		// that the old ones survive; on its own that is satisfied by a handler
+		// which ignores the body's attributes on every upsert, because the two
+		// rules agree on every other request in the corpus. This one sends
+		// `attributes` on the repeat and they must **replace**.
+		//
+		// It is here because a mutation survived without it - reordering the two
+		// branches of the create's switch so the existing row always won passed
+		// `internal/admin` and `internal/conformance` both. That is this
+		// project's named failure shape, a set of inputs an incorrect
+		// implementation satisfies entirely, caught by the pass rather than
+		// after it. See F239 and the handover's mutation section.
+		ID: "admin/authz-resource-server/resource-create-repeat-attributes",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: a repeated resource create that names attributes",
+			Retrieved: "2026-09-14",
+		},
+		Status:  Implemented,
+		Fixture: "authz-res-repeat-attrs",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/resource",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"_id":"5e50a5ce-0000-4000-8000-00000000e601",` +
+				`"name":"gloak-probe-repeated","attributes":{"k3":["c"]}}`),
+		},
+		AssertHeaders:       []string{"Content-Type", "Cache-Control"},
+		AssertAbsentHeaders: []string{"Location"},
+	},
+	{
 		// The scope half of the same finding, and it takes two cases where the
 		// resource takes one. This is the repeat's own 201, and it is the
 		// **request echoed**: four keys, the id it was given back, and nothing

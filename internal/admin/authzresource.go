@@ -725,6 +725,25 @@ func (h *handler) listAuthzResourcePermissions(w http.ResponseWriter, r *http.Re
 // **name** are the 409. That is the inverse of the scope family, where the name
 // upserts.
 //
+// **That upsert destroys information and reproducing it is deliberate.** A
+// repeat on an `_id` this resource server holds answers the ordinary 201 and
+// replaces the row: the listing that held `res-one` holds `res-two` afterwards
+// and the first name is gone, with no error and the **last** create winning.
+// It is the only request in this repository where repeating something loses
+// information - every other create here is refused - and it is copied because
+// this project copies what 26.7.1 does, not what it should do. A handler that
+// answered 409 here would look like a bug fix and would be a divergence on the
+// one route where a client can tell.
+//
+// What is **not** copied is the id space: Keycloak's is global, so the same
+// repeat aimed at another resource server is a 409 that corrupts the server
+// holding the winner. AGENTS.md records that declined divergence separately;
+// Gloak's authz ids are per resource server, which is why every lookup on this
+// path is keyed by a.client.ID. See F237 and F238.
+//
+// Pinned by admin/authz-resource-server/resource-create-repeat and
+// -repeat-attributes, which are what stop somebody tidying the 201 into a 409.
+//
 // Four refusals, in the order they were measured to run:
 //
 //	{"zzz":1}                    the strict 400, ahead of everything below

@@ -1206,6 +1206,13 @@ var Fixtures = map[string]Fixture{
 	"authz-res-repeat":     authzResourceFixture("gloak-probe-authz-rs-rpt", "e3", resourceSeedFull),
 	"authz-scope-repeat":   authzScopeFixture("gloak-probe-authz-sc-rpt", "e4", scopeSeedFull),
 	"authz-scope-repeated": authzScopeRepeatFixture("gloak-probe-authz-sc-rptd", "e5"),
+	// The fourth case, and it exists because a mutation survived without it.
+	// Three cases pin that a repeat **keeps** attributes the second body does
+	// not name, and a handler that ignored the body's attributes on an upsert
+	// altogether satisfies all three - "absent means unchanged" and "the body
+	// can never change them" agree on every input the corpus had. This is the
+	// input that separates them: a repeat that *does* name attributes.
+	"authz-res-repeat-attrs": authzResourceFixture("gloak-probe-authz-rs-rpta", "e6", resourceSeedFull),
 
 	// P9. The identity provider fixtures name their own internalId, because the
 	// body's id wins on this create - measured, the third endpoint with that
