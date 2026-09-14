@@ -205,9 +205,10 @@ GET  .../resource                                                               
 `.../scope`. Repeated a third time it renames again, so the **last** create
 wins - the opposite of every other space here, where the first does.
 
-Confirmed on four independent clean resource servers on container A and two
-more on container B. A cross-server or cross-realm create is a 409 and leaves
-the owner untouched, measured before and after.
+Confirmed for the resource on three independent clean resource servers on
+container A and one on container B, and for the scope on four and one. A
+cross-server or cross-realm create is a 409 and leaves the owner untouched,
+measured before and after.
 
 `.../policy` refuses: 409 `Duplicate resource error`, and `pol-one` is still
 there. Same path prefix, same verb, same question, and one of the three
@@ -279,7 +280,7 @@ container is the request path, plus
 
 - the **fixture name** when the path holds a capture, because every authz
   fixture POSTs to `.../clients/{{client_uuid}}/authz/...` and means a
-  different resource server by it - one path string, twelve parents;
+  different resource server by it - one path string, one parent per fixture;
 - the **enclosing create's own name** for a mapper nested inside it, because
   two clients created at one path are two containers and the path cannot say
   which.
@@ -297,7 +298,10 @@ Four tests and one table, all in `internal/conformance/fixture_idspaces_test.go`
   reading a red test reads the measurement rather than the identity provider's.
 - **`TestNoTwoFixturesMintOneObjectID`** - the sweep, one subtest per space,
   with a **per-space floor**. One floor over the table would be satisfied by
-  the eight spaces that still match while the ninth went quiet.
+  the eight spaces that still match while the ninth went quiet. The floor
+  **reports and does not stop**, which is the precedent's shape corrected: see
+  §5.2 for the pass that spent five mutations proving nothing because a
+  `t.Fatalf` ended the subtest before the collision loop ran.
 - **`TestTheFixtureIDSpacesAreTheOnesMeasured`** - the table pinned whole,
   every field of every route, so that an entry arriving and an entry leaving
   each fail on their own. This is where the coherent-wrong-table mutation dies:
@@ -323,13 +327,116 @@ No fixture, no case and no golden was touched, so no golden was re-recorded.
 
 ## 5. The mutation pass
 
-Eleven mutations, run against `internal/conformance` **whole** - no `-run`
-filter - from a committed and clean tree, with the revert on a `trap … EXIT`
-rather than on the happy path, the diff checked non-empty before each run, and
-`git status --porcelain` checked empty after each revert. `internal/conformance`
-is the only package this cut touches.
+Twenty-one mutations in two passes, each run against `internal/conformance`
+**whole** - no `-run` filter - from a committed and clean tree, with the revert
+on a `trap … EXIT` rather than on the happy path, the diff checked non-empty
+before each run, and `git status --porcelain` checked empty after each revert.
+`internal/conformance` is the only package this cut touches.
+**No survivors in either pass.**
 
-<!-- MUTATION TABLE -->
+### 5.1 Pass A: does anything catch it
+
+| | mutation | outcome |
+|---|---|---|
+| M1 | `idp-mt-oidc`'s internalId set to `idp-minimal`'s | killed, `TestNoTwoFixturesMintOneIdentityProviderID` and `…MintOneObjectID/identity-provider` |
+| M2 | `authzScopeID` drops its group, collapsing every fixture's scope ids | killed, `…/authz-scope` **and 16 goldens** |
+| M3 | one component id and one component name in two realms | killed, `…/component` and `admin/component/update` |
+| M3b | M3 again with `containerOf` neutered to a constant | killed, and **the kill was the wrong one** - see 5.2 |
+| M4 | one mapper id and one mapper name under a client and a client scope | killed, `…/protocol-mapper` and two goldens |
+| M5 | a literal id added to `POST /admin/realms`, which no space declares | killed, `TestEveryLiteralIDInAFixtureBodyIsInADeclaredSpace` **alone** |
+| M6 | the identity provider row's `NameKey` changed from `alias` to `internalId` | killed, `TestTheFixtureIDSpacesAreTheOnesMeasured` **alone** |
+| M7 | the protocol mapper space loses its `PUT` route | killed, `TestTheFixtureIDSpaces…`, `TestEveryLiteralID…` and `…/protocol-mapper` |
+| M8 | `expectsFailure` returns true for every step | killed, all nine floors |
+| M9 | `expectsFailure` returns false for every step | killed, `…/component` and `…/protocol-mapper` |
+| M10 | `fixtureUUID` matches nothing | killed, all nine floors and `TestEveryLiteralID…` |
+
+M6 is the one worth reading twice. It is the **coherent wrong table**: a
+`NameKey` pointing at the id maps every id to exactly one name, so that space
+can never report a collision again, and every floor is still satisfied because
+the count of ids has not moved. The sweep passes. Only the pinned table dies,
+which is the whole reason the pinned table exists.
+
+M8 and M10 are guard mutations - "the function fails", not "the function is
+wrong consistently" - and they are worth running because the failure they model
+is silent. M9 is not: it is the one that says the deliberate-collision
+discriminator is load-bearing, because without it the two fixtures that collide
+**on purpose** are reported as defects.
+
+### 5.2 What pass A got wrong about itself
+
+M3b was recorded "killed by `…MintOneObjectID/component`" and that is true and
+misleading. Reading the message rather than the test name:
+
+```
+component: the sweep found 7 literal ids, want at least 8
+```
+
+That is the **floor**, not the collision. Planting a collision by giving one
+fixture another fixture's id necessarily **removes** an id from the space, the
+floor was a `t.Fatalf`, and the subtest ended before the collision loop ran. So
+M3b proved nothing about `containerOf`, and by the same argument M1, M2, M3 and
+M4 had not proved what they were run to prove either.
+
+The floor is now a `t.Errorf` that reports and continues. A guard against
+looking at nothing must not hide what was looked at, and the precedent's
+`t.Fatalf` is exactly wrong for a sweep whose most likely mutation moves both
+numbers at once.
+
+### 5.3 Pass B: a planted collision in each of the nine spaces
+
+Nine spaces, nine planted collisions, plus the control. `collision` is whether
+the sweep printed `… is minted for N different objects`; `floor` is whether it
+also printed the count guard. Only the first is the sweep biting.
+
+| | space | planted collision | collision | floor | the subtest that died |
+|---|---|---|---|---|---|
+| P0 | client | one uuid, two `clientId`s, no id removed | **yes** | no | `…MintOneObjectID/client` |
+| P1 | identity provider | a second alias for `1de07000-…0002`, no id removed | **yes** | no | `/identity-provider`, and `TestNoTwoFixturesMintOneIdentityProviderID` |
+| P2 | client scope | the second F78 holder takes the first's id | **yes** | yes | `/client-scope` |
+| P3 | identity provider mapper | `idpMapperID` drops its suffix | **yes** | yes | `/identity-provider-mapper` |
+| P4 | authz resource | `authzResourceID` drops its group | **yes** | yes | `/authz-resource` |
+| P5 | authz scope | `authzScopeID` drops its group | **yes** | yes | `/authz-scope` |
+| P6 | authz policy | `authzPolicyID` drops its group | **yes** | yes | `/authz-policy` |
+| P7 | protocol mapper | one id and one name under a client **and** a client scope | **yes** | yes | `/protocol-mapper` |
+| P8 | component | one id and one name in **two realms** | **yes** | yes | `/component` |
+| P9 | *control* | P8 again with `containerOf` neutered | **no** | yes | `TestContainerOfSeparatesWhatACollisionWouldSeparate` |
+
+P0 and P1 are the two that add a mint without removing one, so their floors stay
+satisfied and the collision message is the **only** thing that can kill them.
+The other seven ride on a helper, so they move both numbers; the reporting floor
+is what makes their `collision=yes` readable at all.
+
+P8's message, which is the shape a real cross-realm collision would print:
+
+```
+component id c0e00000-0000-4000-8000-000000000001 is minted for 2 different objects:
+    component-read: gloak-probe-read-policy in /admin/realms/gloak-probe-cmp/components
+    component-update: gloak-probe-read-policy in /admin/realms/gloak-probe-cmp-upd/components
+  the recorder shares one container, so the second create answers: 409 Duplicate
+  resource error, across realms too.
+  The fixture that loses reports success having created nothing, and the case
+  addressing the losing object measures a server it never reached. See F234.
+```
+
+### 5.4 The control is the most useful row
+
+P9 is P8 with `containerOf` returning a constant. The collision message is
+**gone** - the two component mints collapse into one object, because the only
+thing that distinguished them was the realm in the path - and the sweep says
+nothing about it. What is left is the floor, which fires for an unrelated
+reason, and `TestContainerOfSeparatesWhatACollisionWouldSeparate`, which fires
+for the right one:
+
+```
+two realms: containerOf must differ - a component id is global across realms,
+so the second create is a 409 and the loser is stranded
+    got "" and ""
+```
+
+So the unit test is not decoration. Without it, neutering `containerOf` is
+invisible to every planted collision that does not also drop an id count, and
+the sweep silently narrows from "one id, one object" back to "one id, one
+name" - the rule that cannot see the cross-realm trap. That is F236.
 
 ## 6. Containers
 
@@ -419,25 +526,47 @@ the first, and beside the recorder and pollution-guard bullets for the second.
   comment on purpose. "Would not accept a 201" is the wrong spelling of it:
   `add-models` answers 204.
 
+Two more for the closing mutation-discipline paragraph, both earned here:
+
+- **A vacuity floor that is a `t.Fatalf` can hide the thing the mutation was
+  planted to find.** Planting a collision by giving one fixture another's id
+  necessarily removes an id from the space, so the floor fires first and the
+  subtest ends before the collision loop runs. Five mutations in this cut were
+  recorded "killed by the sweep" when the message was the count guard. **Read
+  the failure message, not the test name** - the existing rule says to read the
+  mutated line before reporting a survivor, and this is its mirror for a kill.
+  Where a mutation can be made **additive** - giving an existing id a second
+  name without taking any id out of the space - it should be, because then the
+  floor cannot fire at all and the collision message is the only thing that can
+  kill it.
+- **A mutation pass's dirty check must be scoped to the package it mutates.**
+  This one aborted after its first mutation because a handover file written in
+  another window made a whole-tree `git status --porcelain` non-empty. The trap
+  reverted correctly and nothing was lost, but the run was wasted. It is the
+  same "the dangerous window is the one the discipline itself creates" that the
+  wildcard-staging rule already names, arriving from the other side: the check
+  that protects the pass also aborts it.
+
 ## 9. Follow-ups
 
 ### F236: `containerOf`'s distinctions have no witness in the corpus
 
 Every distinction `containerOf` draws - realm from realm, resource server from
 resource server, container from container - is about a collision no fixture
-makes. Neutering it to a constant leaves `TestNoTwoFixturesMintOneObjectID`
-green over all nine spaces, which M3b demonstrates. The remedy taken here is
+makes. P9 is the demonstration: neutering it to a constant and planting a real
+cross-realm collision leaves the sweep **silent about the collision**, and the
+only thing that fires for the right reason is
 `TestContainerOfSeparatesWhatACollisionWouldSeparate`, which asserts the
 function against the measurements rather than against the tree.
 
 That is strictly weaker than a corpus that exercises it, and the same shape as
-`identityProvidersFetchingOnConstruction`: a list pinned against a measurement
+`identityProvidersFetchingOnConstruction`: a thing pinned against a measurement
 because no usage can pin it. The open question is whether the harness should
 grow a **negative fixture** - a pair of fixtures that really do collide, run
 against a real container once and asserted to fail - or whether a unit test on
 the predicate is where this correctly stops. Nothing is proposed; the
-observation is that five of this repository's guards are now in this category
-and none of them knows about the others.
+observation is that this repository now has several guards in that category and
+none of them knows about the others.
 
 ### F237: the authz upsert is a divergence Gloak has not been asked about
 
@@ -473,7 +602,7 @@ catalogue order.
 
 The nine spaces answer a repeat with a 409, a 400, a 500 and a 201 between
 them, and `idempotentCreate` is `{201, 409}` on every create that carries it -
-108 steps. On the identity provider's cross-realm cell and the mapper's
+101 steps. On the identity provider's cross-realm cell and the mapper's
 same-name cell it is already wrong in the safe direction: the step fails loudly.
 On the authz pair it is wrong in the unsafe one, because there is nothing to
 swallow.
