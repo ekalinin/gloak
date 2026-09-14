@@ -116,6 +116,22 @@ type Step struct {
 	// whose GET writes should have to say so too, and because a list of paths
 	// in a test is a second place the catalogue's shape is written down.
 	Mutates bool
+	// Overwrites says a create deliberately repeats an id the fixture has
+	// already used, on one of the two routes where a repeat **wins**.
+	//
+	// It is `ExpectStatus`'s counterpart and the two are not interchangeable.
+	// A fixture that means to lose a collision says so with `ExpectStatus`,
+	// because a refusal is a status; a fixture that means to *overwrite* has no
+	// status to declare - the repeat answers the create's ordinary 201 - so
+	// without this field it is indistinguishable from the accident the id-space
+	// sweep exists to catch. `authz-scope-repeated` is the one fixture that
+	// needs it, and it needs it for the same reason the sweep reports it: one
+	// id, two objects, deliberately.
+	//
+	// Setting it anywhere a repeat is refused is itself a defect - the step
+	// would be exempted from the sweep while the collision it makes is real.
+	// TestOverwritesIsOnlyDeclaredWhereARepeatWins is the guard. See F239.
+	Overwrites bool
 }
 
 // idempotentCreate is the ExpectStatus of a create whose repeat is harmless:
@@ -125,6 +141,20 @@ type Step struct {
 // The creates that do **not** carry it are the ones that capture from Location -
 // see clientFixtureBody - where a 409 leaves nothing to capture and the failure
 // must be loud.
+//
+// **The name is a claim, and in two of the nine id spaces it is false.** On
+// `POST .../authz/resource-server/resource` and `.../scope` a repeat answers
+// **201** and overwrites the row that was there, so there is no status to
+// swallow: the step reports success for a request that lost information, and
+// this constant accepting a 201 is exactly what makes it silent. It is
+// deliberately **not** widened to cover that - widening it is what AGENTS.md
+// warns about, and there is nothing here to widen it *to*.
+//
+// Which two spaces those are is not left to this sentence. `fixtureIDSpaces`
+// carries a RepeatIsHarmless column measured per space,
+// TestIdempotentCreateNamesTheSpacesItLiesAbout pins that the false ones are
+// exactly these two, and TestNoStepDeclaresALossWhereARepeatWins is what stops
+// a fixture declaring a refusal that will never come. See F239.
 var idempotentCreate = []int{http.StatusCreated, http.StatusConflict}
 
 // Fixture is the setup a case runs against: a named server-side starting
@@ -1158,6 +1188,24 @@ var Fixtures = map[string]Fixture{
 	"authz-res-settings": authzResourceFixture("gloak-probe-authz-rs-set", "e1", resourceSeedOutOfOrder),
 	// The scope-side read that stopped answering `[]` when this cut landed.
 	"authz-scope-resources-full": authzScopeResourcesFixture("gloak-probe-authz-rs-sres", "e2"),
+
+	// ---- the repeat that is not refused ----------------------------------
+	//
+	// **The two spaces where `idempotentCreate`'s name is false.** A repeat of
+	// a create on these two routes answers 201 and overwrites the row that was
+	// there; every other create in this tree is refused. Until these three
+	// cases landed nothing in the corpus measured that at all - the goldens
+	// nearest to it were creates with fresh ids, so the destructive branch of
+	// the only two upserts in this API was served and unrecorded. See F237 and
+	// the RepeatIsHarmless column of fixtureIDSpaces.
+	//
+	// The resource needs one case and the scope needs two, and the reason is a
+	// measured difference between them: the resource create's 201 **is** a read
+	// of what it wrote, so the repeat's own response shows the damage, where the
+	// scope create's 201 is the request echoed and shows none of it.
+	"authz-res-repeat":     authzResourceFixture("gloak-probe-authz-rs-rpt", "e3", resourceSeedFull),
+	"authz-scope-repeat":   authzScopeFixture("gloak-probe-authz-sc-rpt", "e4", scopeSeedFull),
+	"authz-scope-repeated": authzScopeRepeatFixture("gloak-probe-authz-sc-rptd", "e5"),
 
 	// P9. The identity provider fixtures name their own internalId, because the
 	// body's id wins on this create - measured, the third endpoint with that
@@ -6067,6 +6115,30 @@ func authzScopePutFixture(clientID, group string) Fixture {
 			Body:    []byte(`{"name":"gloak-probe-full"}`),
 		},
 	})
+	return f
+}
+
+// authzScopeRepeatFixture creates a scope carrying all three fields and then
+// **POSTs the create again** at the same id with a different name, so the case
+// after it reads what the second 201 left behind.
+//
+// It exists because the scope create's 201 is the request echoed rather than a
+// read - AGENTS.md records that separately - so the repeat's own response body
+// cannot show that iconUri and displayName are gone. The resource family needs
+// no such fixture: its create's 201 is a read of what it wrote, so one case
+// covers both halves there.
+//
+// **The repeat step carries no ExpectStatus and must not.** A repeat here is a
+// 201, not a refusal; declaring a loss would be a lie the runner cannot catch
+// and would also hide the mint from the id-space sweep, which skips any step
+// that expectsFailure. See TestNoStepDeclaresALossWhereARepeatWins.
+func authzScopeRepeatFixture(clientID, group string) Fixture {
+	f := authzScopeFixture(clientID, group, scopeSeedFull)
+	repeat := authzScopeStep(authzScopeID(group, "01"), "gloak-probe-repeated", "")
+	// One id, two objects, on purpose - which is precisely what the id-space
+	// sweep reports, so the fixture has to say it means it. See Step.Overwrites.
+	repeat.Overwrites = true
+	f.Steps = append(f.Steps, repeat)
 	return f
 }
 
