@@ -6431,7 +6431,40 @@ enumerate the routes on which Keycloak makes an **outbound** request while
 serving - this one is the only one anybody here has met, and nobody went looking.
 The expensive half is deciding what the catalogue should call such a case.
 
-## F234: the fixture id spaces share one prefix and nothing enumerates them
+## F234: the fixture id spaces share one prefix and nothing enumerates them (swept 2026-09-14)
+
+**Nine spaces over thirteen create routes, and every one is global.** Not
+deduced: one id was offered to all nine families in one realm and got **nine
+201s and nine coexisting objects**, so the per-family prefixes in `fixture.go`
+are tidiness rather than a constraint.
+
+**What a colliding create answers is different per family, and three of the nine
+do not answer 409** - an identity provider id taken in another realm is a
+**500**, an identity provider mapper repeated under one name is a **400**, and
+`POST .../authz/resource-server/resource` and `.../scope` answer **201 and
+silently rename the row that was there**. Every cell was issued rather than
+reasoned from the identity provider, which is what this entry was filed about.
+
+**Five ids are minted more than once in the tree and all five are deliberate.**
+Zero accidental, and nothing held shut by a coincidence - F230's was removed by
+the cut that filed this entry. A deliberate collision now declares itself with
+`ExpectStatus`, which is a field rather than a comment on purpose.
+
+**The discriminator was wrong first.** "One id, one name" - the identity
+provider precedent's rule - passes the tree and is too weak: one name in two
+**realms** is two objects, and the loser is stranded silently in eight of nine
+spaces. It is keyed on the **object** now: route, container, name.
+
+**And the sweep shipped unable to report anything.** Rewriting one line - the one
+that reads a name - made every collision unreportable with every test green, and
+neither the pinned table nor the nine floors could see it. Worse, **the floor
+catching it was a coincidence**: a collision that arrives the way a real one does
+*adds* a mint and removes nothing, so the count never moves. Measured, not
+argued. Closed with a positive control that hands the comparison a collision it
+must report, an identical pair it must not, and a same-name-two-containers pair
+it must.
+
+## F234 (original): the entry as filed on 2026-09-13
 
 `1de07000-0000-4000-8000-0000000000XX` carries identity providers, identity
 provider mappers, authz policies, resources and scopes, and the organization
@@ -6458,3 +6491,96 @@ against what they held, in a form that survives the revert, so the second cut
 starts from the first's diff instead of re-deriving it. Nothing is proposed here;
 the observation is that two cuts spent a session each on one cell and the
 information that would have saved the second was in the first's working tree.
+
+## F236: the sweep's mechanisms have no witness in the corpus, and a unit test is where that stops
+
+Every distinction `containerOf` draws - realm from realm, resource server from
+resource server, container from container - is about a collision no fixture
+makes, and the same is true of the line that reads a name. P9 and X2b are the
+two demonstrations: neuter either and the sweep goes **silent about a real
+planted collision** with nothing else in the tree failing.
+
+**This is closed rather than deferred, and the reason is worth recording so the
+next person does not read it as unfinished.** The obvious next step is a
+*negative fixture* - a pair of fixtures that really do collide, run against a
+container once and asserted to fail - and it is the wrong step. **A fixture that
+exists only to witness a guard is a fixture with no measurement behind it**, and
+this corpus is measurements: every other fixture here is there because some case
+measures what Keycloak does with it. A synthetic pair proves something about the
+harness, which is what a unit test is for.
+
+So the stop is `TestContainerOfSeparatesWhatACollisionWouldSeparate` and
+`TestTheSweepReportsACollisionItIsGiven`: the mechanisms asserted against the
+measurements and against known inputs, in the same shape as
+`identityProvidersFetchingOnConstruction`, which is pinned against a measurement
+because no usage can pin it. The entry stays open only as a **pointer**: this
+repository now has several guards in that category and none of them knows about
+the others, so the next one will be built from scratch again.
+
+## F237: an authz create answers 201 and destroys the previous row
+
+`POST .../authz/resource-server/resource` and `.../scope` answer **201** to an
+id their own resource server already holds, and **rename the row that was
+there**. The listing that held `res-one` holds `res-two` afterwards and the
+first name is gone. Measured on three independent clean resource servers on one
+container and one on another; `.../policy`, one path segment away, answers 409
+and keeps the first row.
+
+Nothing in the tree measures it: there is no case, Gloak's behaviour on that
+input is unknown, and the two goldens nearest to it are creates with fresh ids.
+
+It is the sharpest of this cut's four, and the reason is exactly those words:
+**it is the only measured request in this repository where repeating something
+loses information.** Every other repeat here is refused, and the whole harness -
+`idempotentCreate`, the recorder's shared container, the rule that a fixture two
+cases name runs twice - is built on repeats being refused. This is the one place
+that premise is false while looking true, and it answers 201 while being false.
+
+What to measure first is whether the `PUT` on the same row does the same thing,
+and whether `owner`, `type` and `uris` survive the rename or are replaced by the
+second body's.
+
+## F238: an authz collision leaves reads that depend on what ran before
+
+§2.5. After a cross-server 409 followed by a same-server collision on one id,
+`GET .../authz/resource-server/scope` on the **owning** server answers
+`400 unknown_error / Cannot parse the JSON`, and that server's own same-id
+create answers 409 where a clean one answers the 201 upsert. Reproduced on two
+fresh realms with the same ordering on container A; not provoked when the scope
+probes ran alone.
+
+This is the F40/F206/F230 family - a value that is a function of what else the
+recorder did - **arriving in a place none of their remedies reaches**. F40's
+answer is a fresh realm and F47's is a per-case container; a fresh realm does
+not clear this, because what is poisoned is a resource-server cache entry that
+outlived the realm boundary. That makes it more than a defect in one listing: it
+is a gap in the isolation mechanism this project relies on everywhere, and the
+only reason it has not bitten a golden is that no `admin/authz` case currently
+follows a collision in catalogue order.
+
+What to measure first is which of the two requests poisons it - the cross-server
+409 alone did not, in the one probe that isolated it - and whether a fresh
+container clears it. The cheap half in the meantime is that no golden under
+`admin/authz` may be recorded after a collision case.
+
+## F239: `idempotentCreate`'s name is a claim, and in two spaces it is false and unchecked
+
+**Record it; do not change it.** One constant over nine different refusals
+across 101 steps is fine, and widening it would be worse - AGENTS.md already
+records that widening one to accept a 400 would also accept `Issuer is
+required`, a fixture that passes while creating nothing.
+
+The problem is the **name**, because the name is what the next person will
+trust. `idempotentCreate` says "a repeat of this is harmless". In two of the
+nine spaces that is false and nothing checks it: on
+`POST .../authz/resource-server/resource` and `.../scope` a repeat answers 201
+and **destroys the row that was there**, so there is no status to swallow and
+the step reports success for a request that lost information. (In the other
+direction it is already wrong safely: the identity provider's cross-realm 500
+and the mapper's same-name 400 are outside `{201, 409}`, so those steps fail
+loudly.)
+
+Nothing is proposed. Whether the answer is a per-space constant, a field, or a
+sentence on the constant's doc comment saying which two spaces it lies about, is
+a design question this cut did not need to answer - but the two spaces it lies
+about are named here so that the next reader of that constant has them.

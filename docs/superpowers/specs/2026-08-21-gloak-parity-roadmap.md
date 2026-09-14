@@ -285,7 +285,45 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-13 (thirty-sixth fold).** `make conformance` reports **598 of
+**Updated 2026-09-14 (thirty-seventh fold).** `make conformance` reports **598 of
+644, no change** - a harness cut, no fixture, case or golden touched.
+
+**Nine id spaces over thirteen create routes, and every one is global.** Measured
+by offering one id to all nine families in one realm: **nine 201s, nine
+coexisting objects**. The per-family prefixes in `fixture.go` are tidiness, not a
+constraint.
+
+**Three of the nine do not answer 409 to a collision**, and the two that matter
+most are silent: `POST .../authz/resource-server/resource` and `.../scope`
+answer **201 and rename the row that was there** - last write wins, nothing in
+the harness can catch it, and `.../policy` one segment away refuses and keeps the
+first row. Every cell was issued rather than reasoned from the identity provider,
+which is what F234 was filed about.
+
+**Five ids are minted twice in the tree and all five are deliberate** - zero
+accidental, nothing held shut by a coincidence.
+
+**Two failures inside the cut are worth more than the sweep's result**, and both
+are the same shape arriving twice:
+
+- **A vacuity floor that is a `t.Fatalf` hid the thing the mutation was planted
+  to find.** Planting a collision by giving one fixture another's id necessarily
+  *removes* an id, so the floor fired first and the subtest ended before the
+  collision loop ran. **Five mutations were recorded "killed by the sweep" when
+  the message was the count guard.** Read the failure message, not the test name.
+- **The sweep shipped unable to report anything.** Rewriting one line - the one
+  that reads a name - made every collision unreportable with every test green,
+  and neither the pinned table nor the nine floors saw it. Found in review.
+  **And the floor catching it was itself a coincidence**: a collision that
+  arrives the way a real one does *adds* a mint and never moves the count, which
+  the cut then measured rather than argued. A table pins what a declaration
+  **says**; nothing pinned what the consumer **does with it**, and only a
+  positive control can.
+
+**The rule that comes out of both:** a vacuity guard covers the traversal; the
+comparison needs its own, and pinning the declaration is not it.
+
+**Earlier on 2026-09-13 (thirty-sixth fold).** `make conformance` reports **598 of
 644, no change** - the whole cut is one golden and two ratchets, and it is the
 first here whose subject was *whether a committed golden is true*.
 
