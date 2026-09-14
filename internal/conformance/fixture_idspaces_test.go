@@ -294,9 +294,14 @@ type idMint struct {
 }
 
 // mintsIn pools every literal id one space's routes carry, keyed by id.
-func mintsIn(sp idSpace) map[string][]idMint {
+//
+// It takes the fixture map rather than reading the package's own, so that
+// TestTheSweepReportsACollisionItIsGiven can hand it a collision and check that
+// the sweep says so. That is not a convenience: see the comment on that test
+// for why nothing else in this file can check it.
+func mintsIn(fixtures map[string]Fixture, sp idSpace) map[string][]idMint {
 	out := map[string][]idMint{}
-	for fname, f := range Fixtures {
+	for fname, f := range fixtures {
 		for _, s := range f.Steps {
 			if expectsFailure(s) {
 				continue
@@ -402,12 +407,39 @@ func jsonStringOf(m map[string]json.RawMessage, field string) string {
 // nothing must not hide what was looked at.
 func sweepIDSpace(t *testing.T, sp idSpace) {
 	t.Helper()
-	minters := mintsIn(sp)
+	minters := mintsIn(Fixtures, sp)
 	if len(minters) < sp.Floor {
 		t.Errorf("%s: the sweep found %d literal ids, want at least %d - it is "+
 			"matching less than it did and would pass whatever the fixtures hold. "+
 			"See F234.", sp.Object, len(minters), sp.Floor)
 	}
+	for _, c := range collisionsIn(minters) {
+		t.Errorf("%s id %s is minted for %d different objects:\n\t\t%s\n"+
+			"\tthe recorder shares one container, so the second create answers: %s.\n"+
+			"\tThe fixture that loses reports success having created nothing, and the "+
+			"case addressing the losing object measures a server it never reached. See F234.",
+			sp.Object, c.id, len(c.where), strings.Join(c.where, "\n\t\t"), sp.Collision)
+	}
+}
+
+// idCollision is one id minted for more than one object.
+type idCollision struct {
+	id string
+	// where is one line per distinct object, sorted.
+	where []string
+}
+
+// collisionsIn is the comparison the whole sweep exists to make, split out from
+// the reporting so that a test can hand it a known collision and check that it
+// comes back.
+//
+// **The sweep's two halves fail in different ways and only one of them had a
+// guard.** idSpace.Floor covers the traversal - that mintsIn still matches
+// something - and TestTheFixtureIDSpacesAreTheOnesMeasured covers the table.
+// Neither covers this function, or the line in mintsIn that fills in the name
+// it compares. See TestTheSweepReportsACollisionItIsGiven.
+func collisionsIn(minters map[string][]idMint) []idCollision {
+	var out []idCollision
 	for id, mints := range minters {
 		objects := map[string]bool{}
 		var where []string
@@ -422,12 +454,10 @@ func sweepIDSpace(t *testing.T, sp idSpace) {
 			continue
 		}
 		sort.Strings(where)
-		t.Errorf("%s id %s is minted for %d different objects:\n\t\t%s\n"+
-			"\tthe recorder shares one container, so the second create answers: %s.\n"+
-			"\tThe fixture that loses reports success having created nothing, and the "+
-			"case addressing the losing object measures a server it never reached. See F234.",
-			sp.Object, id, len(objects), strings.Join(where, "\n\t\t"), sp.Collision)
+		out = append(out, idCollision{id: id, where: where})
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].id < out[j].id })
+	return out
 }
 
 // TestNoTwoFixturesMintOneObjectID is F234's sweep over every id space.
@@ -440,6 +470,123 @@ func TestNoTwoFixturesMintOneObjectID(t *testing.T) {
 			sweepIDSpace(t, sp)
 		})
 	}
+}
+
+// TestTheSweepReportsACollisionItIsGiven is the positive control on the sweep
+// itself, one space at a time, and it closes a hole a review found.
+//
+// **Nothing else here checks that the sweep reads a name where it means a
+// name.** Rewriting one line of mintsIn from r.NameKey to r.IDKey leaves a
+// **coherent wrong sweep**: every id maps to exactly one "name" - itself - so
+// every id is one object, no collision is ever reported, and the table, the
+// floors and containerOf are all untouched and all still pass.
+// TestTheFixtureIDSpacesAreTheOnesMeasured pins that the table **says**
+// `NameKey: "clientId"`; it cannot see what the consumer does with it. That is
+// the shape this project keeps meeting one level along: the claim is pinned and
+// the use of the claim is not.
+//
+// **And the floor is not a backstop for it.** A planted collision made by
+// giving one fixture another's id also removes an id from the space, so the
+// floor happens to fire - which is what made the mutation look dead. A
+// collision that arrives the way a real one would, two independently written
+// fixtures each choosing the same literal, **adds** a mint and removes nothing.
+// The count is unchanged, the floor is silent, and with that one line rewritten
+// the whole suite is green. The `two independent fixtures` case below is
+// exactly that shape, which is why it is the one this test is built on.
+//
+// Both directions are asserted per space, because a sweep that reported
+// everything would satisfy the first half alone.
+func TestTheSweepReportsACollisionItIsGiven(t *testing.T) {
+	const id = "0c0111de-0000-4000-8000-000000000001"
+	for _, sp := range fixtureIDSpaces {
+		t.Run(strings.ReplaceAll(sp.Object, " ", "-"), func(t *testing.T) {
+			for _, r := range sp.Routes {
+				// Two independently written fixtures choosing one literal id
+				// for two different objects, in one container. Nothing is taken
+				// away, so the space's id count is unchanged and the floor
+				// cannot fire: the **name** is the only thing that separates
+				// them, which is exactly the line a review found unpinned.
+				collide := map[string]Fixture{
+					"probe-a": syntheticMint(t, r, id, "probe-object-a", "gloak-probe-one"),
+					"probe-b": syntheticMint(t, r, id, "probe-object-b", "gloak-probe-one"),
+				}
+				got := collisionsIn(mintsIn(collide, sp))
+				if len(got) != 1 || got[0].id != id {
+					t.Errorf("%s %s %s: a planted collision on %s was reported as %v, "+
+						"want exactly one. The sweep is not comparing what it claims to "+
+						"compare, and neither the floor nor the pinned table can see it. "+
+						"See F234.", sp.Object, r.Method, r.Path, id, got)
+				}
+				// The same id and the same name in two different containers,
+				// which is the cross-realm trap containerOf exists for.
+				elsewhere := map[string]Fixture{
+					"probe-a": syntheticMint(t, r, id, "probe-object", "gloak-probe-one"),
+					"probe-b": syntheticMint(t, r, id, "probe-object", "gloak-probe-two"),
+				}
+				if got := collisionsIn(mintsIn(elsewhere, sp)); len(got) != 1 {
+					t.Errorf("%s %s %s: one id and one name in two containers was reported "+
+						"as %v, want exactly one collision - one name in two realms is two "+
+						"objects. See F234.", sp.Object, r.Method, r.Path, got)
+				}
+				// The same id for the same object, which is the deliberate
+				// case five pairs in this tree rely on.
+				share := map[string]Fixture{
+					"probe-a": syntheticMint(t, r, id, "probe-object", "gloak-probe-one"),
+					"probe-b": syntheticMint(t, r, id, "probe-object", "gloak-probe-one"),
+				}
+				if got := collisionsIn(mintsIn(share, sp)); len(got) != 0 {
+					t.Errorf("%s %s %s: two fixtures building one object were reported as "+
+						"%v, want none - a test that reports deliberate sharing is a test "+
+						"people learn to ignore. See F234.", sp.Object, r.Method, r.Path, got)
+				}
+			}
+		})
+	}
+}
+
+// syntheticMint is one fixture whose single step mints `id` under `name` in
+// `container`, shaped for the route it is on.
+//
+// Where the container comes from the path - which is every route except the two
+// nested-in-a-create ones - `container` is the **realm**, because that is both
+// the way containerOf tells two paths apart and the shape a real cross-realm
+// collision would have.
+//
+// It checks the path it builds against the route's own pattern rather than
+// trusting the substitution: a sample path that quietly stopped matching would
+// leave TestTheSweepReportsACollisionItIsGiven comparing an empty map against
+// an empty map, which is the vacuity this whole file is about.
+func syntheticMint(t *testing.T, r idRoute, id, name, container string) Fixture {
+	t.Helper()
+	create := `{"` + r.IDKey + `":"` + id + `","` + r.NameKey + `":"` + name + `"}`
+	var body string
+	switch r.Nested {
+	case "":
+		body = create
+	case ".":
+		body = `[` + create + `]`
+	default:
+		body = `{"` + r.EnclosingNameKey + `":"` + container + `","` + r.Nested + `":[` + create + `]}`
+	}
+	// Where the container is named in the body the path is shared; where it is
+	// not, the path is the only thing that can carry it. **Nesting does not
+	// decide this and the first version of this helper assumed it did**: the
+	// PUT route is nested and its container is the client in its path, so
+	// sharing the path made two clients look like one and the control reported
+	// its own scaffolding.
+	realm := "gloak-probe-realm"
+	if r.EnclosingNameKey == "" {
+		realm = container
+	}
+	tail := strings.ReplaceAll(strings.TrimSuffix(r.Path, "$"), `[^/]+`, "gloak-probe-parent")
+	path := "/admin/realms/" + realm + tail
+	if !routeMatches(r.Method, r.Path, r.Method, path) {
+		t.Fatalf("the sample path %q does not match the route %q, so this test "+
+			"would compare nothing", path, r.Path)
+	}
+	return Fixture{State: "bootstrap", Steps: []Step{{
+		Request: Request{Method: r.Method, Path: path, Body: []byte(body)},
+	}}}
 }
 
 // TestContainerOfSeparatesWhatACollisionWouldSeparate pins containerOf
