@@ -773,21 +773,34 @@ func (h *handler) createAuthzResource(w http.ResponseWriter, r *http.Request, rc
 		URIs:               body.uris(),
 		ScopeIDs:           scopeIDs,
 	}
-	if body.Attributes != nil {
-		stored.Attributes = *body.Attributes
-	}
-
 	// The upsert. An `_id` this resource server already holds is a replace; one
 	// another resource server holds falls through to the insert and meets the
 	// global primary key, which is the measured 409.
 	write := h.store.Authz().CreateResource
+	var current *model.AuthzResource
 	if stored.ID == "" {
 		stored.ID = model.NewID()
-	} else if _, err := h.store.Authz().ResourceByID(r.Context(), a.client.ID, stored.ID); err == nil {
+	} else if existing, err := h.store.Authz().ResourceByID(r.Context(), a.client.ID, stored.ID); err == nil {
 		write = h.store.Authz().UpdateResource
+		current = existing
 	} else if !errors.Is(err, store.ErrNotFound) {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
+	}
+
+	// **`attributes` is the one field where absent means unchanged on this verb
+	// too**, and the replace that the rest of the body performs is what makes
+	// that worth a branch. Measured 2026-09-14 on a resource holding a type, a
+	// displayName, two uris, ownerManagedAccess and `{"k":["v1"]}`: a repeat
+	// carrying only `_id` and a new name cleared all five of the others and left
+	// the attributes exactly as they were. `{"attributes":{}}` does clear them,
+	// so the exception is about absence and not about the field - which is the
+	// same rule updateAuthzResource records, arrived at on the other verb.
+	switch {
+	case body.Attributes != nil:
+		stored.Attributes = *body.Attributes
+	case current != nil:
+		stored.Attributes = current.Attributes
 	}
 	if err := write(r.Context(), stored); err != nil {
 		if errors.Is(err, store.ErrConflict) {
