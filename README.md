@@ -99,8 +99,8 @@ Working today:
   Gloak's responses byte-for-byte against bytes recorded from a live
   Keycloak 26.7.1
 - a parity meter whose denominator comes from Keycloak's own OpenAPI description
-  rather than from a hand-kept list: **598 of 660 enumerated behaviours served**,
-  plus one chapter whose surface has not been counted
+  rather than from a hand-kept list: **598 of 677 enumerated behaviours served**,
+  and **every chapter now has a denominator**
 - an external oracle: `make oracle` drives Gloak with `kcadm.sh`, Keycloak's own
   admin CLI, which asks for things no recorded case asks for
 
@@ -117,9 +117,10 @@ against three of the four `SigAlg`s SAML defines. The **account API** is enumera
 derived reads are served, 18 of 40; the remaining refusals are eleven separate
 blockers rather than one, which F194 records so nobody plans them as one cut.
 `BCFKS` is refused where Keycloak answers a keystore, on purpose - see F171.
-The **management port** is enumerated and served by nothing: all sixteen of its
-behaviours are measured and recorded, because Gloak has no second listener at
-all. A default Keycloak has none either - port 9000 comes up only under
+The **management port** and the **theme resource route** are enumerated and
+served by nothing: all sixteen and all seventeen of their behaviours are
+measured and recorded, because Gloak has neither a second listener nor a theme
+resource route. A default Keycloak has none either - port 9000 comes up only under
 `--health-enabled` or `--metrics-enabled`, which is what the recorder now sets.
 
 The **Admin API is scope-filtered** as of 2026-09-09, which closes the one
@@ -256,10 +257,10 @@ and stay out of the total rather than being dropped from it silently, which
 would inflate the percentage by hiding the parts nobody has counted. It reads:
 
 ```
-total: 598 of 660 enumerated behaviours served; 1 chapters not enumerated
+total: 598 of 677 enumerated behaviours served; 0 chapters not enumerated
 ```
 
-The denominator is 660 rather than 413 plus a fixed number because the protocol
+The denominator is 677 rather than 413 plus a fixed number because the protocol
 chapters have no OpenAPI source and are counted case by case, so they grow as
 measurements find behaviours nobody had named. It moved from 485 on 2026-08-29
 for the first time since it was set, and again the next day when the logout
@@ -271,7 +272,8 @@ The Admin API chapters cannot move this way and none has.
 CI reruns this meter on every pull request and posts the parity increment as
 a comment, failing the pull request when the total falls. A flat total is
 reported as `total unchanged` rather than `no change` when chapters moved
-underneath it: one chapter has no denominator, so work served in one of them
+underneath it: until 2026-09-15 some chapters had no denominator, so work
+served in one of them
 moves a row and cannot move the total, and saying "no change" above a table
 showing `+3` would be a comment contradicting itself. A deliberate fall
 is declared with a `Parity-decrease: <reason>` line in the pull request

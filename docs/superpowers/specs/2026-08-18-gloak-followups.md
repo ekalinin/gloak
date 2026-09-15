@@ -6828,3 +6828,173 @@ the discipline of measuring the option before believing the symptom.
 `AssertAbsentHeaders` on a `Recorded` case asserts nothing through `diff`, which
 is every case in this chapter. `TestAssertAbsentHeadersAgreeWithTheGolden` is
 what makes the fourteen declarations mean something, and M8 confirms it fires.
+
+## F250: a golden whose header is a function of the startup profile
+
+`themes/resource/served-file` and the five other 200s in this chapter hold
+`Cache-Control: no-cache`, which is what `start-dev` serves. A production
+Keycloak serves `max-age=2592000` from the same image, measured. So six goldens
+pin a **profile** rather than a version.
+
+It is F245's shape one variable coarser. That entry is about an **option set** -
+the management port's index page lists the endpoints that are switched on - and
+the fix it proposed, a line in the golden naming the recorder's configuration,
+would cover this too and would still be a change to `FormatGolden` and
+`ParseGolden` that all 1136 files take.
+
+What is different here, and why this gets its own number rather than a line on
+F245, is that the management port's dependency is **visible**: nothing on port
+9000 exists without the option, so a reader who wonders knows to ask. A
+`Cache-Control` header on a static file looks like a property of the product.
+The mitigation shipped is smaller than a fix: the header is asserted, so
+changing the recorder's command line is a red test rather than a re-record diff.
+
+## F251: the report's unenumerated branch had never had a test
+
+Enumerating this chapter took away the branch's only witness, which was that
+some chapter happened to be uncounted. `chapterRow` and
+`TestChapterRowLeavesAnUnenumeratedChapterOutOfTheTotals` give it one that does
+not depend on the catalogue being unfinished.
+
+The entry exists for the decision rather than the fix. The failing assertion's
+own message advised deleting `Chapter.Enumerated` once nothing took the branch,
+and that advice was **not** followed, for the reason in 2.6: the next chapter
+added to this project arrives uncounted, and deleting the only way to say so
+leaves its author choosing between a wrong number and silence.
+
+Whoever disagrees should read F247 first. It already notes that a chapter can be
+set back to `Enumerated: false` and no gate says anything - so the field is
+currently a promise with no enforcement behind it, and "delete it" and "gate it"
+are the two coherent answers. This cut took neither and said why.
+
+## F252: two theme-rendered pages are counted in no chapter
+
+**The condition, settled in review 2026-09-15 and not in the original entry:**
+an `admin/console` row **is allowed** - nothing enforces `admin/*` implying an
+OpenAPI tag, and `Enumerated && OpenAPITag == ""` is simply the catalogue-counted
+mode that `oidc/*`, `saml/*`, `account/*`, `management/*` and `themes/*` all use.
+
+What it breaks is a **reader's** expectation, because every other `admin/*`
+chapter today is a tag. So if that row is created **its declaration has to carry
+a comment saying it is catalogue-counted and why**, or the first person to check
+it against the vendored description will think it is missing. `account/console`
+is a precedent for the **shape** and is not a precedent for the `admin/` prefix.
+
+
+`GET /` and `GET /admin/{realm}/console/` are rendered from the `welcome` and
+`admin` themes and appear in no chapter's denominator. Measured in 2.4: `/` is a
+302 to `/admin/` with a bootstrap admin and a 2397-byte welcome page without
+one; `/admin/` is a 302 to `/admin/{realm}/console/`; that is 3694 bytes of
+markup with an absolute-URL environment block, which `ReplaceIssuer` already
+handles.
+
+They are not in `themes` because 2.2's principle files a page where it is
+served, and they are not under `admin/` because every chapter there is an
+OpenAPI tag and the console is not an operation. So the honest statement is that
+they need a chapter of their own - `admin/console` beside `account/console` is
+the shape the precedent suggests - and that is a decision about the admin
+sub-project rather than about themes.
+
+The welcome page has a second obstacle on top of the first, and it is the
+harness's: the recorder sets `KC_BOOTSTRAP_ADMIN_*` on every container, so the
+only container that could record it is one the recorder will never start.
+Whoever takes this decides whether one page is worth a third container regime.
+
+## F253: a chapter's number does not mean how much work is left, and nothing says so
+
+`themes/resource` reports 13 documented behaviours and one of them,
+`served-file`, stands for 1234 files. `admin/users` reports its tag's operation
+count and one operation stands for every query parameter it honours. Both are
+correct under `Chapter`'s definition and both invite the same misreading, which
+is that the denominator estimates remaining work.
+
+There is no dishonesty in either number and no fix is proposed to either. What
+is missing is a sentence where a reader of the report meets it - in
+`internal/parity/render.go`'s output, which is what lands on a pull request -
+saying what the denominator counts and what it does not. Filed as a
+documentation change with the place named, because the alternative is that every
+chapter's handover document argues the point again, which is how this one spent
+half of section 2.1.
+
+## F254: the one page that spells the resource segment relatively is the one the mask would miss
+
+The welcome page's asset URL is `resources/{version}/common/keycloak/img/favicon.ico`,
+with **no leading slash**, where every other page in this product writes
+`/resources/...`. `ReplaceThemeResource`'s pattern requires the leading slash, so
+that page's version would survive into a golden and churn on every recording.
+
+Nothing records the welcome page today, so nothing is broken - which is exactly
+the shape p13-theme-markup.md warned about when it found "per container start"
+copied through five documents: a claim nothing depends on is a claim nothing
+falsifies. Filed with the measurement so that whoever closes F252 finds it
+before the recording rather than after.
+
+Loosening the pattern is **not** the obvious fix and should not be done without
+re-running `TestThemeResourceAppearsOnlyInTheThemePages`. That test is what
+bounds the pass's over-reach, and dropping the leading slash widens it from
+"`/resources/` followed by five characters" to "the word resources followed by
+five characters", which would fire inside ordinary prose.
+
+## F255: an `AssertAbsentHeaders` entry outside the five is required by nothing
+
+`TestEveryGoldenMissingASecurityHeaderDeclaresItAbsent` is F181's mirror rule -
+read the **bytes** and check each against the catalogue rather than the other
+way round - and its scope is the five security headers. So a case declaring any
+**other** header absent has made a claim no test requires, and deleting the
+declaration is invisible. Measured here by M19, which dropped
+`Content-Security-Policy` from three cases' declarations and survived the suite.
+
+It reaches every such entry in the catalogue and not only this chapter's. The
+reason it cannot simply be fixed by widening the list is that the mirror rule
+needs a **closed** set to mirror against: for an arbitrary header, "absent and
+undeclared" is the state of every header nobody has heard of, so requiring a
+declaration for each would require declaring thousands.
+
+What would close it is the other direction, and it is cheap: an
+`AssertAbsentHeaders` entry naming a header that **no golden in the catalogue
+carries anywhere** is a declaration about a header this product does not have,
+and one naming a header some goldens carry is a claim worth requiring
+per-family. This chapter took the per-family half locally, in
+`TestThemeResourceLacksExactlyWhatTheThemePageCarries`, and the catalogue-wide
+half is what is filed. Whoever takes it should check the other exceptions
+AGENTS.md's bullet lists first: they are the other places a declaration may be
+carrying weight nothing checks.
+
+## Dispositions from the themes cut (2026-09-15)
+### F113: unchanged, and not reached
+
+No body on this route carries a per-request value. Six requests to one container
+and one to a second gave one md5 for `css/styles.css`, and the 307's `Location`
+carries the installation's version rather than the request's - which is what the
+capture masks. The rule was not needed here and no mask was built to reach it.
+
+### F161: applied to fifteen of eighteen media types
+
+`RefuseNonTextBody` is why `themes/resource/binary-media-type` is `Pending` and
+why the media-type table lives in a test. The three recordable rows are `.css`,
+`.js` and `.svg`; the other fifteen are `.png`, `.ico`, `.woff2` and their
+kind, and a golden over any of them would assert nothing.
+
+### F169: the model, with the polarity reversed
+
+Its discipline is measuring the option before believing the symptom, and this
+cut needed it twice. `Cache-Control: no-cache` on a cache-busted URL looks like
+a Keycloak decision and is a `start-dev` artefact (1.8). The absence of a
+welcome page looks like a Keycloak decision and is an artefact of the bootstrap
+admin the recorder sets (2.4). Both were caught by starting a second container
+with the variable moved, which is the whole of F169's method.
+
+### F175: unchanged
+
+`HEAD` answers every route shape here with the route's status and an empty body,
+and cannot be cased for the reason that entry gives: the verifier serves through
+`httptest.ResponseRecorder`, which does not strip a body for a HEAD where
+`http.Server` does.
+
+### F177 / F181 - carrying the weight again
+
+Every case in this chapter is `Recorded`, so `diff`'s "these differ" verdict is
+satisfied by Gloak having no `/resources` route at all, and
+`AssertAbsentHeaders` through `diff` asserts nothing.
+`TestAssertAbsentHeadersAgreeWithTheGolden` is what makes the sixteen
+`X-Frame-Options` declarations mean something.
