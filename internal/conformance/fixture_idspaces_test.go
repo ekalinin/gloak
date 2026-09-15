@@ -94,6 +94,20 @@ type idSpace struct {
 	// table would be satisfied by the eight spaces that still match while the
 	// ninth went quiet, so the floor is **per space**.
 	Floor int
+	// RepeatIsHarmless is whether `idempotentCreate`'s name is true here: does
+	// running one of this space's creates twice leave what the first one made.
+	//
+	// **It is false in exactly two spaces and that is F239.** Everywhere else a
+	// repeat is refused and the first row survives, which is the premise the
+	// whole harness rests on - the recorder shares one container, so a fixture
+	// two cases name runs its creates twice. On the two authz upserts the second
+	// create *wins*, so there is no refusal to swallow and no status that can
+	// report it.
+	//
+	// This is a separate field from Collision rather than a sentence inside it
+	// because Collision is prose for a failure message and nothing compares it
+	// to anything. This one is read by two tests.
+	RepeatIsHarmless bool
 }
 
 // fixtureIDSpaces is the enumeration F234 asked for: nine spaces over thirteen
@@ -123,8 +137,9 @@ var fixtureIDSpaces = []idSpace{
 		// 409 `Client <the new clientId> already exists` - naming the client
 		// that does **not** exist, which is the identity provider's shape
 		// turning up on a second family. idempotentCreate accepts both.
-		Collision: "409; in another realm the body names the client that does not exist",
-		Floor:     47,
+		Collision:        "409; in another realm the body names the client that does not exist",
+		Floor:            47,
+		RepeatIsHarmless: true,
 	},
 	{
 		Object: "client scope",
@@ -132,8 +147,9 @@ var fixtureIDSpaces = []idSpace{
 		// 409 `Client Scope <the new name> already exists` in the same realm
 		// and in another one alike - again naming the scope that does not
 		// exist. Neither loser is in either realm afterwards.
-		Collision: "409 naming the client scope that does not exist",
-		Floor:     45,
+		Collision:        "409 naming the client scope that does not exist",
+		Floor:            45,
+		RepeatIsHarmless: true,
 	},
 	{
 		Object: "protocol mapper",
@@ -161,8 +177,9 @@ var fixtureIDSpaces = []idSpace{
 		// both. The enclosing create is rolled back either way, so a nested
 		// collision strands the **client or client scope** as well as the
 		// mapper - measured, and pinned by mapperIDRollbackFixture.
-		Collision: "409, F78's two bodies by route and holder, and the enclosing create is rolled back",
-		Floor:     22,
+		Collision:        "409, F78's two bodies by route and holder, and the enclosing create is rolled back",
+		Floor:            22,
+		RepeatIsHarmless: true,
 	},
 	{
 		Object: "component",
@@ -171,8 +188,9 @@ var fixtureIDSpaces = []idSpace{
 		// The **header set** of that 409 is not stable on the first occurrence -
 		// see the note on the component-dup-id fixture and F147 - but the
 		// status and the body are.
-		Collision: "409 Duplicate resource error, across realms too",
-		Floor:     8,
+		Collision:        "409 Duplicate resource error, across realms too",
+		Floor:            8,
+		RepeatIsHarmless: true,
 	},
 	{
 		Object: "identity provider",
@@ -183,8 +201,9 @@ var fixtureIDSpaces = []idSpace{
 		// does not accept - so a cross-realm collision here is loud and a
 		// same-realm one is silent. The four organization broker fixtures are
 		// the ones that would meet it.
-		Collision: "409 naming the alias that does not exist; in another realm a 500",
-		Floor:     22,
+		Collision:        "409 naming the alias that does not exist; in another realm a 500",
+		Floor:            22,
+		RepeatIsHarmless: true,
 	},
 	{
 		Object: "identity provider mapper",
@@ -193,8 +212,9 @@ var fixtureIDSpaces = []idSpace{
 		// carrying the same **name** is a 400 `Failed to add mapper '<name>' to
 		// identity provider [<providerId>].` with or without an id, which is
 		// why idempotentCreate cannot cover this create.
-		Collision: "409 Duplicate resource error; a repeat of one name is a 400, not a 409",
-		Floor:     7,
+		Collision:        "409 Duplicate resource error; a repeat of one name is a 400, not a 409",
+		Floor:            7,
+		RepeatIsHarmless: true,
 	},
 	{
 		Object: "authz resource",
@@ -208,12 +228,25 @@ var fixtureIDSpaces = []idSpace{
 		// realm, it is 409 `Duplicate resource error` and the owner is intact.
 		Collision: "201 on the owning resource server - a silent rename; 409 elsewhere",
 		Floor:     57,
+		// **The rename keeps `attributes` and nothing else**, re-measured
+		// 2026-09-14 on a resource carrying a type, a displayName, two uris, a
+		// scope and ownerManagedAccess: the repeat cleared all five and left the
+		// attributes exactly as they were. Pinned by
+		// admin/authz-resource-server/resource-create-repeat, which is the first
+		// golden in this tree to record the destructive branch at all.
+		RepeatIsHarmless: false,
 	},
 	{
 		Object:    "authz scope",
 		Routes:    []idRoute{{http.MethodPost, `/authz/resource-server/scope$`, "", "id", "name", ""}},
 		Collision: "201 on the owning resource server - a silent rename; 409 elsewhere",
 		Floor:     69,
+		// The scope's rename keeps nothing: iconUri and displayName go with the
+		// name. Its 201 is the request echoed rather than a read, so the damage
+		// needs the read beside it - hence two goldens here where the resource
+		// needs one. See admin/authz-resource-server/scope-create-repeat and
+		// -repeat-read.
+		RepeatIsHarmless: false,
 	},
 	{
 		Object: "authz policy",
@@ -221,8 +254,9 @@ var fixtureIDSpaces = []idSpace{
 		// The sibling that refuses where the two above overwrite: same path
 		// prefix, same verb, same question, and the first row survives. Three
 		// stores under one resource server and one of them disagrees.
-		Collision: "409 Duplicate resource error everywhere, and the first row survives",
-		Floor:     32,
+		Collision:        "409 Duplicate resource error everywhere, and the first row survives",
+		Floor:            32,
+		RepeatIsHarmless: true,
 	},
 }
 
@@ -303,7 +337,13 @@ func mintsIn(fixtures map[string]Fixture, sp idSpace) map[string][]idMint {
 	out := map[string][]idMint{}
 	for fname, f := range fixtures {
 		for _, s := range f.Steps {
-			if expectsFailure(s) {
+			// Two declarations, one skip, and they are not the same claim.
+			// expectsFailure says the step means to lose and leaves the winner
+			// untouched; Overwrites says it means to win and replace. Both are
+			// deliberate one-id-two-object mints, so neither is a collision the
+			// sweep should report - and each is illegal in the other's spaces,
+			// which is what the two guards below check.
+			if expectsFailure(s) || s.Overwrites {
 				continue
 			}
 			for _, r := range sp.Routes {
@@ -723,6 +763,296 @@ func TestTheFixtureIDSpacesAreTheOnesMeasured(t *testing.T) {
 	}
 }
 
+// TestIdempotentCreateNamesTheSpacesItLiesAbout is F239 turned into something a
+// run reads.
+//
+// `idempotentCreate` is one constant over nine different refusals, and its name
+// claims a repeat is harmless. In two spaces that is false: the repeat is a 201
+// that overwrites, the constant accepts 201, and the step reports success for a
+// request that lost information. F239's instruction was to record where the
+// claim is false **without widening the constant**, because widening it is how
+// a fixture that creates nothing starts passing.
+//
+// So the record is the RepeatIsHarmless column and this is what stops it
+// rotting. A column nothing compares is a comment with a colon in it - which is
+// the defect this file already met once, in the Collision field it sits beside.
+// The two names are spelled out rather than counted because a count passes when
+// one space flips to false and another flips to true.
+func TestIdempotentCreateNamesTheSpacesItLiesAbout(t *testing.T) {
+	// idempotentCreate accepting a 2xx is the whole mechanism: if it ever stops,
+	// a destructive repeat becomes loud and this test is measuring nothing.
+	accepts201 := false
+	for _, c := range idempotentCreate {
+		if c == http.StatusCreated {
+			accepts201 = true
+		}
+	}
+	if !accepts201 {
+		t.Fatalf("idempotentCreate is %v and does not accept 201: the reason a "+
+			"destructive repeat is silent is that this constant waves the 201 "+
+			"through, so this test asserts nothing while that is false", idempotentCreate)
+	}
+
+	want := map[string]bool{"authz resource": true, "authz scope": true}
+	got := map[string]bool{}
+	for _, sp := range fixtureIDSpaces {
+		if !sp.RepeatIsHarmless {
+			got[sp.Object] = true
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("%d spaces declare a repeat is not harmless, want %d: %v",
+			len(got), len(want), got)
+	}
+	for object := range want {
+		if !got[object] {
+			t.Errorf("%q declares its repeat harmless, and it is not: a repeat "+
+				"there answers 201 and overwrites the row. See F237 and F239.", object)
+		}
+	}
+	for object := range got {
+		if !want[object] {
+			t.Errorf("%q declares its repeat is not harmless and is not one of the "+
+				"two measured spaces. If a third route has been measured "+
+				"overwriting, add it here with the measurement; if this is a "+
+				"guess, take it out - `idempotentCreate` is silent in exactly the "+
+				"spaces this list names.", object)
+		}
+	}
+}
+
+// TestNoStepDeclaresALossWhereARepeatWins is the half of F239 that protects the
+// fixtures rather than describing them.
+//
+// `ExpectStatus` excluding every 2xx is how a fixture declares that it *means*
+// to lose a collision - componentCollideStep and mapperIDRollbackFixture both do
+// it, and mintsIn skips such a step for exactly that reason. In the two spaces
+// where a repeat wins, that declaration is incoherent twice over: the refusal it
+// waits for never comes, so the step fails on its own status; and if the
+// declaration were ever relaxed, mintsIn would still be skipping the step, so
+// the mint it makes would be invisible to the collision sweep.
+//
+// There is no such step today and this is a ratchet, not a bug report. The
+// reason it is worth a test is that it is one copy-paste away: the two declared
+// losses in this tree are both creates, both look exactly like an authz create,
+// and nothing else in the file would notice the difference.
+func TestNoStepDeclaresALossWhereARepeatWins(t *testing.T) {
+	checked := 0
+	for _, sp := range fixtureIDSpaces {
+		if sp.RepeatIsHarmless {
+			continue
+		}
+		checked++
+		for name, f := range Fixtures {
+			for _, s := range f.Steps {
+				if !expectsFailure(s) {
+					continue
+				}
+				for _, r := range sp.Routes {
+					if !routeMatches(r.Method, r.Path, s.Request.Method, s.Request.Path) {
+						continue
+					}
+					t.Errorf("fixture %q declares a deliberate loss on %s %s, and a "+
+						"repeat in the %q space does not lose - it answers 201 and "+
+						"overwrites the row. The step will fail on its own status, "+
+						"and while it carries this declaration the id it mints is "+
+						"invisible to the collision sweep, which skips any step that "+
+						"expectsFailure. See F239.",
+						name, s.Request.Method, s.Request.Path, sp.Object)
+				}
+			}
+		}
+	}
+	// The vacuity guard covers the outer loop rather than the comparison: with
+	// no space declaring RepeatIsHarmless false this walks nothing and passes.
+	// The comparison itself is covered by the test above, which pins which two
+	// spaces those are.
+	if checked != 2 {
+		t.Fatalf("walked %d spaces whose repeat overwrites, want 2: with none "+
+			"this test passes having compared nothing", checked)
+	}
+}
+
+// TestNoAuthzIDReachesTwoResourceServers is F238's half, and it is the reason
+// that entry can be closed without reproducing anything.
+//
+// A colliding authz create does not only lose. On 26.7.1 it **damages the
+// resource server that holds the winner**: measured 2026-09-14, the near
+// server's scope listing answers `400 Cannot parse the JSON` and its settings a
+// 500, while the resource side goes quieter still - the row vanishes from the
+// listing and from its own id read while `/resource/search` still returns it.
+// The row is never lost; a container restart clears all of it, so it is an
+// in-process cache and not storage.
+//
+// Reaching it needs one id minted on **two different resource servers**, and
+// that is what this forbids. It is deliberately not the same check as
+// TestNoTwoFixturesMintOneObjectID: that one keys on the object and skips any
+// step declaring ExpectStatus or Overwrites, and both exemptions are correct
+// there because a declared loss and a declared overwrite are each harmless *on
+// one server*. Neither is harmless across two, and the damage lands on the
+// server that did nothing wrong - so this walks every step including the
+// exempted ones and keys on the fixture alone.
+//
+// Every authz create path carries `{{client_uuid}}`, and every authz fixture
+// builds exactly one client, so "two fixtures" and "two resource servers" are
+// the same statement here. That is what makes the check cheap and what makes it
+// worth writing down: the day a fixture builds two resource servers, this is the
+// test that has to be reconsidered rather than silently satisfied.
+func TestNoAuthzIDReachesTwoResourceServers(t *testing.T) {
+	checked := 0
+	for _, sp := range fixtureIDSpaces {
+		if sp.RepeatIsHarmless {
+			continue
+		}
+		owners := map[string]map[string]bool{}
+		for name, f := range Fixtures {
+			for _, s := range f.Steps {
+				for _, r := range sp.Routes {
+					if !routeMatches(r.Method, r.Path, s.Request.Method, s.Request.Path) {
+						continue
+					}
+					for _, create := range createsIn(s.Request.Body, r.Nested) {
+						id := jsonStringOf(create, r.IDKey)
+						if !fixtureUUID.MatchString(id) {
+							continue
+						}
+						checked++
+						if owners[id] == nil {
+							owners[id] = map[string]bool{}
+						}
+						owners[id][name] = true
+					}
+				}
+			}
+		}
+		for id, fixtures := range owners {
+			if len(fixtures) < 2 {
+				continue
+			}
+			names := make([]string, 0, len(fixtures))
+			for n := range fixtures {
+				names = append(names, n)
+			}
+			sort.Strings(names)
+			t.Errorf("%s id %s is minted by %d fixtures (%s), and each builds its "+
+				"own resource server. A colliding create across two resource "+
+				"servers is refused **and** poisons the one holding the winner: "+
+				"its listing and settings stop answering until the container "+
+				"restarts. The case that breaks is the one reading the server that "+
+				"did nothing. See F238.",
+				sp.Object, id, len(fixtures), strings.Join(names, ", "))
+		}
+	}
+	// A floor over the two spaces together, because the per-space floors on the
+	// table already guard the sweep that skips exempted steps and this one does
+	// not skip them - so the number it sees is the table's floors plus those.
+	if checked < 131 {
+		t.Fatalf("walked %d authz ids across the overwriting spaces, want at least "+
+			"131: this matched almost nothing and would pass whatever the fixtures "+
+			"hold", checked)
+	}
+}
+
+// TestOverwritesIsOnlyDeclaredWhereARepeatWins is the mirror of the test above,
+// and the pair is the point.
+//
+// `Step.Overwrites` exempts a step from the collision sweep, so a stray one is a
+// hole rather than a mistake: the id it mints stops being compared and the next
+// real collision on that route goes unreported. It is only a truthful
+// declaration on the two routes where a repeat answers 201 and replaces the row;
+// anywhere else the repeat is refused, the step is an ordinary deliberate loss,
+// and `ExpectStatus` is the field that says so.
+//
+// The floor is what stops this going quiet. With `Overwrites` set nowhere the
+// loop compares nothing and passes, which is the shape that shipped a silent
+// sweep once already - see F234 and the survivor in fixture-id-spaces.md.
+func TestOverwritesIsOnlyDeclaredWhereARepeatWins(t *testing.T) {
+	declared := 0
+	for name, f := range Fixtures {
+		for _, s := range f.Steps {
+			if !s.Overwrites {
+				continue
+			}
+			declared++
+			if !onAnOverwritingRoute(fixtureIDSpaces, s.Request.Method, s.Request.Path) {
+				t.Errorf("fixture %q declares Overwrites on %s %s, which is not one "+
+					"of the routes where a repeat wins. That flag takes the step out "+
+					"of the collision sweep, so on any other route it hides a real "+
+					"collision rather than declaring a deliberate one. A step that "+
+					"means to lose says so with ExpectStatus. See F239.",
+					name, s.Request.Method, s.Request.Path)
+			}
+			if expectsFailure(s) {
+				t.Errorf("fixture %q declares both Overwrites and a losing "+
+					"ExpectStatus on %s %s: the two say opposite things about the "+
+					"same request, and exactly one of them can be true.",
+					name, s.Request.Method, s.Request.Path)
+			}
+		}
+	}
+	if declared < 1 {
+		t.Fatalf("no step declares Overwrites: this test walked nothing and would " +
+			"pass whatever the fixtures hold. The destructive repeat is measured by " +
+			"admin/authz-resource-server/scope-create-repeat-read, whose fixture " +
+			"needs the flag; if that case is gone, this guard should go with it.")
+	}
+}
+
+// onAnOverwritingRoute reports whether a request is on one of the routes where
+// a repeat wins, and so whether Step.Overwrites is a truthful declaration on it.
+//
+// It is a function rather than four lines inside the test because the test's
+// floor cannot cover it. **A vacuity guard covers the traversal; the comparison
+// needs its own** - the lesson F234 paid for twice - and a floor counting the
+// steps that declare Overwrites is satisfied by a predicate that returns true
+// for everything. TestOnAnOverwritingRouteSeparatesWhatItMustSeparate is the
+// positive control, and it is the only thing in this file that can kill a
+// predicate rewritten to be permissive.
+func onAnOverwritingRoute(spaces []idSpace, method, path string) bool {
+	for _, sp := range spaces {
+		if sp.RepeatIsHarmless {
+			continue
+		}
+		for _, r := range sp.Routes {
+			if routeMatches(r.Method, r.Path, method, path) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestOnAnOverwritingRouteSeparatesWhatItMustSeparate hands the predicate the
+// three answers it has to get right, with the table it really runs on.
+//
+// The first is the case that exists; the second and third are the two ways a
+// permissive predicate goes wrong - a sibling route one path segment away that
+// refuses its repeat, and a create in another family entirely. Both would be
+// exempted from the collision sweep by a predicate that said yes to everything,
+// and nothing else in this file would notice.
+func TestOnAnOverwritingRouteSeparatesWhatItMustSeparate(t *testing.T) {
+	const authz = "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server"
+	for _, tc := range []struct {
+		what   string
+		method string
+		path   string
+		want   bool
+	}{
+		{"the scope create, where a repeat wins", http.MethodPost, authz + "/scope", true},
+		{"the resource create, where a repeat wins", http.MethodPost, authz + "/resource", true},
+		{"the policy create, one segment away, which refuses", http.MethodPost, authz + "/policy", false},
+		{"the permission create, same store as the policy", http.MethodPost, authz + "/permission", false},
+		{"the scope PUT, which is a replace and not a repeat", http.MethodPut, authz + "/scope/x", false},
+		{"a client create, another family", http.MethodPost, "/admin/realms/master/clients", false},
+		{"a component create, another family", http.MethodPost, "/admin/realms/master/components", false},
+	} {
+		if got := onAnOverwritingRoute(fixtureIDSpaces, tc.method, tc.path); got != tc.want {
+			t.Errorf("onAnOverwritingRoute(%s %s) = %v, want %v - %s",
+				tc.method, tc.path, got, tc.want, tc.what)
+		}
+	}
+}
+
 // TestEveryLiteralIDInAFixtureBodyIsInADeclaredSpace is the half of F234 that
 // is about the **next** family rather than about the nine here.
 //
@@ -777,8 +1107,7 @@ func TestEveryLiteralIDInAFixtureBodyIsInADeclaredSpace(t *testing.T) {
 	// it - and, worse, would let the same pointer come back as a real mint
 	// unnoticed.
 	if checked < 345 {
-		t.Fatalf("the sweep found %d literal ids in fixture bodies, want at least "+
-			"345: it is matching nothing and would pass whatever the fixtures hold",
+		t.Fatalf("the sweep found %d literal ids in fixture bodies, want at least "+"345: it is matching nothing and would pass whatever the fixtures hold",
 			checked)
 	}
 	for key, why := range literalIDExemptions {

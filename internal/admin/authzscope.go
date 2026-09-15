@@ -216,6 +216,18 @@ func authzIntBound(w http.ResponseWriter, q url.Values, name string) (int, bool)
 // recorded and it is half of it - the create also writes the body's other
 // fields onto the row it found.
 //
+// **The third line of that table destroys information and is copied on
+// purpose.** Renaming an existing scope through a *create* drops its iconUri
+// and displayName as well as its name, answers 201, and says nothing. This and
+// the resource create one path segment away are the only two requests in this
+// repository where repeating something loses what was there; every other create
+// is refused. It is reproduced because 26.7.1 does it, and answering 409
+// instead would read as a fix and be a divergence a client can see.
+//
+// The damage needs two goldens because this 201 is the request **echoed**
+// rather than a read - admin/authz-resource-server/scope-create-repeat for the
+// answer and -repeat-read for what is left behind. See F237 and F239.
+//
 // **A body with no name is a 409 `Duplicate resource error` that carries all
 // five security headers**, where the same body on the PUT one path segment
 // away carries none. That pair is measured on one container with identical

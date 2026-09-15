@@ -11069,6 +11069,133 @@ var adminCases = []Case{
 		// answer the resource-server PUT and the scope create give a body that
 		// is missing their own gate - and it carries the five security headers,
 		// where the PUT's 409 two cases down carries none.
+		// **A repeat of this create is a 201 that overwrites the row.** The only
+		// two routes in this API where repeating a create loses information are
+		// this one and the scope create beside it; everything else in the corpus
+		// is refused. Measured 2026-09-14 against 26.7.1 on a fresh resource
+		// server: the second body names the same `_id` and only a new name, and
+		// the row comes back renamed with `displayName`, `type`, `icon_uri`,
+		// `uris` and `scopes` gone and `ownerManagedAccess` back to false.
+		//
+		// **`attributes` survives, and it is the only field that does.** That is
+		// the assertion this golden exists for, because it is the one cell Gloak
+		// got wrong: the create built a fresh row and wrote it wholesale, where
+		// the PUT one path segment away already had the rule. `{"attributes":{}}`
+		// does clear them, so the exception is about absence and not the field.
+		//
+		// The response body is a **read** of what was written - the resource
+		// create's 201 is, and the scope create's 201 is not - so this one case
+		// pins both the answer and the damage. See F237.
+		ID: "admin/authz-resource-server/resource-create-repeat",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: repeating a resource create on a taken _id",
+			Retrieved: "2026-09-14",
+		},
+		Status:  Implemented,
+		Fixture: "authz-res-repeat",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/resource",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"_id":"5e50a5ce-0000-4000-8000-00000000e301",` +
+				`"name":"gloak-probe-repeated"}`),
+		},
+		AssertHeaders:       []string{"Content-Type", "Cache-Control"},
+		AssertAbsentHeaders: []string{"Location"},
+	},
+	{
+		// **The input that separates "absent means unchanged" from "the body
+		// cannot change them".** The case above sends no `attributes` and pins
+		// that the old ones survive; on its own that is satisfied by a handler
+		// which ignores the body's attributes on every upsert, because the two
+		// rules agree on every other request in the corpus. This one sends
+		// `attributes` on the repeat and they must **replace**.
+		//
+		// It is here because a mutation survived without it - reordering the two
+		// branches of the create's switch so the existing row always won passed
+		// `internal/admin` and `internal/conformance` both. That is this
+		// project's named failure shape, a set of inputs an incorrect
+		// implementation satisfies entirely, caught by the pass rather than
+		// after it. See F239 and the handover's mutation section.
+		ID: "admin/authz-resource-server/resource-create-repeat-attributes",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: a repeated resource create that names attributes",
+			Retrieved: "2026-09-14",
+		},
+		Status:  Implemented,
+		Fixture: "authz-res-repeat-attrs",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/resource",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"_id":"5e50a5ce-0000-4000-8000-00000000e601",` +
+				`"name":"gloak-probe-repeated","attributes":{"k3":["c"]}}`),
+		},
+		AssertHeaders:       []string{"Content-Type", "Cache-Control"},
+		AssertAbsentHeaders: []string{"Location"},
+	},
+	{
+		// The scope half of the same finding, and it takes two cases where the
+		// resource takes one. This is the repeat's own 201, and it is the
+		// **request echoed**: four keys, the id it was given back, and nothing
+		// about the iconUri and displayName it has just destroyed. A handler that
+		// answered this route with a read of its own write would pass the
+		// resource case and fail here.
+		ID: "admin/authz-resource-server/scope-create-repeat",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: repeating a scope create on a taken id",
+			Retrieved: "2026-09-14",
+		},
+		Status:  Implemented,
+		Fixture: "authz-scope-repeat",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope",
+			Headers: map[string]string{
+				"Authorization": "Bearer {{access_token}}",
+				"Content-Type":  "application/json",
+			},
+			Body: []byte(`{"id":"5c0be000-0000-4000-8000-00000000e401",` +
+				`"name":"gloak-probe-repeated"}`),
+		},
+		AssertHeaders:       []string{"Content-Type", "Cache-Control"},
+		AssertAbsentHeaders: []string{"Location"},
+	},
+	{
+		// The read after the repeat, which is the half the echoed 201 above
+		// cannot show: **iconUri and displayName are gone**. The fixture has
+		// already run both creates, so this case is a plain GET and the golden is
+		// the damage.
+		//
+		// It is authz-scope-put-replaced's shape with the opposite verb, and
+		// putting the two side by side is the point: a POST and a PUT on one row
+		// leave the same wreckage, and only one of them is called a replace.
+		ID: "admin/authz-resource-server/scope-create-repeat-read",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",
+			Section:   "Authorization services: reading a scope a repeated create overwrote",
+			Retrieved: "2026-09-14",
+		},
+		Status:  Implemented,
+		Fixture: "authz-scope-repeated",
+		Request: Request{
+			Method: http.MethodGet,
+			Path: "/admin/realms/master/clients/{{client_uuid}}/authz/resource-server/scope/" +
+				"5c0be000-0000-4000-8000-00000000e501",
+			Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+		},
+		AssertHeaders: []string{"Content-Type", "Cache-Control"},
+	},
+	{
 		ID: "admin/authz-resource-server/resource-create-no-name",
 		Doc: Doc{
 			URL:       "https://www.keycloak.org/docs-api/26.7.1/rest-api/",

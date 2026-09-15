@@ -725,6 +725,25 @@ func (h *handler) listAuthzResourcePermissions(w http.ResponseWriter, r *http.Re
 // **name** are the 409. That is the inverse of the scope family, where the name
 // upserts.
 //
+// **That upsert destroys information and reproducing it is deliberate.** A
+// repeat on an `_id` this resource server holds answers the ordinary 201 and
+// replaces the row: the listing that held `res-one` holds `res-two` afterwards
+// and the first name is gone, with no error and the **last** create winning.
+// It is the only request in this repository where repeating something loses
+// information - every other create here is refused - and it is copied because
+// this project copies what 26.7.1 does, not what it should do. A handler that
+// answered 409 here would look like a bug fix and would be a divergence on the
+// one route where a client can tell.
+//
+// What is **not** copied is the id space: Keycloak's is global, so the same
+// repeat aimed at another resource server is a 409 that corrupts the server
+// holding the winner. AGENTS.md records that declined divergence separately;
+// Gloak's authz ids are per resource server, which is why every lookup on this
+// path is keyed by a.client.ID. See F237 and F238.
+//
+// Pinned by admin/authz-resource-server/resource-create-repeat and
+// -repeat-attributes, which are what stop somebody tidying the 201 into a 409.
+//
 // Four refusals, in the order they were measured to run:
 //
 //	{"zzz":1}                    the strict 400, ahead of everything below
@@ -773,21 +792,34 @@ func (h *handler) createAuthzResource(w http.ResponseWriter, r *http.Request, rc
 		URIs:               body.uris(),
 		ScopeIDs:           scopeIDs,
 	}
-	if body.Attributes != nil {
-		stored.Attributes = *body.Attributes
-	}
-
 	// The upsert. An `_id` this resource server already holds is a replace; one
 	// another resource server holds falls through to the insert and meets the
 	// global primary key, which is the measured 409.
 	write := h.store.Authz().CreateResource
+	var current *model.AuthzResource
 	if stored.ID == "" {
 		stored.ID = model.NewID()
-	} else if _, err := h.store.Authz().ResourceByID(r.Context(), a.client.ID, stored.ID); err == nil {
+	} else if existing, err := h.store.Authz().ResourceByID(r.Context(), a.client.ID, stored.ID); err == nil {
 		write = h.store.Authz().UpdateResource
+		current = existing
 	} else if !errors.Is(err, store.ErrNotFound) {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
+	}
+
+	// **`attributes` is the one field where absent means unchanged on this verb
+	// too**, and the replace that the rest of the body performs is what makes
+	// that worth a branch. Measured 2026-09-14 on a resource holding a type, a
+	// displayName, two uris, ownerManagedAccess and `{"k":["v1"]}`: a repeat
+	// carrying only `_id` and a new name cleared all five of the others and left
+	// the attributes exactly as they were. `{"attributes":{}}` does clear them,
+	// so the exception is about absence and not about the field - which is the
+	// same rule updateAuthzResource records, arrived at on the other verb.
+	switch {
+	case body.Attributes != nil:
+		stored.Attributes = *body.Attributes
+	case current != nil:
+		stored.Attributes = current.Attributes
 	}
 	if err := write(r.Context(), stored); err != nil {
 		if errors.Is(err, store.ErrConflict) {
