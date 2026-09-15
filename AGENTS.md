@@ -37,10 +37,15 @@ catch.
 
 Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 
-- **Four error shapes, not one.** `{"error","error_description"}`, a bare `error`
+- **Five error shapes, not one.** `{"error","error_description"}`, a bare `error`
   holding prose, `{"errorMessage"}`, and the RFC 6749 shape on the admin API. They do
   not split along the protocol/admin boundary. `userinfo` with a bad token is its own
   case: 401, `text/plain`, empty body, error in `WWW-Authenticate`.
+  **The fifth is the first shape inverted**, and it arrived on 2026-09-14:
+  `{"error":"Policy with name [x] already exists","error_description":"Conflicting
+  policy"}` - prose in `error`, a category in `error_description`. Its neighbour
+  on the **same route** is the ordinary way round, so one route answers two 409s
+  whose keys mean opposite things depending on which check refused.
   Two spellings of one refusal are decided by a **field of the request** rather
   than by the endpoint: `POST .../certificates/{attr}/upload` answers
   `Password verification failed` for a JKS whose store password is wrong and
@@ -2965,6 +2970,43 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   comment on purpose. "Would not accept a 201" is the wrong spelling of it:
   `add-models` answers 204.
 
+- **There are eight authz create routes and two of them overwrite.**
+  `POST .../policy/{type}` and `POST .../permission/{type}` are real routes with
+  their own 201 shape - **no `config` key**, where the untyped creates have one -
+  and Gloak serves neither. The overwriting pair is `resource` and `scope`; the
+  other six are one store behind four paths, so an id taken by `policy` is taken
+  for `permission` and both typed families too.
+- **"A repeat" is four different requests and the answers do not agree.** The
+  key is the body's id. A scope create with **no** id and a taken name is a
+  **201 returning the row that already existed**; the same body on `resource` is
+  a 409. Same question, one path segment apart, opposite answers - which is the
+  existing "the scope upserts on the name, the resource on the `_id`" bullet
+  measured on the cell that separates the two rather than inferred from the
+  cells that do not.
+- **The overwriting repeat replaces every field except `attributes`.** Absence
+  means unchanged for that one field and `{"attributes":{}}` still clears it, so
+  it is about absence and not about the field - **on the POST as well as the
+  PUT**. Gloak had it on the PUT alone until 2026-09-14, in a file where the two
+  functions are ninety lines apart.
+- **A fifth error shape, and it is the four-key shape inverted.**
+  `{"error":"Policy with name [x] already exists","error_description":"Conflicting
+  policy"}` - prose in `error`, a category in `error_description`. Its neighbour
+  on the same route is the ordinary way round, so **one route answers two 409s
+  whose keys mean opposite things** depending on which check refused. The
+  error-shapes bullet says four; this is a fifth.
+- **A refused authz create damages the resource server it did not address, and
+  what decides it is whether the row was read first.** A colliding create on
+  another resource server answers 409 and leaves the *winner's* server unable to
+  serve it: the scope listing answers `400 Cannot parse the JSON` and its
+  settings a 500, and the resource side goes quieter - the row vanishes from the
+  listing and from its own id read while **`/resource/search` still returns
+  it**. One row, three reads, two answers. **A container restart clears all of
+  it and the row was never lost**, so it is an in-process cache. The realm
+  boundary is not the variable and was blamed for a fortnight because two probes
+  differed in the realm *and* in whether they read the row on the way through.
+  Gloak's per-resource-server id spaces mean it cannot reproduce any of this,
+  which is the existing declined divergence earning its keep.
+
 ## Boundaries
 
 | Package | Owns | Must not |
@@ -3428,6 +3470,22 @@ implementation satisfies entirely.
   same "the dangerous window is the one the discipline itself creates" that the
   wildcard-staging rule already names, arriving from the other side: the check
   that protects the pass also aborts it.
+
+- **A mutation that does not compile is not a kill, and the verdict line cannot
+  tell you.** A deletion that left a variable declared and unused produced
+  `FAIL ... [build failed]`, which a harness testing "did the output start with
+  `ok`" records as killed. It proves nothing about any assertion. The existing
+  rule says to read the failure message rather than the test name; this is the
+  case where there is no test name at all, because nothing ran. Re-form the
+  mutation so it compiles - usually by changing what a branch assigns rather
+  than removing the branch.
+- **A production mutation has to be run against the package that can kill it,
+  which is usually not the package it lives in.** Every production mutation in
+  this cut survived `internal/admin` and died in `internal/conformance`, because
+  the contract lives in goldens and not in the handler's own tests. "Run each
+  package separately" already says how to run them; it does not say that a
+  mutation in `internal/admin` scored against `internal/admin` alone reports a
+  survivor every time.
 
 **Run each package separately.** A filtered `-run` has twice reported a survivor
 that a test outside the filter was killing, and once hidden a real survivor

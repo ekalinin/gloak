@@ -6517,7 +6517,25 @@ because no usage can pin it. The entry stays open only as a **pointer**: this
 repository now has several guards in that category and none of them knows about
 the others, so the next one will be built from scratch again.
 
-## F237: an authz create answers 201 and destroys the previous row
+## F237: an authz create answers 201 and destroys the previous row (settled 2026-09-14)
+
+**The entry's premise was false.** It said this was "a divergence nobody has
+asked Gloak about"; both upserts were already implemented and documented, and
+every status matched Keycloak on the first run.
+
+**One field diverged**: a repeat keeps `attributes` and Gloak cleared them. The
+rule was already implemented **ninety lines away on the PUT**, in the same file.
+Absence means unchanged for that one field, and `{"attributes":{}}` still clears
+it, so it is about absence and not about the field.
+
+The destructive 201 is **reproduced**, and both handlers now say so in code -
+what it copies, and what it does not: Keycloak's authz id space is global and
+Gloak's is per resource server, which is a separate declined divergence. The
+alternative rejected was leaving `attributes` cleared as a filed divergence:
+this is not Keycloak being indefensible, it is Gloak being wrong about a rule
+the repository had already measured.
+
+## F237 (original): the entry as filed on 2026-09-14
 
 `POST .../authz/resource-server/resource` and `.../scope` answer **201** to an
 id their own resource server already holds, and **rename the row that was
@@ -6540,7 +6558,25 @@ What to measure first is whether the `PUT` on the same row does the same thing,
 and whether `owner`, `type` and `uris` survive the rename or are replaced by the
 second body's.
 
-## F238: an authz collision leaves reads that depend on what ran before
+## F238: an authz collision leaves reads that depend on what ran before (**corrected** 2026-09-14)
+
+**Wrong in its load-bearing half.** The realm is not the variable. A 2x2 shows
+what decides it is **whether the row was read before the collision** - the two
+probes this entry was filed from differed in the realm *and* in that, and the
+realm got the blame.
+
+What is poisoned is an **in-process cache**: the scope listing answers
+`400 Cannot parse the JSON` and its settings a 500, while on the resource side
+the row vanishes from the listing and from its own id read and
+**`/resource/search` still returns it** - one row, three reads, two answers. **A
+container restart clears all of it and the row was never lost.**
+
+**Nothing in the corpus can reach it**, and that is now
+`TestNoAuthzIDReachesTwoResourceServers` rather than an argument. Gloak's
+per-resource-server id spaces mean it cannot reproduce any of this, which is the
+declined divergence earning its keep.
+
+## F238 (original): the entry as filed on 2026-09-14
 
 §2.5. After a cross-server 409 followed by a same-server collision on one id,
 `GET .../authz/resource-server/scope` on the **owning** server answers
@@ -6563,7 +6599,15 @@ What to measure first is which of the two requests poisons it - the cross-server
 container clears it. The cheap half in the meantime is that no golden under
 `admin/authz` may be recorded after a collision case.
 
-## F239: `idempotentCreate`'s name is a claim, and in two spaces it is false and unchecked
+## F239: `idempotentCreate`'s name is a claim, and in two spaces it is false and unchecked (answered 2026-09-14)
+
+**The constant is unwidened**, as filed. `RepeatIsHarmless` is a **measured
+column** now, false in exactly two spaces, with `Step.Overwrites` as the
+declaration a destructive repeat needs - `ExpectStatus` declares a refusal that
+never comes, which is the wrong spelling of it. Four tests, and each declaration
+is illegal in the other's spaces.
+
+## F239 (original): the entry as filed on 2026-09-14
 
 **Record it; do not change it.** One constant over nine different refusals
 across 101 steps is fine, and widening it would be worse - AGENTS.md already
@@ -6584,3 +6628,87 @@ Nothing is proposed. Whether the answer is a per-space constant, a field, or a
 sentence on the constant's doc comment saying which two spaces it lies about, is
 a design question this cut did not need to answer - but the two spaces it lies
 about are named here so that the next reader of that constant has them.
+
+## F240: four authz create routes are served by Keycloak and are in no document
+
+`POST .../authz/resource-server/policy/{type}` and `.../permission/{type}` are
+real routes - `policy/role`, `policy/time`, `permission/resource` and
+`permission/scope` all answer 201 on a default 26.7.1 - and they are **not in
+`keycloak-26.7.1.json` at all.** The description's twenty-two authz paths are
+listed in this repository's own vendored copy and none of them takes a type
+segment.
+
+So the parity cost is **zero**, and that is the interesting part rather than a
+let-off. The meter measures the description, the description does not know these
+routes exist, and the chapter therefore reads 31 of 31 accounted for while four
+served creates sit outside the count. Every other gap this project has found was
+a described operation with no case; this is the first case of the opposite, and
+the meter is structurally unable to report it.
+
+They are not the untyped creates with a path parameter, which is what makes them
+worth serving rather than aliasing: their 201 carries **no `config` key** where
+the untyped ones do, on otherwise identical bodies.
+
+**And Gloak's 404 on them is the wrong one of the two.** Measured side by side:
+Gloak answers `{"error":"Unable to find matching target resource method"}` -
+the unmatched-path body, because its mux has no such route - while Keycloak's
+own 404 on the one type it does not register, `policy/js`, is
+`{"error":"HTTP 404 Not Found"}`. So even declining to serve these routes is
+observably wrong today, and it is wrong in the direction AGENTS.md's
+four-producers bullet is about. That is the cheapest half of this entry and it
+does not require building the family: four routes registered to the existing
+`createAuthzPolicy` would answer the right 404 for the unregistered type and the
+right 201 for the rest, and the `config` difference is what says they still need
+their own response shape.
+
+What is not known is how wide the family is. `policy/js` is a 404 because the
+provider is not registered, and AGENTS.md already records that the accepted type
+set on `POST .../policy` is nine and is **not** `policy/providers`' catalogue -
+so whether the typed route's accepted set is that same nine, the catalogue, or a
+third list is an open question with a cheap answer. The first thing to measure
+is whether `POST .../policy/uma` exists, since `uma` is the type that is
+accepted by the untyped create and absent from the catalogue.
+
+## F241: `Overwrites` is a second exemption from the collision sweep and nothing ranks them
+
+`Step.ExpectStatus` and `Step.Overwrites` both take a step out of `mintsIn`, for
+opposite reasons, and each now has a test saying where it is legal. That is two
+guards that know about each other because one cut wrote both.
+
+The observation is the one F236 already made about a different pair: this
+repository now has several "a declaration the sweep reads" mechanisms -
+`PristineRealm`, `Mutates`, `ExpectStatus`, `Overwrites`, `parkedGoldens` - and
+none of them knows the others exist. A third exemption from this particular
+sweep will be built from scratch and will not come with its own legality test
+unless somebody remembers to ask for one. Nothing is proposed; the note is that
+the count is now five and the next one is the one to worry about.
+
+## F242: Keycloak stores an empty-string authz id and it then collides globally
+
+Found by a probe defect, not by design: a body carrying `{"_id":"","name":"one"}`
+is a **201**, and the row is stored with an id of the empty string. A second
+such create anywhere on the server - any realm, any resource server - then
+collides with it in exactly the way a real id does.
+
+Not chased and deliberately so: nothing in Gloak or in the corpus sends one, and
+it is Keycloak's own defect rather than a contract anybody depends on. It is
+filed because it is the cheapest possible reproduction of the §3 poisoning - two
+requests, no ids to keep track of - and because "the empty string is an id" is
+the sort of thing a validation tidy-up would close without realising it was
+observable.
+
+## F243: no probe script in this repository survives its own cut
+
+Eleven scripts were written for this cut and all eleven are deleted with it.
+Three of them encoded corrections that cost a run each to find - per-cell ids,
+per-cell resource servers, and `fresh()` not being called in a command
+substitution - and the next person measuring anything over a global id space
+will rediscover all three.
+
+F235 asks the same question from the recorder's side: information that would
+have saved the next cut existed in the previous one's working tree. This is that
+shape for probes rather than goldens. Nothing is proposed - a directory of
+one-off shell scripts is its own liability, and the measurements themselves
+belong in the spec and the goldens, which is where they went. The observation is
+only that the **method** has no home, and this cut's method was wrong three
+times before it was right.
