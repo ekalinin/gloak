@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"bytes"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -512,5 +513,81 @@ func TestThemeGoldensHoldTheAnswerTheyWereMeasuredTo(t *testing.T) {
 	}
 	if len(a) == 0 {
 		t.Fatal("the stylesheet group holds an empty body, so its equality is between two nothings")
+	}
+}
+
+// TestThemePageFixtureYieldsTheVersionEveryCasePathNeeds runs the real
+// `theme-page` fixture against a stub and asserts the variable comes back and
+// expands.
+//
+// **It exists because a mutation survived.** Disabling the capture in
+// RunFixture entirely - `if false && name != ""` - passed all eighteen themes
+// subtests of TestConformance. Every case in this chapter is Recorded, so a
+// path that still reads `/resources/{{theme_resource}}/…` is a 404 that differs
+// from the golden exactly as the expanded path's 404 does, and `diff`'s
+// these-differ verdict is satisfied either way. The only thing that would have
+// caught it is `make record` followed by somebody reading sixteen goldens.
+//
+// That is the management cut's M12 in a new place, and its answer is the same
+// one `RecordTarget`'s doc comment gives: logic nothing can test without Docker
+// is logic nothing tests. RunFixture takes a `Do`, so this needs no container.
+func TestThemePageFixtureYieldsTheVersionEveryCasePathNeeds(t *testing.T) {
+	const version = "t72jg"
+	page := `<!DOCTYPE html><html><head>` +
+		`<link href="/resources/` + version + `/login/keycloak.v2/css/styles.css">` +
+		`</head><body></body></html>`
+
+	var asked int
+	do := func(r *http.Request) (*http.Response, error) {
+		asked++
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header:     http.Header{"Content-Type": {"text/html;charset=utf-8"}},
+			Body:       io.NopCloser(strings.NewReader(page)),
+		}, nil
+	}
+
+	vars, err := RunFixture(Fixtures["theme-page"], "http://localhost:8080", do)
+	if err != nil {
+		t.Fatalf("RunFixture: %v", err)
+	}
+	if asked != 1 {
+		t.Fatalf("the fixture issued %d requests, want 1", asked)
+	}
+	if got := vars["theme_resource"]; got != version {
+		t.Fatalf("theme_resource = %q, want %q - a case's path cannot be expanded "+
+			"without it and would ask for the literal placeholder", got, version)
+	}
+
+	// The variable is useless unless Expand reaches the path, which is the only
+	// place this chapter writes it. Every case is checked, not one, so a case
+	// added with a differently spelled placeholder fails here rather than at the
+	// next recording.
+	for _, c := range themeCases() {
+		expanded := Expand(c.Request, vars).Path
+		if strings.Contains(expanded, "{{") {
+			t.Errorf("%s expands to %q, which still holds a placeholder", c.ID, expanded)
+		}
+		if strings.Contains(c.Request.Path, themeResourcePlaceholder) &&
+			!strings.Contains(expanded, "/resources/"+version+"/") {
+			t.Errorf("%s expands to %q, which does not carry the captured version",
+				c.ID, expanded)
+		}
+	}
+
+	// The control. A fixture whose step answers a page with no segment in it
+	// must fail loudly rather than yield an empty variable, because an empty one
+	// expands to `/resources//login/…` - the normalisation 400, recorded as
+	// sixteen goldens of the wrong behaviour.
+	blank := func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Header:     http.Header{},
+			Body:       io.NopCloser(strings.NewReader("<html></html>")),
+		}, nil
+	}
+	if _, err := RunFixture(Fixtures["theme-page"], "http://localhost:8080", blank); err == nil {
+		t.Fatal("a page with no resource segment was accepted, so the fixture would " +
+			"hand every case an empty version")
 	}
 }
