@@ -250,11 +250,11 @@ operations is allocated below; none is left unassigned.
 | Partial export | `partial-export` and `partialImport`, **done 2026-09-06** | P14 | `admin/realms-admin` 42->44. The export is `GET /admin/realms/{realm}` **spliced**, not transcribed, so `realmrep.go` stays the one truth. Answers F163: the parse code separates **syntax from binding**, not shapes | 2 ops |
 | Certificate remainder | The `Client Attribute Certificate` tag's last three, **done 2026-09-06** | F161, F38 | `admin/client-attribute-certificate` 4->5, and **+1 counted, +3 served**: `download` and `generate-and-download` are built and uncounted, because no golden can hold a keystore. The dependency question **inverted** - `x/crypto/pkcs12` is already direct and cannot read Keycloak's BouncyCastle BER, so `internal/keystore` was written and no module added. BCFKS is a deliberate divergence, F171 | 1 op |
 
-Denominator today: **413 Admin API operations plus 231 protocol and account
-behaviours, 644 enumerated**, plus **two** chapters (parts of P13 and P14) whose
+Denominator today: **413 Admin API operations plus 247 protocol, account and
+management behaviours, 660 enumerated**, plus **two** chapters (parts of P13 and P14) whose
 surface is not counted and which the report says so about - P11 left that list on
-2026-09-07 and the account API on 2026-09-08. Served: **598 of 644** after P11's
-second cut, and **P2, P4 and P5 are complete** -
+2026-09-07 and the account API on 2026-09-08. Served: **598 of 660** after the
+management port, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -285,7 +285,49 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-14 (thirty-eighth fold).** `make conformance` reports **598 of
+**Updated 2026-09-15 (thirty-ninth fold).** `make conformance` reports **598 of
+660**, and **the unenumerated chapters fall to one**. `themes` is the last.
+
+**The denominator moves by 16 and the numerator does not move at all**, because
+the whole chapter is `Recorded`: Gloak has no second listener, and neither does a
+default Keycloak.
+
+**Port 9000 does not listen on a default `start-dev`** - the startup line names
+one address and `/proc/net/tcp6` holds one routable socket - and the endpoints
+are not on 8080 either. `--health-enabled` or `--metrics-enabled` brings the port
+up **with only its own endpoints on it**. So the cut's first real decision was
+which surface the chapter enumerates, and it chose the **enabled** one on F169's
+CIBA reasoning: the option is build-time, nothing in the catalogue can reach it,
+the behaviour behind it is real and complete, and a golden cannot hold a refused
+connection.
+
+**Two of that port's responses are a function of the option set rather than of
+the version.** The index at `/` lists exactly the endpoints switched on, and
+`/health`'s check list gains the database check **only when metrics is on**. F245
+records that no golden file says which options produced it, and that recording it
+would mean changing the format across 1119 files - the options are written at
+four call sites in the tree instead.
+
+**Neither published enumeration discriminator transferred, and a third was
+needed.** P11's pair of 404 bodies needs two, and this port has one;
+account-api's needs `OPTIONS` to be the odd verb, and here **every** verb answers
+200 on every route. What all three have in common is the transferable part: each
+was **validated in both directions on one container before it was used**.
+
+**The security-header bullet gains its widest exception yet** - a whole
+**listener**, rather than a route, a family or a media type. And the
+normalisation rule turns out to run ahead of **one route table, not the whole
+server**: `GET //health` is `400 missingNormalization` on 8080 and 200 on 9000,
+seconds apart on one container. That sentence had been drawn from the only
+server anyone had probed.
+
+**Four mutation survivors were fixed rather than filed**, including a corrupted
+`Recorded` golden killing nothing - every case in this chapter is `Recorded`, so
+the corpus could not tell. Two stand and neither is this chapter's: a chapter can
+be set `Enumerated: false` and no gate notices (F247), and removing a **live**
+mask is caught by nothing, since the ratchet only catches inertness (F248).
+
+**Earlier on 2026-09-14 (thirty-eighth fold).** `make conformance` reports **598 of
 644, no change** - four goldens added, none modified, one handler line changed.
 
 **Two of the three follow-ups this cut took were wrong about themselves**, which

@@ -226,6 +226,15 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
     cases is what pins it: `AssertHeaders` can only check a header that is named,
     so without the negative, the day Gloak starts sending the five here "for
     consistency" looks like a pass;
+  - **the whole management port** carries none of them, and it is the widest
+    exception on this list: a listener rather than a route, a family or a media
+    type. `GET /health`, `GET /metrics`, `GET /` and the unmatched-path 404 on
+    port 9000 were read off a socket and carry `Content-Type` (except `/`, which
+    carries none at all), `Cache-Control` on the health family, and nothing
+    else - no `Date` either. Fourteen goldens declare the five absent, and
+    `TestManagementCasesDeclareTheSecurityHeadersAbsent` requires the next one
+    to. This is the eighth correction to this bullet and the first that is about
+    a **port** rather than about a response.
 
     A comment claiming a header is absent is not an assertion. Four cases carried
     a sentence saying "none of the five" while declaring one or two of them, and
@@ -3006,6 +3015,73 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   differed in the realm *and* in whether they read the row on the way through.
   Gloak's per-resource-server id spaces mean it cannot reproduce any of this,
   which is the existing declined divergence earning its keep.
+
+- **The normalisation rule runs ahead of one route table, not across the whole
+  server.** `GET //health` answers `400 missingNormalization` on 8080 and `200`
+  with the health document on 9000, measured on one container seconds apart;
+  `/health/../health` and `/%2e%2e/health` do the same. The sentence "it runs
+  ahead of the route table, across the whole server" was drawn from the only
+  server that had been probed. Pinned by
+  `management/health/unnormalised-path`.
+- **An eighth data point, and the first outside the 404/405/406 family
+  altogether.** On the management port **every verb answers the route's own
+  200** - seventy cells over ten route shapes - and every verb on a path that is
+  not a route answers one 404. There is no 405 anywhere on that port and no
+  `Allow` header. So "the rule" is not a rule of the API; it is a rule of one
+  JAX-RS application, and the second server in the same process does not have
+  it.
+- **A default `start-dev` has no management port.** Port 9000 does not listen
+  at all: the startup line names one address and `/proc/net/tcp6` holds one
+  routable listening socket. `--health-enabled` or `--metrics-enabled` brings
+  it up, with only its own endpoints on it. **The endpoints are not on 8080
+  either** - `/health` and `/metrics` there are the ordinary unmatched-path
+  404. `internal/conformance`'s recorder sets both options on every container
+  it starts, which is what makes the management chapter recordable, and the
+  options are transparent to 8080: the run that introduced them moved no
+  golden outside the new chapter.
+  - **Two of that port's responses are a function of the options rather than of
+  the version.** The index page at `/` lists exactly the endpoints that are
+  switched on - 180 bytes with both, 120 with health alone, 123 with metrics
+  alone - and `/health`'s check list gains
+  `Keycloak database connections async health check` only when metrics is on.
+  A golden of either is a recording of an option set. See F245.
+  - **Four `/health` paths, two documents, and the split is not guessable.**
+  `/health` and `/health/ready` answer the aggregate; `/health/live`,
+  `/health/started`, SmallRye's `/health/well`, `/health/group` and
+  `/health/group/{anything}` answer an empty check list. **A health group that
+  was never defined answers 200 `UP`** where `/health/x` is a 404, so polling
+  a mistyped group name reports healthy. The aggregate's `checks` array has no
+  reproducible order across container starts.
+  - **`/metrics` refuses the media type it serves.**
+  `Accept: application/openmetrics-text` is a 406 where no `Accept` at all is a
+  200 with `application/openmetrics-text; version=1.0.0; charset=utf-8`; both
+  parameters have to be spelled out for the 200. Bare `text/plain` is enough
+  and gives Prometheus 0.0.4. `/health` beside it ignores `Accept` entirely.
+  The 406's status line carries a **non-standard reason phrase**, `406
+  Micrometer prometheus endpoint does not support application/openmetrics-text`,
+  which no golden can hold. And `/metrics` is a **prefix** route where
+  `/health` is exact: `/metrics/anything` is the dump, `/health/anything` is
+  the 404.
+- **A third 404 body, and it is not in the numbered list because it is not the
+  Admin API's.** The management port answers every unmatched path, on all seven
+  verbs, with 53 bytes of HTML - `<html><body><h1>Resource not found</h1></body>
+  </html>`, `text/html; charset=utf-8` - from Quarkus's own management router,
+  which never reaches Keycloak's application. `management/fallback/unknown-path`
+  is the golden.
+- **Two enumeration discriminators are published in this repository and neither
+  is general.** p11's pair of 404s does not work under `/realms/{realm}/`;
+  account-api's "at least one verb answers outside the fallback family, with
+  OPTIONS excluded" does not work on the management port, where **every** verb
+  answers 200 on every route. A third surface needed a third discriminator, and
+  what every one of them has in common is that it was **validated in both
+  directions on one container before it was used**. That is the transferable
+  part. The other transferable part is the SAML cut's: the generic fallback
+  family is counted once for the whole API and never per path.
+- `Case.Unordered` has a consumer outside the Admin API's listings: the
+  management port's `/health` `checks` array, whose three entries come back in
+  different orders on two containers from one image. The array is the whole
+  reason the mask is not the inert kind - it holds three elements, where the 116
+  masks removed on 2026-08-30 covered arrays of one or none.
 
 ## Boundaries
 

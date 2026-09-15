@@ -6712,3 +6712,119 @@ one-off shell scripts is its own liability, and the measurements themselves
 belong in the spec and the goldens, which is where they went. The observation is
 only that the **method** has no home, and this cut's method was wrong three
 times before it was right.
+
+## F244: the verifier has one handler, and a management case is served to the wrong server
+
+`serve` builds one handler and one base URL. A management case's request goes to
+Gloak's main mux and its golden came from port 9000, and section 2.2 measured
+that those are different servers. `Recorded` tolerates it because it asserts only
+"these differ"; `Case.ManagementPort` refuses `Implemented` so that nothing
+claims more.
+
+What closes it is a second handler on the verifier's side and a second base URL
+for it, which is the shape `startKeycloak` now has on the recorder's side.
+Whoever builds Gloak's management interface does both and lifts the refusal in
+the same commit. Filed so that the refusal is met as a decision rather than as
+an obstacle.
+
+## F245: a golden whose bytes are a function of a startup option, and nothing records which
+
+`management/index/root` and the five aggregate health goldens are recordings of
+an **option set**: the index page lists the endpoints that are on, and the check
+list gains an entry when metrics is on. The golden file says nothing about this,
+and neither does anything a reader of the diff would see.
+
+It is a new kind of dependency in this tree. Every other golden is a function of
+the image, the fixture and the realm, all three of which the catalogue names.
+The options are named in `startKeycloak`'s doc comment and in this document, and
+a second option combination would need a second container regime to record - so
+the cheap fix is not a regime but a line in the golden, and that is a change to
+`FormatGolden` and `ParseGolden` that every one of the 1119 files would take.
+Filed rather than done, with the cost stated.
+
+## F246: a non-standard reason phrase cannot be held by a golden
+
+`FormatGolden` writes `HTTP/1.1 %d %s` with `http.StatusText(g.Status)`, so the
+committed file says `406 Not Acceptable` where the wire said `406 Micrometer
+prometheus endpoint does not support application/openmetrics-text`. `ParseGolden`
+reads the status number and discards the rest, so the round trip is lossy in a
+way nothing reports.
+
+It is the first measured non-standard reason phrase in this project, which is why
+this has not bitten before. The fix is to record `resp.Status` rather than
+recompute it, and the reason to hesitate is that `httptest.ResponseRecorder` on
+the verifier's side has no reason phrase at all - so asserting one would need a
+mask, and a mask over the only value it covers is the shape AGENTS.md warns
+about. Measured, filed, and not built.
+
+## F247: a chapter can be un-enumerated and no gate says so
+
+Setting a chapter to `Enumerated: false` with a reason passes the whole suite and
+the parity gate: `TestCoverage` is a reporter, and `Diff.Decreased` gates the
+served total alone. A denominator can therefore shrink with a flat numerator and
+the percentage rises, which is exactly the inflation `Chapter`'s doc comment says
+leaving chapters out silently would cause.
+
+`Diff` already has `MovedOutsideTheTotal` for the adjacent concern, so the place
+to put it is clear. What is not clear is whether it should **gate** or only
+**report**: a chapter genuinely going unenumerated is a thing that has never
+happened, and a gate nobody can trip is one nobody maintains. Filed with the
+question rather than answered.
+
+## F248: removing a live mask is caught by nothing
+
+`TestNoMaskIsInertOnItsGolden` catches a mask that does nothing. Nothing catches
+a mask that was doing something being deleted, and the consequence is not visible
+until a `make record` on a container that happens to disagree. Measured here on
+`Unordered "checks"`, and it applies to every mask in the catalogue.
+
+The mirror rule is the one `TestEveryGoldenMissingASecurityHeaderDeclaresItAbsent`
+built for `AssertAbsentHeaders` after F181: read the **bytes** and check each
+against the catalogue, rather than reading the catalogue and checking each
+against the bytes. For a mask that means recording, per golden, that a mask ran
+on it - which is a change to the recorder, not to a test, and is why this is
+filed rather than done.
+
+## F249: the absent default listener is not expressible, and nothing says so
+
+The single most load-bearing fact in this chapter - that a default `start-dev`
+has no management port - is in a comment, in this document, and in the AGENTS.md
+entry above. It is in no golden and no test, because a golden cannot hold a
+refused connection and the recorder starts containers with the options on.
+
+It is the same shape as F233's "a case whose status depends on the public
+internet has no disposition": a measurement this harness can make once and never
+re-check.
+
+Worth a number because the next person to read `startKeycloak`'s two environment
+variables may reasonably wonder whether they can be dropped. What happens if
+they are was measured rather than guessed, and it is **loud rather than silent**:
+Docker maps an exposed port whether or not anything listens behind it, so the
+mapping still succeeds and the first management request gets an empty reply,
+which `client.Do` returns as an error and the recorder turns into
+`t.Fatalf("request: %v")`. So the options cannot be dropped by accident. What
+is unrecorded is the **reason** they are there, and that lives only in prose.
+
+## F113: unchanged, and applied twice more
+
+`/metrics` and its Prometheus-text form. The rule needed no argument: 116 lines
+move between two requests to one container three seconds apart, and the counter
+that moves is incremented by the recorder's own request. No mask was built to
+reach it, which is F38's rule applied rather than reasoned about again.
+
+## F161: unchanged
+
+Every management body is text and `RefuseNonTextBody` passed all fourteen.
+
+## F169: the model this cut followed
+
+Its entry names three things standing between CIBA and a recording, of which the
+first is *"`startKeycloak` in `record_test.go` would have to pass the option"*.
+That is the whole of this cut's blocker, and the entry's real contribution was
+the discipline of measuring the option before believing the symptom.
+
+### F177 / F181 - the half-fix carried the weight
+
+`AssertAbsentHeaders` on a `Recorded` case asserts nothing through `diff`, which
+is every case in this chapter. `TestAssertAbsentHeadersAgreeWithTheGolden` is
+what makes the fourteen declarations mean something, and M8 confirms it fires.
