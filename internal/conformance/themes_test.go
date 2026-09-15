@@ -623,3 +623,64 @@ func TestThemePageFixtureYieldsTheVersionEveryCasePathNeeds(t *testing.T) {
 			"hand every case an empty version")
 	}
 }
+
+// TestThemeResourceLacksExactlyWhatTheThemePageCarries is the boundary with P13
+// asserted from data rather than from a list.
+//
+// **It exists because a mutation survived.** Dropping `Content-Security-Policy`
+// from `themeResourceAbsentHeaders` was caught by nothing:
+// TestEveryGoldenMissingASecurityHeaderDeclaresItAbsent is F181's mirror rule
+// and its scope is the **five** security headers, so a declaration naming a
+// header outside them is a claim nobody requires. That is not this chapter's
+// defect - it applies to every AssertAbsentHeaders entry in the catalogue that
+// is not one of the five - but this chapter has three such entries and they
+// carry the boundary.
+//
+// The independent source is the theme **page's** own golden. Two headers appear
+// on every page this repository records and on nothing the resource route
+// serves, and reading them off the page rather than out of a slice is what stops
+// this from being the management cut's M2 - a declaration compared against the
+// very list it was spread from.
+func TestThemeResourceLacksExactlyWhatTheThemePageCarries(t *testing.T) {
+	const page = "oidc/authorization/unknown-client-id"
+	raw, err := os.ReadFile(GoldenPath(goldenDir, page))
+	if err != nil {
+		t.Fatalf("read the theme page's golden: %v", err)
+	}
+	g, err := ParseGolden(raw)
+	if err != nil {
+		t.Fatalf("parse the theme page's golden: %v", err)
+	}
+	onThePage := map[string]bool{}
+	for _, h := range g.Headers {
+		onThePage[http.CanonicalHeaderKey(h.Name)] = true
+	}
+
+	// The two the page carries and the route does not. Named here as the claim,
+	// and each one checked against the page's bytes so that a page that stopped
+	// carrying it fails rather than quietly making the claim vacuous.
+	want := []string{"Content-Security-Policy", "Content-Language"}
+	for _, name := range want {
+		if !onThePage[http.CanonicalHeaderKey(name)] {
+			t.Fatalf("%s does not carry %s, so this chapter's claim that the resource "+
+				"route lacks it is about a header nothing has", page, name)
+		}
+	}
+
+	for _, c := range themeCases() {
+		if c.Status == Pending {
+			continue // no golden, so nothing to declare against
+		}
+		declared := map[string]bool{}
+		for _, h := range c.AssertAbsentHeaders {
+			declared[http.CanonicalHeaderKey(h)] = true
+		}
+		for _, name := range want {
+			if !declared[http.CanonicalHeaderKey(name)] {
+				t.Errorf("%s does not declare %s absent, and %s carries it - which is "+
+					"the difference between a theme page and the route it points at",
+					c.ID, name, page)
+			}
+		}
+	}
+}
