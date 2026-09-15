@@ -46,9 +46,11 @@ func (d Diff) Delta() int { return d.AfterServed - d.BeforeServed }
 func (d Diff) Decreased() bool { return d.Delta() < 0 }
 
 // MovedOutsideTheTotal reports whether every chapter that moved is
-// unenumerated. Four chapters have no denominator, so served behaviour landing
-// in one of them cannot reach the total: the total is arithmetically unchanged
-// and the work is real. Saying "no change" for that is a contradiction against
+// unenumerated. Some chapters have no denominator - the count is in the report
+// this reads and is deliberately not repeated here, because it has already gone
+// from four to three to one and a number in prose beside the list it counts is
+// a number that will rot. Served behaviour landing in one of them cannot reach
+// the total: the total is arithmetically unchanged and the work is real. Saying "no change" for that is a contradiction against
 // the table printed underneath it.
 //
 // It is false when nothing moved, because there is then nothing to explain,

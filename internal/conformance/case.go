@@ -218,6 +218,62 @@ type Case struct {
 	// the realm segment - which is what leaves the realm name asserted.
 	SecondRealm bool
 
+	// ManagementPort sends this case's request to Keycloak's management
+	// interface - port 9000 - rather than to the server's HTTP port.
+	//
+	// It is the first field in this struct that decides **which socket** a
+	// request goes to, and it exists because the two ports are two servers.
+	// Measured on one container on 2026-09-15, one path, two ports:
+	//
+	//	GET //health  on 8080  400 {"error":"missingNormalization",...}
+	//	GET //health  on 9000  200 with the health document
+	//
+	// AGENTS.md describes the normalisation rule as running "ahead of the route
+	// table, across the whole server". It runs ahead of one route table. So do
+	// the five security headers, which no management-port response carries, and
+	// so does the 404/405 fallback family, which the management port does not
+	// have at all: **all seven verbs answer a route's own 200 and a non-route's
+	// own 404**, measured over an eleven-by-seven grid.
+	//
+	// **The port only exists under a startup option**, which is what makes this
+	// a field rather than a path prefix. A default `start-dev` listens on 8080
+	// alone - `/proc/net/tcp6` holds one listening socket, and the startup line
+	// names one address - and `--health-enabled` or `--metrics-enabled` is what
+	// brings 9000 up. startKeycloak in record_test.go sets both, so the shared
+	// container and every PristineRealm container carry the same two ports and
+	// the field needs no third container regime. See F169: this project has
+	// already spent weeks reading a startup option's artefact as a missing
+	// feature.
+	//
+	// Three things it refuses, each a mistake it invites, each with a test:
+	//
+	//   - **Implemented.** The verifier has one handler and Gloak has no
+	//     management interface, so it serves a management case's request to the
+	//     main mux. That is not the question the golden asks - the golden asks
+	//     what Keycloak's management port answers - so a case that compared
+	//     equal there would be a claim about the wrong server. Every management
+	//     case is Recorded or Pending, and whoever builds Gloak's management
+	//     port lifts this refusal deliberately rather than inheriting a pass.
+	//     TestManagementRefusals, via managementDefects.
+	//   - **A chapter other than `management`.** The flag decides the port and
+	//     the chapter decides the meter's row, and a case holding one without
+	//     the other files a measurement of one server under another's heading -
+	//     which is how `http/fallback`'s two bodies would get counted a third
+	//     time. The two are checked against each other rather than derived from
+	//     each other, for Case.SecondRealm's reason: deriving the port from the
+	//     report's labelling means renaming a chapter silently moves requests to
+	//     another socket. TestManagementRefusals, via managementDefects.
+	//   - **A fixture with steps.** A fixture's steps run against the main port,
+	//     and nothing they can do reaches this one: a realm, a client, a user
+	//     and a group created on 8080 left `/health`, `/health/live` and `/`
+	//     byte-identical on 9000, measured. A management case naming a fixture
+	//     that mints a token would expand it into a request to a server that
+	//     never reads one. TestManagementRefusals, via managementDefects.
+	//
+	// It needs no refusal against Operation: `management` has no OpenAPITag, so
+	// TestProtocolCasesNameNoOperation already refuses one.
+	ManagementPort bool
+
 	Request Request
 
 	// AssertHeaders lists the response headers compared exactly. Every header
@@ -438,6 +494,26 @@ type Case struct {
 	// mask does, so the frame would have no consumer - which is the test
 	// VolatileHTMLInput's own doc comment records being applied.
 	VolatileXMLText []string
+}
+
+// RecordTarget returns the base URL a case's own request is sent to, given the
+// two a container exposes.
+//
+// It lives here rather than inside the recorder for the reason recordedHeaders'
+// doc comment gives for the same move: the recorder is behind the docker build
+// tag, and logic nothing can test without Docker is logic nothing tests. That
+// was measured rather than assumed - a mutation collapsing this decision to
+// `return base` was applied, compiled, and survived 1147 tests, because not one
+// of them can reach a file the build excludes.
+//
+// A fixture's steps deliberately do **not** go through this. They run against
+// the main port whatever the case declares, which is what Case.ManagementPort's
+// third refusal rests on.
+func RecordTarget(base, management string, c Case) string {
+	if c.ManagementPort {
+		return management
+	}
+	return base
 }
 
 // buildRequest turns a Case's Request into an *http.Request aimed at base.

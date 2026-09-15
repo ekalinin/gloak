@@ -150,14 +150,62 @@ var Chapters = []Chapter{
 	{Name: "account/console", Enumerated: true},
 	{Name: "account/dispatch", Enumerated: true},
 
-	// Surface with no machine-readable description, not counted by hand
-	// either. Listed so the report can say how much it is not measuring.
+	// The one surface left with no machine-readable description and no
+	// hand count either. Listed so the report can say how much it is not
+	// measuring.
 	{
 		Name:   "themes",
 		Reason: "themes and i18n are served as resources, not as an API; no operation list exists",
 	},
-	{
-		Name:   "management",
-		Reason: "the management port's health and metrics endpoints are not in the Admin API document",
-	},
+
+	// The management interface, enumerated by hand on 2026-09-15 and no longer
+	// a "?" row.
+	//
+	// There is no machine-readable description for this surface either, so the
+	// denominator is the catalogue's own case count. What it rests on is a
+	// sweep, and the sweep needed a **third discriminator**: neither of the two
+	// this repository already has works here.
+	//
+	// p11 swept candidate paths against Keycloak's pair of 404s - an unmatched
+	// path answering `Unable to find matching target resource method` with none
+	// of the five security headers, a known path answering `HTTP 404 Not Found`
+	// with all five. The management port has neither body. account-api.md fell
+	// back to "a route exists when at least one verb answers outside the
+	// generic fallback family, with OPTIONS excluded, because OPTIONS answers
+	// 200 on every path". **Here every verb answers 200 on every path that is a
+	// route**, so that test would have accepted nothing it was not already sure
+	// of.
+	//
+	// What enumerates this one is simpler than both, and it was validated in
+	// both directions on one container before it was used: **a route answers
+	// its own 200 on all seven verbs, and a path that is not a route answers
+	// `404 <html><body><h1>Resource not found</h1></body></html>`,
+	// `text/html; charset=utf-8`, 53 bytes, on all seven.** Eleven paths by
+	// seven verbs is 77 cells with no third answer in them.
+	//
+	// That gives ten route shapes and 16 catalogued behaviours. The verb
+	// dimension collapses entirely - 70 of the 77 cells are the one fact that
+	// the verb decides nothing here - so it is counted **once**, which is the
+	// SAML cut's decision about the fallback family and the one part of its
+	// method that transfers. The seven control cells are not counted at all.
+	//
+	// The surface enumerated is the **enabled** one, not the default
+	// container's. A default `start-dev` has no listener on 9000 at all, so
+	// "the default surface" is not a surface: it is the absence of one, and a
+	// chapter recording it would be recording that a feature is off as though
+	// that were a contract. F169 is the precedent - CIBA's 503 was an artefact
+	// of a startup option and read as a missing feature for weeks. See
+	// docs/superpowers/handover/management-port.md for the grid and the
+	// rejected alternative.
+	//
+	// One chapter per route family, which is how the OIDC, SAML and account
+	// sides are split, and the old single `management` row is gone the way the
+	// old `saml` row went. management/fallback is a chapter of its own and is
+	// **not** rows in http/fallback: that chapter counts the two bodies
+	// Keycloak's application serves, and this is a third body from Quarkus's
+	// management router, which the application never sees.
+	{Name: "management/index", Enumerated: true},
+	{Name: "management/health", Enumerated: true},
+	{Name: "management/metrics", Enumerated: true},
+	{Name: "management/fallback", Enumerated: true},
 }

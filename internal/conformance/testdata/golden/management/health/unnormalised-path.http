@@ -1,0 +1,19 @@
+# GET //health
+HTTP/1.1 200 OK
+Cache-Control: no-store
+Content-Length: {{volatile}}
+Content-Type: application/json; charset=UTF-8
+
+{
+    "status": "UP",
+    "checks": [{
+            "name": "Graceful Shutdown",
+            "status": "UP"
+        },{
+            "name": "Keycloak Initialized",
+            "status": "UP"
+        },{
+            "name": "Keycloak database connections async health check",
+            "status": "UP"
+        }]
+}
