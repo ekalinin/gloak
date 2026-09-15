@@ -623,6 +623,9 @@ the case matches and the suite says so.
 | A themes case's path must be under `/resources/` | 2.2's principle; a page is counted where it is served | `TestThemeResourceCasesAddressTheResourceRoute` |
 | Every themes case with a golden declares `X-Frame-Options` absent | Not one response on this route carries it, read at socket level; the theme page one family away carries it | `TestThemeCasesDeclareXFrameOptionsAbsent` |
 | Every themes case names the `theme-page` fixture | Without it a case cannot expand `{{theme_resource}}` into its path, and a 307's `Location` churns on every recording | `TestThemeCasesNameTheThemePageFixture` |
+| That fixture must yield the variable, and every case's path must expand | Disabling the capture passed all eighteen themes subtests, because a `Recorded` case differs either way | `TestThemePageFixtureYieldsTheVersionEveryCasePathNeeds`, killed by M12b |
+| Every themes case declares `Content-Security-Policy` and `Content-Language` absent | Both are on `oidc/authorization/unknown-client-id`'s golden and on nothing this route serves | `TestThemeResourceLacksExactlyWhatTheThemePageCarries`, killed by M19b |
+| Eleven goldens holding two bodies must keep holding them | A byte changed inside one killed nothing through `TestConformance` | `TestThemeGoldensHoldTheAnswerTheyWereMeasuredTo`, killed by M11b |
 | A case asserting `Content-Type` must name an extension the measured table knows | Otherwise the table and the goldens are two unconnected lists of the same thing | `TestThemeContentTypesAreTheMeasuredMapping` |
 | `.woff2` and the other binary media types may not be `Recorded` | The bodies are not UTF-8 - F161 | `Pending`, 1.10 |
 | The welcome page is not a case | The recorder sets a bootstrap admin on every container it starts, so the page is unreachable from this harness | not a case; F252 |
@@ -636,11 +639,177 @@ test run, its **failure message** read rather than its name, and the revert
 verified against a dirty check scoped to `internal/conformance`. The revert is
 on a `trap ... EXIT`, so an interrupted run leaves no mutation behind.
 
-<!-- MUTATION TABLE -->
+**The runner earned one refusal during the pass**, and it is the one
+management-port.md warned about in a different form: a `-run` pattern like
+`^TestConformance$` prints every skipped case's Reason on a `-v` run, so a
+grep for `.go:NNN:` lines returns four skip messages and not the failure. The
+first verdict for M5 was reported that way and named the wrong case entirely.
+The `-run` pattern is now narrowed to the chapter's own subtests
+(`^TestConformance$/^themes/`) whenever the verdict is about one. "Read the
+failure message, not the test name" has a second half: read the **right**
+failure message.
+
+| # | Mutation | Result |
+|---|---|---|
+| M1 | `themesChapterCases` 17 → 16 | KILLED - the count test names both numbers |
+| M2 | drop `X-Frame-Options` from `themeResourceAbsentHeaders` | KILLED - the test reads `theFiveSecurityHeaders`, not the mutated slice |
+| M3 | add `X-Frame-Options: SAMEORIGIN` to a committed golden | KILLED - "the declaration contradicts the measurement" |
+| M4 | add a comment to a case's `ID` line (control) | SURVIVED, correctly - 1155 tests ran |
+| M5 | `themes/resource/served-file` → `Implemented` | not a clean verdict (the grep read another case's skip); M5b KILLED - "want 200, got 404" |
+| M6 | the version alphabet `{5}` → `{4,6}` | KILLED - "want /resources/t72j/… untouched" |
+| M7 | `CaptureThemeResourceFrom` returns the whole match | KILLED - `captured "/resources/t72jg/", want "t72jg"` |
+| M8 | the capture never refuses | not a kill (it panicked, which is a different failure); M8b, additive, KILLED |
+| M9 | an unenumerated chapter joins the denominator | KILLED - "contributed 0 served and 12 documented" |
+| M10 | `.ico` → its registered media type in the table | KILLED, by both arms |
+| M11 | a byte changed inside a committed golden | M11a **SURVIVED** against `TestConformance`; M11b KILLED by the relations test |
+| M12 | `RunFixture` never captures the version | **SURVIVED**; fixed; M12b KILLED |
+| M13 | a themes case names the `bootstrap` fixture | KILLED |
+| M14 | the `themes/version` chapter declaration removed | KILLED - "reports under a chapter which is not declared" |
+| M15 | a case removed from its golden group | KILLED - "has a golden and is in no group" |
+| M16 | a `Recorded` case's `Reason` deleted | KILLED - "must say why it is not served yet" |
+| M17 | the golden equality comparison swallowed | **SURVIVED**; fixed; M17b KILLED |
+| M18 | a themes case's path leaves `/resources/` | KILLED |
+| M19 | drop `Content-Security-Policy` from the absent list | **SURVIVED**; fixed; M19b KILLED |
+| M20 | `themesChapterPrefix` matches nothing | KILLED, by the count and by the vacuity guard |
+| M21 | `themes/resource` → `Enumerated: false` with a reason | **SURVIVED, and stands** |
+| M22 | `themes/resource/binary-media-type` → `Recorded` | KILLED - "marked Recorded but has no golden" |
+
+### M11 is the management cut's M9, reproduced in both directions
+
+A byte changed inside `themes/resource/served-file.http` compiled, ran all
+eighteen themes subtests of `TestConformance`, and **killed nothing**. Every
+case in this chapter is `Recorded`, and a `Recorded` case is required *not* to
+match, so a corrupted golden does not match either way.
+
+The same mutation against `TestThemeGoldensHoldTheAnswerTheyWereMeasuredTo`
+killed with four complaints. That test is the relations the chapter already
+claims - eleven goldens measured answering two bodies - rather than a copy of
+the bytes, which would be a golden checked against a golden somebody typed. Both
+directions were run rather than one, because "the relations test kills it" means
+nothing without "and the suite alone does not".
+
+### M12 survived because `Recorded` absorbs a broken fixture
+
+Disabling the capture in `RunFixture` - `if false && name != ""` - passed all
+eighteen. A path still reading `/resources/{{theme_resource}}/…` is a 404 that
+differs from the golden exactly as the expanded path's 404 does. The only thing
+that could have caught it is `make record` followed by somebody reading sixteen
+goldens, which is the guard `RecordTarget` had before it was fixed.
+
+`RunFixture` takes a `Do`, so the answer needed no container:
+`TestThemePageFixtureYieldsTheVersionEveryCasePathNeeds` drives the real
+`theme-page` fixture against a stub and asserts the expansion **for every case**,
+with a control that a page carrying no segment is refused rather than yielding
+an empty version. An empty one expands to `/resources//login/…`, which is the
+normalisation 400 - sixteen goldens of the wrong behaviour, recorded silently.
+
+### M17 and M19 are two ways of asserting nothing, found the same afternoon
+
+M17 swallowed the golden comparison's complaints and survived, because every
+vacuity guard the test had covered the **traversal** - both groups non-empty,
+the two groups differing, the stylesheet body non-empty - and none covered the
+**comparison**. That is AGENTS.md's rule met on a test written the week it was
+quoted. The fix is a **control group** of two real goldens measured holding
+different bodies, put through the same loop, with its complaint count asserted.
+
+M19 dropped `Content-Security-Policy` from `themeResourceAbsentHeaders` and
+survived, because F181's mirror rule -
+`TestEveryGoldenMissingASecurityHeaderDeclaresItAbsent` - is scoped to the
+**five** security headers, so a declaration naming a header outside them is
+required by nothing. That is **not** this chapter's defect and it reaches every
+`AssertAbsentHeaders` entry in the catalogue that is not one of the five.
+
+The fix taken here is narrow and does a second job:
+`TestThemeResourceLacksExactlyWhatTheThemePageCarries` reads the two headers off
+`oidc/authorization/unknown-client-id`'s **own golden** rather than out of the
+slice the cases are spread from - which keeps it from being M2's tautology and
+makes the boundary with P13 a claim about data rather than a paragraph.
+
+### The survivor that stands
+
+**M21: a chapter can be un-enumerated and nothing notices.** Setting
+`themes/resource` to `Enumerated: false` with a reason passes the whole suite,
+which is F247 exactly as the management cut filed it - `TestCoverage` is a
+reporter and `Diff.Decreased` gates the served total alone, so a denominator can
+shrink with a flat numerator and the percentage rises. It is not this chapter's
+defect; the same mutation on `saml/descriptor` survives identically. It matters
+slightly more now than it did last week, because **this cut removed the last
+chapter that was legitimately un-enumerated** - so from here, any `false` in
+that column is a mistake rather than a state.
 
 ## 5. Parity
 
-<!-- PARITY -->
+Measured with two `GLOAK_PARITY_REPORT` runs, base `d0ad78e` on `main`.
+
+```
+base   598 of 660 enumerated behaviours served; 1 chapters not enumerated
+head   598 of 677 enumerated behaviours served; 0 chapters not enumerated
+```
+
+```
+themes/resource        0 served  12 recorded   13 documented   catalogue
+themes/version         0 served   4 recorded    4 documented   catalogue
+```
+
+**The denominator moves by exactly 17 and the numerator does not move at all.**
+Those are the same fact counted twice and it is the check worth doing: a
+numerator that moved would mean a case outside this chapter had changed status,
+and a denominator that moved by anything other than 17 would mean a case had
+been added or lost somewhere else.
+
+**The parity total does not fall.** Nothing here is `Implemented`, because
+nothing here is served, and 2.7 is why that is the honest state rather than a
+gap.
+
+`0 chapters not enumerated` is the line this cut was for. The report has printed
+a non-zero number there since the meter was built - four on 2026-08-21, three
+after p11, two after the account API, one after the management port - and it
+prints none now.
+
+### The record diff, read file by file
+
+`make record` wrote sixteen new files and **moved nothing else**, on a run that
+introduced a fifth capture form and touched `normalisePasses`'s neighbourhood.
+That is F69's guarantee doing its job on a run with every reason to disturb it,
+and it is the same result the management cut reported.
+
+```
+themes/resource/served-file.http          200 text/css, Cache-Control: no-cache, 3182 bytes
+themes/resource/javascript.http           200 text/javascript, 698 bytes
+themes/resource/svg.http                  200 image/svg+xml, 6718 bytes
+themes/resource/common-type.http          200 text/css, 540 bytes
+themes/resource/unknown-theme-name.http   200 text/css, 3182 bytes - the same body as served-file
+themes/resource/type-ignores-case.http    200 text/css, 3182 bytes - the same body again
+themes/resource/conditional-request.http  200 text/css, 3182 bytes - the same body, no ETag, no Last-Modified
+themes/resource/theme-root.http           200 application/octet-stream, 0 bytes
+themes/resource/unknown-file.http         404, no Content-Type, 0 bytes
+themes/resource/unknown-type.http         404, the same four headers, 0 bytes
+themes/resource/template-not-served.http  404, the same
+themes/resource/messages-not-served.http  404, the same
+themes/version/stale.http                 307, Location: {{issuer}}/resources/{{theme_resource}}/login/keycloak.v2/css/styles.css
+themes/version/wrong-shape.http           404, the same empty shape
+themes/version/stale-unknown-file.http    404, the same
+themes/version/stale-fallback-theme.http  200 text/css, 3182 bytes - the same body once more
+```
+
+Four of them are the ones to read closely.
+
+- **`served-file.http` holds `Cache-Control: no-cache`**, which 1.8 measured to
+  be `start-dev`'s value and not the product's. F250.
+- **`theme-root.http` is a 200 with an empty body and a `Content-Type`**, which
+  no other golden in this repository is.
+- **`stale.http`'s `Location` is masked twice over** -
+  `{{issuer}}/resources/{{theme_resource}}/…` - and the second mask is the
+  capture, not `ReplaceThemeResource`, because `recordedHeaders` does not run
+  that pass. It is the one golden in the chapter that proves the capture works:
+  without it that header would hold a raw five-character value minted with the
+  container's database.
+- **Five goldens hold one md5**, `ed613f09…`, which is the same md5 measured
+  live in 1.2 on three containers. The recording agrees with the measurement
+  that preceded it, which is the check a re-record diff cannot make for itself.
+
+Every body is text and `RefuseNonTextBody` passed all sixteen, which is why
+`binary-media-type` is the one case with none.
 
 ## 6. What belongs in AGENTS.md
 
@@ -856,6 +1025,31 @@ bounds the pass's over-reach, and dropping the leading slash widens it from
 "`/resources/` followed by five characters" to "the word resources followed by
 five characters", which would fire inside ordinary prose.
 
+### F255 - an `AssertAbsentHeaders` entry outside the five is required by nothing
+
+`TestEveryGoldenMissingASecurityHeaderDeclaresItAbsent` is F181's mirror rule -
+read the **bytes** and check each against the catalogue rather than the other
+way round - and its scope is the five security headers. So a case declaring any
+**other** header absent has made a claim no test requires, and deleting the
+declaration is invisible. Measured here by M19, which dropped
+`Content-Security-Policy` from three cases' declarations and survived the suite.
+
+It reaches every such entry in the catalogue and not only this chapter's. The
+reason it cannot simply be fixed by widening the list is that the mirror rule
+needs a **closed** set to mirror against: for an arbitrary header, "absent and
+undeclared" is the state of every header nobody has heard of, so requiring a
+declaration for each would require declaring thousands.
+
+What would close it is the other direction, and it is cheap: an
+`AssertAbsentHeaders` entry naming a header that **no golden in the catalogue
+carries anywhere** is a declaration about a header this product does not have,
+and one naming a header some goldens carry is a claim worth requiring
+per-family. This chapter took the per-family half locally, in
+`TestThemeResourceLacksExactlyWhatTheThemePageCarries`, and the catalogue-wide
+half is what is filed. Whoever takes it should check the other exceptions
+AGENTS.md's bullet lists first: they are the other places a declaration may be
+carrying weight nothing checks.
+
 ### F113 - unchanged, and not reached
 
 No body on this route carries a per-request value. Six requests to one container
@@ -911,4 +1105,21 @@ satisfied by Gloak having no `/resources` route at all, and
 
 ### Containers
 
-<!-- CONTAINERS -->
+- **Three for the measurements**, all fresh:
+  - A, `start-dev` with `KC_BOOTSTRAP_ADMIN_*`, resource version `76sbe` - the
+    sweep, the verb grid, the media-type table and every socket-level read;
+  - B, `start --db=dev-file --http-enabled=true --hostname-strict=false`,
+    version `gb2bn` - the `Cache-Control` question and the cross-mode file
+    comparison. **This is the container without which 1.8 would have been
+    written the wrong way round**, and one container could not have found it;
+  - C, `start-dev` with **no** bootstrap admin, version `swojn` - the welcome
+    page, and the third value for the cross-container file comparison.
+- **Forty for the recording**, all fresh: one shared, in catalogue order, and
+  one per `PristineRealm` case. Every themes case runs against the shared one -
+  none is `PristineRealm`, because the `theme-page` fixture creates nothing and
+  the resource route reads no realm state.
+- **Forty-three in total**, every one of them fresh.
+
+The mutation pass needed none: every mutation was run against
+`CGO_ENABLED=0 go test`, which is the property the brief asks the suite to keep
+and the property that made twenty-two mutations affordable.
