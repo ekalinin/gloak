@@ -463,8 +463,29 @@ func TestThemeGoldensHoldTheAnswerTheyWereMeasuredTo(t *testing.T) {
 	for _, c := range themeCases() {
 		known[c.ID] = true
 	}
-	grouped := map[string]bool{}
+
+	// **The control group, and it goes through the same loop the real ones do.**
+	// Without it the reporting below has no witness: a mutation that swallowed
+	// every complaint - `for range goldensThatDisagree(…)` with an empty body -
+	// survived this test, because every vacuity guard it had covered the
+	// **traversal** and none covered the **comparison**. That is the management
+	// cut's M17b met on a test written the same week it was quoted.
+	//
+	// The two members are real goldens measured holding different bodies, a
+	// script and an SVG, so the control cannot drift the way two bodies written
+	// here would. Neither is in a real group, so it adds no double-membership.
+	const control = "the control: two goldens measured holding different bodies"
+	groups := map[string][]string{control: {
+		"themes/resource/javascript",
+		"themes/resource/svg",
+	}}
 	for name, group := range themeGoldenGroups {
+		groups[name] = group
+	}
+
+	grouped := map[string]bool{}
+	reported := map[string]int{}
+	for name, group := range groups {
 		if len(group) < 2 {
 			t.Errorf("group %q holds %d case(s); a group of one asserts nothing",
 				name, len(group))
@@ -473,14 +494,25 @@ func TestThemeGoldensHoldTheAnswerTheyWereMeasuredTo(t *testing.T) {
 			if !known[id] {
 				t.Errorf("group %q names %s, which is not a case in this chapter", name, id)
 			}
-			if grouped[id] {
-				t.Errorf("%s is in two groups, so it was measured answering two bodies", id)
+			if name != control {
+				if grouped[id] {
+					t.Errorf("%s is in two groups, so it was measured answering two bodies", id)
+				}
+				grouped[id] = true
 			}
-			grouped[id] = true
 		}
 		for _, complaint := range goldensThatDisagree(group, read) {
+			reported[name]++
+			if name == control {
+				continue // expected; the count is what this group is for
+			}
 			t.Error(complaint)
 		}
+	}
+	if reported[control] == 0 {
+		t.Fatal("the control group's two goldens were not reported as disagreeing, so " +
+			"either they hold the same body or nothing above reports a disagreement " +
+			"at all - and the equalities this test claims are unasserted")
 	}
 
 	// The other direction. A themes case with a golden and no group is a golden
