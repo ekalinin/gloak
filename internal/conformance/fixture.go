@@ -84,6 +84,35 @@ type Step struct {
 	// redirect rather than capturing out of it, and supporting what no case
 	// uses is a guess about the next cut.
 	CaptureQuery map[string]string
+	// CaptureThemeResource binds a variable to the `/resources/<version>/`
+	// segment of the step's response body - the cache-busting value Keycloak
+	// mints with its database and writes into every theme page's asset URLs.
+	//
+	// It is what makes the themes chapter addressable at all. That chapter's
+	// route is `/resources/{version}/{themeType}/{themeName}/{path}`, the
+	// version is minted per installation, and `Expand` substitutes into a
+	// case's Path - so without a capture no case could ask for a resource at
+	// the version the server it is talking to actually serves. The four
+	// captures above cannot reach it: `Capture` decodes JSON and a theme page
+	// is HTML, `CaptureHeader` and `CaptureQuery` read a response header where
+	// this is in the body, and `CaptureForm` reads the first HTML **form**
+	// where this is in a `<link>` and a `<script src>`.
+	//
+	// It is a variable name rather than a map, unlike its four neighbours,
+	// because there is exactly one thing to take. A map would have to invent a
+	// vocabulary for its values - "version", say - whose only member is the
+	// thing the field is already named after.
+	//
+	// **Name the variable `theme_resource` and the two halves line up.**
+	// ReplaceCaptured masks a captured value as `{{name}}`, and
+	// ReplaceThemeResource already rewrites `/resources/<version>/` to
+	// `/resources/{{theme_resource}}/` unconditionally on both sides. Under
+	// that name the two produce the same placeholder, so a 307's Location
+	// header - which recordedHeaders runs ReplaceCaptured over and **not**
+	// ReplaceThemeResource - comes out spelled exactly as a body would.
+	// TestCaptureThemeResourceAgreesWithTheUnconditionalPass is where that
+	// equality is asserted rather than left to this comment.
+	CaptureThemeResource string
 	// ExpectStatus is the set of status codes this step accepts. Empty means
 	// **any 2xx**, which is what almost every step wants.
 	//
@@ -209,6 +238,37 @@ type Fixture struct {
 // in different ways, which is the one thing this suite cannot afford.
 var Fixtures = map[string]Fixture{
 	"bootstrap": {State: "bootstrap"},
+
+	// theme-page reads the theme resource version off a theme page, so that the
+	// themes chapter can address the route those pages point at.
+	//
+	// The step is the error page an unknown client_id answers, and it is chosen
+	// for three properties rather than for being the first page to hand. It
+	// needs **no realm state at all**, so the fixture runs no creates and
+	// nothing it does can be seen by another case sharing the container. Both
+	// servers serve it - oidc/authorization/unknown-client-id is Implemented
+	// and its golden holds seven `/resources/{{theme_resource}}/` segments - so
+	// the fixture yields the answering server's own version on the recorder's
+	// side and on the verifier's alike, which is the property the whole chapter
+	// rests on. And it is a **400**, which is why ExpectStatus is written out:
+	// the default is any 2xx and this page is not one.
+	//
+	// It deliberately does not log in. Every other browser fixture here walks
+	// the flow, and a login would mint a session on the shared container for a
+	// chapter whose cases cannot see one - the resource route carries no
+	// cookies, no realm and no authentication, measured.
+	"theme-page": {
+		State: "bootstrap",
+		Steps: []Step{{
+			Request: Request{
+				Method: http.MethodGet,
+				Path:   "/realms/master/protocol/openid-connect/auth",
+				Query:  map[string]string{"client_id": "gloak-nosuch", "response_type": "code"},
+			},
+			ExpectStatus:         []int{http.StatusBadRequest},
+			CaptureThemeResource: "theme_resource",
+		}},
+	},
 
 	// admin-token holds an access token and a refresh token for the
 	// bootstrapped administrator, obtained the way kcadm.sh obtains one: the
@@ -4389,6 +4449,14 @@ func Run(f Fixture, base string, do Do) (*Session, error) {
 		}
 		for name, param := range s.CaptureQuery {
 			value, err := captureFromQuery(resp.Header, param)
+			if err != nil {
+				return nil, fmt.Errorf("fixture step %d: capture %q: %w (status %d)",
+					i, name, err, resp.StatusCode)
+			}
+			vars[name] = value
+		}
+		if name := s.CaptureThemeResource; name != "" {
+			value, err := CaptureThemeResourceFrom(body)
 			if err != nil {
 				return nil, fmt.Errorf("fixture step %d: capture %q: %w (status %d)",
 					i, name, err, resp.StatusCode)

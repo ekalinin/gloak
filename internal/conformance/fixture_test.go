@@ -639,17 +639,21 @@ func TestFixturesAreWellFormed(t *testing.T) {
 			// looks the UUID up in a separate GET, so that a re-run's 409 is
 			// harmless. A GET capturing nothing really is dead weight.
 			//
-			// All four capture kinds count. The browser fixtures' GET /auth
+			// All five capture kinds count. The browser fixtures' GET /auth
 			// takes its value from the login page's HTML, and this test named
 			// only two kinds until they existed - which reported every one of
-			// them as dead weight.
+			// them as dead weight. CaptureThemeResource is the fifth and it
+			// arrived the same way: the theme-page fixture is a GET that
+			// captures exactly one thing, and this list not knowing about it
+			// called that dead weight too.
 			//
 			// The rule rests on "a GET does not change server state", and one
 			// measured endpoint falsifies it: GET /logout with a valid
 			// id_token_hint ends the session. Such a step says Mutates, which
 			// is a declaration rather than a path list - see Step.Mutates.
 			capturesNothing := len(s.Capture) == 0 && len(s.CaptureHeader) == 0 &&
-				len(s.CaptureForm) == 0 && len(s.CaptureQuery) == 0
+				len(s.CaptureForm) == 0 && len(s.CaptureQuery) == 0 &&
+				s.CaptureThemeResource == ""
 			if capturesNothing && !s.Mutates && s.Request.Method == http.MethodGet {
 				t.Errorf("fixture %q step %d: a GET that captures nothing is dead weight", name, i)
 			}

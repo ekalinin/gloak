@@ -87,7 +87,39 @@ const themeResourcePlaceholder = "{{theme_resource}}"
 // A value outside the alphabet would fail loudly rather than quietly: the
 // recording side would write the raw segment into the golden, the serving side
 // would write Gloak's own, and TestConformance would go red on the difference.
-var themeResourcePattern = regexp.MustCompile(`/resources/[0-9a-z]{5}/`)
+//
+// **The alphabet is no longer an inference.** It was written from 65 sampled
+// characters and a probability; on 2026-09-15 the resource route was measured
+// deciding it. `/resources/aaaaa/login/keycloak.v2/css/styles.css` is a 307 to
+// the current version and `AAAAA`, `aaaa`, `aaaaaa`, `aa-aa`, `aa_aa` and
+// `aa.aa` are all 404 in the same position - so the server validates the
+// segment against exactly `[0-9a-z]{5}` before it looks at anything else. The
+// grid is in docs/superpowers/handover/themes-chapter.md section 1.4 and
+// themes/resource/version-wrong-shape is the case.
+//
+// The group exists for CaptureThemeResourceFrom. One pattern with a submatch
+// rather than a second pattern beside it, because the mask and the capture have
+// to agree on what a version is: two regexps could drift, and the first sign
+// would be a golden whose Location header churns on every recording while its
+// body does not.
+var themeResourcePattern = regexp.MustCompile(`/resources/([0-9a-z]{5})/`)
+
+// CaptureThemeResourceFrom returns the theme resource version a theme page
+// carries, for Step.CaptureThemeResource.
+//
+// It reads the **first** occurrence and does not check that the rest agree.
+// Every measured page carries the value seven times, or eight inside an auth
+// flow, and TestThemePagesCarryTheResourceVersionSevenTimes in internal/httpx
+// is what says so; a page whose occurrences disagreed would be a finding about
+// the server, not something a capture should paper over by voting.
+func CaptureThemeResourceFrom(body []byte) (string, error) {
+	m := themeResourcePattern.FindSubmatch(body)
+	if m == nil {
+		return "", fmt.Errorf("conformance: no /resources/<version>/ segment in the body, "+
+			"so this response is not a theme page (%d bytes)", len(body))
+	}
+	return string(m[1]), nil
+}
 
 // ReplaceThemeResource swaps the login theme's `/resources/<version>/` segment
 // for a placeholder, so that a page recorded against one installation and the

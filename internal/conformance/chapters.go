@@ -150,13 +150,81 @@ var Chapters = []Chapter{
 	{Name: "account/console", Enumerated: true},
 	{Name: "account/dispatch", Enumerated: true},
 
-	// The one surface left with no machine-readable description and no
-	// hand count either. Listed so the report can say how much it is not
-	// measuring.
-	{
-		Name:   "themes",
-		Reason: "themes and i18n are served as resources, not as an API; no operation list exists",
-	},
+	// Themes, enumerated by hand on 2026-09-15 and no longer a "?" row. It was
+	// the last one, so the report no longer says "N chapters not enumerated" at
+	// all.
+	//
+	// Its declared reason was *"themes and i18n are served as resources, not as
+	// an API; no operation list exists"*, and two of those three clauses do not
+	// survive being measured. **i18n is served as an API and is already
+	// enumerated**: nineteen Implemented cases under
+	// admin/realms-admin/localization-*, two Recorded ones under
+	// account/supported-locales, and the part of i18n that genuinely is a theme
+	// resource - every theme's `messages/messages_*.properties` - is 404 on the
+	// resource route, which themes/resource/messages-not-served records. And
+	// **"no operation list exists" is true of SAML, of the account API and of
+	// the management port too**, all three of which were counted by hand; it
+	// describes every chapter in this file whose denominator is a case count
+	// rather than giving a reason not to have one. Only the middle clause was
+	// load-bearing, and what it argues for is a different **unit**, not the
+	// absence of one.
+	//
+	// The unit is **an answer the route gives that a request can distinguish
+	// without knowing which file it named**. Keycloak's themes hold about twelve
+	// hundred servable files; they say one thing between them, and counting them
+	// per file would report one behaviour twelve hundred times - which is the
+	// SAML cut's decision about the fallback family and the management cut's
+	// about the verb dimension, applied to the dimension this surface has. The
+	// file dimension collapses because it was **measured** collapsing:
+	// `css/styles.css` is one md5 across two start-dev containers with different
+	// databases and a third in production mode, and the consoles' content-hashed
+	// asset names are identical across all three. The only part of a theme URL
+	// that moves is the version segment.
+	//
+	// What does not collapse is eighteen behaviours over one route,
+	// `/resources/{version}/{themeType}/{themeName}/{path}`: a stale version is
+	// a 307 to the current one but only after the file resolves and not on the
+	// fallback-theme path; the version segment is validated against
+	// `[0-9a-z]{5}` before anything else is looked at; an unknown theme **name**
+	// serves the default theme's bytes where an unknown **type** is a 404; the
+	// type ignores case and the version does not; a theme's root directory is a
+	// 200 with no bytes; only `resources/` inside a theme is reachable, so the
+	// templates, `theme.properties` and the message bundles are all refused; the
+	// route has no `ETag`, no `Last-Modified` and no negotiation of any kind;
+	// and it carries **four** of the five security headers, missing
+	// `X-Frame-Options`.
+	//
+	// **The boundary with P13 is that this chapter is the other end of the URLs
+	// P13's pages mint.** Thirty-eight goldens hold
+	// `/resources/{{theme_resource}}/` inside a body and every one is counted
+	// under the endpoint that rendered it, which is what
+	// TestThemeResourceAppearsOnlyInTheThemePages already enumerates. A page
+	// rendered from a theme is counted where it is served - account/console is
+	// the precedent - and the machinery a theme is served *by* is counted here.
+	// Two theme-rendered pages are counted in neither place and are named rather
+	// than quietly absorbed: `/` and `/admin/{realm}/console/`. See F252.
+	//
+	// The discriminator is a **fourth**, and none of the three published here is
+	// general. p11's pair of 404 bodies needs two distinct ones; this route has
+	// one, and it is a body of zero bytes. account-api's "at least one verb
+	// answers outside the fallback family" cannot separate a file that exists
+	// from one that does not, since both are GET-only. The management port's "a
+	// route answers its own 200 on all seven verbs" is false here, where GET and
+	// HEAD answer and the other five are 405. What enumerates this one was
+	// validated in both directions on one container before it was used: **a
+	// request naming a resource that resolves answers 200 with its bytes and a
+	// media type; one that does not answers 404 with no body and no
+	// `Content-Type`.** The transferable part is the validation, not the test.
+	//
+	// One chapter per family, which is how the OIDC, SAML, account and
+	// management sides are split. themes/version is a chapter of its own because
+	// the version segment is the only part of a theme URL that belongs to the
+	// installation rather than to the theme tree, and it is the one thing on
+	// this surface a reimplementation has to mint rather than copy. See
+	// docs/superpowers/handover/themes-chapter.md for the grid and the
+	// alternative rejected.
+	{Name: "themes/resource", Enumerated: true},
+	{Name: "themes/version", Enumerated: true},
 
 	// The management interface, enumerated by hand on 2026-09-15 and no longer
 	// a "?" row.
