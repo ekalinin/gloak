@@ -75,8 +75,11 @@ var managementCases = []Case{
 		Reason:              "Gloak serves no management interface, so it has no index page to list one",
 		Fixture:             "bootstrap",
 		ManagementPort:      true,
-		Request:             Request{Method: http.MethodGet, Path: "/"},
-		AssertHeaders:       []string{"Content-Length"},
+		Request: Request{Method: http.MethodGet, Path: "/"},
+		// No AssertHeaders. Content-Length is masked package-wide, so asserting
+		// it would assert that a response has a length - the inert kind of
+		// declaration AGENTS.md says is worse than none. What this case asserts
+		// is the status, the body, and the six headers it declares absent.
 		AssertAbsentHeaders: append([]string{"Content-Type"}, managementSecurityHeaders...),
 	},
 	{

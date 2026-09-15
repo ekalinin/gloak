@@ -191,6 +191,15 @@ func TestManagementRefusalGuardCanFail(t *testing.T) {
 // the declaration. TestAssertAbsentHeadersAgreeWithTheGolden is what compares
 // each declaration against the recorded bytes; this is what says every case
 // that has bytes has to make one.
+//
+// **It reads theFiveSecurityHeaders and not managementSecurityHeaders**, and
+// that is the whole difference between a guard and a tautology. The cases
+// spread managementSecurityHeaders into their declarations, so a guard reading
+// the same slice would compare a list against itself: dropping a name from it
+// would drop the name from all fourteen declarations and from the guard's
+// expectation in one edit, and pass. theFiveSecurityHeaders is the set
+// AGENTS.md's bullet is about, declared for a different test in
+// headersplit_test.go, and it is the independent source this needs.
 func TestManagementCasesDeclareTheSecurityHeadersAbsent(t *testing.T) {
 	checked := 0
 	for _, c := range Catalog {
@@ -203,7 +212,7 @@ func TestManagementCasesDeclareTheSecurityHeadersAbsent(t *testing.T) {
 			declared[name] = true
 		}
 		var missing []string
-		for _, name := range managementSecurityHeaders {
+		for _, name := range theFiveSecurityHeaders {
 			if !declared[name] {
 				missing = append(missing, name)
 			}

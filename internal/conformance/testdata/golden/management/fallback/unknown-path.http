@@ -1,0 +1,6 @@
+# GET /nosuchpath
+HTTP/1.1 404 Not Found
+Content-Length: {{volatile}}
+Content-Type: text/html; charset=utf-8
+
+<html><body><h1>Resource not found</h1></body></html>
