@@ -9,5 +9,6 @@ var Catalog = func() []Case {
 	all = append(all, adminCases...)
 	all = append(all, samlCases...)
 	all = append(all, accountCases...)
+	all = append(all, managementCases...)
 	return all
 }()
