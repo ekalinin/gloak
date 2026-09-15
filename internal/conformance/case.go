@@ -496,6 +496,26 @@ type Case struct {
 	VolatileXMLText []string
 }
 
+// RecordTarget returns the base URL a case's own request is sent to, given the
+// two a container exposes.
+//
+// It lives here rather than inside the recorder for the reason recordedHeaders'
+// doc comment gives for the same move: the recorder is behind the docker build
+// tag, and logic nothing can test without Docker is logic nothing tests. That
+// was measured rather than assumed - a mutation collapsing this decision to
+// `return base` was applied, compiled, and survived 1147 tests, because not one
+// of them can reach a file the build excludes.
+//
+// A fixture's steps deliberately do **not** go through this. They run against
+// the main port whatever the case declares, which is what Case.ManagementPort's
+// third refusal rests on.
+func RecordTarget(base, management string, c Case) string {
+	if c.ManagementPort {
+		return management
+	}
+	return base
+}
+
 // buildRequest turns a Case's Request into an *http.Request aimed at base.
 // The recorder points base at the reference container; the verifier points it
 // at the in-process handler's issuer.

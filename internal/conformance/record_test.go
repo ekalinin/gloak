@@ -103,10 +103,7 @@ func TestRecordGoldens(t *testing.T) {
 			// links are relative and the health documents hold none. The
 			// symmetry is what matters rather than the current inertness, since
 			// the verifier normalises against the one base it has.
-			target := base
-			if c.ManagementPort {
-				target = management
-			}
+			target := RecordTarget(base, management, c)
 
 			// The fixture's own steps are run but never recorded: only the
 			// case's response becomes a golden. Recording a step would commit

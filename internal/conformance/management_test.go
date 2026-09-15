@@ -303,6 +303,38 @@ func TestManagementHealthGoldensHoldTheDocumentTheyWereMeasuredTo(t *testing.T) 
 	}
 }
 
+// TestRecordTargetFollowsTheFlag is the recorder's routing decision, tested
+// where a build without Docker can reach it.
+//
+// The decision used to be three lines inside record_test.go, which carries the
+// `docker` build tag. A mutation collapsing it to "always the main port" was
+// applied and survived the whole package - 1147 tests, none of which the build
+// even compiles that file for. The only thing that could have caught it is
+// running `make record` and reading fourteen goldens, which is not a guard a
+// pull request can rely on.
+//
+// The third case is the one worth having: a case that does not declare the flag
+// must go to the main port **even when a management URL was supplied**, which
+// is what stops the routing being "whichever URL is non-empty".
+func TestRecordTargetFollowsTheFlag(t *testing.T) {
+	const main, mgmt = "http://host:8080", "http://host:9000"
+	for _, tc := range []struct {
+		name string
+		c    Case
+		want string
+	}{
+		{"a management case goes to the management port", Case{ManagementPort: true}, mgmt},
+		{"an ordinary case goes to the main port", Case{}, main},
+		{"an ordinary case ignores the management URL it was given", Case{ID: "admin/users/read"}, main},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := RecordTarget(main, mgmt, tc.c); got != tc.want {
+				t.Errorf("RecordTarget = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestManagementCasesDeclareTheSecurityHeadersAbsent is the finding made into
 // an assertion.
 //
