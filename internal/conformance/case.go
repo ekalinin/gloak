@@ -254,7 +254,7 @@ type Case struct {
 	//     equal there would be a claim about the wrong server. Every management
 	//     case is Recorded or Pending, and whoever builds Gloak's management
 	//     port lifts this refusal deliberately rather than inheriting a pass.
-	//     TestManagementCasesAreNotImplemented.
+	//     TestManagementRefusals, via managementDefects.
 	//   - **A chapter other than `management`.** The flag decides the port and
 	//     the chapter decides the meter's row, and a case holding one without
 	//     the other files a measurement of one server under another's heading -
@@ -262,13 +262,13 @@ type Case struct {
 	//     time. The two are checked against each other rather than derived from
 	//     each other, for Case.SecondRealm's reason: deriving the port from the
 	//     report's labelling means renaming a chapter silently moves requests to
-	//     another socket. TestManagementPortAndChapterAgree.
+	//     another socket. TestManagementRefusals, via managementDefects.
 	//   - **A fixture with steps.** A fixture's steps run against the main port,
 	//     and nothing they can do reaches this one: a realm, a client, a user
 	//     and a group created on 8080 left `/health`, `/health/live` and `/`
 	//     byte-identical on 9000, measured. A management case naming a fixture
 	//     that mints a token would expand it into a request to a server that
-	//     never reads one. TestManagementCasesRunNoFixtureSteps.
+	//     never reads one. TestManagementRefusals, via managementDefects.
 	//
 	// It needs no refusal against Operation: `management` has no OpenAPITag, so
 	// TestProtocolCasesNameNoOperation already refuses one.

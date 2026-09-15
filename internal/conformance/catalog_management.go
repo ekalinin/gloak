@@ -47,7 +47,8 @@ var managementSecurityHeaders = []string{
 // handler and serves every case's request to it, so a management case is served
 // to Gloak's main mux - a different server from the one the golden was recorded
 // against. Case.ManagementPort refuses Implemented for that reason, and
-// TestManagementCasesAreNotImplemented is where the refusal lives.
+// TestManagementRefusals is where the refusal lives, and
+// TestManagementRefusalGuardCanFail is what shows it fires.
 //
 // Five of these goldens hold the same 45 bytes and three more hold the same 345
 // as management/health/check. That is deliberate and it is not padding: a
@@ -69,13 +70,13 @@ var managementCases = []Case{
 		// with `--health-enabled` alone and 123 with `--metrics-enabled` alone.
 		// startKeycloak sets both and this golden is the both-enabled one. See
 		// F245.
-		ID:                  "management/index/root",
-		Doc:                 managementDoc,
-		Status:              Recorded,
-		Reason:              "Gloak serves no management interface, so it has no index page to list one",
-		Fixture:             "bootstrap",
-		ManagementPort:      true,
-		Request: Request{Method: http.MethodGet, Path: "/"},
+		ID:             "management/index/root",
+		Doc:            managementDoc,
+		Status:         Recorded,
+		Reason:         "Gloak serves no management interface, so it has no index page to list one",
+		Fixture:        "bootstrap",
+		ManagementPort: true,
+		Request:        Request{Method: http.MethodGet, Path: "/"},
 		// No AssertHeaders. Content-Length is masked package-wide, so asserting
 		// it would assert that a response has a length - the inert kind of
 		// declaration AGENTS.md says is worse than none. What this case asserts
@@ -371,10 +372,10 @@ var managementCases = []Case{
 		//
 		// Pending for F113 and not for the negotiation: the media type is a
 		// contract and the body under it is the same moving counter dump.
-		ID:     "management/metrics/prometheus-text",
-		Doc:    managementMetricsDoc,
-		Status: Pending,
-		Reason: "text/plain selects Prometheus 0.0.4 and the body is still the moving counter dump - F113",
+		ID:      "management/metrics/prometheus-text",
+		Doc:     managementMetricsDoc,
+		Status:  Pending,
+		Reason:  "text/plain selects Prometheus 0.0.4 and the body is still the moving counter dump - F113",
 		Fixture: "", // no golden can hold this body either; see
 		// management/metrics/dump
 		ManagementPort: true,
