@@ -208,6 +208,52 @@ var managementEmptyGoldens = []string{
 	"management/health/group-unknown",
 }
 
+// goldensThatDisagree returns one complaint per golden in group whose body
+// differs from the first's, and no complaints when they all hold one document.
+//
+// It takes a reader rather than reading files so the comparison can be run on
+// bodies known to differ. **The traversal's vacuity guard does not cover the
+// comparison**, which was measured: disabling the equality left the partition
+// check, the non-empty check and the two-documents-differ check all passing,
+// and the test went green having compared nothing. That is AGENTS.md's rule met
+// on a test written the same afternoon it was quoted.
+func goldensThatDisagree(group []string, body func(string) []byte) []string {
+	var out []string
+	if len(group) < 2 {
+		return out
+	}
+	first := body(group[0])
+	for _, id := range group[1:] {
+		if got := body(id); !bytes.Equal(got, first) {
+			out = append(out, fmt.Sprintf(
+				"%s and %s were measured answering the same document and their goldens "+
+					"differ.\n%s: %s\n%s: %s", group[0], id, group[0], first, id, got))
+		}
+	}
+	return out
+}
+
+// TestManagementHealthGoldenComparisonCanFail is that comparison's own guard.
+func TestManagementHealthGoldenComparisonCanFail(t *testing.T) {
+	bodies := map[string][]byte{
+		"a": []byte(`{"status":"UP"}`),
+		"b": []byte(`{"status":"UP"}`),
+		"c": []byte(`{"status":"DOWN"}`),
+	}
+	read := func(id string) []byte { return bodies[id] }
+
+	if got := goldensThatDisagree([]string{"a", "b"}, read); len(got) != 0 {
+		t.Errorf("two identical bodies were reported as disagreeing: %v", got)
+	}
+	got := goldensThatDisagree([]string{"a", "b", "c"}, read)
+	if len(got) != 1 {
+		t.Fatalf("want one complaint about the body that differs, got %d: %v", len(got), got)
+	}
+	if !strings.Contains(got[0], "DOWN") {
+		t.Errorf("the complaint does not show the body that differs: %q", got[0])
+	}
+}
+
 // TestManagementHealthGoldensHoldTheDocumentTheyWereMeasuredTo is this
 // chapter's answer to a surviving mutation.
 //
@@ -251,14 +297,10 @@ func TestManagementHealthGoldensHoldTheDocumentTheyWereMeasuredTo(t *testing.T) 
 		if len(group) < 2 {
 			t.Fatalf("a group of %d goldens asserts no equality", len(group))
 		}
-		first := read(group[0])
-		for _, id := range group[1:] {
-			if got := read(id); !bytes.Equal(got, first) {
-				t.Errorf("%s and %s were measured answering the same document and their "+
-					"goldens differ.\n%s: %s\n%s: %s", group[0], id, group[0], first, id, got)
-			}
+		for _, d := range goldensThatDisagree(group, read) {
+			t.Error(d)
 		}
-		return first
+		return read(group[0])
 	}
 
 	// The mirror, and it is the reason the two lists are a partition rather
