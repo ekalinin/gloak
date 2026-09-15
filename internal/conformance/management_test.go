@@ -261,6 +261,36 @@ func TestManagementHealthGoldensHoldTheDocumentTheyWereMeasuredTo(t *testing.T) 
 		return first
 	}
 
+	// The mirror, and it is the reason the two lists are a partition rather
+	// than a sample. Removing management/health/started from its group was
+	// applied and survived: the test checked the claims that were made, and a
+	// smaller set of true claims is still true - which is F181's shape on a new
+	// pair of lists. Joining against the catalogue is what makes a deletion
+	// visible, and it is also what refuses the next health case being added
+	// without a group.
+	grouped := map[string]int{}
+	for _, id := range append(append([]string{}, managementAggregateGoldens...), managementEmptyGoldens...) {
+		grouped[id]++
+	}
+	for _, c := range Catalog {
+		if chapterOf(c.ID) != "management/health" {
+			continue
+		}
+		switch grouped[c.ID] {
+		case 1:
+			delete(grouped, c.ID)
+		case 0:
+			t.Errorf("%s is a management/health case and is in neither document group, "+
+				"so no golden is compared against its bytes", c.ID)
+		default:
+			t.Errorf("%s is in both document groups, which would assert the two documents "+
+				"are the same", c.ID)
+		}
+	}
+	for id := range grouped {
+		t.Errorf("%s is named in a document group and is not a management/health case", id)
+	}
+
 	aggregate := agree(managementAggregateGoldens)
 	empty := agree(managementEmptyGoldens)
 
