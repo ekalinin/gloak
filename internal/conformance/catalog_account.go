@@ -1167,9 +1167,11 @@ var accountCases = []Case{
 			Retrieved: "2026-09-07",
 		},
 		Status: Recorded,
-		Reason: "the account console is a theme resource - 4222 bytes of markup, an " +
-			"importmap of eleven vendored modules and a JSON environment block - and " +
-			"the themes chapter is not enumerated. Gloak serves the REST branch for " +
+		Reason: "the account console is a page rendered from the account theme - 4222 " +
+			"bytes of markup, an importmap of eleven vendored modules and a JSON " +
+			"environment block - and it is counted here rather than under themes " +
+			"because a page is counted where it is served, which is the boundary " +
+			"that chapter draws. Gloak serves the REST branch for " +
 			"every Accept, which is a declared divergence rather than an oversight: " +
 			"answering the fallback 404 instead would be a second wrong answer and " +
 			"would lose the JSON branch with it",

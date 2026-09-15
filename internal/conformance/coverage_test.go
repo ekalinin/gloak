@@ -79,33 +79,20 @@ func TestCoverage(t *testing.T) {
 	t.Log("chapter                              served  recorded  documented  source")
 	for _, ch := range Chapters {
 		tl := tallies[ch.Name]
-		switch {
-		case !ch.Enumerated:
+		r := chapterRow(ch, chapterTally{
+			implemented:   tl.implemented,
+			recorded:      tl.recorded,
+			pending:       tl.pending,
+			operations:    servedOperations(tl.cases),
+			documentedOps: byTag[ch.OpenAPITag],
+		})
+		served += r.served
+		documented += r.documented
+		if !ch.Enumerated {
 			unenumerated++
-			t.Logf("%-36s  %6d  %8d  %10s  not enumerated: %s",
-				ch.Name, tl.implemented, tl.recorded, "?", ch.Reason)
-			rows = append(rows, fmt.Sprintf("%s\t%d\t%d\t0\tfalse",
-				ch.Name, tl.implemented, tl.recorded))
-		case ch.OpenAPITag != "":
-			// Distinct operations, not cases: the denominator counts
-			// operations, so several cases on one endpoint must not read as
-			// several operations served. See servedOperations in openapi.go.
-			n := byTag[ch.OpenAPITag]
-			ops := servedOperations(tl.cases)
-			documented += n
-			served += ops
-			t.Logf("%-36s  %6d  %8d  %10d  openapi 26.7.1",
-				ch.Name, ops, tl.recorded, n)
-			rows = append(rows, fmt.Sprintf("%s\t%d\t%d\t%d\ttrue", ch.Name, ops, tl.recorded, n))
-		default:
-			n := tl.implemented + tl.recorded + tl.pending
-			documented += n
-			served += tl.implemented
-			t.Logf("%-36s  %6d  %8d  %10d  catalogue",
-				ch.Name, tl.implemented, tl.recorded, n)
-			rows = append(rows, fmt.Sprintf("%s\t%d\t%d\t%d\ttrue",
-				ch.Name, tl.implemented, tl.recorded, n))
 		}
+		t.Log(r.log)
+		rows = append(rows, r.row)
 	}
 	t.Logf("total: %d of %d enumerated behaviours served; %d chapters not enumerated",
 		served, documented, unenumerated)
@@ -287,11 +274,19 @@ func TestCoverageWritesAReportWhenAsked(t *testing.T) {
 	// slice can only ever agree with it. What actually pins the column is the
 	// `fields[3]` comparison below, between the meter's own number and the one
 	// it wrote, and what pins the Reason rule is
-	// TestEveryUnenumeratedChapterSaysWhy in openapi_test.go. This branch has
-	// one job left: refusing a report where the whole feature has gone.
-	if unenumerated == 0 {
-		t.Fatal("no unenumerated chapter in the report, so this half of the format has " +
-			"no consumer; drop the Enumerated field rather than leaving a branch nothing takes")
+	// TestEveryUnenumeratedChapterSaysWhy in openapi_test.go.
+	//
+	// This branch used to refuse a report with no unenumerated chapter in it,
+	// on the ground that the format's other half would then have no consumer.
+	// **The themes chapter was enumerated on 2026-09-15 and there is no such
+	// chapter left**, which is the catalogue being finished rather than the
+	// format being broken - so the assertion inverted: the unenumerated rows
+	// are counted here to say how many there are, and the branch that builds
+	// one is covered by TestChapterRowLeavesAnUnenumeratedChapterOutOfTheTotals
+	// against a chapter it constructs. A format branch witnessed by "the
+	// catalogue happens to be incomplete today" was never a test of the format.
+	if unenumerated != 0 {
+		t.Logf("%d unenumerated chapter(s) in the report", unenumerated)
 	}
 
 	if got := fmt.Sprint(sumServed); got != fields[1] {
@@ -339,6 +334,78 @@ func TestParityReportVariableDoesNotLeak(t *testing.T) {
 // whether the number is acceptable. A failure to write is a test failure like
 // any other - t.Errorf does fail the test - and it changes nothing about what
 // the meter concluded.
+// chapterTally is what the report needs to know about one chapter's cases.
+// Both denominators are supplied rather than chosen here: operations is what
+// the chapter served of its tag, documentedOps is how many that tag has, and
+// which of them the row uses is chapterRow's decision.
+type chapterTally struct {
+	implemented, recorded, pending int
+	operations, documentedOps      int
+}
+
+// chapterReportRow is one chapter's contribution to the meter: the TSV row, the
+// line the test logs, and what it adds to each of the two totals.
+type chapterReportRow struct {
+	row, log           string
+	served, documented int
+}
+
+// chapterRow decides a chapter's row and what it contributes to the totals.
+//
+// It is a function rather than three arms inside TestCoverage's loop because of
+// what happened on 2026-09-15, when the themes chapter was enumerated and
+// **the live catalogue stopped having an unenumerated chapter at all**. The
+// unenumerated arm's only witness had always been "some chapter happens to be
+// uncounted today", which is not a test: it passed for a year because the
+// catalogue was incomplete, and it went red the moment the catalogue was
+// finished. TestChapterRowLeavesAnUnenumeratedChapterOutOfTheTotals is the
+// witness that does not depend on the catalogue being unfinished.
+//
+// The advice the old assertion left behind was to drop Chapter.Enumerated once
+// nothing took the branch. That was not followed, and the reason is in
+// Chapter's own doc comment: the field exists so a chapter nobody has counted
+// says so rather than being quietly left out of the total, and the next chapter
+// added to this project arrives uncounted like every one of the five before it.
+// Deleting the only way to say "not counted" would leave that chapter's author
+// with the choice between a wrong number and silence, and silence inflates the
+// percentage - which is the disease the field was built for. See F251.
+func chapterRow(ch Chapter, tl chapterTally) chapterReportRow {
+	switch {
+	case !ch.Enumerated:
+		// Zero in the numeric column and `false` in the last, rather than "?"
+		// where a number belongs: the report is read by cmd/parity as well as
+		// by a person, and **nothing is added to either total**. That is the
+		// whole point of the row - a chapter nobody has counted is visible and
+		// is not in the denominator.
+		return chapterReportRow{
+			row: fmt.Sprintf("%s\t%d\t%d\t0\tfalse", ch.Name, tl.implemented, tl.recorded),
+			log: fmt.Sprintf("%-36s  %6d  %8d  %10s  not enumerated: %s",
+				ch.Name, tl.implemented, tl.recorded, "?", ch.Reason),
+		}
+	case ch.OpenAPITag != "":
+		// Distinct operations, not cases: the denominator counts operations, so
+		// several cases on one endpoint must not read as several operations
+		// served. See servedOperations in openapi.go.
+		return chapterReportRow{
+			row: fmt.Sprintf("%s\t%d\t%d\t%d\ttrue",
+				ch.Name, tl.operations, tl.recorded, tl.documentedOps),
+			log: fmt.Sprintf("%-36s  %6d  %8d  %10d  openapi 26.7.1",
+				ch.Name, tl.operations, tl.recorded, tl.documentedOps),
+			served:     tl.operations,
+			documented: tl.documentedOps,
+		}
+	default:
+		n := tl.implemented + tl.recorded + tl.pending
+		return chapterReportRow{
+			row: fmt.Sprintf("%s\t%d\t%d\t%d\ttrue", ch.Name, tl.implemented, tl.recorded, n),
+			log: fmt.Sprintf("%-36s  %6d  %8d  %10d  catalogue",
+				ch.Name, tl.implemented, tl.recorded, n),
+			served:     tl.implemented,
+			documented: n,
+		}
+	}
+}
+
 func writeParityReport(t *testing.T, rows []string, served, documented, unenumerated int) {
 	t.Helper()
 	path := os.Getenv("GLOAK_PARITY_REPORT")
