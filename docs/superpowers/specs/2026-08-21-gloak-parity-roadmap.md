@@ -285,7 +285,48 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-14 (thirty-seventh fold).** `make conformance` reports **598 of
+**Updated 2026-09-14 (thirty-eighth fold).** `make conformance` reports **598 of
+644, no change** - four goldens added, none modified, one handler line changed.
+
+**Two of the three follow-ups this cut took were wrong about themselves**, which
+is the round's shape.
+
+**F237 said "nobody has asked Gloak"** - both upserts were already implemented
+and every status matched on the first run. What actually diverged was **one
+field**: a repeat keeps `attributes` and Gloak cleared them, and the rule was
+already implemented **ninety lines away on the PUT in the same file**.
+
+**F238 was wrong in its load-bearing half.** The realm is not the variable; what
+decides it is **whether the row was read before the collision**. Its two probes
+differed in the realm *and* in that, and the realm got the blame for a
+fortnight. What is poisoned is an in-process cache - a restart clears it and the
+row was never lost - and **nothing in the corpus can reach it**, which is a test
+now rather than an argument.
+
+**And the framing was wrong too: there are eight authz create routes, not
+three.** `POST .../policy/{type}` and `.../permission/{type}` are real, answer
+201 with **no `config` key**, and are in **no description** - checked against the
+vendored one. The six refusing routes are **one store behind four paths**.
+
+**"A repeat" is four different requests and the answers do not agree.** A scope
+create with **no** id and a taken name is a **201 returning the row that already
+existed**; the same body on `resource` is a 409. Same question, one path segment
+apart, opposite answers.
+
+**A fifth error shape**, and it is the first one inverted: prose in `error`, a
+category in `error_description`, on a route whose neighbouring 409 is the
+ordinary way round.
+
+**Two mutation-discipline rules, both earned by being got wrong here.** A
+mutation that does not compile is **not a kill** and the verdict line cannot tell
+you - a harness reading "did the output start with `ok`" records `[build failed]`
+as killed. And **a production mutation has to be run against the package that can
+kill it, which is usually not the package it lives in**: every production
+mutation in this cut survived `internal/admin` and died in `internal/conformance`,
+because the contract lives in goldens rather than in the handler's own tests. I
+reproduced that.
+
+**Earlier on 2026-09-14 (thirty-seventh fold).** `make conformance` reports **598 of
 644, no change** - a harness cut, no fixture, case or golden touched.
 
 **Nine id spaces over thirteen create routes, and every one is global.** Measured
