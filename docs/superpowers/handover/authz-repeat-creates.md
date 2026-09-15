@@ -19,8 +19,12 @@ The short version, and each half is a correction to the entry that asked for it:
   has nothing to do with it; a container restart clears the whole thing; the row
   is never lost. What decides it is whether the row was **read before** the
   collision, which no probe had varied.
-- **F239 is closed with a column and three tests** rather than a comment, and
-  the constant is not widened.
+- **F239 is closed with a column, a second declaration and four tests** rather
+  than a comment, and the constant is not widened.
+- **The mutation pass found the gap rather than confirming the work.** One
+  survivor, and it was the shape this project has a name for: three cases that
+  an implementation with the rule backwards satisfies entirely. Closed with a
+  fourth case before reporting.
 
 ## 1. Every authz create route, and what a repeat does
 
@@ -134,6 +138,33 @@ carry the measurement in their doc comments - `createAuthzScope`'s spells out
 five bodies and their answers. The gap was never the implementation. **It was
 that no golden recorded the destructive branch**, so the behaviour was served,
 documented and unpinned.
+
+Per route, on a repeat:
+
+| route | Keycloak | Gloak |
+|---|---|---|
+| `resource` | 201, renamed, `attributes` kept | same - **`attributes` were cleared until this cut** |
+| `scope` | 201, renamed, `iconUri`/`displayName` dropped | same |
+| `policy` | 409 `Duplicate resource error` | same |
+| `permission` | 409 `Duplicate resource error` | same |
+| `policy/role` | 409 | **404** - route not served |
+| `policy/time` | 409 | **404** - route not served |
+| `permission/resource` | 409 | **404** - route not served |
+| `permission/scope` | 409 | **404** - route not served |
+| `import` | 204, ids unchanged | same |
+
+Both prose 409 bodies match, including
+`{"error":"Policy with name [one] already exists","error_description":"Conflicting policy"}`
+with its inverted keys.
+
+**The four unserved rows are a 404 of the wrong kind**, which is worth more than
+"not served": Gloak answers
+`{"error":"Unable to find matching target resource method"}`, the **unmatched
+path** body, because its mux has no such route. Keycloak's own 404 on the one
+type it does not register - `policy/js` - is `{"error":"HTTP 404 Not Found"}`,
+the body AGENTS.md attributes to a route that was found and could not run. So
+the two servers answer the same status with different bodies on a request a
+client can send today. F240.
 
 ### 2.1 The one divergence, and it is one field
 
@@ -311,7 +342,7 @@ warning about widening stands and nothing here goes near it.
 
 What was wrong is that its name is a promise and the two spaces where the
 promise is false were recorded only in prose - in `Collision`, a field nothing
-compares to anything. Three things now:
+compares to anything. Four things now:
 
 1. **`idSpace.RepeatIsHarmless`**, a measured column per space. False in exactly
    two: `authz resource` and `authz scope`.
@@ -322,6 +353,9 @@ compares to anything. Three things now:
    by which a destructive repeat is silent; if it ever stops, the test is
    measuring nothing and says so with a `Fatalf` rather than passing.
 3. **`Step.Overwrites`**, and this is the part that turned out to matter.
+4. **`onAnOverwritingRoute` and its positive control**, because the floor over
+   the steps that declare the flag is satisfied by a predicate that permits
+   everything - proved by M5, which exactly one test in the tree can see.
 
 ### 4.1 `Overwrites` exists because the sweep caught my own fixture
 
@@ -389,29 +423,43 @@ one of them is called a replace.
 All three carry `Cache-Control: no-cache`, the charset, all five security
 headers, and the two creates assert `Location` absent.
 
-### 5.2 The rest of the diff: there is none
+### 5.2 The fourth case, added because a mutation survived
 
-`make record` ran the whole catalogue against a fresh set of containers and the
-working tree afterwards held **three added files and zero modified ones**:
+`admin/authz-resource-server/resource-create-repeat-attributes` - the same
+repeat, but naming attributes. 201, and they **replace**:
+
+```json
+{"name":"gloak-probe-repeated", ... ,"attributes":{"k3":["c"]},
+ "_id":"5e50a5ce-0000-4000-8000-00000000e601","uris":[]}
+```
+
+The fixture's resource was seeded with `{"k1":["a"],"k2":["b1","b2"]}` and none
+of it survives. Put beside the case above, the pair says the rule exactly:
+absent means unchanged, named means replaced. Either case alone is satisfied by
+a handler that gets the rule wrong in one direction. See §9.1.
+
+### 5.3 The rest of the diff: there is none, twice
+
+Two full `make record` runs, one per batch of cases. Each left the working tree
+holding **only the new files and zero modified ones**:
 
 ```
-?? internal/conformance/testdata/golden/admin/authz-resource-server/resource-create-repeat.http
-?? internal/conformance/testdata/golden/admin/authz-resource-server/scope-create-repeat-read.http
-?? internal/conformance/testdata/golden/admin/authz-resource-server/scope-create-repeat.http
+run 1:  ?? .../authz-resource-server/resource-create-repeat.http
+        ?? .../authz-resource-server/scope-create-repeat.http
+        ?? .../authz-resource-server/scope-create-repeat-read.http
+run 2:  ?? .../authz-resource-server/resource-create-repeat-attributes.http
 ```
 
-Read file by file, which for three files is quick, and each is quoted in full in
-§5.1. **Nothing existing moved**, which is the outcome worth stating rather than
-passing over: the `attributes` fix changes a response Gloak serves, and the only
-golden that could have noticed is one recording that response - which did not
-exist until this cut created it. So the fix is invisible to the 1089 goldens
-that were already here, and the three new ones are the entire evidence that it
-happened. That is also why no golden needed re-reading for churn: there was no
-churn to read.
+Read file by file, which for four files is quick, and each is quoted in full
+above. **Nothing existing moved, either time**, which is the outcome worth
+stating rather than passing over: the `attributes` fix changes a response Gloak
+serves, and the only golden that could have noticed is one recording that
+response - which did not exist until this cut created it. So the fix is
+invisible to the 1089 goldens that were already here, and the four new ones are
+the entire evidence that it happened. There was no churn to read.
 
-The three new goldens were written by the same run that left the other 1086
-byte-identical, so they are recordings from the same container generation as
-everything around them.
+Two independent record runs leaving 1089 goldens byte-identical is also the
+strongest statement available that this cut moved nothing it did not mean to.
 
 ## 6. Containers
 
@@ -421,9 +469,10 @@ everything around them.
   before it is from the first start.
 - **One Gloak process** on port 18092 over a file-backed SQLite, restarted once
   after the fix and re-diffed.
-- **The record run is 41 container starts**: one shared, plus one fresh per
+- **Each record run is 41 container starts**: one shared, plus one fresh per
   `PristineRealm` case, of which there are 40. That is the harness's own
-  arithmetic, not a count of what I watched.
+  arithmetic, not a count of what I watched. **Two runs, so 82 starts**, and the
+  second was needed because the mutation pass added a case.
 
 **Two starts of one container, not two containers.** The §3.2 restart finding
 rests on the *same* database coming back clean, which is what makes it evidence
@@ -432,7 +481,33 @@ independent-container confirmation of the repeat matrix is §7.
 
 ## 7. A second container, because two starts of one is not two containers
 
-*Filled in below.*
+`gloak-ref2`, a separate `docker run` of the same image on port 18093, never
+touched by any earlier probe.
+
+**The repeat matrix reproduces in every cell**, including the one cell container
+1 could not answer cleanly: cell A/resource had been contaminated there by an id
+probe 1 used twenty minutes earlier in another realm, and had to be re-measured
+on a new id. On container 2 it came back `first=201 repeat=201` first time. That
+is the F237 cell, and it is now measured on two independently started
+containers.
+
+**The F238 2x2 reproduces byte for byte**: `readbefore=yes` clean in both
+realms, `readbefore=no` giving `400 Cannot parse the JSON` for the scope and a
+`[]` listing with a 404 by-id for the resource, in both realms, and `policy`
+clean in every cell. The discriminator is not an artifact of one container's
+history.
+
+The distinction the brief asks for, stated plainly: **two containers, and one of
+them started twice.** The restart in §3.2 is a *measurement* on container 1 -
+the whole point is that the same database came back clean, which a second
+container could not have shown. The independence claims in §1 and §3.1 rest on
+container 2, which shares nothing with it.
+
+Nothing here reaches outside the container. The question is worth asking after
+F230, and the answer is that every route in this cut is an Admin API write and
+read against local storage; the one thing that looked like an external effect -
+a create damaging a server it did not address - is an in-process cache, proved
+by the restart.
 
 ## 8. Parity
 
@@ -459,7 +534,88 @@ meter cannot see at all.
 
 ## 9. The mutation pass
 
-*Filled in below.*
+Seven mutations, each applied alone, reverted from a `trap ... EXIT`, with the
+dirty check scoped to the package being mutated and **each package run
+separately, no `-run` filter**. The failure message was read every time, not the
+verdict line.
+
+| # | mutation | kind | result |
+|---|---|---|---|
+| M1 | a repeat clears `attributes` - the code as it shipped | coherent | killed by `resource-create-repeat`; **survived `internal/admin`** |
+| M2 | an upsert always keeps `attributes`, body ignored | coherent | **SURVIVED both packages**; closed, now killed by `resource-create-repeat-attributes` |
+| M3 | `authz policy` declared as overwriting | coherent table | killed by `TestIdempotentCreateNamesTheSpacesItLiesAbout` + 2 |
+| M4 | `authz scope` declared harmless | coherent table | killed by the same + 2 |
+| M5 | `onAnOverwritingRoute` permits every route | coherent predicate | killed by **one** test, the positive control |
+| M6 | `mintsIn` stops honouring `Overwrites` | mechanism | killed by `TestNoTwoFixturesMintOneObjectID/authz-scope` |
+| M7 | `Overwrites` declared on the policy create | **additive** | killed by `TestOverwritesIsOnlyDeclaredWhereARepeatWins` |
+
+### 9.1 M2, the survivor that was closed before reporting
+
+**The one real survivor.** Swapping the two branches of the create's switch so
+that an existing row's attributes always win - and the body's are silently
+ignored on every upsert - passed `internal/admin` **and**
+`internal/conformance`.
+
+It is a coherent wrong implementation, not a broken function: "attributes are
+immutable once set" is a rule somebody could hold. And the reason nothing saw it
+is exactly this project's named failure shape: **"absent means unchanged" and
+"the body cannot change them" agree on every request the corpus contained**,
+because no case sent `attributes` on a repeat. Three cases pinned that the old
+attributes survive; all three are satisfied by a handler that can never change
+them.
+
+The mutated code was read before this was believed, per the rule - the two
+branches really had swapped, and the diff display was misleading because both
+branches contain similar text.
+
+Closed with `admin/authz-resource-server/resource-create-repeat-attributes`: a
+repeat that *does* name attributes, which must replace. Measured first, then
+recorded. M2 now dies there.
+
+### 9.2 M1's first form was a build failure, and the verdict line said "not ok"
+
+Written as a pure deletion of the preserve branch, it left `current` declared and
+unused. `go test` reported `FAIL ... [build failed]`, and a harness that reads
+"did the output start with `ok`" calls that a kill. It is not one: it proves
+nothing about any assertion.
+
+This is the rule that says read the failure message and not the test name,
+arriving from the direction the rule does not mention - not a vacuity floor
+firing early, but the compiler refusing before any test ran. Re-formed as
+`stored.Attributes = nil`, which compiles, keeps `current` used, and is exactly
+the behaviour that shipped.
+
+### 9.3 M1 survives `internal/admin`, and that is a finding rather than a nuisance
+
+Every production mutation in this cut was killed **only** by
+`internal/conformance`. `internal/admin` has no unit test that exercises the
+create's upsert at all, so the entire attributes rule - on the verb where it was
+missing - rests on one golden.
+
+Not fixed here, and the reason is F236's: `internal/admin`'s tests are for the
+things a golden cannot reach, and this one can. But it is worth knowing that the
+package owning the handler cannot tell the shipped bug from the fix.
+
+### 9.4 M5 is why the positive control was added
+
+M5 makes `onAnOverwritingRoute` return true for everything. Every floor in the
+file is still satisfied - the steps that declare `Overwrites` are still counted,
+the nine spaces are still swept, every id is still pooled - and **exactly one
+test in the whole tree fails**, checked by listing every failure rather than the
+first six.
+
+That is AGENTS.md's "a vacuity guard covers the traversal; the comparison needs
+its own" reproduced on a new guard, and it is the reason the predicate was pulled
+out of the test body and given seven known inputs. Without the control this cut
+would have shipped a legality check that permits everything, with every test
+green - which is precisely what F234 shipped and had to come back for.
+
+### 9.5 M7 was made additive on purpose
+
+`Overwrites` declared on the policy create, **added** as an extra step rather
+than moved from an existing one. No id leaves any space, so no floor can fire and
+the collision message is the only thing that can kill it. It was, and by the
+right test.
 
 ## 10. What belongs in AGENTS.md
 
@@ -509,9 +665,23 @@ arriving from a new direction:
   Gloak's per-resource-server id spaces mean it cannot reproduce any of this,
   which is the existing declined divergence earning its keep.
 
-**Into the mutation-discipline paragraphs**, one line:
+**Into the mutation-discipline paragraphs**, two lines:
 
-*Filled in below once the pass ran.*
+- **A mutation that does not compile is not a kill, and the verdict line cannot
+  tell you.** A deletion that left a variable declared and unused produced
+  `FAIL ... [build failed]`, which a harness testing "did the output start with
+  `ok`" records as killed. It proves nothing about any assertion. The existing
+  rule says to read the failure message rather than the test name; this is the
+  case where there is no test name at all, because nothing ran. Re-form the
+  mutation so it compiles - usually by changing what a branch assigns rather
+  than removing the branch.
+- **A production mutation has to be run against the package that can kill it,
+  which is usually not the package it lives in.** Every production mutation in
+  this cut survived `internal/admin` and died in `internal/conformance`, because
+  the contract lives in goldens and not in the handler's own tests. "Run each
+  package separately" already says how to run them; it does not say that a
+  mutation in `internal/admin` scored against `internal/admin` alone reports a
+  survivor every time.
 
 ## 11. Follow-ups
 
@@ -534,6 +704,18 @@ the meter is structurally unable to report it.
 They are not the untyped creates with a path parameter, which is what makes them
 worth serving rather than aliasing: their 201 carries **no `config` key** where
 the untyped ones do, on otherwise identical bodies.
+
+**And Gloak's 404 on them is the wrong one of the two.** Measured side by side:
+Gloak answers `{"error":"Unable to find matching target resource method"}` -
+the unmatched-path body, because its mux has no such route - while Keycloak's
+own 404 on the one type it does not register, `policy/js`, is
+`{"error":"HTTP 404 Not Found"}`. So even declining to serve these routes is
+observably wrong today, and it is wrong in the direction AGENTS.md's
+four-producers bullet is about. That is the cheapest half of this entry and it
+does not require building the family: four routes registered to the existing
+`createAuthzPolicy` would answer the right 404 for the unregistered type and the
+right 201 for the rest, and the `config` difference is what says they still need
+their own response shape.
 
 What is not known is how wide the family is. `policy/js` is a 404 because the
 provider is not registered, and AGENTS.md already records that the accepted type
