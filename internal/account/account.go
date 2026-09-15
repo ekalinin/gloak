@@ -10,9 +10,9 @@
 // use the discriminator the SAML sweep used: without an Accept header every
 // path under /realms/{realm}/account - including ones no route serves -
 // answers 200 with the console's HTML, and the two 404 bodies never appear.
-// Gloak serves the REST branch for every Accept, because the console is a
-// theme resource and the themes chapter is not enumerated; the divergence is
-// a case of its own, account/console/accept-html.
+// Gloak serves the REST branch for every Accept, because the console is a page
+// rendered from the account theme and Gloak has no theme machinery to render
+// one with; the divergence is a case of its own, account/console/accept-html.
 //
 // **The gate is two stages and they answer with different statuses.** A
 // caller whose token grants no role on the realm's `account` client is

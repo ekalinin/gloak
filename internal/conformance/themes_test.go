@@ -1,7 +1,9 @@
 package conformance
 
 import (
+	"bytes"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 )
@@ -172,49 +174,109 @@ func TestThemeResourceCasesAddressTheResourceRoute(t *testing.T) {
 	}
 }
 
+// themeMediaTypes is what the resource route answers for each extension it
+// serves, measured 2026-09-15 against quay.io/keycloak/keycloak:26.7.1.
+//
+// Eighteen extensions appear among the 1234 servable files, one file per
+// extension was requested, and **nine of the eighteen are
+// `application/octet-stream`**. Only three of the eighteen have bodies a golden
+// can hold, so a reader checking the mapping from the goldens alone would see a
+// sixth of it - and the interesting five sixths are the part that is missing.
+// This is where the rest lives, which is where management-port.md put the
+// metrics dump it could not record either.
+var themeMediaTypes = map[string]string{
+	".css":   "text/css",
+	".gif":   "image/gif",
+	".html":  "text/html",
+	".jpg":   "image/jpeg",
+	".js":    "text/javascript",
+	".json":  "application/json",
+	".png":   "image/png",
+	".svg":   "image/svg+xml",
+	".txt":   "text/plain",
+	".eot":   "application/octet-stream",
+	".hbs":   "application/octet-stream",
+	".ico":   "application/octet-stream",
+	".map":   "application/octet-stream",
+	".otf":   "application/octet-stream",
+	".scss":  "application/octet-stream",
+	".ttf":   "application/octet-stream",
+	".woff":  "application/octet-stream",
+	".woff2": "application/octet-stream",
+}
+
 // TestThemeContentTypesAreTheMeasuredMapping holds the whole media-type table,
-// including the two rows no golden can.
+// including the fifteen rows no golden can.
 //
-// Three of the six extensions this route serves have bodies a golden can hold
-// and three do not, so a reader checking the mapping from the goldens alone
-// would see half of it - and the interesting half is the half that is missing.
-// `.ico` and `.woff2` are **not** their registered media types: both are
-// `application/octet-stream`, where `image/vnd.microsoft.icon` and `font/woff2`
-// are what a reader would predict. So the mapping is a table Keycloak keeps
-// rather than a rule, which is the reason the three recordable rows are three
-// cases and not one.
+// The mapping is a table Keycloak keeps and not a rule a reader can derive,
+// which is why the three recordable rows are three cases and not one. Two
+// groups of rows say so:
 //
-// Measured on 2026-09-15 against quay.io/keycloak/keycloak:26.7.1, one file per
-// extension, on a start-dev container and again on a production-mode one.
+//   - **Every font format is `application/octet-stream`**: `.woff2`, `.woff`,
+//     `.ttf`, `.otf` and `.eot`, where `font/woff2`, `font/woff`, `font/ttf`
+//     and `font/otf` are registered and are what a reader would predict.
+//   - **`.ico` is too**, where `image/vnd.microsoft.icon` is registered - and
+//     `.gif`, `.jpg`, `.png` and `.svg` beside it are all their registered
+//     image types. So "images get an image type" is a rule with one exception
+//     and it is the commonest favicon extension on the web.
+//
+// Source maps are in the table because they are **served**:
+// `/resources/{version}/admin/keycloak.v2/assets/*.js.map` answers 200. So is
+// `robots.txt` under the admin theme, as `text/plain`.
 func TestThemeContentTypesAreTheMeasuredMapping(t *testing.T) {
-	measured := map[string]string{
-		".css":   "text/css",
-		".js":    "text/javascript",
-		".svg":   "image/svg+xml",
-		".png":   "image/png",
-		".ico":   "application/octet-stream",
-		".woff2": "application/octet-stream",
-	}
-	// The two rows that are the finding, named rather than left to a reader to
-	// spot among the six. A mapping that had quietly become the registered one
-	// would pass the map above only if somebody had edited it, and would pass
-	// nothing here.
-	for _, ext := range []string{".ico", ".woff2"} {
-		if measured[ext] != "application/octet-stream" {
-			t.Errorf("%s is recorded as %q; the measurement is application/octet-stream, "+
-				"and it being the registered type instead is the thing this test exists to say",
-				ext, measured[ext])
+	// The rows that are the finding, named rather than left to a reader to spot
+	// among eighteen. A table that had quietly become the registered mapping
+	// would satisfy itself; this does not.
+	for _, ext := range []string{".eot", ".ico", ".map", ".otf", ".ttf", ".woff", ".woff2"} {
+		if got := themeMediaTypes[ext]; got != "application/octet-stream" {
+			t.Errorf("%s is recorded as %q; it was measured application/octet-stream, "+
+				"and it being the registered type instead is the thing this table exists to say",
+				ext, got)
 		}
 	}
-	// And the vacuity guard the comparison needs of its own: a table where every
-	// row agreed would carry no finding at all.
+	// The other direction, without which the check above is satisfied by a table
+	// where everything is octet-stream.
+	for ext, want := range map[string]string{
+		".gif": "image/gif", ".jpg": "image/jpeg", ".png": "image/png", ".svg": "image/svg+xml",
+	} {
+		if got := themeMediaTypes[ext]; got != want {
+			t.Errorf("%s is recorded as %q, want %q - the image rows are what make "+
+				"the .ico row a finding rather than a policy", ext, got, want)
+		}
+	}
+	// And the vacuity guard the traversal needs of its own: a table one row
+	// long, or one with a single value in it, would pass both loops above.
 	distinct := map[string]bool{}
-	for _, v := range measured {
+	for _, v := range themeMediaTypes {
 		distinct[v] = true
 	}
-	if len(distinct) < 4 {
-		t.Errorf("the media-type table holds %d distinct values; it was measured with "+
-			"five over six extensions, so this table has been flattened", len(distinct))
+	if len(themeMediaTypes) != 18 || len(distinct) != 10 {
+		t.Errorf("the table holds %d extensions over %d media types; it was measured "+
+			"with 18 over 10, so a row has been added or lost without a measurement",
+			len(themeMediaTypes), len(distinct))
+	}
+	// Every case in the chapter that asserts Content-Type must be asking for an
+	// extension this table knows, or the table and the goldens are two
+	// unconnected lists of the same thing.
+	for _, c := range themeCases() {
+		asserts := false
+		for _, h := range c.AssertHeaders {
+			if http.CanonicalHeaderKey(h) == "Content-Type" {
+				asserts = true
+			}
+		}
+		if !asserts || strings.HasSuffix(c.Request.Path, "/") {
+			continue
+		}
+		leaf := c.Request.Path[strings.LastIndexByte(c.Request.Path, '/')+1:]
+		i := strings.LastIndexByte(leaf, '.')
+		if i < 0 {
+			continue
+		}
+		if _, ok := themeMediaTypes[leaf[i:]]; !ok {
+			t.Errorf("%s asserts Content-Type for a %q file and the table has no such row",
+				c.ID, leaf[i:])
+		}
 	}
 }
 
@@ -322,5 +384,133 @@ func TestChapterRowLeavesAnUnenumeratedChapterOutOfTheTotals(t *testing.T) {
 	if counted.documented == tagged.documented {
 		t.Fatal("the catalogue and tag denominators are the same number in this tally, " +
 			"so the check above cannot tell them apart")
+	}
+}
+
+// themeGoldenGroups are the goldens measured answering the same bytes, and the
+// test below is what the duplication bought.
+//
+// Five of the sixteen hold the same 3182-byte stylesheet and six more hold the
+// same empty 404. The objection is that the denominator counts one answer
+// eleven times, and the answer is management-port.md section 2.5's: **a
+// behaviour is a request and its answer, not an answer**. That an unknown theme
+// name serves the default theme's file, that the theme type ignores case, and
+// that a stale version does *not* redirect on the fallback path are three
+// separately falsifiable claims about Keycloak that happen to share a body.
+//
+// What makes them mean something is that the identity is asserted. Every case
+// in this chapter is Recorded, and a Recorded case is required *not* to match,
+// so a byte changed inside any one of these goldens is absorbed by `diff`
+// saying "these differ" - which it would say anyway. That is the management
+// cut's M9, met here on a chapter where it covers eleven of sixteen goldens.
+//
+// The relations are what closes it, and they are relations no single case can
+// state: eleven goldens were measured answering two bodies, and this is where
+// the equalities live.
+var themeGoldenGroups = map[string][]string{
+	"the login theme's styles.css": {
+		"themes/resource/served-file",
+		"themes/resource/type-ignores-case",
+		"themes/resource/unknown-theme-name",
+		"themes/resource/conditional-request",
+		"themes/version/stale-fallback-theme",
+	},
+	"this route's empty 404": {
+		"themes/resource/unknown-file",
+		"themes/resource/unknown-type",
+		"themes/resource/template-not-served",
+		"themes/resource/messages-not-served",
+		"themes/version/wrong-shape",
+		"themes/version/stale-unknown-file",
+	},
+}
+
+// themeGoldensThatStandAlone are the cases deliberately in no group: each was
+// measured answering bytes no other case in this chapter shares. Named here so
+// that a new case with a golden and no group fails rather than passing by
+// default, which is the management cut's M10 - a smaller set of true claims is
+// still true.
+var themeGoldensThatStandAlone = map[string]bool{
+	"themes/resource/javascript":  true,
+	"themes/resource/svg":         true,
+	"themes/resource/common-type": true,
+	"themes/resource/theme-root":  true,
+	"themes/version/stale":        true,
+}
+
+// TestThemeGoldensHoldTheAnswerTheyWereMeasuredTo asserts the equalities above
+// and the one inequality that keeps them from being vacuous.
+//
+// The groups are joined against the catalogue in both directions: a named case
+// that does not exist fails, and a themes case with a golden that is in no group
+// and is not named as standing alone fails too.
+func TestThemeGoldensHoldTheAnswerTheyWereMeasuredTo(t *testing.T) {
+	read := func(id string) []byte {
+		t.Helper()
+		raw, err := os.ReadFile(GoldenPath(goldenDir, id))
+		if err != nil {
+			t.Fatalf("read golden for %s: %v", id, err)
+		}
+		g, err := ParseGolden(raw)
+		if err != nil {
+			t.Fatalf("parse golden for %s: %v", id, err)
+		}
+		return g.Body
+	}
+
+	known := map[string]bool{}
+	for _, c := range themeCases() {
+		known[c.ID] = true
+	}
+	grouped := map[string]bool{}
+	for name, group := range themeGoldenGroups {
+		if len(group) < 2 {
+			t.Errorf("group %q holds %d case(s); a group of one asserts nothing",
+				name, len(group))
+		}
+		for _, id := range group {
+			if !known[id] {
+				t.Errorf("group %q names %s, which is not a case in this chapter", name, id)
+			}
+			if grouped[id] {
+				t.Errorf("%s is in two groups, so it was measured answering two bodies", id)
+			}
+			grouped[id] = true
+		}
+		for _, complaint := range goldensThatDisagree(group, read) {
+			t.Error(complaint)
+		}
+	}
+
+	// The other direction. A themes case with a golden and no group is a golden
+	// nothing but `diff` looks at, and `diff` is satisfied by any difference.
+	for _, c := range themeCases() {
+		if c.Status == Pending || grouped[c.ID] || themeGoldensThatStandAlone[c.ID] {
+			continue
+		}
+		if _, err := os.Stat(GoldenPath(goldenDir, c.ID)); err != nil {
+			continue
+		}
+		t.Errorf("%s has a golden and is in no group, so nothing asserts what it holds; "+
+			"put it in a group or name it in themeGoldensThatStandAlone", c.ID)
+	}
+	for id := range themeGoldensThatStandAlone {
+		if !known[id] {
+			t.Errorf("%s stands alone and is not a case in this chapter", id)
+		}
+		if grouped[id] {
+			t.Errorf("%s is named as standing alone and is also in a group", id)
+		}
+	}
+
+	// The inequality, without which two groups of identical empty bodies would
+	// satisfy every comparison above.
+	a := read(themeGoldenGroups["the login theme's styles.css"][0])
+	b := read(themeGoldenGroups["this route's empty 404"][0])
+	if bytes.Equal(a, b) {
+		t.Fatal("the two groups hold the same body, so the equalities above are one claim")
+	}
+	if len(a) == 0 {
+		t.Fatal("the stylesheet group holds an empty body, so its equality is between two nothings")
 	}
 }

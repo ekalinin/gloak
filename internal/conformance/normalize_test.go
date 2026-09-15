@@ -798,6 +798,33 @@ func TestThemeResourceAppearsOnlyInTheThemePages(t *testing.T) {
 		"account/console/accept-html":     7,
 		"account/console/unknown-subpath": 7,
 	}
+	// **The themes chapter's goldens hold the segment and are not pages.** This
+	// test counts the raw file, and FormatGolden opens every golden with a
+	// `# <method> <path>` comment - so a case whose *request* addresses
+	// /resources carries one occurrence before its body is reached. Sixteen of
+	// them do, which is why the entries below are a rule rather than sixteen
+	// lines: the count is a property of the request line and would be the same
+	// for any case added to that chapter.
+	//
+	// It is worth being explicit that this widens what the test's name means.
+	// The bound it exists to keep is on ReplaceThemeResource's over-reach - the
+	// pass rewrites any `/resources/<five>/` it finds in a **body** - and none
+	// of these bodies holds one. Twelve of the sixteen are a stylesheet, a
+	// script, an SVG or nothing at all; the remaining four are empty 404s.
+	for _, c := range themeCases() {
+		if c.Status == Pending {
+			continue // no golden; themes/resource/binary-media-type is F161's
+		}
+		want[c.ID] = 1
+	}
+	// The one exception, and it is the case that earns Step.CaptureThemeResource
+	// its keep: the 307's Location carries the **live** version, masked to
+	// {{theme_resource}} by ReplaceCaptured. So this golden holds the segment
+	// twice - once in the request line at the stale version it asked for, once
+	// in the header at the current one - and the two are spelled differently on
+	// purpose. Without the capture the second would be a raw five-character
+	// value that churns on every recording.
+	want["themes/version/stale"] = 2
 	seen := map[string]bool{}
 	for _, c := range Catalog {
 		raw, err := os.ReadFile(GoldenPath(goldenDir, c.ID))
