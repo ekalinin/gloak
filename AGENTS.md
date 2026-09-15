@@ -251,6 +251,17 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
     and one sends all five while the other sends none. A "first occurrence"
     hypothesis was measured on a fresh container and refuted. See F147.
 
+  - **the theme resource route carries four of the five**, and it is the first
+    exception on this list that is about **one** header rather than about all of
+    them. `GET /resources/{version}/{themeType}/{themeName}/{path}` answers with
+    `Referrer-Policy`, `Strict-Transport-Security`, `X-Content-Type-Options` and
+    `X-Robots-Tag` and **no `X-Frame-Options`**, on its 200s, on its empty 404,
+    on its 307 and on the empty-bodied theme root alike, read off a socket. The
+    theme **page** one path family away carries all five plus
+    `Content-Security-Policy` and `Content-Language`, measured on one container
+    seconds apart, so the difference is the route and not the server. Sixteen
+    goldens declare it absent and
+    `TestThemeCasesDeclareXFrameOptionsAbsent` requires the next one to.
   **`X-Frame-Options` is additionally absent** on `text/plain` (all seven
   goldens), on `application/octet-stream` (measured, no golden can hold one -
   see F161, and since 2026-09-06 **a test can fail on it**: the two certificate
@@ -3083,6 +3094,101 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   reason the mask is not the inert kind - it holds three elements, where the 116
   masks removed on 2026-08-30 covered arrays of one or none.
 
+- **This recorder's goldens are a function of how the container was started, in
+  more than one place, and nothing in a golden says how.** Two measured
+  instances a week apart: the whole `management` chapter exists only under
+  `--health-enabled` or `--metrics-enabled`, and the theme resource route's
+  `Cache-Control` is `no-cache` under `start-dev` and `max-age=2592000` under
+  `start`. The first is visible - nothing on port 9000 exists without the
+  option - and **the second is not**, because a `Cache-Control` header on a
+  static file reads as a property of the product. Neither F245 nor F250 says
+  this on its own, and it is the sentence that makes F245's proposed fix - a
+  line in the golden naming the recorder's configuration - a cost worth paying
+  rather than a change to 1136 files for one chapter.
+- **The theme resource route's `Cache-Control` is a function of the startup
+  mode, not of the version.** `no-cache` under `start-dev` and
+  `max-age=2592000` under `start`, one image, measured on two containers on
+  2026-09-15. It is the only golden-bearing header in this repository whose
+  value is a profile rather than an image, and `internal/conformance`'s
+  recorder runs `start-dev`, so the committed value is the development one.
+  See F250. The route has **no `ETag`, no `Last-Modified`, no `Accept-Ranges`
+  and no `Vary`** either: `If-None-Match` and `If-Modified-Since` both answer
+  the full body with a 200, `Accept-Encoding: gzip` answers uncompressed, and
+  `Accept` is ignored - so a development server refetches all 408 admin
+  console assets on every page load.
+  - **An unknown theme *name* is not an error and an unknown theme *type* is.**
+  `/resources/{version}/login/anything-at-all/css/styles.css` answers
+  `keycloak.v2`'s bytes, one md5 over three spellings, because the name falls
+  back to the type's **default** theme; `css/login.css` under the same name is
+  a 404, which is what says the fallback is to the default rather than a search
+  of every theme. An unknown **type** is a 404. And the type is matched
+  **case-insensitively** where the version segment is not - three segments of
+  one path, three rules about case.
+  - **A stale version segment is a 307, but only after the lookup succeeds and
+  only on the exact-match path.** `/resources/aaaaa/login/keycloak.v2/css/styles.css`
+  redirects to the current version with the path preserved and the query
+  dropped; the same request for a file that does not exist is the 404, and the
+  same request naming a theme that does not exist serves the bytes at the
+  stale version without redirecting. The segment itself is validated against
+  **exactly `[0-9a-z]{5}`** - `aaaa`, `aaaaaa`, `AAAAA` and `aa-aa` are all
+  404 where `aaaaa`, `12345` and `00000` are 307 - which is the route deciding
+  the alphabet `ReplaceThemeResource`'s pattern was inferred to have.
+  - **Only `resources/` inside a theme is reachable.** `template.ftl`,
+  `theme.properties` and every `messages/messages_*.properties` are 404 on
+  this route, so the message bundles - the part of i18n that genuinely is a
+  theme resource - are the part it refuses to serve. A theme's root directory
+  is a **200 with zero bytes and `application/octet-stream`**, not a listing
+  and not a 404, and so is any directory under it; the same path without the
+  trailing slash is the 404. The answer follows whether the entry exists, not
+  whether it is a file.
+  - **Nine of the eighteen media types this route serves are
+  `application/octet-stream`.** Every font format is - `.woff2`, `.woff`,
+  `.ttf`, `.otf`, `.eot` - and so is `.ico`, where `.gif`, `.jpg`, `.png` and
+  `.svg` beside it are all their registered types. Source maps under
+  `/resources/{version}/admin/keycloak.v2/assets/` are served, and so is a
+  `robots.txt` under the same theme. The table is `themeMediaTypes` in
+  `internal/conformance/themes_test.go`.
+- **A fourth 404 body, and it is the emptiest one measured.** The theme resource
+  route answers an unknown file, and an unknown theme type, with **zero bytes,
+  no `Content-Type` at all** and four of the five security headers. The three
+  already listed are the Admin API's `Unable to find matching target resource
+  method` with none of the five, `HTTP 404 Not Found` with all five, and the
+  management port's 53 bytes of HTML with none. This one shares its status code
+  with all three and its shape with none. `themes/resource/unknown-file` is the
+  golden.
+- The management port narrowed this rule to one route table on 2026-09-15. The
+  theme resource route is **inside** that one: `//`, `/../` and `%2e%2e` in a
+  resource path all answer `400 missingNormalization` with none of the five
+  security headers, although the route serves no JSON and answers none of the
+  application's error shapes. A trailing slash on a file and a query string are
+  both ignored. So the boundary is the JAX-RS application and not the media type
+  or the handler style.
+- **Three enumeration discriminators were published here and a fourth was
+  needed.** p11's pair of 404 bodies needs two distinct ones and this route has
+  one; account-api's "at least one verb answers outside the fallback family"
+  cannot separate a file that exists from one that does not, since both are
+  GET-only; the management port's "a route answers its own 200 on all seven
+  verbs" is false here, where GET and HEAD answer and the other five are 405.
+  The fourth is **a request naming a resource that resolves answers 200 with its
+  bytes and a media type; one that does not answers 404 with no body and no
+  `Content-Type`** - validated in both directions on one container before it was
+  used, which is the only part any of the four has in common and the only part
+  that transfers.
+
+  **And a fourth dimension has now been collapsed.** SAML collapsed the fallback
+  family, account-api collapsed `OPTIONS`, the management port collapsed the
+  verb, and themes collapsed **the file**: 1234 servable assets, measured
+  byte-identical across three containers and two startup modes, counted as one
+  behaviour. The test is always the same - if the dimension were counted, how
+  many times would one fact be reported?
+- `ReplaceThemeResource`'s `[0-9a-z]{5}` is no longer an inference from thirteen
+  sampled values. The route validates the segment against exactly that, measured
+  as a sixteen-row grid, so the mask and the server agree by measurement rather
+  than by luck. The pattern now carries a submatch group for
+  `Step.CaptureThemeResource`, deliberately one pattern rather than two: the
+  mask and the capture must agree on what a version is, and the first sign of
+  drift would be a golden whose `Location` churns while its body does not.
+
 ## Boundaries
 
 | Package | Owns | Must not |
@@ -3562,6 +3668,16 @@ implementation satisfies entirely.
   package separately" already says how to run them; it does not say that a
   mutation in `internal/admin` scored against `internal/admin` alone reports a
   survivor every time.
+
+- **A mutation that deletes a predicate proves nothing; one that deletes a
+  comparison's *reporting* proves a great deal, and they look identical in a
+  diff.** Disabling a guard means the guard does not run, which is true of every
+  assertion ever written - the verdict is a tautology and reporting it as a
+  survivor is a fourth costume for F208. What is worth finding is a guard that
+  can be made **silently wrong while still appearing present**: the id-spaces
+  cut shipped a sweep whose comparison read the wrong field, and it ran, passed,
+  and asserted nothing. The question to ask of any survivor is not "did the
+  check stop running" but "could this be wrong and still look right".
 
 **Run each package separately.** A filtered `-run` has twice reported a survivor
 that a test outside the filter was killing, and once hidden a real survivor

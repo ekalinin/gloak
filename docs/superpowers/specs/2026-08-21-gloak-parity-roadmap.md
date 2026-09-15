@@ -250,11 +250,11 @@ operations is allocated below; none is left unassigned.
 | Partial export | `partial-export` and `partialImport`, **done 2026-09-06** | P14 | `admin/realms-admin` 42->44. The export is `GET /admin/realms/{realm}` **spliced**, not transcribed, so `realmrep.go` stays the one truth. Answers F163: the parse code separates **syntax from binding**, not shapes | 2 ops |
 | Certificate remainder | The `Client Attribute Certificate` tag's last three, **done 2026-09-06** | F161, F38 | `admin/client-attribute-certificate` 4->5, and **+1 counted, +3 served**: `download` and `generate-and-download` are built and uncounted, because no golden can hold a keystore. The dependency question **inverted** - `x/crypto/pkcs12` is already direct and cannot read Keycloak's BouncyCastle BER, so `internal/keystore` was written and no module added. BCFKS is a deliberate divergence, F171 | 1 op |
 
-Denominator today: **413 Admin API operations plus 247 protocol, account and
-management behaviours, 660 enumerated**, plus **two** chapters (parts of P13 and P14) whose
+Denominator today: **413 Admin API operations plus 264 protocol, account,
+management and theme behaviours, 677 enumerated**, plus **two** chapters (parts of P13 and P14) whose
 surface is not counted and which the report says so about - P11 left that list on
-2026-09-07 and the account API on 2026-09-08. Served: **598 of 660** after the
-management port, and **P2, P4 and P5 are complete** -
+2026-09-07 and the account API on 2026-09-08. Served: **598 of 677** after the
+themes chapter, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -285,7 +285,53 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-15 (thirty-ninth fold).** `make conformance` reports **598 of
+**Updated 2026-09-15 (fortieth fold).** `make conformance` reports **598 of 677,
+and `0 chapters not enumerated`.** The caveat is gone from the report entirely.
+
+Ten days ago the line read **535 of 554, 4 chapters not enumerated**. The
+denominator is complete now, which means every percentage this project prints
+from here is honest in a way none before it was.
+
+**The unit is the deliverable, more than the count.** *An answer the route gives
+that a request can distinguish without knowing which file it named* - 1234
+servable assets saying one thing between them, counted once. **A fourth
+dimension collapsed**, after SAML's fallback family, account-api's `OPTIONS` and
+the management port's verb, and the test is always the same: if the dimension
+were counted, how many times would one fact be reported?
+
+**The other outcome stayed live until one measurement came back.** The brief
+offered two - a denominator, or a rewritten reason saying why one would be
+meaningless - and said plainly that a chapter counted **wrongly** is worse than
+a chapter counted **never**. What decided it was file stability: `css/styles.css`
+is one md5 across two `start-dev` containers with different databases **and** a
+production-mode one. A cut that had skipped that third container would have
+written the section backwards.
+
+**A fourth enumeration discriminator, and the transferable part is unchanged.**
+None of the three published ones works here - p11's needs two 404 bodies, this
+route has one; account-api's cannot separate a file that exists from one that
+does not; the management port's is false where GET and HEAD answer and five
+verbs are 405. What all four share is that **each was validated in both
+directions on one container before it was relied on**.
+
+**And the two configuration findings finally say together what neither said
+alone.** The management chapter exists only under a startup option, and the
+theme route's `Cache-Control` is `no-cache` under `start-dev` and
+`max-age=2592000` under `start`. The first is visible; **the second is not**,
+because that header on a static file reads as a property of the product. *This
+recorder's goldens are a function of how the container was started, in more than
+one place, and nothing in a golden says how* - which is what makes F245's
+proposed fix a cost worth paying rather than a change to 1136 files for one
+chapter.
+
+**One review mutation of mine proved nothing and is recorded as such.** Disabling
+a guard means the guard does not run, which is true of every assertion ever
+written. The useful question is whether a guard can be made **silently wrong
+while still appearing present** - which the id-spaces sweep was - and a planted
+violation showed this one bites. That is F208 in a fourth costume, catching the
+reviewer rather than the cut.
+
+**Earlier on 2026-09-15 (thirty-ninth fold).** `make conformance` reports **598 of
 660**, and **the unenumerated chapters fall to one**. `themes` is the last.
 
 **The denominator moves by 16 and the numerator does not move at all**, because
