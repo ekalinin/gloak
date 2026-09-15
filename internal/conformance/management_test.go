@@ -1,7 +1,9 @@
 package conformance
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 )
@@ -175,6 +177,100 @@ func TestManagementRefusalGuardCanFail(t *testing.T) {
 			t.Errorf("a case that breaks no refusal was complained about: %v", got)
 		}
 	})
+}
+
+// The two documents the eleven health and cross-cutting goldens hold between
+// them, named by the cases that hold them.
+//
+// managementAggregateGoldens all answer /health's three-check document, and the
+// last three are the chapter's cross-cutting claims: the verb decides nothing,
+// `Accept` decides nothing, and the path is not normalised. Each of those is a
+// claim that **this request gets that same document**, and a claim of that
+// shape is a relation between two goldens rather than a property of one.
+//
+// managementEmptyGoldens all answer the empty-checks document. /health/started
+// being in this group and not the one above is the finding that the four
+// MicroProfile paths are two documents rather than four, and that which path
+// gets which is not guessable from the names.
+var managementAggregateGoldens = []string{
+	"management/health/check",
+	"management/health/ready",
+	"management/health/accept-ignored",
+	"management/health/wrong-verb",
+	"management/health/unnormalised-path",
+}
+
+var managementEmptyGoldens = []string{
+	"management/health/live",
+	"management/health/started",
+	"management/health/well",
+	"management/health/group",
+	"management/health/group-unknown",
+}
+
+// TestManagementHealthGoldensHoldTheDocumentTheyWereMeasuredTo is this
+// chapter's answer to a surviving mutation.
+//
+// Changing `Graceful Shutdown` to `Graceless Shutdown` inside
+// management/health/check's golden was applied, compiled and run against the
+// whole package, and **nothing failed**. That is not a defect in this chapter:
+// it is account-api.md's rule met on a fresh surface - a Recorded golden that
+// is wrong is invisible, because the verifier requires the served response
+// *not* to match and a corrupted golden does not match either way. Every case
+// here is Recorded, so every body in this chapter sat in that hole.
+//
+// What closes it is not a copy of the bytes, which would be a golden checked
+// against a second golden somebody typed. It is the **relations the chapter
+// claims**: five of these requests were measured answering one document and
+// five answering another, and those equalities are assertions no single case
+// can make. A byte changed in any one of the ten now disagrees with four
+// siblings.
+//
+// The vacuity guards are two, because the traversal and the comparison need
+// their own. The first is that both groups are non-empty and every named golden
+// was read. The second is that the two documents **differ from each other**: a
+// bug that made every golden read as empty bytes would satisfy ten equalities
+// and say nothing, and it is the comparison rather than the walk that would be
+// hollow.
+func TestManagementHealthGoldensHoldTheDocumentTheyWereMeasuredTo(t *testing.T) {
+	read := func(id string) []byte {
+		t.Helper()
+		raw, err := os.ReadFile(GoldenPath(goldenDir, id))
+		if err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+		g, err := ParseGolden(raw)
+		if err != nil {
+			t.Fatalf("%s: parse golden: %v", id, err)
+		}
+		return g.Body
+	}
+
+	agree := func(group []string) []byte {
+		t.Helper()
+		if len(group) < 2 {
+			t.Fatalf("a group of %d goldens asserts no equality", len(group))
+		}
+		first := read(group[0])
+		for _, id := range group[1:] {
+			if got := read(id); !bytes.Equal(got, first) {
+				t.Errorf("%s and %s were measured answering the same document and their "+
+					"goldens differ.\n%s: %s\n%s: %s", group[0], id, group[0], first, id, got)
+			}
+		}
+		return first
+	}
+
+	aggregate := agree(managementAggregateGoldens)
+	empty := agree(managementEmptyGoldens)
+
+	if len(aggregate) == 0 || len(empty) == 0 {
+		t.Fatal("a group's document is empty, so its equalities compare nothing")
+	}
+	if bytes.Equal(aggregate, empty) {
+		t.Fatal("the aggregate document and the empty one are the same bytes, so the split " +
+			"this chapter records - four /health paths, two documents - is asserted by nothing")
+	}
 }
 
 // TestManagementCasesDeclareTheSecurityHeadersAbsent is the finding made into
