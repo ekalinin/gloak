@@ -893,3 +893,15 @@ Neither was re-tested and neither moved.
 - **`internal/management` reads no store**, so if a later cut adds a check that
   does, `newManagementFixture` has to start sharing the fixture's store and its
   doc comment says so.
+- **README.md's flag table is now incomplete and this branch may not edit it.**
+  It lists six rows at lines 171-176 and `gloak serve` now takes eight. The two
+  missing rows, phrased as the table phrases the rest:
+
+  | flag | env | default | meaning |
+  |---|---|---|---|
+  | `-health-enabled` | `GLOAK_HEALTH_ENABLED` | off | serve the management interface, as Keycloak's `--health-enabled` does |
+  | `-management-addr` | `GLOAK_MANAGEMENT_ADDR` | `:9000` | address the management interface listens on |
+
+  Worth a sentence beside them that **off is Keycloak's default too**, and that
+  there is deliberately no `-metrics-enabled` - `gloak serve -metrics-enabled` is
+  a usage error, and `TestThereIsNoMetricsFlag` is what keeps it one.
