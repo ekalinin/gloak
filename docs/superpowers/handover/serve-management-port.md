@@ -548,6 +548,7 @@ verdicts are recorded, because they are not the same question.
 | M15 | `serve` ignores the flag | `internal/conformance` | KILLED - all five Implemented health cases |
 | M16 | the chapter-without-the-flag arm disabled | `internal/conformance` | KILLED by the can-fail guard |
 | M17 | both checks read the draining flag | `internal/management` | KILLED - "took the other check down too" |
+| M18 | the health document's separator inverted | `internal/httpx` | KILLED - the byte table and the arity guard both |
 
 ### 5.1 M8 is the finding, and it would have corrupted eight goldens
 
@@ -610,6 +611,19 @@ The split is where it should be: `internal/httpx` pins the **rendering** for a
 given list, byte for byte and length for length, and `internal/management`
 chooses the list - and what it chooses has no measured contract to be checked
 against.
+
+### 5.4 One arity has no recording, so it is asserted as a property
+
+The byte table holds two checks and none, which are the two a `--health-enabled`
+Keycloak serves. **One is the arity a separator gets wrong** and nothing measured
+it. `TestHealthDocumentIsAlwaysJSON` walks zero to three and asserts that the
+document parses and holds the entries it was given - a property rather than
+bytes, because claiming bytes for an arity nobody recorded would be inventing a
+contract, and claiming the output is JSON is not.
+
+M18 inverted the separator and is killed by both, which is the point: the byte
+table catches it at the arity that has a recording and the property catches it at
+the arity that does not.
 
 ## 6. Parity
 
