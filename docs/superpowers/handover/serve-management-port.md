@@ -645,6 +645,58 @@ The eight still `Recorded` are not: their declarations are still checked against
 the recorded bytes alone. That is another instance of F256 and it is the same
 sentence twice, so it is counted once there.
 
+## 5.6 The review round, and the trap it walked into
+
+A review of the branch reported, as its highest-severity finding, that **Gloak
+serves a `/health` body no measured Keycloak has produced**. The evidence was
+good: `management/health/check.http` holds 313 bytes and opens its array `[{`,
+where the socket sent 345 and opened it `[` newline eight spaces `{`. Same
+document, different whitespace, and the reviewer had checked that neither
+`FormatGolden` nor the recorder reformats JSON.
+
+**It is the `Unordered: []string{"checks"}` mask.** Sorting an array means
+parsing and re-rendering it, and the re-rendering is not the wire's layout - so
+the golden is the *normalised form* of the response rather than the response.
+The comparison is sound because `normalisePasses` runs on **both** sides: the
+recorder applies it before writing and `diff` applies it to what Gloak served.
+Nothing in this harness ever compares a golden to a socket.
+
+It was settled by running the measured 345 bytes through `normalisePasses`:
+
+```
+wire3 len: 345
+normalised wire3: 313 bytes
+golden: 313 bytes
+EQUAL: true
+
+wire2 len: 225
+normalised wire2: 202 bytes    (the same layout, minus the third check)
+```
+
+So Gloak's two-check body and the golden differ in the third check and in
+nothing else, which is what the eight `Reason` strings say.
+
+**The trap is now a test rather than something to rediscover.**
+`TestTheAggregateGoldenIsTheWireBytesAfterTheMask` holds the measured wire bytes,
+puts them through the passes and requires the committed golden, with a vacuity
+guard that fails if the wire and the golden ever become equal - because then the
+equality would hold for a different reason and the test would stop recording that
+the mask re-renders anything.
+
+It is worth stating why the review was reasonable and still wrong. Every fact it
+cited was true and it had read the recorder; what it had not read is that the
+same function runs on the verifier's side. **A golden in this repository is not a
+recording; it is a recording under the case's masks**, and no comment in the
+management chapter said so. Three now do.
+
+The rest of the round found seven real things and they are in the commit: the
+asymmetric error path in `serve` (a listener error returned with the sibling
+still listening), a SIGTERM window before the signal handler was installed, two
+drains sharing one budget, a duplicated fixture-state switch, a discarded drain
+error, `-management-addr=:0` logging `:0`, and three comments that were wrong -
+including one in this cut that criticised a hopeful log line twenty-five lines
+above a hopeful log line.
+
 ## 6. Parity
 
 ```
@@ -739,6 +791,19 @@ Phrased as it would be folded.
 >   `Implemented` survived 26 subtests, because `Implemented` is `iota` and a
 >   `Recorded` case is required not to match anyway, and it would have had
 >   `make record` rewrite eight goldens from the wrong port.
+
+### For the masks section
+
+> - **A golden is not a recording; it is a recording under the case's masks, and
+>   `Unordered` is where the difference is visible.** Sorting an array means
+>   parsing and re-rendering it, so `management/health/check`'s golden holds
+>   **313** bytes opening `[{` where the socket sent **345** opening `[` newline
+>   eight spaces `{` - the same document in a layout no server produced. It is
+>   sound because `normalisePasses` runs on both sides, the recorder's and the
+>   verifier's, so nothing ever compares a golden to a socket. A code review of
+>   the management port read the file against a `curl` and reported the
+>   difference as a divergence; `TestTheAggregateGoldenIsTheWireBytesAfterTheMask`
+>   is that pinned, and it applies to every `Unordered` golden in the tree.
 
 ### For the statuses section
 
