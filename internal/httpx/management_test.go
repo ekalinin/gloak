@@ -1,6 +1,8 @@
 package httpx
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -135,6 +137,50 @@ func TestHealthDocumentIsTheMeasuredBytes(t *testing.T) {
 			}
 			if got := w.Header().Get("Cache-Control"); got != "no-store" {
 				t.Errorf("Cache-Control = %q, want no-store on every response in this family", got)
+			}
+		})
+	}
+}
+
+// TestHealthDocumentIsAlwaysJSON walks the arities the measured table does not.
+//
+// The table above holds two checks and none, because those are the two a
+// Keycloak with --health-enabled alone was measured serving. **One is the arity
+// the separator logic is most likely to get wrong** and there is no recording of
+// it, so this asserts a property rather than bytes: whatever the writer emits
+// parses, and holds the entries it was given. Claiming bytes for an arity
+// nothing measured would be inventing a contract; claiming the document is JSON
+// is not.
+func TestHealthDocumentIsAlwaysJSON(t *testing.T) {
+	for n := 0; n <= 3; n++ {
+		t.Run(fmt.Sprintf("%d checks", n), func(t *testing.T) {
+			checks := make([]HealthCheck, n)
+			for i := range checks {
+				checks[i] = HealthCheck{Name: fmt.Sprintf("check %d", i), Up: true}
+			}
+			w := httptest.NewRecorder()
+			WriteHealthDocument(w, checks)
+
+			var doc struct {
+				Status string `json:"status"`
+				Checks []struct {
+					Name   string `json:"name"`
+					Status string `json:"status"`
+				} `json:"checks"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &doc); err != nil {
+				t.Fatalf("the document does not parse: %v\n%q", err, w.Body)
+			}
+			if len(doc.Checks) != n {
+				t.Errorf("document holds %d checks, want %d: %q", len(doc.Checks), n, w.Body)
+			}
+			for i, c := range doc.Checks {
+				if want := fmt.Sprintf("check %d", i); c.Name != want {
+					t.Errorf("check %d is named %q, want %q", i, c.Name, want)
+				}
+			}
+			if doc.Status != "UP" {
+				t.Errorf("status = %q, want UP", doc.Status)
 			}
 		})
 	}

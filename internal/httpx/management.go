@@ -96,13 +96,13 @@ func WriteHealthDocument(w http.ResponseWriter, checks []HealthCheck) {
 	var b strings.Builder
 	fmt.Fprintf(&b, healthOpen, status)
 	for i, c := range checks {
-		name, err := json.Marshal(c.Name)
-		if err != nil {
-			// json.Marshal of a string cannot fail. Answering with the name
-			// unquoted would produce a document that is not JSON, so the
-			// unreachable branch writes nothing rather than something broken.
-			continue
-		}
+		// **The error is discarded rather than branched on.** json.Marshal of a
+		// string cannot fail - invalid UTF-8 is replaced rather than refused -
+		// so a branch here is one nothing can reach and nothing can test. It is
+		// also a branch that would make things worse: skipping the entry would
+		// leave the previous one's comma dangling and produce a document that is
+		// not JSON, which is a worse answer than the one this cannot produce.
+		name, _ := json.Marshal(c.Name)
 		up := "UP"
 		if !c.Up {
 			up = "DOWN"
