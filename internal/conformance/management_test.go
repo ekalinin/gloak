@@ -3,6 +3,8 @@ package conformance
 import (
 	"bytes"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -39,6 +41,11 @@ func TestManagementChapterCountIsThePinnedNumber(t *testing.T) {
 	}
 }
 
+// metricsChapter is the one management chapter that may still hold no
+// Implemented case. It is a constant rather than a literal inside the refusal
+// because the refusal's message names it and the two must agree.
+const metricsChapter = "management/metrics"
+
 // managementDefects returns one complaint per way cases break
 // Case.ManagementPort's three refusals, and no complaints when they hold.
 //
@@ -53,17 +60,39 @@ func managementDefects(cases []Case, fixtures map[string]Fixture) []string {
 			continue
 		}
 
-		// Refusal one: the verifier has one handler and it is Gloak's main mux,
-		// so an Implemented management case asserts that the main port
-		// reproduces bytes recorded from the management port. Keycloak's own
-		// main port answers /health with the unmatched-path 404, so that is a
-		// contract nobody wants met.
-		if c.ManagementPort && c.Status == Implemented {
+		// Refusal one, **narrowed on 2026-09-16 rather than removed**.
+		//
+		// It used to refuse Implemented for every management case, and its
+		// ground was measured: the verifier had one handler, so a management
+		// case's request went to Gloak's main mux while its golden had been
+		// recorded from port 9000 - two servers that disagree about the same
+		// request, `GET //health` being 400 on one and 200 on the other. That
+		// ground is gone. newManagementFixture builds the second handler, serve
+		// routes to it through Target, and
+		// TestTheVerifierAnswersAManagementCaseFromTheManagementServer
+		// reproduces the very disagreement that made the refusal true - on
+		// Gloak, on the two handlers the verifier now holds.
+		//
+		// What is left is narrower and is still measured. **A metrics case may
+		// not be Implemented.** Gloak keeps no counters, so it has no
+		// --metrics-enabled and serves no /metrics - which is not a gap but the
+		// measured answer for that option set, since a metrics-disabled
+		// Keycloak answers /metrics with the ordinary 53-byte 404. The two
+		// recordable cases in that family are 406s out of Micrometer's content
+		// negotiation, and an endpoint that produced them would need a success
+		// branch, which could only be a fabricated dump. The dump cannot be
+		// compared against anything either: 116 lines move between two requests
+		// three seconds apart and 2156 between two containers, which is F113.
+		// So there is nothing on that endpoint an Implemented case could
+		// truthfully claim.
+		if c.ManagementPort && c.Status == Implemented && chapterOf(c.ID) == metricsChapter {
 			out = append(out, fmt.Sprintf(
-				"%s is Implemented and goes to the management port, but the verifier has one "+
-					"handler and serves it to Gloak's main mux - a different server from the one "+
-					"its golden was recorded against. Give the verifier a management handler and "+
-					"lift this refusal in the same commit.", c.ID))
+				"%s is Implemented and is in %s. Gloak keeps no counters, so it has no "+
+					"--metrics-enabled and no metrics endpoint; the only recordable responses "+
+					"there are Micrometer's 406s, whose success branch would have to be a "+
+					"fabricated dump, and the dump moves 116 lines in three seconds so nothing "+
+					"on it can be compared. Serving one means building the counters first.",
+				c.ID, metricsChapter))
 		}
 
 		// Refusal two, in both directions. The flag decides which socket the
@@ -98,18 +127,17 @@ func managementDefects(cases []Case, fixtures map[string]Fixture) []string {
 
 // TestManagementRefusals runs the three refusals over the catalogue.
 //
-// The first is the one that answers "what does the verifier serve for a
-// management-port case". It serves the request to the same handler it serves
-// every other case to, because it has exactly one, and that handler is Gloak's
-// main mux. The golden beside it was recorded from port 9000. Those are two
-// different servers on one container, measured disagreeing about the same
-// request: `GET //health` is a 400 on 8080 and a 200 on 9000.
+// The first used to answer "what does the verifier serve for a management-port
+// case" with "the main mux, because it has only one handler". It now has two:
+// newManagementFixture builds Gloak's management interface and serve picks
+// between them with Target, the same predicate the recorder picks a base URL
+// with. So the refusal is narrowed to the one family whose ground survives -
+// the metrics endpoint, which Gloak does not serve and whose only recordable
+// responses could not be produced honestly.
 //
-// So the verifier is not answering the question the golden asks. Recorded is
-// honest about that - it asserts only "these differ" - and the refusal is what
-// stops anything claiming more. When Gloak grows a management interface,
-// whoever builds it gives the verifier a second handler and lifts this in the
-// same commit, which a reviewer sees.
+// The other two are unchanged and both still matter, one of them more than
+// before: a management case that does not declare the flag is now recorded from
+// the wrong server **and** verified against the wrong handler.
 func TestManagementRefusals(t *testing.T) {
 	declared := 0
 	for _, c := range Catalog {
@@ -139,9 +167,9 @@ func TestManagementRefusalGuardCanFail(t *testing.T) {
 		want  string
 	}{
 		{
-			name:  "implemented",
-			cases: []Case{{ID: "management/health/check", Status: Implemented, ManagementPort: true, Fixture: "bootstrap"}},
-			want:  "Give the verifier a management handler",
+			name:  "an implemented metrics case",
+			cases: []Case{{ID: "management/metrics/dump", Status: Implemented, ManagementPort: true, Fixture: "bootstrap"}},
+			want:  "Gloak keeps no counters",
 		},
 		{
 			name:  "flag outside the chapter",
@@ -175,6 +203,37 @@ func TestManagementRefusalGuardCanFail(t *testing.T) {
 		ok := []Case{{ID: "management/health/check", Status: Recorded, ManagementPort: true, Fixture: "bootstrap"}}
 		if got := managementDefects(ok, stepped); len(got) != 0 {
 			t.Errorf("a case that breaks no refusal was complained about: %v", got)
+		}
+	})
+
+	// The lift, asserted rather than assumed. A refusal that was narrowed and a
+	// refusal that was deleted look identical from the side that still fires;
+	// this is the side that stopped firing, and it has to be checked or the
+	// narrowing is a claim in a comment.
+	t.Run("an implemented health case is allowed, which is the lift", func(t *testing.T) {
+		lifted := []Case{{ID: "management/health/live", Status: Implemented, ManagementPort: true, Fixture: "bootstrap"}}
+		if got := managementDefects(lifted, stepped); len(got) != 0 {
+			t.Errorf("the verifier has a management handler and this is still refused: %v", got)
+		}
+	})
+
+	// And the two families are told apart by the chapter rather than by the
+	// status, so an Implemented index or fallback case is allowed too. Without
+	// this row, a refusal reading "any Implemented case outside management/health"
+	// would pass every row above.
+	t.Run("the narrowing is to the metrics chapter and not to one case", func(t *testing.T) {
+		for _, id := range []string{"management/index/root", "management/fallback/unknown-path"} {
+			allowed := []Case{{ID: id, Status: Implemented, ManagementPort: true, Fixture: "bootstrap"}}
+			if got := managementDefects(allowed, stepped); len(got) != 0 {
+				t.Errorf("%s is Implemented and was refused: %v", id, got)
+			}
+		}
+		for _, id := range []string{"management/metrics/dump", "management/metrics/prefix-match"} {
+			refused := []Case{{ID: id, Status: Implemented, ManagementPort: true, Fixture: "bootstrap"}}
+			if got := managementDefects(refused, stepped); len(got) != 1 {
+				t.Errorf("%s is Implemented and got %d complaints, want exactly one: %v",
+					id, len(got), got)
+			}
 		}
 	})
 }
@@ -345,7 +404,7 @@ func TestManagementHealthGoldensHoldTheDocumentTheyWereMeasuredTo(t *testing.T) 
 	}
 }
 
-// TestRecordTargetFollowsTheFlag is the recorder's routing decision, tested
+// TestTargetFollowsTheFlag is the routing decision **both** sides make, tested
 // where a build without Docker can reach it.
 //
 // The decision used to be three lines inside record_test.go, which carries the
@@ -356,9 +415,15 @@ func TestManagementHealthGoldensHoldTheDocumentTheyWereMeasuredTo(t *testing.T) 
 // pull request can rely on.
 //
 // The third case is the one worth having: a case that does not declare the flag
-// must go to the main port **even when a management URL was supplied**, which
-// is what stops the routing being "whichever URL is non-empty".
-func TestRecordTargetFollowsTheFlag(t *testing.T) {
+// must go to the main side **even when a management value was supplied**, which
+// is what stops the routing being "whichever value is non-empty".
+//
+// The second half of the table is the same three rows over http.Handlers rather
+// than strings, and it is not decoration. Target is generic precisely so the
+// recorder and the verifier cannot come to disagree about which socket or which
+// handler a case addresses, and a test that only ever instantiated it at one
+// type would leave the other instantiation asserted by nothing.
+func TestTargetFollowsTheFlag(t *testing.T) {
 	const main, mgmt = "http://host:8080", "http://host:9000"
 	for _, tc := range []struct {
 		name string
@@ -370,10 +435,248 @@ func TestRecordTargetFollowsTheFlag(t *testing.T) {
 		{"an ordinary case ignores the management URL it was given", Case{ID: "admin/users/read"}, main},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := RecordTarget(main, mgmt, tc.c); got != tc.want {
-				t.Errorf("RecordTarget = %q, want %q", got, tc.want)
+			if got := Target(main, mgmt, tc.c); got != tc.want {
+				t.Errorf("Target = %q, want %q", got, tc.want)
 			}
 		})
+	}
+
+	// **Target must not read Status, and that had to be found by mutation.**
+	// Narrowing the predicate to `c.ManagementPort && c.Status == Implemented`
+	// was applied, compiled, and survived 26 subtests including the whole
+	// management chapter of TestConformance. It is not a harmless narrowing: a
+	// Recorded case is required *not* to match, so eight cases sent to the main
+	// mux fail to match for the wrong reason and skip exactly as they should -
+	// and the **recorder** reads this same function, so `make record` would have
+	// rewritten those eight goldens from port 8080 and the diff would have looked
+	// like Keycloak changing its mind.
+	//
+	// Implemented is iota, so it is Status's zero value, which is why every
+	// table row above and the integration test below went through the mutated
+	// branch without noticing. The rows here are the ones that do not: the
+	// answer is the same for all three statuses, so a predicate that reads one
+	// fails.
+	for _, status := range []Status{Implemented, Recorded, Pending} {
+		t.Run(fmt.Sprintf("the port does not depend on the status (%d)", status), func(t *testing.T) {
+			if got := Target(main, mgmt, Case{ManagementPort: true, Status: status}); got != mgmt {
+				t.Errorf("a management case with status %d went to %q; Target decides on "+
+					"the socket a case addresses and a status is not one", status, got)
+			}
+			if got := Target(main, mgmt, Case{Status: status}); got != main {
+				t.Errorf("an ordinary case with status %d went to %q", status, got)
+			}
+		})
+	}
+
+	named := func(name string) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(name))
+		})
+	}
+	mainH, mgmtH := named("main"), named("management")
+	for _, tc := range []struct {
+		name string
+		c    Case
+		want string
+	}{
+		{"a management case goes to the management handler", Case{ManagementPort: true}, "management"},
+		{"an ordinary case goes to the main handler", Case{}, "main"},
+		{"an ordinary case ignores the management handler it was given", Case{ID: "admin/users/read"}, "main"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			Target(mainH, mgmtH, tc.c).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+			if got := w.Body.String(); got != tc.want {
+				t.Errorf("Target served %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestTheVerifierAnswersAManagementCaseFromTheManagementServer is what replaces
+// Case.ManagementPort's first refusal, and it is the same measurement that made
+// that refusal true, taken on Gloak instead of on Keycloak.
+//
+// The refusal's ground was that the verifier had one handler while the goldens
+// came from a second server, and the evidence was one request answered two ways
+// on one Keycloak container:
+//
+//	GET //health  on 8080  400 {"error":"missingNormalization",...}
+//	GET //health  on 9000  200 with the health document
+//
+// This sends that request to each of the two handlers the verifier now builds
+// and requires the same two answers. **A guard that only checked "there are two
+// handlers" could be satisfied by two handlers that are the same server**; this
+// is satisfied only by two that disagree the way the reference pair disagrees,
+// and it is the one request in this repository measured to tell them apart.
+func TestTheVerifierAnswersAManagementCaseFromTheManagementServer(t *testing.T) {
+	mainHandler := newFixture(t, "bootstrap")
+	mgmtHandler := newManagementFixture(t)
+
+	ask := func(h http.Handler) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "http://localhost:8080//health", nil))
+		return w
+	}
+
+	onMain := ask(mainHandler)
+	if onMain.Code != http.StatusBadRequest {
+		t.Errorf("the main handler answered GET //health with %d, want the 400 the "+
+			"normalisation rule gives: %s", onMain.Code, onMain.Body)
+	}
+	if !strings.Contains(onMain.Body.String(), "missingNormalization") {
+		t.Errorf("the main handler's GET //health is not missingNormalization: %s", onMain.Body)
+	}
+
+	onManagement := ask(mgmtHandler)
+	if onManagement.Code != http.StatusOK {
+		t.Errorf("the management handler answered GET //health with %d, want 200; "+
+			"this port does not normalise, measured", onManagement.Code)
+	}
+	if !strings.Contains(onManagement.Body.String(), `"status": "UP"`) {
+		t.Errorf("the management handler's GET //health is not the health document: %s",
+			onManagement.Body)
+	}
+}
+
+// TestServeSendsACaseToTheHandlerItsFlagNames closes the gap between "the
+// verifier has two handlers" and "a case reaches the right one".
+//
+// Target is tested above on values, and the handlers are tested above as two
+// servers. Neither says that serve wires the one to the other, and that is the
+// join a later edit could break silently: dropping the branch from serve would
+// leave every test above green while every management case was compared against
+// the main mux again.
+//
+// It sends **one path, twice, differing only in the flag** - which is the same
+// shape as the measurement on the reference container, and the reason it is one
+// path rather than two cases is that two paths could differ for two reasons.
+func TestServeSendsACaseToTheHandlerItsFlagNames(t *testing.T) {
+	live := Request{Method: http.MethodGet, Path: "/health/live"}
+
+	// **Status: Recorded, deliberately.** Implemented is Status's zero value, so
+	// a case written without one goes through any predicate that reads the
+	// status as though it were Implemented - which is how a narrowed Target
+	// survived this test once. A Recorded management case is the one that has to
+	// reach the management handler and the one nothing else here would notice
+	// missing, because a Recorded case is required not to match anyway.
+	onManagement, _, err := serve(t, Case{
+		ID: "management/health/live", Status: Recorded, Fixture: "bootstrap",
+		ManagementPort: true, Request: live,
+	})
+	if err != nil {
+		t.Fatalf("serve the management case: %v", err)
+	}
+	if onManagement.Code != http.StatusOK {
+		t.Errorf("a ManagementPort case got %d for /health/live, want the management "+
+			"interface's 200: %s", onManagement.Code, onManagement.Body)
+	}
+
+	onMain, _, err := serve(t, Case{
+		ID: "management/health/live", Fixture: "bootstrap", Request: live,
+	})
+	if err != nil {
+		t.Fatalf("serve the same request without the flag: %v", err)
+	}
+	if onMain.Code != http.StatusNotFound {
+		t.Errorf("the same request without the flag got %d, want the main server's 404; "+
+			"if these two agree, serve is not reading the flag at all", onMain.Code)
+	}
+}
+
+// theAggregateOnTheWire is what port 9000 actually sent for GET /health on a
+// both-options container, read off a socket on 2026-09-16: 345 bytes, with the
+// `checks` array opened on its own line.
+//
+// **It is not what management/health/check's golden holds**, and that is the
+// point of the test below.
+const theAggregateOnTheWire = "{\n" +
+	"    \"status\": \"UP\",\n" +
+	"    \"checks\": [\n" +
+	"        {\n" +
+	"            \"name\": \"Graceful Shutdown\",\n" +
+	"            \"status\": \"UP\"\n" +
+	"        },\n" +
+	"        {\n" +
+	"            \"name\": \"Keycloak Initialized\",\n" +
+	"            \"status\": \"UP\"\n" +
+	"        },\n" +
+	"        {\n" +
+	"            \"name\": \"Keycloak database connections async health check\",\n" +
+	"            \"status\": \"UP\"\n" +
+	"        }\n" +
+	"    ]\n" +
+	"}"
+
+// TestTheAggregateGoldenIsTheWireBytesAfterTheMask is a trap defused.
+//
+// `management/health/check`'s golden holds **313** bytes and opens its array
+// `[{`; the socket sent **345** and opened it `[` newline eight spaces `{`. A
+// reader comparing the committed file against a `curl` would conclude that Gloak
+// serves a body no Keycloak has produced, and a code review of this branch did
+// conclude exactly that.
+//
+// It is the `Unordered: []string{"checks"}` mask. Sorting an array means parsing
+// and re-rendering it, and the re-rendering is not the wire's layout - so **the
+// golden is the normalised form of the response, not the response**. The
+// comparison is sound because `normalisePasses` runs on both sides: the recorder
+// applies it before writing (`record_test.go`) and `diff` applies it to what
+// Gloak served (`conformance_test.go`). Nothing ever compares a golden to a
+// socket.
+//
+// This pins the relationship so the next reader finds it asserted rather than
+// having to rediscover it, and so that a change to the sort's rendering is a
+// failing test rather than 313 bytes quietly becoming something else.
+func TestTheAggregateGoldenIsTheWireBytesAfterTheMask(t *testing.T) {
+	var c Case
+	for _, cc := range Catalog {
+		if cc.ID == "management/health/check" {
+			c = cc
+		}
+	}
+	if len(c.Unordered) == 0 {
+		t.Fatal("management/health/check carries no Unordered mask, so this test is " +
+			"about a normalisation that no longer happens")
+	}
+
+	wire := []byte(theAggregateOnTheWire)
+	// **The length is what makes the constant above a transcription.** 345 is
+	// the `content-length` the socket reported; it is the one number here that
+	// was read rather than typed. Without it the constant's *layout* is pinned
+	// by nothing: a mutation collapsing its array opener to the golden's `[{`
+	// survived, because the mask re-renders either form to the same bytes and
+	// the equality below held for the wrong reason.
+	if len(wire) != 345 {
+		t.Fatalf("the transcribed wire body is %d bytes and the socket reported 345; "+
+			"this test is about the difference between that layout and the golden's, "+
+			"so a transcription that has drifted towards the golden records nothing",
+			len(wire))
+	}
+	normalised, err := normalisePasses(wire, testIssuer, c, nil)
+	if err != nil {
+		t.Fatalf("normalise the wire bytes: %v", err)
+	}
+
+	raw, err := os.ReadFile(GoldenPath(goldenDir, c.ID))
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	g, err := ParseGolden(raw)
+	if err != nil {
+		t.Fatalf("parse golden: %v", err)
+	}
+
+	if string(normalised) != string(g.Body) {
+		t.Errorf("the measured wire bytes do not normalise to the committed golden.\n"+
+			"wire (%d bytes):       %q\nnormalised (%d bytes): %q\ngolden (%d bytes):     %q",
+			len(wire), wire, len(normalised), normalised, len(g.Body), g.Body)
+	}
+	// The vacuity guard, and it is the whole reason this test says anything: if
+	// the mask stopped re-rendering, the wire and the golden would be equal and
+	// the equality above would hold for a different reason.
+	if string(wire) == string(g.Body) {
+		t.Error("the wire bytes and the golden are identical, so this test no longer " +
+			"records that the mask re-renders the array")
 	}
 }
 

@@ -9,14 +9,19 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/ekalinin/gloak/internal/account"
 	"github.com/ekalinin/gloak/internal/admin"
 	"github.com/ekalinin/gloak/internal/bootstrap"
 	"github.com/ekalinin/gloak/internal/keys"
+	"github.com/ekalinin/gloak/internal/management"
 	"github.com/ekalinin/gloak/internal/oidc"
 	"github.com/ekalinin/gloak/internal/store"
 	"github.com/ekalinin/gloak/internal/store/postgres"
@@ -43,6 +48,31 @@ type config struct {
 	issuer        string
 	adminUser     string
 	adminPassword string
+
+	// healthEnabled brings the management interface up, and **off is the
+	// measured default**: a `quay.io/keycloak/keycloak:26.7.1 start-dev` with
+	// neither --health-enabled nor --metrics-enabled has no listener on 9000 at
+	// all. Its startup line names one address and /proc/net/tcp6 inside the
+	// container holds one routable listening socket.
+	//
+	// Keycloak spells it --health-enabled and KC_HEALTH_ENABLED; Gloak's
+	// environment variables use the GLOAK_ prefix and never KC_, so this is
+	// GLOAK_HEALTH_ENABLED.
+	//
+	// **There is deliberately no --metrics-enabled.** Keycloak's other option
+	// brings the same port up carrying /metrics, and Gloak keeps no counters to
+	// put on it. A flag that accepted the word and served a fabricated dump
+	// would be worse than its absence: a Prometheus scraper pointed at it would
+	// get a 200 holding none of the series it charts and would read as healthy
+	// while charting nothing. Without the option, /metrics answers the ordinary
+	// 53-byte 404, which is exactly what a metrics-disabled Keycloak answers -
+	// measured on its own container.
+	healthEnabled bool
+
+	// managementAddr is the management interface's listener. Keycloak's
+	// management port is 9000 and is not the HTTP port; the two are two
+	// servers, measured disagreeing about the same request.
+	managementAddr string
 }
 
 func parseConfig(args []string) (*config, error) {
@@ -58,6 +88,10 @@ func parseConfig(args []string) (*config, error) {
 		"externally visible issuer base URL, no trailing slash (env GLOAK_ISSUER)")
 	fs.StringVar(&cfg.adminUser, "admin-user", envOr("GLOAK_ADMIN_USER", "admin"),
 		"master realm admin username (env GLOAK_ADMIN_USER)")
+	fs.BoolVar(&cfg.healthEnabled, "health-enabled", envTrue("GLOAK_HEALTH_ENABLED"),
+		"serve the management interface on -management-addr (env GLOAK_HEALTH_ENABLED)")
+	fs.StringVar(&cfg.managementAddr, "management-addr", envOr("GLOAK_MANAGEMENT_ADDR", ":9000"),
+		"address the management interface listens on (env GLOAK_MANAGEMENT_ADDR)")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -80,6 +114,22 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envTrue reports whether the environment variable named key is set to a value
+// Go's flag package would read as true. It is envOr's boolean half and the
+// default is always false, because the one option it serves is off by default
+// on Keycloak too.
+//
+// **A value it cannot parse is false rather than an error**, which is a
+// deliberate asymmetry with the flag: `-health-enabled=yes` is a usage error
+// that stops the server, and `GLOAK_HEALTH_ENABLED=yes` starts it without the
+// management port. Making the environment fatal would mean a typo in a
+// deployment's env block stops a server that would otherwise serve every
+// request correctly, to protect an endpoint that is off by default anyway.
+func envTrue(key string) bool {
+	v, err := strconv.ParseBool(os.Getenv(key))
+	return err == nil && v
 }
 
 func serve(args []string) error {
@@ -116,12 +166,160 @@ func serve(args []string) error {
 
 	server := newHTTPServer(cfg.addr, logRequests(oidc.WithKeycloakFallbacks(mux)))
 
-	slog.Info("gloak: listening", "addr", cfg.addr, "issuer", cfg.issuer, "db", cfg.db)
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	// The management interface is a **second server on a second socket**, not a
+	// route family on this one, and that is measured rather than stylistic:
+	// `GET //health` is `400 missingNormalization` on 8080 and `200` with the
+	// health document on 9000 of one container, seconds apart. Registering its
+	// routes on the mux above would give them the main server's normalisation
+	// rule, its security headers and its two fallback bodies, none of which
+	// this port has.
+	//
+	// It is built whether or not it is served, because it is what holds the
+	// draining flag: a `gloak serve` with no management port still drains, it
+	// just has nobody to tell.
+	mgmt := management.New()
+	var mgmtServer *http.Server
+
+	// Both listeners report through one channel, so a management socket that
+	// cannot be bound **stops the server** rather than logging and leaving an
+	// operator who asked for a health endpoint without one. A readiness probe
+	// aimed at a port nothing listens on is the failure mode this endpoint
+	// exists to prevent, and producing it silently would be worse than not
+	// offering the option. It is buffered for two so neither goroutine can be
+	// left blocked on a send after this function has returned.
+	serveErr := make(chan error, 2)
+
+	// The signal handler is installed **before** either socket is taken, so
+	// there is no window in which a listener is answering and a SIGTERM would
+	// kill the process with the default disposition - no drain, no 503, and a
+	// readiness probe that sees 200 until the connection is refused.
+	//
+	// Both listeners start after the store is open and the master realm is
+	// bootstrapped, which is what makes the `Keycloak Initialized` check a
+	// defensible constant rather than a variable with one reachable value.
+	// Keycloak's own port behaves the same way: 73395 polls of /health from the
+	// instant a fresh container started gave two answers - no connection, and
+	// the check already UP.
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Both sockets are taken **here**, synchronously, rather than inside their
+	// goroutines. A port that cannot be bound is then an error before anything
+	// claims to be listening, and each line logged below is true when it is
+	// printed rather than hopeful: binding inside the goroutine makes the
+	// failure arrive through the channel a moment after the log has already
+	// announced the address.
+	apiListener, err := net.Listen("tcp", cfg.addr)
+	if err != nil {
 		return fmt.Errorf("gloak: serve: %w", err)
+	}
+	if cfg.healthEnabled {
+		ln, err := net.Listen("tcp", cfg.managementAddr)
+		if err != nil {
+			_ = apiListener.Close()
+			return fmt.Errorf("gloak: management interface: %w", err)
+		}
+		mgmtServer = newHTTPServer(cfg.managementAddr, mgmt.Handler())
+		go func() {
+			if err := mgmtServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				serveErr <- fmt.Errorf("gloak: management interface: %w", err)
+			}
+		}()
+		// ln.Addr() and not cfg.managementAddr, so that `-management-addr=:0`
+		// logs the port it actually got rather than the zero it asked for.
+		slog.Info("gloak: management interface listening", "addr", ln.Addr().String())
+	}
+
+	slog.Info("gloak: listening", "addr", apiListener.Addr().String(),
+		"issuer", cfg.issuer, "db", cfg.db)
+	go func() {
+		if err := server.Serve(apiListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveErr <- fmt.Errorf("gloak: serve: %w", err)
+			return
+		}
+		serveErr <- nil
+	}()
+
+	select {
+	case err := <-serveErr:
+		// **Whichever server failed, the other one is stopped.** Returning here
+		// with the sibling still listening would leave it answering requests
+		// against a store this function's own defer is about to close, and would
+		// leave its goroutine blocked in Serve for as long as the process lived.
+		// The process does exit immediately today, which is exactly why this is
+		// easy to leave out and wrong to rely on: serve is an ordinary function
+		// with no cleanup contract of its own.
+		stopBoth(server, mgmtServer)
+		return err
+	case <-ctx.Done():
+	}
+
+	// The drain, and the order of these three statements is the contract the
+	// graceful-shutdown health check exists to publish.
+	//
+	// Readiness goes DOWN **first**, so an orchestrator stops routing new
+	// requests here before the server starts refusing them. The main server
+	// drains next, finishing the requests it already has. The management
+	// interface is stopped **last**, so /health answers 503 for the whole of the
+	// drain rather than the probe's connection being refused - which is what
+	// Keycloak does, measured by polling a container through `docker kill -s
+	// TERM`: /health and /health/ready answered 503 while /health/live stayed
+	// 200, and the port kept answering until the process went.
+	slog.Info("gloak: draining")
+	mgmt.BeginDraining()
+
+	// **Each server gets its own budget rather than sharing one.** With a single
+	// context, a main server that used the whole of it would hand the management
+	// interface an already-expired one, which closes the listener and returns
+	// immediately without finishing the `/health` response in flight - so the
+	// probe's last read would be a reset connection rather than the 503 the
+	// ordering above exists to deliver.
+	err = shutdownWithin(server, drainTimeout)
+	if mgmtErr := shutdownWithin(mgmtServer, drainTimeout); mgmtErr != nil {
+		// Logged rather than returned, because the main server's drain is the
+		// one an operator is waiting on and only one error can be returned. It
+		// is not discarded: a management interface that would not stop is a
+		// thing somebody should see.
+		slog.Error("gloak: management interface did not drain", "error", mgmtErr)
+	}
+	if err != nil {
+		return fmt.Errorf("gloak: drain: %w", err)
 	}
 	return nil
 }
+
+// shutdownWithin drains s, giving it at most d. A nil server is a no-op, which
+// is the `-health-enabled` off case.
+func shutdownWithin(s *http.Server, d time.Duration) error {
+	if s == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	return s.Shutdown(ctx)
+}
+
+// stopBoth closes both servers when one of them has failed.
+//
+// It is Close rather than Shutdown: the caller is on its way out with an error
+// and there is nothing to drain gracefully into. A nil server is a no-op.
+func stopBoth(servers ...*http.Server) {
+	for _, s := range servers {
+		if s != nil {
+			_ = s.Close()
+		}
+	}
+}
+
+// drainTimeout bounds how long a shutdown waits for requests in flight.
+//
+// **It is not a measured Keycloak value.** Quarkus's own shutdown timeout is
+// configurable and nothing in this project has measured Keycloak's default, so
+// this is Gloak's own bound rather than a claim about the reference server. It
+// is generous against the requests Gloak serves, every one of which is a small
+// JSON document, and it is finite so that a stuck client cannot hold a
+// terminating process open indefinitely.
+const drainTimeout = 30 * time.Second
 
 // openStore opens the store selected by driver. sqlite and postgres both
 // migrate on return, so the store is ready to use as soon as this succeeds.

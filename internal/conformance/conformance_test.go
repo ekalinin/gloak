@@ -87,17 +87,28 @@ func TestConformance(t *testing.T) {
 // It returns an error rather than failing the test directly because a fixture
 // step failing is the *expected* state for a Recorded case: the endpoint its
 // steps call is exactly what has not been built yet.
+//
+// **It builds both of Gloak's servers and the case decides which its own
+// request reaches**, through the same Target the recorder chooses a base URL
+// with. Both are built for every case, unconditionally, so that the branch in
+// Target is the only thing that decides - building the management handler
+// inside an `if c.ManagementPort` would write the predicate a second time, in
+// the one place a second copy could go wrong without anything failing.
 func serve(t *testing.T, c Case) (*httptest.ResponseRecorder, map[string]string, error) {
 	t.Helper()
 	f, ok := Fixtures[c.Fixture]
 	if !ok {
 		return nil, nil, fmt.Errorf("unknown fixture %q", c.Fixture)
 	}
-	h := newFixture(t, f.State)
+	mainHandler := newFixture(t, f.State)
+	mgmtHandler := newManagementFixture(t)
 
+	// The fixture's steps always go to the main server, mirroring the recorder,
+	// which always runs them against port 8080. See Case.ManagementPort's third
+	// refusal: nothing a step can do reaches the management interface.
 	do := func(req *http.Request) (*http.Response, error) {
 		w := httptest.NewRecorder()
-		h.ServeHTTP(w, req)
+		mainHandler.ServeHTTP(w, req)
 		return w.Result(), nil
 	}
 	sess, err := Run(f, testIssuer, do)
@@ -115,7 +126,7 @@ func serve(t *testing.T, c Case) (*httptest.ResponseRecorder, map[string]string,
 	// their responses the same way is the property this suite rests on.
 	sess.Apply(req)
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
+	Target(mainHandler, mgmtHandler, c).ServeHTTP(w, req)
 	return w, vars, nil
 }
 
