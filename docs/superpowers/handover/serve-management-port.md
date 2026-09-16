@@ -550,6 +550,8 @@ verdicts are recorded, because they are not the same question.
 | M17 | both checks read the draining flag | `internal/management` | KILLED - "took the other check down too" |
 | M18 | the health document's separator inverted | `internal/httpx` | KILLED - the byte table and the arity guard both |
 | M19 | the health writer **adds** `X-Frame-Options` (additive) | `internal/conformance` | KILLED - all five Implemented health cases; see 5.5 |
+| M20 | one byte in the transcribed wire body | `internal/conformance` | KILLED - "does not normalise to the committed golden" |
+| M21 | the transcription's array opener collapsed to the golden's `[{` | `internal/conformance` | **SURVIVED**; fixed; M21b KILLED - 5.6 |
 
 ### 5.1 M8 is the finding, and it would have corrupted eight goldens
 
@@ -678,10 +680,16 @@ nothing else, which is what the eight `Reason` strings say.
 
 **The trap is now a test rather than something to rediscover.**
 `TestTheAggregateGoldenIsTheWireBytesAfterTheMask` holds the measured wire bytes,
-puts them through the passes and requires the committed golden, with a vacuity
-guard that fails if the wire and the golden ever become equal - because then the
-equality would hold for a different reason and the test would stop recording that
-the mask re-renders anything.
+puts them through the passes and requires the committed golden.
+
+Its first vacuity guard was "the wire and the golden must not be equal", and
+**M21 showed that is not enough**. Collapsing the transcription's array opener to
+the golden's `[{` - a partial drift towards the golden - survived, because the
+mask re-renders either layout to the same bytes and the equality held for the
+wrong reason while the constant had stopped being a transcription. The guard that
+closes it is the one the `internal/httpx` table already uses: **assert the length
+the socket reported.** 345 is the only number in this test that was read rather
+than typed, and M21b kills on it.
 
 It is worth stating why the review was reasonable and still wrong. Every fact it
 cited was true and it had read the recorder; what it had not read is that the
