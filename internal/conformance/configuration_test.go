@@ -296,3 +296,45 @@ func firstLines(raw []byte) string {
 	head, _, _ := strings.Cut(string(raw), "\n\n")
 	return head
 }
+
+// TestTheTreeHoldsMoreThanOneConfiguration is the sweep above's vacuity guard,
+// and it is separate because it is a claim about the **catalogue** rather than
+// about the comparison.
+//
+// If every golden named one configuration, the sweep would be satisfied by a
+// recorder that ignored Case.Configuration entirely and wrote a constant - which
+// is exactly what a recorder written before this field did, one line at a time,
+// for 1136 files. Two distinct values in the tree is what makes the line a
+// recording rather than a decoration.
+//
+// It counts per configuration rather than only counting the distinct values,
+// because the number that would go wrong first is the small one: six goldens
+// declare StartDevHealth today and a re-record that lost the branch would take
+// it to zero, where a test asking only "are there two?" would then report the
+// catalogue as having one configuration and say nothing about which.
+func TestTheTreeHoldsMoreThanOneConfiguration(t *testing.T) {
+	seen := map[Configuration]int{}
+	for _, c := range Catalog {
+		raw, err := os.ReadFile(GoldenPath(goldenDir, c.ID))
+		if err != nil {
+			continue
+		}
+		g, err := ParseGolden(raw)
+		if err != nil {
+			t.Errorf("%s: %v", c.ID, err)
+			continue
+		}
+		seen[g.Configuration]++
+	}
+	if len(seen) < 2 {
+		t.Fatalf("every golden in the tree names one configuration, %v, so a recorder "+
+			"writing a constant would pass the sweep above", seen)
+	}
+	for _, cfg := range Configurations() {
+		if seen[cfg] == 0 {
+			t.Errorf("no golden was recorded under %q, which is declared and started by "+
+				"`make record`; a configuration nothing uses is a container regime "+
+				"nothing exercises", cfg)
+		}
+	}
+}

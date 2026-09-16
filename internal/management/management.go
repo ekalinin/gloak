@@ -38,12 +38,15 @@
 // endpoints that are on, so Gloak's is the 120-byte page rather than the
 // 180-byte one the conformance goldens hold.
 //
-// The consequence is stated rather than hidden: **six** of the fourteen
-// management goldens are recordings whose bytes are a function of the option set
-// - the index page and the **five** aggregate documents - and two more hold
-// Micrometer's 406, which needs the metrics endpoint to exist. Those eight stay
-// Recorded and each says so in its own catalogue entry. See
-// docs/superpowers/handover/serve-management-port.md section 2.
+// Six of the fourteen management goldens are recordings whose bytes are a
+// function of the option set - the index page and the five aggregate documents.
+// **Those six are recorded against a container started this way**, since
+// conformance.Case.Configuration existed, so they hold the bytes this package
+// sends and their cases are Implemented. Two more hold Micrometer's 406, which
+// needs the metrics endpoint to exist, and stay Recorded under a configuration
+// that has one - re-recording them here would replace the 406 with this
+// package's 404 and make two cases read as served. See
+// docs/superpowers/handover/recorder-configurations.md.
 package management
 
 import (

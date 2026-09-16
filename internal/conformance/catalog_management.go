@@ -42,22 +42,38 @@ var managementSecurityHeaders = []string{
 // fallback, and the three cross-cutting facts that separate this port from the
 // one every other chapter measures.
 //
-// **Six of these are Implemented and the other ten are not, and the split is
-// one fact rather than ten.** Gloak serves this port as a Keycloak started with
-// `--health-enabled` and no `--metrics-enabled` serves it, because that is the
-// only option set it can serve honestly: it keeps no counters, so it has no
-// metrics endpoint, and a metrics-disabled Keycloak's answers are the ones it
-// reproduces. Two of this port's responses are a function of the option set
-// rather than of the version - the index page lists exactly the endpoints that
-// are on, and /health's check list gains the database check only when metrics
-// is on - and the recorder sets both options, so eight goldens hold the
-// other set's bytes. Each of those eight says so in its own Reason.
+// **Twelve of these are Implemented and the other four are the metrics family,
+// and the split is one fact rather than sixteen.** Gloak serves this port as a
+// Keycloak started with `--health-enabled` and no `--metrics-enabled` serves
+// it, because that is the only option set it can serve honestly: it keeps no
+// counters, so it has no metrics endpoint, and a metrics-disabled Keycloak's
+// answers are the ones it reproduces.
 //
-// **Nothing in the metrics family can be Implemented**, and that refusal is in
-// managementDefects with the measurement behind it. It is what is left of a
-// wider refusal: until 2026-09-16 no management case could be Implemented at
-// all, because the verifier had one handler and served them to Gloak's main
-// mux. It now builds two - see newManagementFixture - and
+// Two of this port's responses are a function of the option set rather than of
+// the version - the index page lists exactly the endpoints that are on, and
+// /health's check list gains the database check only when metrics is on - and
+// until 2026-09-16 the recorder set both options on every container, so six
+// goldens held the other set's bytes and six cases stayed Recorded describing
+// behaviours Gloak serves correctly. **Case.Configuration is what closed that**:
+// those six declare StartDevHealth and are recorded against a container started
+// the way Gloak is configured, so the bytes they hold are the bytes Gloak sends
+// and the cases are Implemented.
+//
+// **Nothing in the metrics family can be Implemented, and it is recorded under
+// the other configuration for a reason that is not the recorder's
+// convenience.** Micrometer's content negotiation exists only under
+// `--metrics-enabled`: with health alone, `/metrics` is the ordinary 53-byte
+// 404, measured. Re-recording those two cases under StartDevHealth would
+// replace their 406 with that 404, and Gloak - which answers the 404 - would
+// then match, so two cases would read as served while the behaviour they name
+// is not served at all. managementDefects refuses both halves: an Implemented
+// metrics case, and a metrics case declaring a configuration with no metrics
+// endpoint in it.
+//
+// The Implemented half of the chapter rests on a change made the week before:
+// until 2026-09-16 no management case could be Implemented at all, because the
+// verifier had one handler and served them to Gloak's main mux. It now builds
+// two - see newManagementFixture - and
 // TestTheVerifierAnswersAManagementCaseFromTheManagementServer reproduces, on
 // Gloak's own pair, the `GET //health` disagreement that made the old refusal
 // true on Keycloak's.
@@ -80,24 +96,21 @@ var managementCases = []Case{
 		// level: the response is `HTTP/1.1 200 OK`, `content-length: 180`, and
 		// nothing else.
 		//
-		// Its bytes are a function of the recorder's startup options, which no
-		// other golden in this tree is: the page lists exactly the endpoints
-		// that are switched on. Measured at 180 bytes with both options, 120
-		// with `--health-enabled` alone and 123 with `--metrics-enabled` alone.
-		// startKeycloak sets both and this golden is the both-enabled one. See
-		// F245.
-		ID:     "management/index/root",
-		Doc:    managementDoc,
-		Status: Recorded,
-		// **Gloak serves an index page and it is not this one**, which is the
-		// difference between this Reason and the one it replaced on
-		// 2026-09-16. Gloak has no --metrics-enabled, so its page is the
-		// 120-byte health-only one - byte-identical to what a Keycloak started
-		// the same way answers, measured on its own container - and this golden
-		// is the 180-byte both-options page. The case is Recorded because the
-		// recorder sets both options, not because nothing answers. F245 is the
-		// entry for a golden whose bytes are a function of a startup option.
-		Reason:         "Gloak has no metrics endpoint, so its index lists only /health: 120 bytes where this golden is the both-options 180 - F245",
+		// **Its bytes are a function of the container's startup options**, which
+		// no other golden in this tree was until the theme chapter's
+		// Cache-Control was measured: the page lists exactly the endpoints that
+		// are switched on. Measured at 180 bytes with both options, 120 with
+		// `--health-enabled` alone and 123 with `--metrics-enabled` alone.
+		//
+		// It declares StartDevHealth, so the golden holds the 120-byte page -
+		// read off a socket on 2026-09-16 and byte for byte what Gloak serves,
+		// because Gloak has no metrics endpoint to list. This case was Recorded
+		// with a Reason naming F245 until the recorder could start a second
+		// configuration; the behaviour never moved.
+		ID:             "management/index/root",
+		Doc:            managementDoc,
+		Status:         Implemented,
+		Configuration:  StartDevHealth,
 		Fixture:        "bootstrap",
 		ManagementPort: true,
 		Request:        Request{Method: http.MethodGet, Path: "/"},
@@ -117,26 +130,29 @@ var managementCases = []Case{
 		// recordings agreeing would have been evidence of nothing - AGENTS.md's
 		// rule read in the direction that is actually valid.
 		//
-		// The three entries are themselves option-dependent: with
-		// `--health-enabled` alone the document holds two, and enabling metrics
-		// is what adds the database check. See F245.
-		ID:     "management/health/check",
-		Doc:    managementDoc,
-		Status: Recorded,
-		// **Gloak answers this path and answers it with two checks**, which is
-		// what a Keycloak started with --health-enabled alone answers - 225
-		// bytes on the wire, measured. This golden is the both-options
-		// document, which the socket sent as 345 bytes and which the Unordered
-		// mask re-renders to the 313 committed here; Gloak's two-check body
-		// goes through the same mask and comes out 202. **The third entry is
-		// the only difference**, and that the two layouts agree is asserted by
-		// TestTheAggregateGoldenIsTheWireBytesAfterTheMask rather than assumed.
-		// Gloak has no metrics option to
-		// hang a database check on, and publishing one anyway would be tidying
-		// up a measured quirk: the coupling between a metrics flag and a health
-		// check is Quarkus's, it looks like a bug, and reproducing it is the
-		// whole job. See F245 and internal/management's package comment.
-		Reason:              "Gloak's /health carries two checks, not three: the database check is a function of --metrics-enabled, which Gloak does not have - F245",
+		// **The entries are themselves option-dependent**: with
+		// `--health-enabled` alone the document holds two and the socket sends
+		// 225 bytes, and enabling metrics adds
+		// `Keycloak database connections async health check` and takes it to
+		// 345. This case declares StartDevHealth, so the golden is the
+		// two-check document - which is what Gloak serves, because it has no
+		// metrics option to hang a database check on and publishing one anyway
+		// would be tidying up a measured quirk: the coupling between a metrics
+		// flag and a *health* check is Quarkus's, it looks like a bug, and
+		// reproducing it is the whole job.
+		//
+		// The committed bytes are **202**, not the 225 the socket sent: the
+		// Unordered mask parses the array and re-renders it, so the golden is
+		// the normalised form of the response rather than the response. Both
+		// sides go through normalisePasses, so nothing ever compares a golden to
+		// a socket - TestTheAggregateGoldenIsTheWireBytesAfterTheMask is that
+		// relationship pinned, and it holds the wire bytes of **both**
+		// configurations so the option coupling stays measured after the
+		// three-check document left the golden tree.
+		ID:                  "management/health/check",
+		Doc:                 managementDoc,
+		Status:              Implemented,
+		Configuration:       StartDevHealth,
 		Fixture:             "bootstrap",
 		ManagementPort:      true,
 		Request:             Request{Method: http.MethodGet, Path: "/health"},
@@ -164,14 +180,14 @@ var managementCases = []Case{
 		// orchestrator polls and they answer different documents - a server
 		// answering the aggregate to /health/live would look healthy to a
 		// reader and be wrong.
-		ID:     "management/health/ready",
-		Doc:    managementDoc,
-		Status: Recorded,
-		// Gloak answers it, and with the same two-check document /health gets -
-		// including the 503 during a drain, which is the pair's whole point and
-		// is measured on both servers. It is Recorded for management/health/check's
-		// reason and no other: the third check is the option set.
-		Reason:              "Gloak's /health/ready carries two checks, not three, for management/health/check's reason - F245",
+		//
+		// It answers the same two-check document /health does under this
+		// configuration - including the 503 during a drain, which is the pair's
+		// whole point and is measured on both servers.
+		ID:                  "management/health/ready",
+		Doc:                 managementDoc,
+		Status:              Implemented,
+		Configuration:       StartDevHealth,
 		Fixture:             "bootstrap",
 		ManagementPort:      true,
 		Request:             Request{Method: http.MethodGet, Path: "/health/ready"},
@@ -246,15 +262,16 @@ var managementCases = []Case{
 		// a separate behaviour: no other case in this chapter sends an `Accept`
 		// to /health, so without it the claim that the header is ignored is
 		// made by nothing.
-		ID:     "management/health/accept-ignored",
-		Doc:    managementDoc,
-		Status: Recorded,
-		// **The behaviour this case records is served and correct.** Gloak's
-		// /health ignores Accept exactly as Keycloak's does - the header
-		// changes no byte - and the only thing between this case and
-		// Implemented is that the document it is compared against carries the
-		// metrics-on check list. See management/health/check.
-		Reason:         "Gloak ignores Accept here as measured; the golden is the both-options document and Gloak's carries two checks - F245",
+		//
+		// **This is one of F256's three behaviours, and it is guarded by a
+		// golden now.** It was Recorded while the recorder ran one
+		// configuration, and a Recorded case is required *not* to match - so a
+		// Gloak that read `Accept` here would have failed to match exactly as
+		// thoroughly as one that ignores it.
+		ID:             "management/health/accept-ignored",
+		Doc:            managementDoc,
+		Status:         Implemented,
+		Configuration:  StartDevHealth,
 		Fixture:        "bootstrap",
 		ManagementPort: true,
 		Request: Request{
@@ -275,13 +292,16 @@ var managementCases = []Case{
 		// 404/405/406 family altogether, and it is counted once for the whole
 		// port: 70 of the sweep's 77 cells say the same thing, and counting
 		// them per path would report one behaviour seventy times.
-		ID:     "management/health/wrong-verb",
-		Doc:    managementDoc,
-		Status: Recorded,
-		// Served and correct: Gloak's management port answers every verb with
-		// the route's own 200 and sends no Allow, asserted over eight verbs in
-		// internal/management. The golden's third check is the only difference.
-		Reason:              "Gloak answers every verb with the route's own 200 as measured; the golden is the both-options document - F245",
+		//
+		// **F256's second behaviour, guarded by a golden now.** Gloak's
+		// management port answers every verb with the route's own 200 and sends
+		// no Allow, asserted over eight verbs in internal/management and, since
+		// this case was recorded under the configuration Gloak serves, by this
+		// golden too.
+		ID:                  "management/health/wrong-verb",
+		Doc:                 managementDoc,
+		Status:              Implemented,
+		Configuration:       StartDevHealth,
 		Fixture:             "bootstrap",
 		ManagementPort:      true,
 		Request:             Request{Method: http.MethodPut, Path: "/health"},
@@ -298,17 +318,16 @@ var managementCases = []Case{
 		// sentence about one route table. `/health/../health` and
 		// `/%2e%2e/health` answer the same 200, measured with
 		// `curl --path-as-is` because curl normalises a path before sending it.
-		ID:     "management/health/unnormalised-path",
-		Doc:    managementDoc,
-		Status: Recorded,
-		// Served and correct, and this is the one whose correctness is checked
-		// somewhere else rather than here: Gloak's main mux answers `GET
-		// //health` with 400 missingNormalization and its management handler
-		// answers 200 with the health document, which is
-		// TestTheVerifierAnswersAManagementCaseFromTheManagementServer and is
-		// the same disagreement measured on Keycloak's two ports. The golden's
-		// third check is the only reason this is not Implemented.
-		Reason:              "Gloak's management port does not normalise, asserted on both handlers; the golden is the both-options document - F245",
+		//
+		// **F256's third behaviour and the one that made the entry.** A
+		// mutation making routePath compute the cleaned path and throw it away
+		// survived the whole conformance suite while this case was Recorded,
+		// and was killed only by internal/management's own route table. It is
+		// killed here too now.
+		ID:                  "management/health/unnormalised-path",
+		Doc:                 managementDoc,
+		Status:              Implemented,
+		Configuration:       StartDevHealth,
 		Fixture:             "bootstrap",
 		ManagementPort:      true,
 		Request:             Request{Method: http.MethodGet, Path: "//health"},
@@ -336,6 +355,16 @@ var managementCases = []Case{
 		// one** - `406 Micrometer prometheus endpoint does not support
 		// application/openmetrics-text` - and no golden can hold it: FormatGolden
 		// writes http.StatusText(406). See F246.
+		//
+		// **It keeps the default configuration, and that is a decision rather
+		// than the absence of one.** Every other case in this chapter is
+		// recorded under StartDevHealth, which is the option set Gloak serves;
+		// this behaviour does not exist there. `/metrics` with health alone is
+		// the ordinary 53-byte 404, measured off a socket on 2026-09-16, so
+		// re-recording this case under that configuration would replace the 406
+		// with the fallback - and Gloak, which answers the fallback, would then
+		// match and the case would read as served while Micrometer's
+		// negotiation is served by nothing. managementDefects refuses it.
 		ID:     "management/metrics/openmetrics-refused",
 		Doc:    managementMetricsDoc,
 		Status: Recorded,
@@ -367,7 +396,9 @@ var managementCases = []Case{
 		// the only way to record it at all: the dump is barred by F113 and the
 		// 406 is the same endpoint answering from the same place. What the
 		// golden pins is that the request reached Micrometer, which is exactly
-		// the claim - a path that had not reached it would be the 53-byte 404.
+		// the claim - a path that had not reached it would be the 53-byte 404,
+		// and that is also why this case keeps the default configuration. See
+		// its sibling above.
 		ID:     "management/metrics/prefix-match",
 		Doc:    managementMetricsDoc,
 		Status: Recorded,

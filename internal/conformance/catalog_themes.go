@@ -84,11 +84,17 @@ var themeResourceCases = []Case{
 		// **Cache-Control on this route is a function of how the server was
 		// started, not of its version.** `no-cache` under `start-dev` and
 		// `max-age=2592000` under `start`, measured on two containers from one
-		// image on 2026-09-15. The recorder runs start-dev, so this golden
-		// holds the development value, and that is the only golden-bearing
-		// header in this repository whose value is a startup mode rather than
-		// an image. F250 is the entry; F245 is the same shape one option set
-		// along.
+		// image on 2026-09-15. This golden holds the development value, and that
+		// is the only golden-bearing header in this repository whose value is a
+		// startup mode rather than an image. F250 is the entry; F245 is the
+		// same shape one option set along.
+		//
+		// **The golden now says so.** Its `# recorded-with:` line names
+		// `start-dev`, which is what F250 asked for: the header can still be
+		// read as a property of the product, and the file one line above it
+		// says which command line produced it. A `start` configuration is not
+		// declared, because nothing yet records anything under one - see
+		// configuration.go.
 		//
 		// It is asserted rather than left off precisely because of that. A
 		// header measured to move on a variable the catalogue does not name is
