@@ -99,7 +99,7 @@ Working today:
   Gloak's responses byte-for-byte against bytes recorded from a live
   Keycloak 26.7.1
 - a parity meter whose denominator comes from Keycloak's own OpenAPI description
-  rather than from a hand-kept list: **598 of 677 enumerated behaviours served**,
+  rather than from a hand-kept list: **604 of 677 enumerated behaviours served**,
   and **every chapter now has a denominator**
 - an external oracle: `make oracle` drives Gloak with `kcadm.sh`, Keycloak's own
   admin CLI, which asks for things no recorded case asks for
@@ -117,9 +117,12 @@ against three of the four `SigAlg`s SAML defines. The **account API** is enumera
 derived reads are served, 18 of 40; the remaining refusals are eleven separate
 blockers rather than one, which F194 records so nobody plans them as one cut.
 `BCFKS` is refused where Keycloak answers a keystore, on purpose - see F171.
-The **management port** and the **theme resource route** are enumerated and
-served by nothing: all sixteen and all seventeen of their behaviours are
-measured and recorded, because Gloak has neither a second listener nor a theme
+The **management port** is served, under `-health-enabled`, for the one
+configuration Keycloak answers with `--health-enabled` alone - including the part
+of that configuration which is an **absence**: `/metrics` answers the ordinary
+404 there, so a server with no counters is not diverging by having no metrics
+endpoint. The **theme resource route** is enumerated and served by nothing: all
+seventeen of its behaviours are measured and recorded, because Gloak has no theme
 resource route. A default Keycloak has none either - port 9000 comes up only under
 `--health-enabled` or `--metrics-enabled`, which is what the recorder now sets.
 
@@ -174,6 +177,13 @@ option model.
 | `-issuer` | `GLOAK_ISSUER` | `http://localhost:8080` | externally visible issuer base URL, no trailing slash |
 | `-admin-user` | `GLOAK_ADMIN_USER` | `admin` | bootstrap administrator username |
 | none | `GLOAK_ADMIN_PASSWORD` | none, required | bootstrap administrator password |
+| `-health-enabled` | `GLOAK_HEALTH_ENABLED` | off | serve the management interface, as Keycloak's `--health-enabled` does |
+| `-management-addr` | `GLOAK_MANAGEMENT_ADDR` | `:9000` | address the management interface listens on |
+
+Off is Keycloak's default too: a plain `start-dev` has no listener on 9000 at
+all. There is deliberately **no `-metrics-enabled`** - Gloak keeps no counters,
+so `gloak serve -metrics-enabled` is a usage error rather than a flag that does
+nothing, and a test keeps it one.
 
 `GLOAK_ISSUER` must be the URL clients actually reach, since every endpoint in the
 discovery document is derived from it.
@@ -257,7 +267,7 @@ and stay out of the total rather than being dropped from it silently, which
 would inflate the percentage by hiding the parts nobody has counted. It reads:
 
 ```
-total: 598 of 677 enumerated behaviours served; 0 chapters not enumerated
+total: 604 of 677 enumerated behaviours served; 0 chapters not enumerated
 ```
 
 The denominator is 677 rather than 413 plus a fixed number because the protocol

@@ -6998,3 +6998,127 @@ satisfied by Gloak having no `/resources` route at all, and
 `AssertAbsentHeaders` through `diff` asserts nothing.
 `TestAssertAbsentHeadersAgreeWithTheGolden` is what makes the sixteen
 `X-Frame-Options` declarations mean something.
+
+## F256: a `Recorded` case cannot guard the routing it records
+
+Three of this chapter's behaviours - the verb decides nothing, `Accept` decides
+nothing, the path is not normalised - are served correctly and are guarded by
+`internal/management`'s route table and by no golden. A mutation disabling path
+cleaning survived the whole conformance suite (5.2).
+
+The cause is that their goldens hold the both-options document, so the cases are
+`Recorded`, so a wrong answer and a right one both fail to match. It is
+`account-api.md`'s "a `Recorded` golden that is wrong is invisible" on a new axis:
+here the *golden* is right and the **case** cannot see the difference either way.
+
+What closes it is whatever closes F245 - a recorder that can record more than one
+option set, or a line in the golden naming the configuration. Filed here rather
+than folded into F245 because this is the first measured **consequence** of it,
+and F245 has been filed as a cost with no instance since 2026-09-15.
+
+## F257: `Keycloak Initialized` is a constant because of a startup ordering choice
+
+Gloak's management listener starts after the store is open and the master realm
+is bootstrapped, which is what makes the check unfalsifiable and what makes the
+constant honest (2.3). Keycloak's port behaves the same way, measured.
+
+Bringing the listener up **first** is a defensible design and is arguably why the
+check exists: a `gloak serve` against a slow database would then genuinely report
+DOWN while it bootstrapped, and `/health/started` would mean something. Doing it
+needs the DOWN document for **this** check, which 1.2 does not carry - only the
+datasource check's DOWN was measured, and that one carries a `data` block this
+one may or may not have.
+
+So it is one measurement away rather than a design question, and the measurement
+is awkward: it needs a Keycloak whose initialization is slow enough to poll, which
+no container regime here produces.
+
+## F258: the drain window is as long as the drain and that may be too short to observe
+
+Gloak's `Graceful Shutdown` check goes DOWN and the process exits as soon as the
+main server has no work, which on an idle server is microseconds. Verified
+against the built binary: one poll in several thousand caught the 503.
+
+That is honest - the window is the drain - and it may be useless. Keycloak's
+window is however long Quarkus takes to stop, which is seconds. Kubernetes reads
+the readiness probe on an interval measured in seconds, so a Gloak that drains
+instantly will never be observed draining.
+
+Measured twice against the binary, and the two runs disagree in the way that
+makes the point: the first caught the 503 once in several thousand polls, and the
+second caught it **not at all** before the process was gone.
+
+The fix is a minimum drain period before the main server is shut down, and the
+reason to hesitate is that it is a number nobody has measured on Keycloak and a
+server that refuses to exit promptly is its own problem. Filed with the question
+rather than answered.
+
+## F259: `%2F` in a management path is decoded and Keycloak does not decode it
+
+`/health%2Flive` is a **404** on Keycloak and the liveness document on Gloak,
+measured. Keycloak's management router decodes `%2E` - `/%2e%2e/health` is the
+health document - and does not decode `%2F` into a separator; Gloak routes on
+`r.URL.Path`, which Go has already decoded fully.
+
+No case sends it and nothing in the catalogue can. Closing it means routing on
+`EscapedPath` with a per-segment unescape that leaves `%2F` alone, which is about
+eight lines for a path nobody sends - so it is filed as a named divergence rather
+than built, which is F38's rule applied. The neighbouring spellings are
+unmeasured: `/health%2F` and `/%2Fhealth` were not probed.
+
+## F260: `HEAD` drops `Content-Type` on the 404 and keeps it on a route
+
+`HEAD /health/live` carries `Content-Type` and `Cache-Control`; `HEAD
+/nosuchpath` carries **no `Content-Type` at all**, where its own `GET` carries
+`text/html; charset=utf-8`. Measured on the health-only container.
+
+It cannot be cased, for F175's reason: the verifier serves through
+`httptest.ResponseRecorder`, which does not strip a body for a `HEAD` where
+`http.Server` does. Gloak's own behaviour here is net/http's and has not been
+compared. Recorded so that the next person to look at `HEAD` on this port has the
+measurement.
+
+## Dispositions from serving the management port (2026-09-16)
+### F38: the model this cut followed, and the one place it was argued rather than applied
+
+`/metrics` is F38 applied without argument: no counters, no consumer, and a body
+no golden can hold. What needed arguing is the other direction - `/health` has a
+consumer that is not speculative, a deployment's liveness probe, and "we answer
+nothing" there is a divergence rather than restraint. The entry's grounds hold in
+both directions and this cut is the first to use the second one.
+
+### F113: unchanged, and reached from a new side
+
+`/metrics` and its Prometheus-text form, as before. New: the **datasource health
+check's DOWN document** carries a wall-clock `Failing since`, so even a health
+document can be barred by this rule. It is the second reason Gloak publishes no
+database check, and the first that is about a body rather than about an option.
+
+### F169: unchanged, and the precedent held a second time
+
+The management port exists only under a startup option, and this cut's whole
+answer turned on measuring **a second option set** rather than assuming the
+recorded one was the only one. Reading "the goldens hold three checks" as "the
+product has three checks" would have been F169's mistake exactly.
+
+### F244: closed
+
+The verifier has two handlers, `serve` picks between them with the same predicate
+the recorder uses, and `Case.ManagementPort`'s first refusal is narrowed to the
+metrics chapter with the measurement that keeps it true. Section 3.
+
+### F245: unchanged, and now with a measured cost
+
+Still filed, still not built. What this cut adds is that the cost is no longer
+hypothetical: eight cases are `Recorded` purely because the recorder ran one
+option set, three behaviours are guarded by no golden as a result (F256), and the
+`Reason` strings now have to carry the explanation in prose.
+
+### F246: unchanged
+
+The 406's non-standard reason phrase. Gloak serves no 406 on this port, so
+nothing here touches it.
+
+### F247 and F248: unchanged
+
+Neither was re-tested and neither moved.

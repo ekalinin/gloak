@@ -3037,7 +3037,10 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
 - **An eighth data point, and the first outside the 404/405/406 family
   altogether.** On the management port **every verb answers the route's own
   200** - seventy cells over ten route shapes - and every verb on a path that is
-  not a route answers one 404. There is no 405 anywhere on that port and no
+  not a route answers one 404. **That sweep understated itself**: `TRACE`
+  answers the route's own 200 as well, measured 2026-09-16, so the rule is not
+  "all seven verbs" but **"the verb is not read"** - see the routing bullet
+  below. There is no 405 anywhere on that port and no
   `Allow` header. So "the rule" is not a rule of the API; it is a rule of one
   JAX-RS application, and the second server in the same process does not have
   it.
@@ -3189,11 +3192,74 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   mask and the capture must agree on what a version is, and the first sign of
   drift would be a golden whose `Location` churns while its body does not.
 
+- **Gloak serves this port as a `--health-enabled`-only Keycloak serves it,
+  and that is one decision rather than a list of exceptions.** Gloak keeps no
+  counters, so it has no `--metrics-enabled`; a metrics-disabled container
+  answers `/metrics` with the ordinary 53-byte 404, serves a **120-byte** index
+  page listing `/health` alone, and answers `/health` with **two** checks
+  rather than three. All three were measured on 2026-09-16 and Gloak
+  reproduces all three. So eight of the fourteen management goldens hold the
+  other option set's bytes and stay `Recorded` - not because the path is
+  unserved, but because the recorder sets both options. See F245 and F256.
+- **A DOWN health check is not always a bare status, and the two measured
+  shapes disagree.** The datasource check gains
+  `"data": {"Failing since": "<yyyy-MM-dd HH:mm:ss,SSS>"}` when it fails -
+  measured by stopping the Postgres under a container - which is a per-request
+  value and therefore F113. The graceful-shutdown check's DOWN carries `status`
+  alone, measured by polling a container through `docker kill -s TERM`. The
+  aggregate answers **503** when any check is DOWN and `/health/live` stays
+  **200** through both, which is the split an orchestrator relies on.
+  **`Keycloak Initialized` is never observably DOWN**: 73395 polls across a
+  fresh container's whole startup gave two answers, no connection and the check
+  already UP, because the listener does not accept until it holds.
+- **The path is cleaned on this port and never refused, and the rule is
+  `path.Clean` on the decoded path with `%2F` excepted.** `//health`,
+  `///health`, `/./health`, `/foo/../health` and `/%2e%2e/health` all answer
+  `/health`; `/health/..`, `/..` and `//` all answer the index; `/health%2Flive`
+  is a **404**, so the decode covers `%2E` and not `%2F`. `/health/group/` is a
+  prefix at any depth - `/health/group/a/b` is the 200 empty document where
+  `/health/x` one segment up is the 404. And the verb sweep understated
+  itself: `TRACE` answers the route's own 200 too, so the rule is not "seven
+  verbs" but "the verb is not read".
+- **`internal/management` is a second server and deliberately shares no
+  middleware with the first.** It does not go through `WithKeycloakFallbacks`,
+  because every rule that wrapper applies - the normalisation 400, the five
+  security headers, the two fallback bodies - is a rule of one JAX-RS
+  application, and this is the other server in the same process. `GET //health`
+  is 400 on 8080 and 200 on 9000 of one container, and the verifier now
+  reproduces that pair on Gloak:
+  `TestTheVerifierAnswersAManagementCaseFromTheManagementServer`.
+- **The verifier builds two handlers and `Target` decides which a case's own
+  request reaches.** It is the same generic function the recorder picks a base
+  URL with, so the two sides cannot come to disagree about which server a case
+  addresses, and it **must not read the case's `Status`** - narrowing it to
+  `Implemented` survived 26 subtests, because `Implemented` is `iota` and a
+  `Recorded` case is required not to match anyway, and it would have had
+  `make record` rewrite eight goldens from the wrong port.
+- **A golden is not a recording; it is a recording under the case's masks, and
+  `Unordered` is where the difference is visible.** Sorting an array means
+  parsing and re-rendering it, so `management/health/check`'s golden holds
+  **313** bytes opening `[{` where the socket sent **345** opening `[` newline
+  eight spaces `{` - the same document in a layout no server produced. It is
+  sound because `normalisePasses` runs on both sides, the recorder's and the
+  verifier's, so nothing ever compares a golden to a socket. A code review of
+  the management port read the file against a `curl` and reported the
+  difference as a divergence; `TestTheAggregateGoldenIsTheWireBytesAfterTheMask`
+  is that pinned, and it applies to every `Unordered` golden in the tree.
+- **A `Recorded` case cannot guard the behaviour it records, on the routing as
+  well as on the bytes.** Three of the management chapter's cross-cutting
+  behaviours are served correctly by Gloak and caught by no golden, because
+  their goldens hold a different option set's document and so a Gloak that
+  answered them *wrongly* would fail to match just as thoroughly as one that
+  answers them right. A mutation disabling path cleaning survived the whole
+  conformance suite and was killed only by the package test. F256.
+
 ## Boundaries
 
 | Package | Owns | Must not |
 |---|---|---|
 | `internal/model` | domain types | depend on anything in the project |
+| `internal/management` | the management interface's route table and its one piece of state | know about SQL, or write a response body itself |
 | `internal/store` | repository interfaces, `ErrNotFound`, `ErrConflict` | know about SQL dialects |
 | `internal/store/sqlite`, `internal/store/postgres` | the two drivers | diverge from each other in behaviour |
 | `internal/keys` | realm signing keys, JWKS | publish the HMAC key or any private key |

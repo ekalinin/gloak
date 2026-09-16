@@ -253,8 +253,8 @@ operations is allocated below; none is left unassigned.
 Denominator today: **413 Admin API operations plus 264 protocol, account,
 management and theme behaviours, 677 enumerated**, plus **two** chapters (parts of P13 and P14) whose
 surface is not counted and which the report says so about - P11 left that list on
-2026-09-07 and the account API on 2026-09-08. Served: **598 of 677** after the
-themes chapter, and **P2, P4 and P5 are complete** -
+2026-09-07 and the account API on 2026-09-08. Served: **604 of 677** after the
+management port is served, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -285,7 +285,48 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-15 (fortieth fold).** `make conformance` reports **598 of 677,
+**Updated 2026-09-16 (forty-first fold).** `make conformance` reports **604 of
+677**, the denominator unchanged and the chapter count still zero. Six behaviours
+promoted, and this is the first cut since the accounting closed whose subject was
+**serving** rather than counting.
+
+**The first decision was whether to serve at all, and one unmeasured cell
+answered it.** A `/health` that always says `UP` because nothing computes
+anything is a lie in the shape of a contract, and it would pass every golden. The
+brief offered "serve nothing and rewrite the reasons" as an equal outcome. What
+resolved it was measuring what Keycloak answers with **only `--health-enabled`**:
+that configuration publishes two checks instead of three, a 120-byte index
+instead of 180, and answers `/metrics` with the ordinary 53-byte 404.
+
+**So Gloak serves all of Keycloak's management port for one configuration, byte
+for byte - including the part of that configuration that is an absence.** A
+server with no counters answering `/metrics` with the fallback is not diverging;
+it is answering exactly what Keycloak answers under the same options. Eight
+goldens stay `Recorded` because the recorder sets both options, which is F245 and
+F256 and is one problem rather than eight.
+
+**The `Implemented` refusal was narrowed rather than deleted.** Its ground - the
+verifier has one handler - became false when the verifier gained a second, so
+leaving it whole would have made it furniture. It now refuses `management/metrics`
+alone, with the measurement in the message, and a test asserts **both** halves. I
+reproduced both: widening it back fails and disabling it fails.
+
+**The near-miss is the one to remember.** Narrowing `Target` - the predicate
+deciding which server a case addresses - to read the case's `Status` **survived
+26 subtests**, because `Implemented` is `iota` and a `Recorded` case is required
+not to match anyway. The recorder reads the same function, so `make record` would
+have rewritten **eight goldens from the wrong port** and every test would have
+stayed green. Found in the cut's own pass, fixed, and I reproduced the fix in
+both directions.
+
+**And a review of the port reported a divergence that was not one.** A golden
+holds 313 bytes where the socket sent 345, because `Unordered` sorts an array by
+parsing and re-rendering it. It is sound - `normalisePasses` runs on the
+recorder's side and the verifier's, so nothing ever compares a golden to a socket
+- but **a golden is not a recording; it is a recording under the case's masks**,
+and that is now pinned and applies to every `Unordered` golden in the tree.
+
+**Earlier on 2026-09-15 (fortieth fold).** `make conformance` reports **598 of 677,
 and `0 chapters not enumerated`.** The caveat is gone from the report entirely.
 
 Ten days ago the line read **535 of 554, 4 chapters not enumerated**. The
