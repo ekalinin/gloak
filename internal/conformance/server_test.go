@@ -63,26 +63,28 @@ func newFixture(t *testing.T, state string) http.Handler {
 // more than that. It now has two, and the refusal is narrowed rather than
 // deleted; see managementDefects.
 //
-// **It takes the state and reads nothing from it, and that is measured rather
-// than lazy.** Gloak's management interface reads no store: the only computed
-// value it publishes is whether the process is draining, and the other check is
-// a constant whose constancy was measured on the reference server. Nothing a
-// fixture can do reaches this handler, which is the same fact
-// Case.ManagementPort's third refusal rests on from the recorder's side - a
-// realm, a client, a user and a group created on 8080 left /health,
-// /health/live and / byte-identical on 9000 of the same container.
+// **It takes no state, and that is measured rather than lazy.** Gloak's
+// management interface reads no store: the only computed value it publishes is
+// whether the process is draining, and the other check is a constant whose
+// constancy was measured on the reference server. Nothing a fixture can do
+// reaches this handler, which is the same fact Case.ManagementPort's third
+// refusal rests on from the recorder's side - a realm, a client, a user and a
+// group created on 8080 left /health, /health/live and / byte-identical on 9000
+// of the same container.
 //
-// The state is still validated, so an unknown fixture is a failure here exactly
-// as it is next door rather than quietly becoming a handler.
-func newManagementFixture(t *testing.T, state string) http.Handler {
+// It took a state and switched on it until a review pointed out the cost. serve
+// builds **both** handlers for every case, so a second `switch` over fixture
+// states would be a second place every new state has to be added - and it would
+// catch nothing, because newFixture runs one line earlier and fatals on an
+// unknown state with the same message. A duplicate guard that can only ever fire
+// after the real one is maintenance with no consumer.
+//
+// If a later cut gives this interface a check that reads the store, this has to
+// take the fixture's store rather than growing its own, or the health endpoint
+// will be reporting on a database no case wrote to.
+func newManagementFixture(t *testing.T) http.Handler {
 	t.Helper()
-	switch state {
-	case "bootstrap":
-		return management.New().Handler()
-	default:
-		t.Fatalf("unknown fixture state %q", state)
-		return nil
-	}
+	return management.New().Handler()
 }
 
 // newFixtureMux is the route table newFixture wraps.

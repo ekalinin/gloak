@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -202,21 +203,12 @@ func TestHealthDocumentStatusFollowsTheChecks(t *testing.T) {
 		t.Errorf("a document whose last check is DOWN answered %d, want 503", w.Code)
 	}
 	body := w.Body.String()
-	if !contains(body, "\"status\": \"DOWN\",\n") {
+	if !strings.Contains(body, "\"status\": \"DOWN\",\n") {
 		t.Errorf("the top-level status did not follow the failing check: %q", body)
 	}
-	if !contains(body, "\"name\": \"Graceful Shutdown\",\n            \"status\": \"UP\"") {
+	if !strings.Contains(body, "\"name\": \"Graceful Shutdown\",\n            \"status\": \"UP\"") {
 		t.Errorf("the passing check was not left UP: %q", body)
 	}
-}
-
-func contains(haystack, needle string) bool {
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
 }
 
 // onTheWire serves one writer through a real http.Server and returns the

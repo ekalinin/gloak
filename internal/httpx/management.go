@@ -3,6 +3,7 @@ package httpx
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 )
@@ -125,7 +126,7 @@ func WriteHealthDocument(w http.ResponseWriter, checks []HealthCheck) {
 	h.Set("Content-Type", "application/json; charset=UTF-8")
 	h.Set("Cache-Control", "no-store")
 	w.WriteHeader(code)
-	_, _ = w.Write([]byte(b.String()))
+	_, _ = io.WriteString(w, b.String())
 }
 
 // managementIndex is the index page a Keycloak started with --health-enabled
@@ -163,7 +164,7 @@ func WriteManagementIndex(w http.ResponseWriter) {
 	suppressDate(w)
 	w.Header()["Content-Type"] = nil
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(managementIndex))
+	_, _ = io.WriteString(w, managementIndex)
 }
 
 // managementNotFound is the management router's 404 body: 53 bytes of HTML from
@@ -185,5 +186,5 @@ func WriteManagementNotFound(w http.ResponseWriter) {
 	suppressDate(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusNotFound)
-	_, _ = w.Write([]byte(managementNotFound))
+	_, _ = io.WriteString(w, managementNotFound)
 }

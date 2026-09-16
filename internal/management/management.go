@@ -38,11 +38,12 @@
 // endpoints that are on, so Gloak's is the 120-byte page rather than the
 // 180-byte one the conformance goldens hold.
 //
-// The consequence is stated rather than hidden: five of the fourteen management
-// goldens were recorded with both options set and cannot match a server that
-// has one. They are the five whose bytes are a function of the option set - the
-// index page and the four aggregate documents - and their catalogue entries say
-// so. See docs/superpowers/handover/serve-management-port.md section 2.
+// The consequence is stated rather than hidden: **six** of the fourteen
+// management goldens are recordings whose bytes are a function of the option set
+// - the index page and the **five** aggregate documents - and two more hold
+// Micrometer's 406, which needs the metrics endpoint to exist. Those eight stay
+// Recorded and each says so in its own catalogue entry. See
+// docs/superpowers/handover/serve-management-port.md section 2.
 package management
 
 import (
@@ -173,15 +174,21 @@ func (i *Interface) Handler() http.Handler {
 			httpx.WriteManagementIndex(w)
 		case p == healthPath, p == readyPath:
 			httpx.WriteHealthDocument(w, i.aggregate())
-		case p == livePath, p == startedPath, p == wellPath, p == groupPath:
+		case p == livePath, p == startedPath, p == wellPath, p == groupPath,
+			strings.HasPrefix(p, groupPrefix):
 			// **These are not a stubbed-out aggregate.** The document is empty
 			// because no check is registered in these groups, which is exactly
 			// why Keycloak's is: liveness, startup, wellness and the health
 			// groups each have their own registry and Keycloak puts nothing in
 			// any of them. Gloak putting nothing in them is the same statement,
 			// not a placeholder for one.
-			httpx.WriteHealthDocument(w, nil)
-		case strings.HasPrefix(p, groupPrefix):
+			//
+			// The named group and the prefix are one arm rather than two
+			// identical ones. `/health/group` and `/health/group/{anything}`
+			// answer the same 45 bytes, and path.Clean never leaves a trailing
+			// slash on anything but the root, so the equality and the prefix are
+			// disjoint: nothing can fall through `p == groupPath` into
+			// HasPrefix.
 			httpx.WriteHealthDocument(w, nil)
 		default:
 			httpx.WriteManagementNotFound(w)
@@ -212,7 +219,11 @@ func (i *Interface) Handler() http.Handler {
 // document. No case covers it and nothing in the catalogue sends it. See F259.
 func routePath(p string) string {
 	if !strings.HasPrefix(p, "/") {
-		// An absolute-form or authority-form request target. Nothing routes.
+		// `OPTIONS *`, which net/url special-cases to Path "*", and the
+		// authority-form target a CONNECT carries, which leaves Path empty.
+		// Both 404. **An absolute-form target does not come here** - `GET
+		// http://host:9000/health` gives Path "/health" and routes normally -
+		// which this comment claimed until a review checked it.
 		return ""
 	}
 	return path.Clean(p)

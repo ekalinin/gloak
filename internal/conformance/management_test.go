@@ -510,8 +510,8 @@ func TestTargetFollowsTheFlag(t *testing.T) {
 // is satisfied only by two that disagree the way the reference pair disagrees,
 // and it is the one request in this repository measured to tell them apart.
 func TestTheVerifierAnswersAManagementCaseFromTheManagementServer(t *testing.T) {
-	main := newFixture(t, "bootstrap")
-	mgmt := newManagementFixture(t, "bootstrap")
+	mainHandler := newFixture(t, "bootstrap")
+	mgmtHandler := newManagementFixture(t)
 
 	ask := func(h http.Handler) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
@@ -519,7 +519,7 @@ func TestTheVerifierAnswersAManagementCaseFromTheManagementServer(t *testing.T) 
 		return w
 	}
 
-	onMain := ask(main)
+	onMain := ask(mainHandler)
 	if onMain.Code != http.StatusBadRequest {
 		t.Errorf("the main handler answered GET //health with %d, want the 400 the "+
 			"normalisation rule gives: %s", onMain.Code, onMain.Body)
@@ -528,7 +528,7 @@ func TestTheVerifierAnswersAManagementCaseFromTheManagementServer(t *testing.T) 
 		t.Errorf("the main handler's GET //health is not missingNormalization: %s", onMain.Body)
 	}
 
-	onManagement := ask(mgmt)
+	onManagement := ask(mgmtHandler)
 	if onManagement.Code != http.StatusOK {
 		t.Errorf("the management handler answered GET //health with %d, want 200; "+
 			"this port does not normalise, measured", onManagement.Code)
@@ -581,6 +581,90 @@ func TestServeSendsACaseToTheHandlerItsFlagNames(t *testing.T) {
 	if onMain.Code != http.StatusNotFound {
 		t.Errorf("the same request without the flag got %d, want the main server's 404; "+
 			"if these two agree, serve is not reading the flag at all", onMain.Code)
+	}
+}
+
+// theAggregateOnTheWire is what port 9000 actually sent for GET /health on a
+// both-options container, read off a socket on 2026-09-16: 345 bytes, with the
+// `checks` array opened on its own line.
+//
+// **It is not what management/health/check's golden holds**, and that is the
+// point of the test below.
+const theAggregateOnTheWire = "{\n" +
+	"    \"status\": \"UP\",\n" +
+	"    \"checks\": [\n" +
+	"        {\n" +
+	"            \"name\": \"Graceful Shutdown\",\n" +
+	"            \"status\": \"UP\"\n" +
+	"        },\n" +
+	"        {\n" +
+	"            \"name\": \"Keycloak Initialized\",\n" +
+	"            \"status\": \"UP\"\n" +
+	"        },\n" +
+	"        {\n" +
+	"            \"name\": \"Keycloak database connections async health check\",\n" +
+	"            \"status\": \"UP\"\n" +
+	"        }\n" +
+	"    ]\n" +
+	"}"
+
+// TestTheAggregateGoldenIsTheWireBytesAfterTheMask is a trap defused.
+//
+// `management/health/check`'s golden holds **313** bytes and opens its array
+// `[{`; the socket sent **345** and opened it `[` newline eight spaces `{`. A
+// reader comparing the committed file against a `curl` would conclude that Gloak
+// serves a body no Keycloak has produced, and a code review of this branch did
+// conclude exactly that.
+//
+// It is the `Unordered: []string{"checks"}` mask. Sorting an array means parsing
+// and re-rendering it, and the re-rendering is not the wire's layout - so **the
+// golden is the normalised form of the response, not the response**. The
+// comparison is sound because `normalisePasses` runs on both sides: the recorder
+// applies it before writing (`record_test.go`) and `diff` applies it to what
+// Gloak served (`conformance_test.go`). Nothing ever compares a golden to a
+// socket.
+//
+// This pins the relationship so the next reader finds it asserted rather than
+// having to rediscover it, and so that a change to the sort's rendering is a
+// failing test rather than 313 bytes quietly becoming something else.
+func TestTheAggregateGoldenIsTheWireBytesAfterTheMask(t *testing.T) {
+	var c Case
+	for _, cc := range Catalog {
+		if cc.ID == "management/health/check" {
+			c = cc
+		}
+	}
+	if len(c.Unordered) == 0 {
+		t.Fatal("management/health/check carries no Unordered mask, so this test is " +
+			"about a normalisation that no longer happens")
+	}
+
+	wire := []byte(theAggregateOnTheWire)
+	normalised, err := normalisePasses(wire, testIssuer, c, nil)
+	if err != nil {
+		t.Fatalf("normalise the wire bytes: %v", err)
+	}
+
+	raw, err := os.ReadFile(GoldenPath(goldenDir, c.ID))
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	g, err := ParseGolden(raw)
+	if err != nil {
+		t.Fatalf("parse golden: %v", err)
+	}
+
+	if string(normalised) != string(g.Body) {
+		t.Errorf("the measured wire bytes do not normalise to the committed golden.\n"+
+			"wire (%d bytes):       %q\nnormalised (%d bytes): %q\ngolden (%d bytes):     %q",
+			len(wire), wire, len(normalised), normalised, len(g.Body), g.Body)
+	}
+	// The vacuity guard, and it is the whole reason this test says anything: if
+	// the mask stopped re-rendering, the wire and the golden would be equal and
+	// the equality above would hold for a different reason.
+	if string(wire) == string(g.Body) {
+		t.Error("the wire bytes and the golden are identical, so this test no longer " +
+			"records that the mask re-renders the array")
 	}
 }
 

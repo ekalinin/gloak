@@ -62,8 +62,12 @@ var managementSecurityHeaders = []string{
 // Gloak's own pair, the `GET //health` disagreement that made the old refusal
 // true on Keycloak's.
 //
-// Five of these goldens hold the same 45 bytes and three more hold the same 345
-// as management/health/check. That is deliberate and it is not padding: a
+// Five of these goldens hold the same 45 bytes and **four** more hold the same
+// **313** as management/health/check. (Both numbers were wrong here until
+// 2026-09-16: it said three and 345. 345 is what the socket sent; 313 is what
+// the golden holds, because the Unordered mask re-renders the array - see
+// TestTheAggregateGoldenIsTheWireBytesAfterTheMask, which is that trap pinned.)
+// That is deliberate and it is not padding: a
 // behaviour is a request and its answer, not an answer. /health/well being a
 // route at all, and /health/group/{name} answering UP for a group that was
 // never defined, are separately falsifiable claims about Keycloak that happen
@@ -121,8 +125,13 @@ var managementCases = []Case{
 		Status: Recorded,
 		// **Gloak answers this path and answers it with two checks**, which is
 		// what a Keycloak started with --health-enabled alone answers - 225
-		// bytes, measured. This golden is the both-options document at 345,
-		// and the third entry is the difference. Gloak has no metrics option to
+		// bytes on the wire, measured. This golden is the both-options
+		// document, which the socket sent as 345 bytes and which the Unordered
+		// mask re-renders to the 313 committed here; Gloak's two-check body
+		// goes through the same mask and comes out 202. **The third entry is
+		// the only difference**, and that the two layouts agree is asserted by
+		// TestTheAggregateGoldenIsTheWireBytesAfterTheMask rather than assumed.
+		// Gloak has no metrics option to
 		// hang a database check on, and publishing one anyway would be tidying
 		// up a measured quirk: the coupling between a metrics flag and a health
 		// check is Quarkus's, it looks like a bug, and reproducing it is the

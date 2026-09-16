@@ -100,15 +100,15 @@ func serve(t *testing.T, c Case) (*httptest.ResponseRecorder, map[string]string,
 	if !ok {
 		return nil, nil, fmt.Errorf("unknown fixture %q", c.Fixture)
 	}
-	main := newFixture(t, f.State)
-	mgmt := newManagementFixture(t, f.State)
+	mainHandler := newFixture(t, f.State)
+	mgmtHandler := newManagementFixture(t)
 
 	// The fixture's steps always go to the main server, mirroring the recorder,
 	// which always runs them against port 8080. See Case.ManagementPort's third
 	// refusal: nothing a step can do reaches the management interface.
 	do := func(req *http.Request) (*http.Response, error) {
 		w := httptest.NewRecorder()
-		main.ServeHTTP(w, req)
+		mainHandler.ServeHTTP(w, req)
 		return w.Result(), nil
 	}
 	sess, err := Run(f, testIssuer, do)
@@ -126,7 +126,7 @@ func serve(t *testing.T, c Case) (*httptest.ResponseRecorder, map[string]string,
 	// their responses the same way is the property this suite rests on.
 	sess.Apply(req)
 	w := httptest.NewRecorder()
-	Target(main, mgmt, c).ServeHTTP(w, req)
+	Target(mainHandler, mgmtHandler, c).ServeHTTP(w, req)
 	return w, vars, nil
 }
 
