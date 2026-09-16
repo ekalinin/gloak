@@ -640,6 +640,18 @@ func TestTheAggregateGoldenIsTheWireBytesAfterTheMask(t *testing.T) {
 	}
 
 	wire := []byte(theAggregateOnTheWire)
+	// **The length is what makes the constant above a transcription.** 345 is
+	// the `content-length` the socket reported; it is the one number here that
+	// was read rather than typed. Without it the constant's *layout* is pinned
+	// by nothing: a mutation collapsing its array opener to the golden's `[{`
+	// survived, because the mask re-renders either form to the same bytes and
+	// the equality below held for the wrong reason.
+	if len(wire) != 345 {
+		t.Fatalf("the transcribed wire body is %d bytes and the socket reported 345; "+
+			"this test is about the difference between that layout and the golden's, "+
+			"so a transcription that has drifted towards the golden records nothing",
+			len(wire))
+	}
 	normalised, err := normalisePasses(wire, testIssuer, c, nil)
 	if err != nil {
 		t.Fatalf("normalise the wire bytes: %v", err)
