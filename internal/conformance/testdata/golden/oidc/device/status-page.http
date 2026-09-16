@@ -1,4 +1,5 @@
 # GET /realms/master/device/status
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 200 OK
 Content-Language: en
 Content-Length: {{volatile}}

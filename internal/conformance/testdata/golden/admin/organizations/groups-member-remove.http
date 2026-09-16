@@ -1,4 +1,5 @@
 # DELETE /admin/realms/gloak-probe-og-lea/organizations/{{org_id}}/groups/{{group_1}}/members/{{member_id}}
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 204 No Content
 Cache-Control: no-cache
 Referrer-Policy: no-referrer

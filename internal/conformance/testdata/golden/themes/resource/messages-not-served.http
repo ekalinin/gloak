@@ -1,4 +1,5 @@
 # GET /resources/{{theme_resource}}/login/keycloak.v2/messages/messages_en.properties
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 404 Not Found
 Content-Length: {{volatile}}
 Referrer-Policy: no-referrer

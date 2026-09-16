@@ -1,4 +1,5 @@
 # GET /admin/realms/master/clients/{{client_uuid}}/authz/resource-server/resource/gloak-probe-no-such-resource
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 404 Not Found
 Content-Length: {{volatile}}
 Content-Type: application/json

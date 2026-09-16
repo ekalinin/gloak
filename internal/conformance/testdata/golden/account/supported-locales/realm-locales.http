@@ -1,4 +1,5 @@
 # GET /realms/gloak-probe-account-brokers/account/supportedLocales
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 200 OK
 Content-Length: {{volatile}}
 Content-Type: application/json;charset=UTF-8

@@ -1,4 +1,5 @@
 # POST /realms/master/protocol/openid-connect/token/introspect
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 401 Unauthorized
 Content-Length: {{volatile}}
 Content-Type: application/json

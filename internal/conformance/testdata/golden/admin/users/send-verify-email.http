@@ -1,4 +1,5 @@
 # PUT /admin/realms/master/users/{{user_id}}/send-verify-email
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 500 Internal Server Error
 Content-Length: {{volatile}}
 Content-Type: application/json

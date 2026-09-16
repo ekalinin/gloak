@@ -1,4 +1,5 @@
 # GET /admin/realms/master/client-registration-policy/providers
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 200 OK
 Cache-Control: no-cache
 Content-Length: {{volatile}}

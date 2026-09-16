@@ -1,4 +1,5 @@
 # GET /admin/realms/master
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 403 Forbidden
 Content-Length: {{volatile}}
 Content-Type: application/json

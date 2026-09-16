@@ -1,4 +1,5 @@
 # GET /admin/realms/gloak-probe-sess/clients/5e551040-0000-4000-8000-000000000001/offline-sessions
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 200 OK
 Cache-Control: no-cache
 Content-Length: {{volatile}}

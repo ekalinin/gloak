@@ -1,4 +1,5 @@
 # GET /resources/aaaaaa/login/keycloak.v2/css/styles.css
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 404 Not Found
 Content-Length: {{volatile}}
 Referrer-Policy: no-referrer

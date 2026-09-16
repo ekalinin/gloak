@@ -1,4 +1,5 @@
 # POST /admin/realms/master/users
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 400 Bad Request
 Content-Length: {{volatile}}
 Content-Type: application/json

@@ -284,6 +284,48 @@ type Case struct {
 	// TestProtocolCasesNameNoOperation already refuses one.
 	ManagementPort bool
 
+	// Configuration names the way the reference container this case is
+	// recorded against is started. Empty means DefaultConfiguration, which is
+	// what 1130 of the 1136 goldens carry.
+	//
+	// **It is the third field in this struct that decides which container a
+	// case is recorded against**, after PristineRealm and ManagementPort, and
+	// it is the first that changes what the container *is* rather than which
+	// one or which socket. The recorder keeps one container per configuration
+	// in use, so declaring it costs one extra start for the whole run rather
+	// than one per case - which is where it differs from PristineRealm, whose
+	// whole point is a container nothing else has touched.
+	//
+	// **Why it exists.** Two measured chapters hold goldens whose bytes are a
+	// function of the container's command line: the management port, which does
+	// not exist without `--health-enabled` or `--metrics-enabled` and two of
+	// whose responses say which of the two is on, and the theme resource route,
+	// whose `Cache-Control` is `no-cache` under `start-dev` and
+	// `max-age=2592000` under `start`. See F245 and F250.
+	//
+	// **What decides a case's value.** A case is recorded under the
+	// configuration in which the behaviour it documents is observable, and
+	// where more than one qualifies, under the one Gloak serves. The management
+	// chapter is where both halves bite. Six of its cases document behaviours
+	// every configuration with a management port has - the index page, the
+	// aggregate document, readiness, and the three cross-cutting facts that the
+	// verb, `Accept` and an unnormalised path each decide nothing - so they are
+	// recorded under StartDevHealth, which is the option set Gloak serves, and
+	// they are Implemented. The two metrics cases document Micrometer's content
+	// negotiation, which **only exists** under `--metrics-enabled`: recording
+	// them under StartDevHealth would replace a 406 with the ordinary 53-byte
+	// 404 and leave a golden that says nothing about the behaviour its case
+	// names, while making the case match and therefore look servable. That is
+	// the implementation moving the contract to fit itself, and
+	// managementDefects refuses it.
+	//
+	// It is a **declaration** rather than something derived, for
+	// Case.SecondRealm's reason and one of its own: no property of a request
+	// says which options its answer is a function of, and the one chapter where
+	// a reader would guess "all the management cases go together" is the
+	// chapter where that guess is wrong.
+	Configuration Configuration
+
 	Request Request
 
 	// AssertHeaders lists the response headers compared exactly. Every header

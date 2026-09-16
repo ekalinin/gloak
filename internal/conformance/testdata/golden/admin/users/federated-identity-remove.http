@@ -1,4 +1,5 @@
 # DELETE /admin/realms/master/users/{{user_id}}/federated-identity/gloak-probe-idp-spare
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 204 No Content
 Cache-Control: no-cache
 Referrer-Policy: no-referrer

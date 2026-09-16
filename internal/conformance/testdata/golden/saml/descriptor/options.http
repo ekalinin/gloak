@@ -1,4 +1,5 @@
 # OPTIONS /realms/master/protocol/saml/descriptor
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 200 OK
 Allow: HEAD, POST, GET, OPTIONS
 Content-Length: {{volatile}}

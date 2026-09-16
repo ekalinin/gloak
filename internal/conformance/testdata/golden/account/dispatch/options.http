@@ -1,4 +1,5 @@
 # OPTIONS /realms/master/account/groups
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 200 OK
 Content-Length: {{volatile}}
 Referrer-Policy: no-referrer

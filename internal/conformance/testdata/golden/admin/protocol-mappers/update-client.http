@@ -1,4 +1,5 @@
 # PUT /admin/realms/master/clients/c11e0000-0000-4000-8000-000000000013/protocol-mappers/models/9a99e400-0000-4000-8000-000000000007
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 204 No Content
 Cache-Control: no-cache
 Referrer-Policy: no-referrer

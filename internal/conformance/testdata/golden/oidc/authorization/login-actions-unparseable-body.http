@@ -1,4 +1,5 @@
 # POST /realms/master/login-actions/authenticate
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 500 Internal Server Error
 Cache-Control: no-store, must-revalidate, max-age=0
 Content-Length: {{volatile}}

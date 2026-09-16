@@ -1,4 +1,5 @@
 # GET /realms/master/protocol/saml/clients/gloak-probe-no-such-sso-name
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 400 Bad Request
 Cache-Control: no-store, must-revalidate, max-age=0
 Content-Language: en

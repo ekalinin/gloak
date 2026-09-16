@@ -1,4 +1,5 @@
 # GET /metrics
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 406 Not Acceptable
 Content-Length: {{volatile}}
 

@@ -1,4 +1,5 @@
 # GET /admin/realms/master/client-scopes/a5c09e00-0000-4000-8000-0000000000fe/protocol-mappers/models
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 404 Not Found
 Content-Length: {{volatile}}
 Content-Type: application/json

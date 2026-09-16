@@ -1,4 +1,5 @@
 # GET /realms/master/account/nosuchsub
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 200 OK
 Cache-Control: no-cache
 Content-Language: en

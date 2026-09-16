@@ -1,4 +1,5 @@
 # POST /admin/realms/gloak-probe-org-mem-nil/organizations/{{org_id}}/invitations/gloak-probe-no-such-invitation/resend
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 404 Not Found
 Content-Length: {{volatile}}
 Content-Type: application/json
