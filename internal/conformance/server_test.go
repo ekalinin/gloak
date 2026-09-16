@@ -10,6 +10,7 @@ import (
 	"github.com/ekalinin/gloak/internal/admin"
 	"github.com/ekalinin/gloak/internal/bootstrap"
 	"github.com/ekalinin/gloak/internal/keys"
+	"github.com/ekalinin/gloak/internal/management"
 	"github.com/ekalinin/gloak/internal/oidc"
 	"github.com/ekalinin/gloak/internal/store/sqlite"
 )
@@ -49,6 +50,39 @@ func testDSN(t *testing.T) string {
 func newFixture(t *testing.T, state string) http.Handler {
 	t.Helper()
 	return oidc.WithKeycloakFallbacks(newFixtureMux(t, state))
+}
+
+// newManagementFixture builds Gloak's **second** server for a named starting
+// state: the management interface, which is a different server from the one
+// above and not a route family on it.
+//
+// This is what closes F244. The verifier had one handler and one base URL, so a
+// management case's request went to Gloak's main mux while its golden had been
+// recorded from port 9000 - two servers, measured disagreeing about the same
+// request - and Case.ManagementPort refused Implemented so that nothing claimed
+// more than that. It now has two, and the refusal is narrowed rather than
+// deleted; see managementDefects.
+//
+// **It takes the state and reads nothing from it, and that is measured rather
+// than lazy.** Gloak's management interface reads no store: the only computed
+// value it publishes is whether the process is draining, and the other check is
+// a constant whose constancy was measured on the reference server. Nothing a
+// fixture can do reaches this handler, which is the same fact
+// Case.ManagementPort's third refusal rests on from the recorder's side - a
+// realm, a client, a user and a group created on 8080 left /health,
+// /health/live and / byte-identical on 9000 of the same container.
+//
+// The state is still validated, so an unknown fixture is a failure here exactly
+// as it is next door rather than quietly becoming a handler.
+func newManagementFixture(t *testing.T, state string) http.Handler {
+	t.Helper()
+	switch state {
+	case "bootstrap":
+		return management.New().Handler()
+	default:
+		t.Fatalf("unknown fixture state %q", state)
+		return nil
+	}
 }
 
 // newFixtureMux is the route table newFixture wraps.

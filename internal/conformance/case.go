@@ -247,14 +247,20 @@ type Case struct {
 	//
 	// Three things it refuses, each a mistake it invites, each with a test:
 	//
-	//   - **Implemented.** The verifier has one handler and Gloak has no
-	//     management interface, so it serves a management case's request to the
-	//     main mux. That is not the question the golden asks - the golden asks
-	//     what Keycloak's management port answers - so a case that compared
-	//     equal there would be a claim about the wrong server. Every management
-	//     case is Recorded or Pending, and whoever builds Gloak's management
-	//     port lifts this refusal deliberately rather than inheriting a pass.
-	//     TestManagementRefusals, via managementDefects.
+	//   - **Implemented, in the metrics chapter alone.** This refusal was wider
+	//     until 2026-09-16: the verifier had one handler and Gloak had no
+	//     management interface, so a management case's request went to the main
+	//     mux, which is not the question its golden asks. Gloak now serves the
+	//     port and the verifier builds a second handler - newManagementFixture -
+	//     which serve reaches through Target, so that ground is gone and the
+	//     refusal is narrowed to the one place it survives. Gloak keeps no
+	//     counters, so it has no --metrics-enabled and no /metrics; the two
+	//     recordable cases there are Micrometer's 406s, whose success branch
+	//     could only be a fabricated dump, and the dump moves 116 lines in
+	//     three seconds so nothing on it can be compared at all.
+	//     TestManagementRefusals, via managementDefects, and
+	//     TestManagementRefusalGuardCanFail asserts **both** halves - that the
+	//     metrics chapter is still refused and that the other three are not.
 	//   - **A chapter other than `management`.** The flag decides the port and
 	//     the chapter decides the meter's row, and a case holding one without
 	//     the other files a measurement of one server under another's heading -
@@ -263,6 +269,10 @@ type Case struct {
 	//     each other, for Case.SecondRealm's reason: deriving the port from the
 	//     report's labelling means renaming a chapter silently moves requests to
 	//     another socket. TestManagementRefusals, via managementDefects.
+	//     **This half got heavier when the refusal above got lighter**: a
+	//     management case that does not declare the flag is now recorded from
+	//     the wrong server *and* verified against the wrong handler, where
+	//     before the verifier had only one handler to get wrong.
 	//   - **A fixture with steps.** A fixture's steps run against the main port,
 	//     and nothing they can do reaches this one: a realm, a client, a user
 	//     and a group created on 8080 left `/health`, `/health/live` and `/`
@@ -496,24 +506,37 @@ type Case struct {
 	VolatileXMLText []string
 }
 
-// RecordTarget returns the base URL a case's own request is sent to, given the
-// two a container exposes.
+// Target returns the one of two things a case's own request is aimed at: the
+// main server's, or the management interface's.
+//
+// **It is generic because the two sides of this suite address different kinds
+// of thing and must never disagree about which.** The recorder chooses between
+// two base URLs on a container; the verifier chooses between two
+// http.Handlers. That is one decision - a case goes where Case.ManagementPort
+// says and nowhere else - and written twice it is two predicates that can
+// drift. The drift is silent in the worst direction: a management case pointed
+// at the main mux compares bytes recorded from port 9000 against a server that
+// answers like 8080, which is exactly the state Case.ManagementPort's first
+// refusal existed to refuse. One function is what makes "a case cannot be
+// silently pointed at the wrong one" a property rather than a hope.
 //
 // It lives here rather than inside the recorder for the reason recordedHeaders'
 // doc comment gives for the same move: the recorder is behind the docker build
 // tag, and logic nothing can test without Docker is logic nothing tests. That
 // was measured rather than assumed - a mutation collapsing this decision to
 // `return base` was applied, compiled, and survived 1147 tests, because not one
-// of them can reach a file the build excludes.
+// of them can reach a file the build excludes. It was called RecordTarget until
+// the verifier started calling it too, at which point the name named half of
+// its callers.
 //
-// A fixture's steps deliberately do **not** go through this. They run against
-// the main port whatever the case declares, which is what Case.ManagementPort's
-// third refusal rests on.
-func RecordTarget(base, management string, c Case) string {
+// A fixture's steps deliberately do **not** go through this, on either side.
+// They run against the main server whatever the case declares, which is what
+// Case.ManagementPort's third refusal rests on.
+func Target[T any](main, management T, c Case) T {
 	if c.ManagementPort {
 		return management
 	}
-	return base
+	return main
 }
 
 // buildRequest turns a Case's Request into an *http.Request aimed at base.

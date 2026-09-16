@@ -42,13 +42,25 @@ var managementSecurityHeaders = []string{
 // fallback, and the three cross-cutting facts that separate this port from the
 // one every other chapter measures.
 //
-// **Nothing here is Implemented and nothing can be**, which is a statement
-// about the verifier rather than about the catalogue. The verifier builds one
-// handler and serves every case's request to it, so a management case is served
-// to Gloak's main mux - a different server from the one the golden was recorded
-// against. Case.ManagementPort refuses Implemented for that reason, and
-// TestManagementRefusals is where the refusal lives, and
-// TestManagementRefusalGuardCanFail is what shows it fires.
+// **Six of these are Implemented and the other ten are not, and the split is
+// one fact rather than ten.** Gloak serves this port as a Keycloak started with
+// `--health-enabled` and no `--metrics-enabled` serves it, because that is the
+// only option set it can serve honestly: it keeps no counters, so it has no
+// metrics endpoint, and a metrics-disabled Keycloak's answers are the ones it
+// reproduces. Two of this port's responses are a function of the option set
+// rather than of the version - the index page lists exactly the endpoints that
+// are on, and /health's check list gains the database check only when metrics
+// is on - and the recorder sets both options, so eight goldens hold the
+// other set's bytes. Each of those eight says so in its own Reason.
+//
+// **Nothing in the metrics family can be Implemented**, and that refusal is in
+// managementDefects with the measurement behind it. It is what is left of a
+// wider refusal: until 2026-09-16 no management case could be Implemented at
+// all, because the verifier had one handler and served them to Gloak's main
+// mux. It now builds two - see newManagementFixture - and
+// TestTheVerifierAnswersAManagementCaseFromTheManagementServer reproduces, on
+// Gloak's own pair, the `GET //health` disagreement that made the old refusal
+// true on Keycloak's.
 //
 // Five of these goldens hold the same 45 bytes and three more hold the same 345
 // as management/health/check. That is deliberate and it is not padding: a
@@ -70,10 +82,18 @@ var managementCases = []Case{
 		// with `--health-enabled` alone and 123 with `--metrics-enabled` alone.
 		// startKeycloak sets both and this golden is the both-enabled one. See
 		// F245.
-		ID:             "management/index/root",
-		Doc:            managementDoc,
-		Status:         Recorded,
-		Reason:         "Gloak serves no management interface, so it has no index page to list one",
+		ID:     "management/index/root",
+		Doc:    managementDoc,
+		Status: Recorded,
+		// **Gloak serves an index page and it is not this one**, which is the
+		// difference between this Reason and the one it replaced on
+		// 2026-09-16. Gloak has no --metrics-enabled, so its page is the
+		// 120-byte health-only one - byte-identical to what a Keycloak started
+		// the same way answers, measured on its own container - and this golden
+		// is the 180-byte both-options page. The case is Recorded because the
+		// recorder sets both options, not because nothing answers. F245 is the
+		// entry for a golden whose bytes are a function of a startup option.
+		Reason:         "Gloak has no metrics endpoint, so its index lists only /health: 120 bytes where this golden is the both-options 180 - F245",
 		Fixture:        "bootstrap",
 		ManagementPort: true,
 		Request:        Request{Method: http.MethodGet, Path: "/"},
@@ -96,10 +116,18 @@ var managementCases = []Case{
 		// The three entries are themselves option-dependent: with
 		// `--health-enabled` alone the document holds two, and enabling metrics
 		// is what adds the database check. See F245.
-		ID:                  "management/health/check",
-		Doc:                 managementDoc,
-		Status:              Recorded,
-		Reason:              "Gloak has no management interface and no health checks to report",
+		ID:     "management/health/check",
+		Doc:    managementDoc,
+		Status: Recorded,
+		// **Gloak answers this path and answers it with two checks**, which is
+		// what a Keycloak started with --health-enabled alone answers - 225
+		// bytes, measured. This golden is the both-options document at 345,
+		// and the third entry is the difference. Gloak has no metrics option to
+		// hang a database check on, and publishing one anyway would be tidying
+		// up a measured quirk: the coupling between a metrics flag and a health
+		// check is Quarkus's, it looks like a bug, and reproducing it is the
+		// whole job. See F245 and internal/management's package comment.
+		Reason:              "Gloak's /health carries two checks, not three: the database check is a function of --metrics-enabled, which Gloak does not have - F245",
 		Fixture:             "bootstrap",
 		ManagementPort:      true,
 		Request:             Request{Method: http.MethodGet, Path: "/health"},
@@ -113,8 +141,7 @@ var managementCases = []Case{
 		// containers, so nothing here needs a mask.
 		ID:                  "management/health/live",
 		Doc:                 managementDoc,
-		Status:              Recorded,
-		Reason:              "Gloak has no management interface and no liveness probe",
+		Status:              Implemented,
 		Fixture:             "bootstrap",
 		ManagementPort:      true,
 		Request:             Request{Method: http.MethodGet, Path: "/health/live"},
@@ -128,10 +155,14 @@ var managementCases = []Case{
 		// orchestrator polls and they answer different documents - a server
 		// answering the aggregate to /health/live would look healthy to a
 		// reader and be wrong.
-		ID:                  "management/health/ready",
-		Doc:                 managementDoc,
-		Status:              Recorded,
-		Reason:              "Gloak has no management interface and no readiness probe",
+		ID:     "management/health/ready",
+		Doc:    managementDoc,
+		Status: Recorded,
+		// Gloak answers it, and with the same two-check document /health gets -
+		// including the 503 during a drain, which is the pair's whole point and
+		// is measured on both servers. It is Recorded for management/health/check's
+		// reason and no other: the third check is the option set.
+		Reason:              "Gloak's /health/ready carries two checks, not three, for management/health/check's reason - F245",
 		Fixture:             "bootstrap",
 		ManagementPort:      true,
 		Request:             Request{Method: http.MethodGet, Path: "/health/ready"},
@@ -145,8 +176,7 @@ var managementCases = []Case{
 		// path gets which is not guessable from the names.
 		ID:                  "management/health/started",
 		Doc:                 managementDoc,
-		Status:              Recorded,
-		Reason:              "Gloak has no management interface and no startup probe",
+		Status:              Implemented,
 		Fixture:             "bootstrap",
 		ManagementPort:      true,
 		Request:             Request{Method: http.MethodGet, Path: "/health/started"},
@@ -160,8 +190,7 @@ var managementCases = []Case{
 		// exact one - `/health/wel` and `/health/wellness` are both the 404.
 		ID:                  "management/health/well",
 		Doc:                 managementDoc,
-		Status:              Recorded,
-		Reason:              "Gloak has no management interface and no wellness endpoint",
+		Status:              Implemented,
 		Fixture:             "bootstrap",
 		ManagementPort:      true,
 		Request:             Request{Method: http.MethodGet, Path: "/health/well"},
@@ -172,8 +201,7 @@ var managementCases = []Case{
 		// The health-group endpoint with no group named.
 		ID:                  "management/health/group",
 		Doc:                 managementDoc,
-		Status:              Recorded,
-		Reason:              "Gloak has no management interface and no health groups",
+		Status:              Implemented,
 		Fixture:             "bootstrap",
 		ManagementPort:      true,
 		Request:             Request{Method: http.MethodGet, Path: "/health/group"},
@@ -190,8 +218,7 @@ var managementCases = []Case{
 		// /health - `/health/x` - is the 404.
 		ID:                  "management/health/group-unknown",
 		Doc:                 managementDoc,
-		Status:              Recorded,
-		Reason:              "Gloak has no management interface and no health groups to miss",
+		Status:              Implemented,
 		Fixture:             "bootstrap",
 		ManagementPort:      true,
 		Request:             Request{Method: http.MethodGet, Path: "/health/group/nosuchgroup"},
@@ -210,10 +237,15 @@ var managementCases = []Case{
 		// a separate behaviour: no other case in this chapter sends an `Accept`
 		// to /health, so without it the claim that the header is ignored is
 		// made by nothing.
-		ID:             "management/health/accept-ignored",
-		Doc:            managementDoc,
-		Status:         Recorded,
-		Reason:         "Gloak has no management interface, so it negotiates nothing on one",
+		ID:     "management/health/accept-ignored",
+		Doc:    managementDoc,
+		Status: Recorded,
+		// **The behaviour this case records is served and correct.** Gloak's
+		// /health ignores Accept exactly as Keycloak's does - the header
+		// changes no byte - and the only thing between this case and
+		// Implemented is that the document it is compared against carries the
+		// metrics-on check list. See management/health/check.
+		Reason:         "Gloak ignores Accept here as measured; the golden is the both-options document and Gloak's carries two checks - F245",
 		Fixture:        "bootstrap",
 		ManagementPort: true,
 		Request: Request{
@@ -234,10 +266,13 @@ var managementCases = []Case{
 		// 404/405/406 family altogether, and it is counted once for the whole
 		// port: 70 of the sweep's 77 cells say the same thing, and counting
 		// them per path would report one behaviour seventy times.
-		ID:                  "management/health/wrong-verb",
-		Doc:                 managementDoc,
-		Status:              Recorded,
-		Reason:              "Gloak has no management interface, so it has no verb rule on one",
+		ID:     "management/health/wrong-verb",
+		Doc:    managementDoc,
+		Status: Recorded,
+		// Served and correct: Gloak's management port answers every verb with
+		// the route's own 200 and sends no Allow, asserted over eight verbs in
+		// internal/management. The golden's third check is the only difference.
+		Reason:              "Gloak answers every verb with the route's own 200 as measured; the golden is the both-options document - F245",
 		Fixture:             "bootstrap",
 		ManagementPort:      true,
 		Request:             Request{Method: http.MethodPut, Path: "/health"},
@@ -254,10 +289,17 @@ var managementCases = []Case{
 		// sentence about one route table. `/health/../health` and
 		// `/%2e%2e/health` answer the same 200, measured with
 		// `curl --path-as-is` because curl normalises a path before sending it.
-		ID:                  "management/health/unnormalised-path",
-		Doc:                 managementDoc,
-		Status:              Recorded,
-		Reason:              "Gloak has no management interface, so it normalises nothing on one",
+		ID:     "management/health/unnormalised-path",
+		Doc:    managementDoc,
+		Status: Recorded,
+		// Served and correct, and this is the one whose correctness is checked
+		// somewhere else rather than here: Gloak's main mux answers `GET
+		// //health` with 400 missingNormalization and its management handler
+		// answers 200 with the health document, which is
+		// TestTheVerifierAnswersAManagementCaseFromTheManagementServer and is
+		// the same disagreement measured on Keycloak's two ports. The golden's
+		// third check is the only reason this is not Implemented.
+		Reason:              "Gloak's management port does not normalise, asserted on both handlers; the golden is the both-options document - F245",
 		Fixture:             "bootstrap",
 		ManagementPort:      true,
 		Request:             Request{Method: http.MethodGet, Path: "//health"},
@@ -285,10 +327,17 @@ var managementCases = []Case{
 		// one** - `406 Micrometer prometheus endpoint does not support
 		// application/openmetrics-text` - and no golden can hold it: FormatGolden
 		// writes http.StatusText(406). See F246.
-		ID:             "management/metrics/openmetrics-refused",
-		Doc:            managementMetricsDoc,
-		Status:         Recorded,
-		Reason:         "Gloak has no management interface and no metrics endpoint to refuse a media type",
+		ID:     "management/metrics/openmetrics-refused",
+		Doc:    managementMetricsDoc,
+		Status: Recorded,
+		// **Gloak answers this path with the 53-byte 404, which is what a
+		// metrics-disabled Keycloak answers** - measured on a container started
+		// with --health-enabled alone. So this is not "Gloak serves nothing
+		// here"; it is Gloak serving the other option set's answer. Building
+		// the 406 would mean building an endpoint whose success branch could
+		// only be a fabricated dump. managementDefects refuses Implemented for
+		// this whole chapter and says why.
+		Reason:         "Gloak keeps no counters, so /metrics is the 53-byte 404 a metrics-disabled Keycloak answers rather than Micrometer's 406",
 		Fixture:        "bootstrap",
 		ManagementPort: true,
 		Request: Request{
@@ -310,10 +359,13 @@ var managementCases = []Case{
 		// 406 is the same endpoint answering from the same place. What the
 		// golden pins is that the request reached Micrometer, which is exactly
 		// the claim - a path that had not reached it would be the 53-byte 404.
-		ID:             "management/metrics/prefix-match",
-		Doc:            managementMetricsDoc,
-		Status:         Recorded,
-		Reason:         "Gloak has no management interface, so nothing of its routes under one",
+		ID:     "management/metrics/prefix-match",
+		Doc:    managementMetricsDoc,
+		Status: Recorded,
+		// The same as its sibling, and the prefix claim goes with it: Gloak has
+		// no /metrics, so it has no prefix under one and every suffix is the
+		// 404. That is the metrics-disabled answer rather than a gap.
+		Reason:         "Gloak keeps no counters, so nothing routes under /metrics and every suffix is the 53-byte 404",
 		Fixture:        "bootstrap",
 		ManagementPort: true,
 		Request: Request{
@@ -332,8 +384,7 @@ var managementCases = []Case{
 		// all seven verbs identically.
 		ID:                  "management/fallback/unknown-path",
 		Doc:                 managementDoc,
-		Status:              Recorded,
-		Reason:              "Gloak has no management interface and so no router to refuse a path on one",
+		Status:              Implemented,
 		Fixture:             "bootstrap",
 		ManagementPort:      true,
 		Request:             Request{Method: http.MethodGet, Path: "/nosuchpath"},
