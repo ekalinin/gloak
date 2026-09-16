@@ -549,6 +549,7 @@ verdicts are recorded, because they are not the same question.
 | M16 | the chapter-without-the-flag arm disabled | `internal/conformance` | KILLED by the can-fail guard |
 | M17 | both checks read the draining flag | `internal/management` | KILLED - "took the other check down too" |
 | M18 | the health document's separator inverted | `internal/httpx` | KILLED - the byte table and the arity guard both |
+| M19 | the health writer **adds** `X-Frame-Options` (additive) | `internal/conformance` | KILLED - all five Implemented health cases; see 5.5 |
 
 ### 5.1 M8 is the finding, and it would have corrupted eight goldens
 
@@ -624,6 +625,25 @@ contract, and claiming the output is JSON is not.
 M18 inverted the separator and is killed by both, which is the point: the byte
 table catches it at the arity that has a recording and the property catches it at
 the arity that does not.
+
+### 5.5 What the promotion bought, measured by an additive mutation
+
+`AssertAbsentHeaders` on a `Recorded` case asserts nothing through `diff` - the
+verdict is "these differ" and any one difference satisfies it - which is F177's
+half-fix and is why `TestAssertAbsentHeadersAgreeWithTheGolden` exists at all.
+All fourteen management cases sat in that hole before this cut.
+
+M19 **adds** `X-Frame-Options` to the health writer, which is the additive shape
+this project prefers because it cannot be mistaken for a deletion, and it is
+killed by all five promoted health cases. So the six declarations that moved to
+`Implemented` are now compared against **Gloak's own response** as well as
+against the golden, and the widest security-header exception in this repository -
+a whole listener carrying none of the five - is asserted on the served side for
+the first time.
+
+The eight still `Recorded` are not: their declarations are still checked against
+the recorded bytes alone. That is another instance of F256 and it is the same
+sentence twice, so it is counted once there.
 
 ## 6. Parity
 
