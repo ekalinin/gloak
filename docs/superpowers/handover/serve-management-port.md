@@ -357,6 +357,25 @@ in a package test rather than by starting a process.
 `BeginDraining` is idempotent, because a second signal during a drain must not
 restart anything.
 
+### 2.6 A management socket that cannot be bound stops the server
+
+`gloak serve -health-enabled` takes the management socket with a synchronous
+`net.Listen` before the main server starts, and a failure is returned rather than
+logged.
+
+Both halves were got wrong first and are worth recording. Logging and carrying on
+leaves an operator who asked for a health endpoint without one - **and a
+readiness probe aimed at a port nothing listens on is the exact failure this
+endpoint exists to prevent**, so producing it silently is worse than not offering
+the option. And binding inside the goroutine made the `management interface
+listening` line print before the bind was known, so the log asserted something
+hopeful; the first version of this code printed that line and then exited with
+`address already in use` two lines later.
+
+Verified against the built binary with a port held by another process: exit 1,
+`gloak: management interface: listen tcp 127.0.0.1:19102: bind: address already
+in use`, and no misleading log line.
+
 ## 3. The harness: what happened to the refusal, and what the verifier does
 
 ### 3.1 What the verifier does now
@@ -455,7 +474,40 @@ the wrong server **and** verified against the wrong handler. Its message says so
 `Target`'s one call site there is compiled by nothing in `make test`. That is M12
 from the previous cut: a recorder change nothing can catch except a recording.
 
-RECORD_DIFF_PLACEHOLDER
+**The diff is empty. Zero files changed, out of 1135 rewritten.**
+
+```
+$ git status --porcelain -- internal/conformance/testdata | wc -l
+0
+```
+
+Read file by file, which for an empty diff means reading what the run *did*
+rather than what it left:
+
+- **All fourteen management goldens were rewritten and all fourteen came back
+  byte-identical.** The log names each one -
+  `management/index/root.http` through `management/fallback/unknown-path.http` -
+  so none of them was skipped into looking unchanged. This is the assertion the
+  run exists to make: if `Target` had lost the management branch, those fourteen
+  would have been re-recorded from port 8080 and the diff would have held
+  fourteen files turning into the main port's unmatched-path 404.
+- **The eight `Recorded` ones are the load-bearing half.** A `Recorded` case is
+  required not to match, so nothing in `make test` can tell where its golden came
+  from; these eight are the only evidence that the recorder still reaches port
+  9000 for a case Gloak does not serve byte for byte. They are also exactly the
+  eight M8 would have corrupted (5.1).
+- **The six now `Implemented` were rewritten too**, because `GoldenIsAsserted` is
+  true for both statuses, and came back identical - so the promotion moved no
+  byte.
+- **The 1121 goldens outside this chapter did not move**, which is the control.
+  The only production change that could have reached them is `internal/httpx`
+  gaining a file, and it gained functions rather than changing one; an empty diff
+  across the rest of the tree is what says so.
+- **Six cases were skipped for having no fixture** and twelve `Pending` goldens
+  were left alone, both unchanged from the previous run's counts.
+
+Forty containers, all fresh: one shared and one per `PristineRealm` case. The run
+took 833 seconds and exited 0.
 
 ## 5. The mutation pass
 
@@ -734,6 +786,10 @@ That is honest - the window is the drain - and it may be useless. Keycloak's
 window is however long Quarkus takes to stop, which is seconds. Kubernetes reads
 the readiness probe on an interval measured in seconds, so a Gloak that drains
 instantly will never be observed draining.
+
+Measured twice against the binary, and the two runs disagree in the way that
+makes the point: the first caught the 503 once in several thousand polls, and the
+second caught it **not at all** before the process was gone.
 
 The fix is a minimum drain period before the main server is shut down, and the
 reason to hesitate is that it is a number nobody has measured on Keycloak and a

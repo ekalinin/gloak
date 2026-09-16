@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -178,11 +179,31 @@ func serve(args []string) error {
 	// just has nobody to tell.
 	mgmt := management.New()
 	var mgmtServer *http.Server
+
+	// Both listeners report through one channel, so a management socket that
+	// cannot be bound **stops the server** rather than logging and leaving an
+	// operator who asked for a health endpoint without one. A readiness probe
+	// aimed at a port nothing listens on is the failure mode this endpoint
+	// exists to prevent, and producing it silently would be worse than not
+	// offering the option. It is buffered for two so neither goroutine can be
+	// left blocked on a send after this function has returned.
+	serveErr := make(chan error, 2)
+
 	if cfg.healthEnabled {
+		// The socket is taken **here** rather than inside the goroutine, so a
+		// port that cannot be bound is an error before the main server starts,
+		// and so the line logged below is true when it is printed rather than
+		// hopeful. ListenAndServe in a goroutine reports the same failure a
+		// moment later and through the channel, by which time the log has
+		// already said the interface is listening.
+		ln, err := net.Listen("tcp", cfg.managementAddr)
+		if err != nil {
+			return fmt.Errorf("gloak: management interface: %w", err)
+		}
 		mgmtServer = newHTTPServer(cfg.managementAddr, mgmt.Handler())
 		go func() {
-			if err := mgmtServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				slog.Error("gloak: management interface", "error", err)
+			if err := mgmtServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				serveErr <- fmt.Errorf("gloak: management interface: %w", err)
 			}
 		}()
 		slog.Info("gloak: management interface listening", "addr", cfg.managementAddr)
@@ -198,15 +219,17 @@ func serve(args []string) error {
 	defer stop()
 
 	slog.Info("gloak: listening", "addr", cfg.addr, "issuer", cfg.issuer, "db", cfg.db)
-	serveErr := make(chan error, 1)
-	go func() { serveErr <- server.ListenAndServe() }()
+	go func() {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveErr <- fmt.Errorf("gloak: serve: %w", err)
+			return
+		}
+		serveErr <- nil
+	}()
 
 	select {
 	case err := <-serveErr:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return fmt.Errorf("gloak: serve: %w", err)
-		}
-		return nil
+		return err
 	case <-ctx.Done():
 	}
 
