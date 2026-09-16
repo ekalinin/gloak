@@ -441,6 +441,33 @@ func TestTargetFollowsTheFlag(t *testing.T) {
 		})
 	}
 
+	// **Target must not read Status, and that had to be found by mutation.**
+	// Narrowing the predicate to `c.ManagementPort && c.Status == Implemented`
+	// was applied, compiled, and survived 26 subtests including the whole
+	// management chapter of TestConformance. It is not a harmless narrowing: a
+	// Recorded case is required *not* to match, so eight cases sent to the main
+	// mux fail to match for the wrong reason and skip exactly as they should -
+	// and the **recorder** reads this same function, so `make record` would have
+	// rewritten those eight goldens from port 8080 and the diff would have looked
+	// like Keycloak changing its mind.
+	//
+	// Implemented is iota, so it is Status's zero value, which is why every
+	// table row above and the integration test below went through the mutated
+	// branch without noticing. The rows here are the ones that do not: the
+	// answer is the same for all three statuses, so a predicate that reads one
+	// fails.
+	for _, status := range []Status{Implemented, Recorded, Pending} {
+		t.Run(fmt.Sprintf("the port does not depend on the status (%d)", status), func(t *testing.T) {
+			if got := Target(main, mgmt, Case{ManagementPort: true, Status: status}); got != mgmt {
+				t.Errorf("a management case with status %d went to %q; Target decides on "+
+					"the socket a case addresses and a status is not one", status, got)
+			}
+			if got := Target(main, mgmt, Case{Status: status}); got != main {
+				t.Errorf("an ordinary case with status %d went to %q", status, got)
+			}
+		})
+	}
+
 	named := func(name string) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(name))
@@ -527,8 +554,15 @@ func TestTheVerifierAnswersAManagementCaseFromTheManagementServer(t *testing.T) 
 func TestServeSendsACaseToTheHandlerItsFlagNames(t *testing.T) {
 	live := Request{Method: http.MethodGet, Path: "/health/live"}
 
+	// **Status: Recorded, deliberately.** Implemented is Status's zero value, so
+	// a case written without one goes through any predicate that reads the
+	// status as though it were Implemented - which is how a narrowed Target
+	// survived this test once. A Recorded management case is the one that has to
+	// reach the management handler and the one nothing else here would notice
+	// missing, because a Recorded case is required not to match anyway.
 	onManagement, _, err := serve(t, Case{
-		ID: "management/health/live", Fixture: "bootstrap", ManagementPort: true, Request: live,
+		ID: "management/health/live", Status: Recorded, Fixture: "bootstrap",
+		ManagementPort: true, Request: live,
 	})
 	if err != nil {
 		t.Fatalf("serve the management case: %v", err)
