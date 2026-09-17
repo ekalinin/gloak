@@ -332,14 +332,39 @@ var redirectMediaTypeCells = []struct {
 // before the handler runs, so a writer that stopped deleting X-Frame-Options
 // would send it on every row, and one that set Content-Security-Policy
 // unconditionally would too.
+// It guards its own traversal and its own comparison separately, because they
+// go vacuous in different ways. An empty table runs no subtest and reports the
+// same green as a table that checked everything - a mutation that replaced the
+// range with `[:0]` survived the whole package. And a table whose every row
+// expected both headers absent would traverse eleven cells while asserting only
+// one side of each rule, which is the shape the sixteen `GET` goldens were in
+// for a fortnight.
 func checkRedirectCells(t *testing.T, location, cacheControl string,
 	write func(http.ResponseWriter, *http.Request, string)) {
 	t.Helper()
+	var framed, policied, bare int
+	for _, cell := range redirectMediaTypeCells {
+		switch {
+		case cell.policy:
+			policied++
+		case cell.frame:
+			framed++
+		default:
+			bare++
+		}
+	}
+	if framed == 0 || policied == 0 || bare == 0 {
+		t.Fatalf("the table needs a row of each kind and has %d framed, %d policied, %d bare: "+
+			"one of the two rules is asserted in one direction only", framed, policied, bare)
+	}
+
+	ran := 0
 	for _, cell := range redirectMediaTypeCells {
 		name := cell.contentType
 		if name == "" {
 			name = "(no Content-Type)"
 		}
+		ran++
 		t.Run(name, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodGet, "/realms/master/probe", nil)
 			if cell.contentType != "" {
@@ -390,6 +415,10 @@ func checkRedirectCells(t *testing.T, location, cacheControl string,
 				t.Errorf("body = %q, want empty", body)
 			}
 		})
+	}
+	if ran != len(redirectMediaTypeCells) {
+		t.Fatalf("ran %d of %d cells, so this table asserted less than it names",
+			ran, len(redirectMediaTypeCells))
 	}
 }
 
