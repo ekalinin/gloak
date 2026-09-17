@@ -984,8 +984,15 @@ var framedRequestMediaTypes = map[string]bool{
 // **It is not a rule about these two redirects**, although that is how F221
 // filed it. The same one-entry list decides the header on a plain admin
 // DELETE's 204, measured on the same day and as far outside the browser flow as
-// this API goes. Gloak still sets this header at three call sites that are
-// right only because their requests are always form-urlencoded - see F265.
+// this API goes, and on POST /login-actions/authenticate's 302 - which is the
+// response WriteLoginActionRedirect's doc comment cites as the counterexample
+// proving the rule is per endpoint, and is not one.
+//
+// Gloak still sets this header at three call sites rather than by this rule.
+// One of them, WriteLoginActionRedirect, diverges for any request that is not a
+// form. The other two - revocation's success and POST /logout's 204 - answer a
+// different response entirely for any other Content-Type, so nothing can tell
+// them from the rule in either direction. See F265.
 var policyRequestMediaTypes = map[string]bool{
 	"application/x-www-form-urlencoded": true,
 }
