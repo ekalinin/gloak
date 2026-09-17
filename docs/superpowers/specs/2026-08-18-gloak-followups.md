@@ -6727,7 +6727,23 @@ Whoever builds Gloak's management interface does both and lifts the refusal in
 the same commit. Filed so that the refusal is met as a decision rather than as
 an obstacle.
 
-## F245: a golden whose bytes are a function of a startup option, and nothing records which
+## F245: a golden whose bytes are a function of a startup option, and nothing records which (fixed 2026-09-17)
+
+**The golden says now.** `Case.Configuration` names the container and
+`FormatGolden` writes `# recorded-with: <the command line>` into the file, spelled
+as a person would type it. The entry balked at a 1136-file format change when the
+cost was one chapter; at two chapters and eight behaviours the arithmetic changed.
+
+**The golden half of that commit is purely additive** - 1136 files, 1136
+insertions, **zero deletions** - and it is a separate commit from the re-record,
+whose golden diff is six files. A format change to every golden and a re-record
+in one commit would be a diff nobody can read.
+
+The `Case`-only alternative was rejected on exactly the ground this entry was
+filed on: **the file is what a reviewer reads in a `make record` diff**, and a
+catalogue field answers only somebody who already thought to ask.
+
+## F245 (original): the entry as filed on 2026-09-15
 
 `management/index/root` and the five aggregate health goldens are recordings of
 an **option set**: the index page lists the endpoints that are on, and the check
@@ -6999,7 +7015,17 @@ satisfied by Gloak having no `/resources` route at all, and
 `TestAssertAbsentHeadersAgreeWithTheGolden` is what makes the sixteen
 `X-Frame-Options` declarations mean something.
 
-## F256: a `Recorded` case cannot guard the routing it records
+## F256: a `Recorded` case cannot guard the routing it records (closed 2026-09-17)
+
+**All three behaviours carry `Implemented` cases now**, and all three mutations
+die - including the one this entry was filed from, `routePath` discarding the
+clean path, which had survived the whole conformance suite.
+
+**The remedy was a configuration rather than a mask.** The cases were re-recorded
+against the container Gloak is configured like; nothing about the assertions
+changed.
+
+## F256 (original): the entry as filed on 2026-09-16
 
 Three of this chapter's behaviours - the verb decides nothing, `Accept` decides
 nothing, the path is not normalised - are served correctly and are guarded by
@@ -7122,3 +7148,139 @@ nothing here touches it.
 ### F247 and F248: unchanged
 
 Neither was re-tested and neither moved.
+
+## F261: the configuration line is written from the value the container was started with, and nothing compares it to the container
+
+`startKeycloak` takes `cfg`, and the recorder writes that same `cfg` into the
+golden. If the environment table said something other than what the
+configuration's name claims - `StartDevHealth` mapped to `KC_METRICS_ENABLED`,
+say - every file would carry an honest-looking line naming a command line
+nobody ran, and `TestEveryGoldenNamesTheConfigurationItsCaseDeclares` would be
+green.
+
+`TestConfigurationEnvironmentsArePinned` closes the table (M5 kills on it) and
+the two content tests close the two responses that differ between the option
+sets (section 2). What is **not** closed is the general case: a third
+configuration whose responses happen not to differ anywhere a golden reaches
+would be unfalsifiable, and a configuration's *name* is prose.
+
+What would close it is the container answering for itself - Keycloak publishes
+its build options on `/admin/serverinfo`, and `KC_METRICS_ENABLED` is observable
+there. The recorder could assert the container it started matches the
+configuration it was asked for, once per start. About fifteen lines, behind the
+`docker` tag, and therefore untestable without Docker, which is the reason it is
+filed rather than built.
+
+## F262: the metrics refusal is keyed on one environment variable name
+
+The fourth arm of `managementDefects` reads `env["KC_METRICS_ENABLED"] != "true"`.
+That is the right shape - the behaviour needs the endpoint, not a spelling - and
+it is one string literal away from being wrong, because nothing compares that
+literal to the one `configurationEnv` writes.
+
+Measured by M6, which is the survivor in section 8: rewriting the refusal to key
+on the configuration's **name** instead is observationally identical while only
+two configurations exist, and it passes every row of
+`TestManagementRefusalGuardCanFail`. The two spellings can only be separated by
+a third configuration, and `TestTheTreeHoldsMoreThanOneConfiguration` refuses one
+that no golden uses - so the input that would tell them apart cannot be
+constructed without recording something.
+
+A seam would close it: `managementDefects` taking the environment lookup as an
+argument, the way it already takes the fixtures map for exactly this reason. It
+is four lines and it was not done, because the refusal it protects has one
+consumer and inventing a seam for a guard is how a guard becomes furniture.
+Filed with the question rather than answered.
+
+## F263: no configuration is declared for `start`, so F250 is half-closed
+
+`themes/resource/served-file` now says `# recorded-with: start-dev
+--health-enabled --metrics-enabled`, which is what F250 asked for: the reader
+who meets `Cache-Control: no-cache` on a static file is one line from the reason.
+What is still true is that **only one of the two measured profiles is in the
+tree.** `max-age=2592000` is a real contract of a real configuration and no
+golden holds it.
+
+Declaring `start` is not free the way `start-dev --health-enabled` was. A
+production-mode container needs a database and a hostname, takes longer to
+start, and every theme case that declared it would need its fixture to work
+there. And `TestTheTreeHoldsMoreThanOneConfiguration` refuses a configuration no
+golden uses, so it cannot be declared in advance of a case that wants it.
+
+The question this leaves is whether the six theme 200s should move to `start` -
+the profile a deployment runs - or stay on `start-dev` - the profile the rest of
+the tree is recorded under. This cut has no opinion worth acting on and the
+measurement is in F250.
+
+## F264: a configuration is a container's command line, and a container has more state than that
+
+`Configuration` names `start-dev` plus two options. Three other things about the
+recorder's container decide bytes and none of them is in the value:
+`KC_BOOTSTRAP_ADMIN_USERNAME` and its password, which F252 records as the reason
+the welcome page cannot be recorded at all; the image tag, which is pinned in
+`startKeycloak` and not in the configuration; and the database, which is the
+container's own H2 and is what mints the theme version segment (F23).
+
+None of the three varies today, so widening the value would be a mask over
+something that does not move - which is the inert-declaration shape this project
+refuses. It is filed because the *next* configuration is quite likely to vary
+one of them: a `start` container needs a real database, and at that point the
+value has to say so or two goldens will name one configuration and come from two
+different containers.
+
+## Dispositions from the recorder configurations cut (2026-09-17)
+### F245: closed
+
+A golden says which configuration produced it, on every one of the 1136 files,
+and the recorder can record more than one. The entry's stated cost - "a change
+to `FormatGolden` and `ParseGolden` that every one of the 1119 files would take"
+- was paid, and the arithmetic that made it worth paying is the one the entry
+itself named: two chapters rather than one, and eight behaviours.
+
+### F256: closed
+
+Section 4. All three behaviours carry `Implemented` cases, and the three
+mutations that used to survive the conformance suite die in it.
+
+### F250: half-closed, see F263
+
+The line names `start-dev`, so the profile is no longer invisible. The `start`
+profile's bytes are still in no golden.
+
+### F246: fenced rather than fixed, and now it fails loudly
+
+`FormatGolden` still writes `http.StatusText(g.Status)` and still loses a
+non-standard reason phrase. What changed is that
+`TestEveryGoldenRoundTripsThroughParseAndFormat` would now **fail** on a
+committed golden carrying one, rather than the loss being silent. Nothing in the
+tree carries one: `management/metrics/openmetrics-refused` is the one measured
+instance and its golden holds `406 Not Acceptable`, which is the loss the entry
+describes, committed before the round-trip test existed and passing it because
+the file holds the recomputed phrase rather than the measured one.
+
+### F249: unchanged, and now refused rather than merely unlikely
+
+The absent default listener is still expressible in no golden. What is new is
+that a configuration with neither option **cannot be declared**: `startKeycloak`
+refuses a configuration `configurationEnv` has no entry for, and
+`TestConfigurationEnvironmentsArePinned` refuses `start-dev` with no options as
+a declared one, with the measurement in its message.
+
+### F40, F47 - unchanged, and the regimes compose
+
+`PristineRealm` still gets a container per case and the configuration pool does
+not touch it. A pristine case that declares a configuration gets a fresh
+container started that way, which is one line in the recorder and is exercised
+by nothing today - no `PristineRealm` case declares a configuration.
+
+### F113: unchanged, and it is the reason section 3's second case was not written
+
+A `Failing since` timestamp keeps the datasource check's DOWN document out of
+any golden, and the counter dump out of `/metrics`. It is also half the argument
+against a `management/health/check-metrics-enabled` case: the three-check
+document's UP branch is recordable and its DOWN branch is not, so a case for it
+would be a contract for one of its two states.
+
+### F247, F248, F251, F252, F253, F254, F255 - unchanged
+
+None was re-tested and none moved.
