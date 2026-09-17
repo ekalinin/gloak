@@ -12545,15 +12545,25 @@ var adminCases = []Case{
 				`"identityProviderMapper":"oidc-username-idp-mapper"}`),
 		},
 		AssertHeaders: []string{"Content-Type"},
-		// **The five are deliberately not declared here, and that is a
-		// divergence rather than an omission.** The golden records none of
-		// them; Gloak sends all five, because createIdentityProviderMapper
-		// writes this 409 through httpx.WriteOAuthError where the other twelve
-		// goldens of the family go through internal/admin's
-		// writeDuplicateResource, which deletes them. Declaring the absence is
-		// what the mirror rule asks for and it turns this case red, so the
-		// entry lives in omissionsGloakStillSends in catalog_test.go with the
-		// reason and comes out with the fix. See F226.
+		// AGENTS.md's `Duplicate resource error` exception: the 409 sends
+		// **none** of the five, while the duplicate-name 400 below and the
+		// empty-body 500 beside it - same route, same verb, same request
+		// Content-Type - send all five. Re-measured 2026-09-17 on a live
+		// 26.7.1: 409, 67 bytes, none of the five; 400 and 500, all five.
+		//
+		// The declaration was withheld until 2026-09-17 because Gloak sent all
+		// five here - createIdentityProviderMapper wrote the body through
+		// httpx.WriteOAuthError where the rest of the family goes through
+		// internal/admin's writeDuplicateResource, which deletes them. That was
+		// F226, and the entry that excused it in omissionsGloakStillSends is
+		// gone with it.
+		AssertAbsentHeaders: []string{
+			"Referrer-Policy",
+			"Strict-Transport-Security",
+			"X-Content-Type-Options",
+			"X-Frame-Options",
+			"X-Robots-Tag",
+		},
 	},
 	{
 		// **A name the alias already holds is a 400, not a 409**, and the

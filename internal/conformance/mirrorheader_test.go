@@ -110,17 +110,13 @@ func TestEveryGoldenMissingASecurityHeaderDeclaresItAbsent(t *testing.T) {
 //
 // Keyed by case ID rather than by path, because the reader of the entry wants
 // the case.
-var omissionsGloakStillSends = map[string]string{
-	"admin/identity-providers/mappers-create-no-name": "F226. The golden records " +
-		"a 409 `Duplicate resource error` with none of the five, which is AGENTS.md's " +
-		"fifth exception, and the case's own comment has said so since 2026-09-02. " +
-		"Gloak sends all five: createIdentityProviderMapper writes this 409 through " +
-		"httpx.WriteOAuthError, where the other twelve goldens carrying this body go " +
-		"through internal/admin's writeDuplicateResource, which deletes them first. " +
-		"The divergence is older than this list and was invisible until the mirror " +
-		"rule asked for the declaration. Fixing it is a handler change and does not " +
-		"belong in the sweep that found it.",
-}
+//
+// **It is empty, and that is the ratchet working.** Its one entry was F226 -
+// `admin/identity-providers/mappers-create-no-name`, whose 409 Gloak sent with
+// all five where the recording has none - and it went when the handler was
+// fixed on 2026-09-17 and the case wrote its declaration. The list emptying is
+// how the bargain was supposed to end.
+var omissionsGloakStillSends = map[string]string{}
 
 // caseIDOf turns a golden's path back into the case ID that names it, which is
 // GoldenPath run backwards. Every path the sweep reports came from the corpus
