@@ -1,4 +1,5 @@
 # GET /admin/realms/gloak-probe-wf-read/workflows/1f100000-0000-4000-8000-000000000001
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 200 OK
 Content-Type: application/yaml;charset=UTF-8
 Referrer-Policy: no-referrer

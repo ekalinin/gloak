@@ -1,4 +1,5 @@
 # GET /admin/realms/gloak-probe-cmp-mrg/components/c0e00000-0000-4000-8000-000000000006
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 200 OK
 Cache-Control: no-cache
 Content-Length: {{volatile}}

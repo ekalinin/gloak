@@ -1,4 +1,5 @@
 # DELETE /admin/realms/gloak-probe-cmp-dl2/components/c0e00000-0000-4000-8000-000000000008
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 404 Not Found
 Content-Length: {{volatile}}
 Content-Type: application/json

@@ -1,4 +1,5 @@
 # GET /admin/realms/master/identity-provider/instances/gloak-probe-idp-min/export
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 204 No Content
 Cache-Control: no-cache
 Referrer-Policy: no-referrer

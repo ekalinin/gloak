@@ -1,4 +1,5 @@
 # DELETE /admin/realms/master/clients/c10adf00-0000-4000-8000-000000000003/nodes/gloak-node-2.example.com
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 204 No Content
 Cache-Control: no-cache
 Referrer-Policy: no-referrer

@@ -1,4 +1,5 @@
 # DELETE /admin/realms/gloak-probe-sess-del/sessions/gloak-probe-no-such-session
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 404 Not Found
 Content-Length: {{volatile}}
 Content-Type: application/json

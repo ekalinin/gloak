@@ -1,4 +1,5 @@
 # PUT /admin/realms/master/clients/f7800000-0000-4000-8000-000000000003
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 400 Bad Request
 Content-Length: {{volatile}}
 Content-Type: application/json

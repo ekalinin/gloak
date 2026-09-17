@@ -2,10 +2,12 @@ package conformance
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -111,6 +113,41 @@ func managementDefects(cases []Case, fixtures map[string]Fixture) []string {
 					"recorder will send it to port 8080 and record the wrong server", c.ID))
 		}
 
+		// Refusal four, added 2026-09-16 with Case.Configuration.
+		//
+		// **A metrics case has to be recorded under a configuration that has a
+		// metrics endpoint**, and the mistake it refuses is the one this cut's
+		// own mechanism invites. Every other case in this chapter declares
+		// StartDevHealth, because that is the option set Gloak serves and
+		// recording there is what took six cases from Recorded to Implemented.
+		// Doing the same to these two would look like finishing the job and
+		// would destroy them: `/metrics` under health alone is the ordinary
+		// 53-byte 404, measured, so the golden would stop holding Micrometer's
+		// 406 and start holding the fallback - which Gloak answers, so the case
+		// would match, so it would have to be promoted, and the chapter would
+		// report a behaviour served that nothing serves.
+		//
+		// It is keyed on the **environment** rather than on the configuration's
+		// name, because what the behaviour needs is the endpoint and not a
+		// spelling: a third configuration switching metrics on under another
+		// name is served by this refusal without anybody editing it.
+		if inChapter && chapterOf(c.ID) == metricsChapter {
+			env, ok := keycloakEnv(ConfigurationOf(c))
+			if !ok {
+				out = append(out, fmt.Sprintf(
+					"%s is recorded under %q, for which no container environment is declared",
+					c.ID, ConfigurationOf(c)))
+			} else if env["KC_METRICS_ENABLED"] != "true" {
+				out = append(out, fmt.Sprintf(
+					"%s is in %s and is recorded under %q, which has no metrics endpoint. "+
+						"/metrics there is the ordinary 53-byte 404, so the golden would hold "+
+						"the fallback rather than Micrometer's 406 - and Gloak answers that "+
+						"404, so the case would match and read as served while the behaviour "+
+						"it names is served by nothing.",
+					c.ID, metricsChapter, ConfigurationOf(c)))
+			}
+		}
+
 		// Refusal three: a fixture's steps run against the main port, and
 		// nothing they can do reaches this one.
 		if c.ManagementPort && c.Fixture != "" {
@@ -186,6 +223,14 @@ func TestManagementRefusalGuardCanFail(t *testing.T) {
 			cases: []Case{{ID: "management/health/check", Status: Recorded, ManagementPort: true, Fixture: "admin-token"}},
 			want:  "nothing a step can do reaches port 9000",
 		},
+		{
+			name: "a metrics case recorded without the metrics endpoint",
+			cases: []Case{{
+				ID: "management/metrics/openmetrics-refused", Status: Recorded,
+				ManagementPort: true, Fixture: "bootstrap", Configuration: StartDevHealth,
+			}},
+			want: "which has no metrics endpoint",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := managementDefects(tc.cases, stepped)
@@ -203,6 +248,28 @@ func TestManagementRefusalGuardCanFail(t *testing.T) {
 		ok := []Case{{ID: "management/health/check", Status: Recorded, ManagementPort: true, Fixture: "bootstrap"}}
 		if got := managementDefects(ok, stepped); len(got) != 0 {
 			t.Errorf("a case that breaks no refusal was complained about: %v", got)
+		}
+	})
+
+	// The configuration refusal from the side that must stay quiet, which is
+	// the half a refusal keyed on "any declared configuration" would get wrong.
+	// Two rows, because the two families take opposite values: the metrics
+	// family needs the option and everything else in the chapter needs it off.
+	t.Run("the configuration refusal is about the metrics endpoint and not about declaring one", func(t *testing.T) {
+		metricsOnTheDefault := []Case{{
+			ID: "management/metrics/prefix-match", Status: Recorded,
+			ManagementPort: true, Fixture: "bootstrap",
+		}}
+		if got := managementDefects(metricsOnTheDefault, stepped); len(got) != 0 {
+			t.Errorf("a metrics case on the default configuration was complained about: %v", got)
+		}
+		healthWithoutMetrics := []Case{{
+			ID: "management/health/check", Status: Implemented,
+			ManagementPort: true, Fixture: "bootstrap", Configuration: StartDevHealth,
+		}}
+		if got := managementDefects(healthWithoutMetrics, stepped); len(got) != 0 {
+			t.Errorf("a health case recorded under the option set Gloak serves was "+
+				"complained about: %v", got)
 		}
 	})
 
@@ -241,11 +308,17 @@ func TestManagementRefusalGuardCanFail(t *testing.T) {
 // The two documents the eleven health and cross-cutting goldens hold between
 // them, named by the cases that hold them.
 //
-// managementAggregateGoldens all answer /health's three-check document, and the
-// last three are the chapter's cross-cutting claims: the verb decides nothing,
-// `Accept` decides nothing, and the path is not normalised. Each of those is a
-// claim that **this request gets that same document**, and a claim of that
-// shape is a relation between two goldens rather than a property of one.
+// managementAggregateGoldens all answer /health's aggregate document - two
+// checks, since all five are recorded under StartDevHealth - and the last three
+// are the chapter's cross-cutting claims: the verb decides nothing, `Accept`
+// decides nothing, and the path is not normalised. Each of those is a claim that
+// **this request gets that same document**, and a claim of that shape is a
+// relation between two goldens rather than a property of one.
+//
+// Those five must stay on one configuration or the equalities below stop
+// meaning what they say: two of them recorded under different containers would
+// disagree for a reason that is not the server's. TestTheFiveAggregateCasesAreOnOneConfiguration
+// is what says so.
 //
 // managementEmptyGoldens all answer the empty-checks document. /health/started
 // being in this group and not the one above is the finding that the four
@@ -401,6 +474,45 @@ func TestManagementHealthGoldensHoldTheDocumentTheyWereMeasuredTo(t *testing.T) 
 	if bytes.Equal(aggregate, empty) {
 		t.Fatal("the aggregate document and the empty one are the same bytes, so the split " +
 			"this chapter records - four /health paths, two documents - is asserted by nothing")
+	}
+}
+
+// TestTheFiveAggregateCasesAreOnOneConfiguration is the premise the equalities
+// above rest on, made into an assertion.
+//
+// Five requests were measured answering one document, and the goldens are
+// compared against each other to say so. A configuration is what decides how
+// many checks that document holds, so moving one of the five to another
+// container would make them disagree for a reason that has nothing to do with
+// the server - and the failure would read as Keycloak changing its mind about
+// /health. The same holds for the empty group, whose document is the same under
+// both configurations today and need not stay so.
+func TestTheFiveAggregateCasesAreOnOneConfiguration(t *testing.T) {
+	for _, group := range [][]string{managementAggregateGoldens, managementEmptyGoldens} {
+		var first Configuration
+		for i, id := range group {
+			var c Case
+			for _, cc := range Catalog {
+				if cc.ID == id {
+					c = cc
+				}
+			}
+			if c.ID == "" {
+				t.Errorf("%s is named in a document group and is not in the catalogue", id)
+				continue
+			}
+			cfg := ConfigurationOf(c)
+			if i == 0 {
+				first = cfg
+				continue
+			}
+			if cfg != first {
+				t.Errorf("%s is recorded under %q and %s under %q; these goldens are "+
+					"compared against each other, so two containers would make them "+
+					"disagree for a reason that is not the server's",
+					group[0], first, id, cfg)
+			}
+		}
 	}
 }
 
@@ -585,11 +697,16 @@ func TestServeSendsACaseToTheHandlerItsFlagNames(t *testing.T) {
 }
 
 // theAggregateOnTheWire is what port 9000 actually sent for GET /health on a
-// both-options container, read off a socket on 2026-09-16: 345 bytes, with the
-// `checks` array opened on its own line.
+// **both-options** container, read off a socket on 2026-09-16: 345 bytes, with
+// the `checks` array opened on its own line.
 //
-// **It is not what management/health/check's golden holds**, and that is the
-// point of the test below.
+// **No golden holds this document any more.** management/health/check is
+// recorded under StartDevHealth since Case.Configuration existed, so the
+// committed bytes are the two-check document Gloak serves. This constant is the
+// three-check measurement kept where something still reads it: the option
+// coupling - that `--metrics-enabled` adds a *health* check - is a fact about
+// Keycloak that was previously asserted by a golden, and
+// TestTheTwoAggregateDocumentsDifferByTheMetricsCheck is what asserts it now.
 const theAggregateOnTheWire = "{\n" +
 	"    \"status\": \"UP\",\n" +
 	"    \"checks\": [\n" +
@@ -608,13 +725,55 @@ const theAggregateOnTheWire = "{\n" +
 	"    ]\n" +
 	"}"
 
+// theHealthOnlyAggregateOnTheWire is the same request on a container started
+// with `--health-enabled` alone, read off a socket on 2026-09-16: 225 bytes,
+// the same layout, two checks.
+//
+// **This is the document management/health/check's golden is a recording of**,
+// and it is what Gloak serves.
+const theHealthOnlyAggregateOnTheWire = "{\n" +
+	"    \"status\": \"UP\",\n" +
+	"    \"checks\": [\n" +
+	"        {\n" +
+	"            \"name\": \"Graceful Shutdown\",\n" +
+	"            \"status\": \"UP\"\n" +
+	"        },\n" +
+	"        {\n" +
+	"            \"name\": \"Keycloak Initialized\",\n" +
+	"            \"status\": \"UP\"\n" +
+	"        }\n" +
+	"    ]\n" +
+	"}"
+
+// theDatabaseCheck is the entry `--metrics-enabled` adds, and the name is the
+// contract: it is a **health** check whose presence a *metrics* flag decides,
+// which looks like a bug and is measured.
+const theDatabaseCheck = "Keycloak database connections async health check"
+
+// aggregateCase returns management/health/check out of the catalogue, with the
+// mask this pair of tests is about confirmed present.
+func aggregateCase(t *testing.T) Case {
+	t.Helper()
+	var c Case
+	for _, cc := range Catalog {
+		if cc.ID == "management/health/check" {
+			c = cc
+		}
+	}
+	if len(c.Unordered) == 0 {
+		t.Fatal("management/health/check carries no Unordered mask, so these tests are " +
+			"about a normalisation that no longer happens")
+	}
+	return c
+}
+
 // TestTheAggregateGoldenIsTheWireBytesAfterTheMask is a trap defused.
 //
-// `management/health/check`'s golden holds **313** bytes and opens its array
-// `[{`; the socket sent **345** and opened it `[` newline eight spaces `{`. A
+// `management/health/check`'s golden holds **202** bytes and opens its array
+// `[{`; the socket sent **225** and opened it `[` newline eight spaces `{`. A
 // reader comparing the committed file against a `curl` would conclude that Gloak
-// serves a body no Keycloak has produced, and a code review of this branch did
-// conclude exactly that.
+// serves a body no Keycloak has produced, and a code review of this chapter did
+// conclude exactly that, when the numbers were 313 and 345.
 //
 // It is the `Unordered: []string{"checks"}` mask. Sorting an array means parsing
 // and re-rendering it, and the re-rendering is not the wire's layout - so **the
@@ -626,28 +785,32 @@ const theAggregateOnTheWire = "{\n" +
 //
 // This pins the relationship so the next reader finds it asserted rather than
 // having to rediscover it, and so that a change to the sort's rendering is a
-// failing test rather than 313 bytes quietly becoming something else.
+// failing test rather than 202 bytes quietly becoming something else.
+//
+// **The transcription moved with the case's configuration and that is the whole
+// change here.** It held the both-options wire until 2026-09-16, because the
+// recorder ran one configuration; it holds the health-only wire now, because the
+// case declares StartDevHealth and the golden is a recording of that container.
+// A test comparing one configuration's bytes against another's golden would have
+// been the most confusing possible failure, which is why the two constants are
+// named for their configurations rather than for their sizes.
 func TestTheAggregateGoldenIsTheWireBytesAfterTheMask(t *testing.T) {
-	var c Case
-	for _, cc := range Catalog {
-		if cc.ID == "management/health/check" {
-			c = cc
-		}
-	}
-	if len(c.Unordered) == 0 {
-		t.Fatal("management/health/check carries no Unordered mask, so this test is " +
-			"about a normalisation that no longer happens")
+	c := aggregateCase(t)
+	if got := ConfigurationOf(c); got != StartDevHealth {
+		t.Fatalf("management/health/check is recorded under %q and this test holds the "+
+			"wire bytes of %q; the transcription and the case have to name one container",
+			got, StartDevHealth)
 	}
 
-	wire := []byte(theAggregateOnTheWire)
-	// **The length is what makes the constant above a transcription.** 345 is
+	wire := []byte(theHealthOnlyAggregateOnTheWire)
+	// **The length is what makes the constant above a transcription.** 225 is
 	// the `content-length` the socket reported; it is the one number here that
 	// was read rather than typed. Without it the constant's *layout* is pinned
 	// by nothing: a mutation collapsing its array opener to the golden's `[{`
 	// survived, because the mask re-renders either form to the same bytes and
 	// the equality below held for the wrong reason.
-	if len(wire) != 345 {
-		t.Fatalf("the transcribed wire body is %d bytes and the socket reported 345; "+
+	if len(wire) != 225 {
+		t.Fatalf("the transcribed wire body is %d bytes and the socket reported 225; "+
 			"this test is about the difference between that layout and the golden's, "+
 			"so a transcription that has drifted towards the golden records nothing",
 			len(wire))
@@ -677,6 +840,135 @@ func TestTheAggregateGoldenIsTheWireBytesAfterTheMask(t *testing.T) {
 	if string(wire) == string(g.Body) {
 		t.Error("the wire bytes and the golden are identical, so this test no longer " +
 			"records that the mask re-renders the array")
+	}
+}
+
+// TestTheTwoAggregateDocumentsDifferByTheMetricsCheck is what the three-check
+// document left behind when it left the golden tree.
+//
+// Until 2026-09-16 `management/health/check`'s golden held the both-options
+// document, and that recording was the only place in this repository where the
+// option coupling - **a metrics flag decides whether a health check exists** -
+// was asserted rather than written in prose. Re-recording the case under the
+// configuration Gloak serves is what took it from Recorded to Implemented and
+// what would have quietly discarded that.
+//
+// It is kept as a **relation between two transcriptions** rather than as a
+// second case, for two reasons. A case would go into the chapter's denominator
+// as a behaviour Gloak will never serve - `TestGloakPublishesNoDatabaseCheck`
+// is the assertion that it must not - where `Recorded` means "not built yet"
+// and is a list that exists to empty itself. And the claim is not a response: it
+// is the difference between two responses, which no single golden can hold.
+//
+// Both lengths were read off sockets on containers started for the purpose, and
+// they are the vacuity guard: a transcription edited to agree with its
+// neighbour would satisfy the subtraction below and record nothing.
+func TestTheTwoAggregateDocumentsDifferByTheMetricsCheck(t *testing.T) {
+	both, health := theAggregateOnTheWire, theHealthOnlyAggregateOnTheWire
+	if len(both) != 345 {
+		t.Fatalf("the both-options transcription is %d bytes and the socket reported 345", len(both))
+	}
+	if len(health) != 225 {
+		t.Fatalf("the health-only transcription is %d bytes and the socket reported 225", len(health))
+	}
+	if !strings.Contains(both, theDatabaseCheck) {
+		t.Fatalf("the both-options document does not name %q, so it is not the "+
+			"metrics-on recording", theDatabaseCheck)
+	}
+	if strings.Contains(health, theDatabaseCheck) {
+		t.Fatalf("the health-only document names %q; the whole coupling is that it does "+
+			"not", theDatabaseCheck)
+	}
+
+	// The two are the same document with one entry added, which is the claim.
+	// Comparing the parsed check lists rather than the bytes is deliberate: the
+	// entry arrives with its own indentation and a comma on the entry before
+	// it, so a byte-level subtraction would be asserting SmallRye's layout a
+	// third time - the byte table in internal/httpx already does that twice.
+	names := func(doc string) []string {
+		t.Helper()
+		var parsed struct {
+			Checks []struct{ Name string } `json:"checks"`
+		}
+		if err := json.Unmarshal([]byte(doc), &parsed); err != nil {
+			t.Fatalf("parse %q: %v", doc, err)
+		}
+		out := make([]string, 0, len(parsed.Checks))
+		for _, e := range parsed.Checks {
+			out = append(out, e.Name)
+		}
+		return out
+	}
+	withMetrics, withoutMetrics := names(both), names(health)
+	var remainder []string
+	for _, n := range withMetrics {
+		if n != theDatabaseCheck {
+			remainder = append(remainder, n)
+		}
+	}
+	if !slices.Equal(remainder, withoutMetrics) {
+		t.Errorf("the two configurations' check lists differ by more than the database "+
+			"check.\nwith metrics:    %v\nwithout metrics: %v", withMetrics, withoutMetrics)
+	}
+	if len(withoutMetrics) != 2 || len(withMetrics) != 3 {
+		t.Errorf("the documents hold %d and %d checks, and the measurement is two and three",
+			len(withoutMetrics), len(withMetrics))
+	}
+}
+
+// TestTheIndexGoldenIsTheHealthOnlyPage is the positive control for the
+// recorder actually starting the container the catalogue names.
+//
+// `TestEveryGoldenNamesTheConfigurationItsCaseDeclares` compares the file's line
+// against the case's declaration, and both of those are written from the same
+// value in one run - so it catches a declaration that moved without a re-record
+// and **not** a recorder that started the wrong container and wrote the right
+// line. This is the other half, and the index page is where it is cheapest: its
+// body is a list of the endpoints that are switched on, so a golden recorded
+// with metrics on names `/metrics` and one recorded without it cannot.
+//
+// The aggregate has the same property and is covered by
+// TestTheAggregateGoldenIsTheWireBytesAfterTheMask, which compares it against a
+// transcription of the health-only wire. Between them the two option-dependent
+// responses in this chapter are both pinned to the configuration they claim.
+func TestTheIndexGoldenIsTheHealthOnlyPage(t *testing.T) {
+	var c Case
+	for _, cc := range Catalog {
+		if cc.ID == "management/index/root" {
+			c = cc
+		}
+	}
+	if got := ConfigurationOf(c); got != StartDevHealth {
+		t.Fatalf("management/index/root is recorded under %q and this test is about the "+
+			"health-only page", got)
+	}
+
+	raw, err := os.ReadFile(GoldenPath(goldenDir, c.ID))
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	g, err := ParseGolden(raw)
+	if err != nil {
+		t.Fatalf("parse golden: %v", err)
+	}
+	body := string(g.Body)
+	if !strings.Contains(body, `<a href="/health">/health</a>`) {
+		t.Errorf("the index golden does not list /health, so it is not this port's index "+
+			"page at all: %q", body)
+	}
+	if strings.Contains(body, "/metrics") {
+		t.Errorf("the index golden lists /metrics, so it was recorded against a container "+
+			"started with --metrics-enabled while its case declares %q. The page lists "+
+			"exactly the endpoints that are on, which is what makes it the cheapest check "+
+			"that the recorder started the container the catalogue named: %q",
+			StartDevHealth, body)
+	}
+	// The length is the measurement: 120 bytes with health alone, 180 with both
+	// and 123 with metrics alone, read off sockets. Without it, a page listing
+	// /health and nothing else could still have drifted.
+	if len(g.Body) != 120 {
+		t.Errorf("the index golden is %d bytes and a --health-enabled container sent 120",
+			len(g.Body))
 	}
 }
 

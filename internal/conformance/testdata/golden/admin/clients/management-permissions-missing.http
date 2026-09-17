@@ -1,4 +1,5 @@
 # GET /admin/realms/master/clients/00000000-0000-0000-0000-000000000000/management/permissions
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 404 Not Found
 Content-Length: {{volatile}}
 Content-Type: application/json

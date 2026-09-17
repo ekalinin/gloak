@@ -1,9 +1,9 @@
 # GET /
+# recorded-with: start-dev --health-enabled
 HTTP/1.1 200 OK
 Content-Length: {{volatile}}
 
 <html>
 <h2>Keycloak Management Interface</h2>
-<ul><li><a href="/health">/health</a> - Health endpoint</li>
-<li><a href="/metrics">/metrics</a> - Metrics endpoint</li></ul>
+<ul><li><a href="/health">/health</a> - Health endpoint</li></ul>
 </html>

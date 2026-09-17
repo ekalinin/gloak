@@ -1,4 +1,5 @@
 # GET /admin/realms/gloak-probe-events/events/config
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 200 OK
 Cache-Control: no-cache
 Content-Length: {{volatile}}

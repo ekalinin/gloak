@@ -1,4 +1,5 @@
 # GET /admin/realms/master/client-templates/a5c09e00-0000-4000-8000-000000000011/protocol-mappers/protocol/saml
+# recorded-with: start-dev --health-enabled --metrics-enabled
 HTTP/1.1 200 OK
 Cache-Control: no-cache
 Content-Length: {{volatile}}

@@ -68,17 +68,45 @@ type Header struct {
 // Golden is a recorded response.
 type Golden struct {
 	RequestLine string
-	Status      int
-	Headers     []Header
-	Body        []byte
+
+	// Configuration names the way the reference container was started. It is
+	// written into the file so that a golden says what it is a recording of -
+	// see Configuration, and F245 and F250 for the two chapters whose bytes
+	// move with it.
+	//
+	// It is **empty when the file carries no such line**, which is not a valid
+	// configuration: ConfigurationOf never returns one. A golden that predates
+	// the line therefore reads as disagreeing with its case rather than as
+	// agreeing by default, which is what
+	// TestEveryGoldenNamesTheConfigurationItsCaseDeclares reports and what
+	// TestEveryGoldenRoundTripsThroughParseAndFormat makes a hard failure.
+	Configuration Configuration
+
+	Status  int
+	Headers []Header
+	Body    []byte
 }
 
+// configurationLine opens the line FormatGolden writes and ParseGolden reads.
+// It is a comment, because the file is an .http transcript and a header would
+// claim the server sent one.
+const configurationLine = "# recorded-with: "
+
 // FormatGolden renders a Golden as the .http file that gets committed:
-// the request as a comment, the status line, every header, a blank line,
-// then the body with nothing appended after it.
+// the request as a comment, the configuration it was recorded under as a
+// second comment, the status line, every header, a blank line, then the body
+// with nothing appended after it.
+//
+// The configuration line is the answer to F245 and F250, and it is second
+// rather than first because the request is what a reader looks for. Its cost
+// was one line in all 1136 files, taken deliberately: a golden's bytes are a
+// function of the container's command line in two chapters, one of them
+// invisibly, and a field the catalogue kept to itself would not be in the diff
+// a reviewer reads.
 func FormatGolden(g Golden) []byte {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "# %s\n", g.RequestLine)
+	fmt.Fprintf(&b, "%s%s\n", configurationLine, g.Configuration)
 	fmt.Fprintf(&b, "HTTP/1.1 %d %s\n", g.Status, http.StatusText(g.Status))
 	for _, h := range g.Headers {
 		fmt.Fprintf(&b, "%s: %s\n", h.Name, h.Value)
@@ -89,6 +117,17 @@ func FormatGolden(g Golden) []byte {
 }
 
 // ParseGolden reads back what FormatGolden wrote.
+//
+// A file with no configuration line parses, with Configuration empty. That is
+// tolerated here and refused by a sweep over the tree rather than by this
+// function, for two reasons. ParseGolden is called on hand-built corpora by
+// half a dozen guards that have nothing to say about a configuration, and
+// making the line mandatory here would have meant editing every one of them to
+// carry a value they do not test. And the sweep is the stronger check anyway:
+// TestEveryGoldenRoundTripsThroughParseAndFormat re-formats every committed
+// file and requires the bytes back, so a missing line fails as a difference
+// rather than as a parse error, and so does a line that has been edited into
+// something FormatGolden would not write.
 func ParseGolden(raw []byte) (Golden, error) {
 	head, body, found := bytes.Cut(raw, []byte("\n\n"))
 	if !found {
@@ -103,17 +142,30 @@ func ParseGolden(raw []byte) (Golden, error) {
 	}
 	g := Golden{RequestLine: strings.TrimPrefix(lines[0], "# "), Body: body}
 
-	fields := strings.Fields(lines[1])
+	// The configuration line is optional on the way in and always written on
+	// the way out. Reading it by prefix rather than by position is what lets
+	// the two states be told apart at all: without the line, lines[1] is the
+	// status line.
+	rest := lines[1:]
+	if strings.HasPrefix(rest[0], configurationLine) {
+		g.Configuration = Configuration(strings.TrimPrefix(rest[0], configurationLine))
+		rest = rest[1:]
+	}
+	if len(rest) == 0 {
+		return Golden{}, fmt.Errorf("conformance: golden needs a status line after its comments")
+	}
+
+	fields := strings.Fields(rest[0])
 	if len(fields) < 2 || !strings.HasPrefix(fields[0], "HTTP/") {
-		return Golden{}, fmt.Errorf("conformance: %q is not a status line", lines[1])
+		return Golden{}, fmt.Errorf("conformance: %q is not a status line", rest[0])
 	}
 	status, err := strconv.Atoi(fields[1])
 	if err != nil {
-		return Golden{}, fmt.Errorf("conformance: status code in %q: %w", lines[1], err)
+		return Golden{}, fmt.Errorf("conformance: status code in %q: %w", rest[0], err)
 	}
 	g.Status = status
 
-	for _, line := range lines[2:] {
+	for _, line := range rest[1:] {
 		name, value, ok := strings.Cut(line, ": ")
 		if !ok {
 			return Golden{}, fmt.Errorf("conformance: %q is not a header", line)
