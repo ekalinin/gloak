@@ -3097,17 +3097,20 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   reason the mask is not the inert kind - it holds three elements, where the 116
   masks removed on 2026-08-30 covered arrays of one or none.
 
-- **This recorder's goldens are a function of how the container was started, in
-  more than one place, and nothing in a golden says how.** Two measured
-  instances a week apart: the whole `management` chapter exists only under
-  `--health-enabled` or `--metrics-enabled`, and the theme resource route's
-  `Cache-Control` is `no-cache` under `start-dev` and `max-age=2592000` under
-  `start`. The first is visible - nothing on port 9000 exists without the
-  option - and **the second is not**, because a `Cache-Control` header on a
-  static file reads as a property of the product. Neither F245 nor F250 says
-  this on its own, and it is the sentence that makes F245's proposed fix - a
-  line in the golden naming the recorder's configuration - a cost worth paying
-  rather than a change to 1136 files for one chapter.
+- **This recorder's goldens are a function of how the container was started,
+  and the golden now says how.** Two measured instances a week apart: the
+  whole `management` chapter exists only under `--health-enabled` or
+  `--metrics-enabled`, and the theme resource route's `Cache-Control` is
+  `no-cache` under `start-dev` and `max-age=2592000` under `start`. The first
+  is visible - nothing on port 9000 exists without the option - and **the
+  second is not**, because a `Cache-Control` header on a static file reads as
+  a property of the product. `Case.Configuration` names the container and
+  `FormatGolden` writes it into the file as `# recorded-with: <the command
+  line>`, so a golden says what it is a recording of and a re-record's diff
+  shows the configuration changing beside the bytes that changed with it.
+  1130 of the 1136 declare nothing and take the default, which is the
+  both-options set: **a default that moves the whole tree is a default nobody
+  can review.** F245 and F250.
 - **The theme resource route's `Cache-Control` is a function of the startup
   mode, not of the version.** `no-cache` under `start-dev` and
   `max-age=2592000` under `start`, one image, measured on two containers on
@@ -3193,14 +3196,16 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   drift would be a golden whose `Location` churns while its body does not.
 
 - **Gloak serves this port as a `--health-enabled`-only Keycloak serves it,
-  and that is one decision rather than a list of exceptions.** Gloak keeps no
-  counters, so it has no `--metrics-enabled`; a metrics-disabled container
-  answers `/metrics` with the ordinary 53-byte 404, serves a **120-byte** index
-  page listing `/health` alone, and answers `/health` with **two** checks
-  rather than three. All three were measured on 2026-09-16 and Gloak
-  reproduces all three. So eight of the fourteen management goldens hold the
-  other option set's bytes and stay `Recorded` - not because the path is
-  unserved, but because the recorder sets both options. See F245 and F256.
+  and the recorder records it that way.** Gloak keeps no counters, so it has
+  no `--metrics-enabled`; a metrics-disabled container answers `/metrics` with
+  the ordinary 53-byte 404, serves a **120-byte** index page listing `/health`
+  alone, and answers `/health` with **two** checks rather than three.
+  Six of the fourteen management goldens are recordings of that option set and
+  all six cases are `Implemented`. The **two** that are not are the metrics
+  family, and they keep the both-options configuration on purpose: Micrometer's
+  content negotiation does not exist without the option, so recording them
+  where Gloak lives would replace a 406 with a 404 Gloak answers and report two
+  behaviours served that nothing serves.
 - **A DOWN health check is not always a bare status, and the two measured
   shapes disagree.** The datasource check gains
   `"data": {"Failing since": "<yyyy-MM-dd HH:mm:ss,SSS>"}` when it fails -
@@ -3246,14 +3251,32 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   the management port read the file against a `curl` and reported the
   difference as a divergence; `TestTheAggregateGoldenIsTheWireBytesAfterTheMask`
   is that pinned, and it applies to every `Unordered` golden in the tree.
-- **A `Recorded` case cannot guard the behaviour it records, on the routing as
-  well as on the bytes.** Three of the management chapter's cross-cutting
-  behaviours are served correctly by Gloak and caught by no golden, because
-  their goldens hold a different option set's document and so a Gloak that
-  answered them *wrongly* would fail to match just as thoroughly as one that
-  answers them right. A mutation disabling path cleaning survived the whole
-  conformance suite and was killed only by the package test. F256.
-
+- **A `Recorded` case cannot guard the behaviour it records, and the remedy is
+  usually a configuration rather than a mask.** Three of the management
+  chapter's cross-cutting behaviours - the verb decides nothing, `Accept`
+  decides nothing, the path is cleaned - were served correctly and caught by no
+  golden, because their goldens held a different option set's document and a
+  Gloak answering them *wrongly* failed to match just as thoroughly as one
+  answering them right. A mutation disabling path cleaning survived the whole
+  conformance suite. All three are `Implemented` now and all three mutations
+  die, because the cases were re-recorded against the container Gloak is
+  configured like. F256, closed.
+- **`make record` runs one container per configuration and one per
+  `PristineRealm` case, and the two are different kinds of thing.** A pristine
+  container exists so that **no other case** has touched the realm, so it
+  cannot be shared; a configuration is a property of the container that any
+  number of cases share, so it is pooled. Forty-one starts for 1135 goldens:
+  one shared per configuration in use, thirty-nine pristine. Adding a
+  configuration costs one start for the whole run, not one per case.
+- **A golden is a recording of a container, and the file names it.**
+  `FormatGolden` writes `# recorded-with: <command line>` as the second line
+  and `ParseGolden` reads it; a file carrying no such line parses with the
+  value **empty**, which is not a configuration any case can declare, so a
+  golden that predates the line reads as disagreeing rather than as agreeing by
+  default. `TestEveryGoldenRoundTripsThroughParseAndFormat` is what makes the
+  line mandatory without `ParseGolden` having to refuse one: every committed
+  file is re-formatted and the bytes are required back, which also fences F246
+  - a non-standard reason phrase cannot survive the round trip.
 ## Boundaries
 
 | Package | Owns | Must not |
@@ -3744,6 +3767,17 @@ implementation satisfies entirely.
   cut shipped a sweep whose comparison read the wrong field, and it ran, passed,
   and asserted nothing. The question to ask of any survivor is not "did the
   check stop running" but "could this be wrong and still look right".
+
+- **A guard written from the value the thing under test was built from cannot
+  catch that thing being built wrong.** The recorder starts a container from
+  `ConfigurationOf(c)` and writes `ConfigurationOf(c)` into the golden, so a
+  test comparing the file's line against the case catches a declaration that
+  moved without a re-record and **not** a recorder that started the wrong
+  container. What catches that is content that differs between the two
+  configurations - the index page's list of enabled endpoints, the aggregate's
+  check count - pinned against socket-read bytes with the socket's own
+  `content-length`. Ask of any declaration-versus-declaration test which of the
+  two it would notice being wrong.
 
 **Run each package separately.** A filtered `-run` has twice reported a survivor
 that a test outside the filter was killing, and once hidden a real survivor

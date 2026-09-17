@@ -99,7 +99,7 @@ Working today:
   Gloak's responses byte-for-byte against bytes recorded from a live
   Keycloak 26.7.1
 - a parity meter whose denominator comes from Keycloak's own OpenAPI description
-  rather than from a hand-kept list: **604 of 677 enumerated behaviours served**,
+  rather than from a hand-kept list: **610 of 677 enumerated behaviours served**,
   and **every chapter now has a denominator**
 - an external oracle: `make oracle` drives Gloak with `kcadm.sh`, Keycloak's own
   admin CLI, which asks for things no recorded case asks for
@@ -267,7 +267,7 @@ and stay out of the total rather than being dropped from it silently, which
 would inflate the percentage by hiding the parts nobody has counted. It reads:
 
 ```
-total: 604 of 677 enumerated behaviours served; 0 chapters not enumerated
+total: 610 of 677 enumerated behaviours served; 0 chapters not enumerated
 ```
 
 The denominator is 677 rather than 413 plus a fixed number because the protocol

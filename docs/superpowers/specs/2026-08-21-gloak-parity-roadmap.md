@@ -253,8 +253,8 @@ operations is allocated below; none is left unassigned.
 Denominator today: **413 Admin API operations plus 264 protocol, account,
 management and theme behaviours, 677 enumerated**, plus **two** chapters (parts of P13 and P14) whose
 surface is not counted and which the report says so about - P11 left that list on
-2026-09-07 and the account API on 2026-09-08. Served: **604 of 677** after the
-management port is served, and **P2, P4 and P5 are complete** -
+2026-09-07 and the account API on 2026-09-08. Served: **610 of 677** after the
+recorder learns configurations, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -285,7 +285,47 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-16 (forty-first fold).** `make conformance` reports **604 of
+**Updated 2026-09-17 (forty-second fold).** `make conformance` reports **610 of
+677**, denominator unmoved. Six behaviours promoted, and **not one of them is new
+code** - they were already served and the recorder could not record what Gloak
+answers.
+
+**This was the only item on the list where the meter understated what was
+built**, and it is now closed. `Case.Configuration` names a container and
+`FormatGolden` writes it into the file as `# recorded-with: <the command line>`,
+so a golden says what it is a recording of.
+
+**The brief offered three routes and the cut took two of them, with the cheaper
+half amended by the check the brief asked for.** The per-case container was to be
+"checked hardest", and checking paid: `PristineRealm` costs one start per case
+because its point is a realm nothing else has touched, but **a configuration is a
+property of the container that any number of cases share**. Pooled, the measured
+cost is **41 starts rather than 40** - one for the whole run, not one per case.
+The `Case`-only route was rejected on F245's own ground: the file is what a
+reviewer reads in a `make record` diff.
+
+**And the commit split is the part worth copying.** The format change is 1136
+goldens, 1136 insertions, **zero deletions**; the re-record is six files. Those in
+one commit would be a diff nobody can read. I checked that split rather than
+taking it - the commit as a whole is 1141 files and 1778 insertions, and the
+purely-additive figure is the **golden** half of it.
+
+**The metrics refusal was measured and the measurement pointed the other way.**
+`/metrics` on a health-only container is the 404 Gloak answers, so those two cases
+*would* match and force a promotion - to **612 built on two rows duplicating a
+third**, since Micrometer's content negotiation does not exist without the option.
+The refusal holds and gained an arm keyed on the container's **environment**
+rather than a configuration's name.
+
+**One rule out of the mutation pass is general.** *A guard written from the value
+the thing under test was built from cannot catch that thing being built wrong.*
+The recorder starts a container from `ConfigurationOf(c)` and writes
+`ConfigurationOf(c)` into the golden, so comparing the file's line to the case
+catches a declaration that moved and **not** a recorder that started the wrong
+container. What catches that is content differing between configurations, pinned
+against socket-read bytes.
+
+**Earlier on 2026-09-16 (forty-first fold).** `make conformance` reports **604 of
 677**, the denominator unchanged and the chapter count still zero. Six behaviours
 promoted, and this is the first cut since the accounting closed whose subject was
 **serving** rather than counting.
