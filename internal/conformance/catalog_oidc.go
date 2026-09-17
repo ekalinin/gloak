@@ -157,10 +157,11 @@ var oidcCore = []Case{
 	// for byte. That is the whole contract of the family and it is why these
 	// were worth serving before the success path.
 	//
-	// All of them pin X-Frame-Options and Content-Security-Policy **absent**.
-	// GET /auth's redirect back to the client is the one response in the browser
-	// flow that omits them, and AssertHeaders can only check a header that is
-	// named, so the negative needs its own field.
+	// All of them pin X-Frame-Options and Content-Security-Policy **absent**,
+	// and every one of them sends **no request Content-Type**. That is the
+	// variable, not the endpoint: the two cases below send the same request with
+	// one and get the headers. AssertHeaders can only check a header that is
+	// named, so the negative needs its own field either way.
 	{
 		ID: "oidc/authorization/missing-response-type",
 		Doc: Doc{
@@ -182,6 +183,75 @@ var oidcCore = []Case{
 		},
 		AssertHeaders:       []string{"Location", "Cache-Control"},
 		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
+	},
+	// The two cells that say the redirect's two absences are about the
+	// **request** and not about the endpoint. Both send the request the case
+	// above sends, byte for byte, plus a Content-Type, and the Location comes
+	// back byte-identical - so this is one branch answering differently rather
+	// than three different responses. Measured 2026-09-17 across ten request
+	// media types on a live 26.7.1, twice, and GET /logout answers the same way.
+	//
+	// They are two cases because the two headers follow **two** rules:
+	// X-Frame-Options an allow-list of three (application/json,
+	// application/xml, application/x-www-form-urlencoded) and
+	// Content-Security-Policy a list of one. application/json is the probe that
+	// separates them and it is the first case in the tree where the two
+	// disagree - before this, every golden had them moving together, because
+	// the corpus held only the two extreme cells. See F220 and F221.
+	{
+		ID: "oidc/authorization/redirect-json-content-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authorization endpoint: request validation",
+			Retrieved: "2026-09-17",
+		},
+		Status:  Implemented,
+		Fixture: "browser-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/auth",
+			Query: map[string]string{
+				"client_id":    "gloak-probe-browser",
+				"redirect_uri": "http://localhost:9999/callback",
+				"scope":        "openid",
+				"state":        "xyz123",
+			},
+			// A GET with a Content-Type and no body. Keycloak reads the header,
+			// not the body, so the request is legal and the value is the whole
+			// point of the case.
+			Headers: map[string]string{"Content-Type": "application/json"},
+		},
+		AssertHeaders: []string{"Location", "Cache-Control", "X-Frame-Options"},
+		// The half that distinguishes F221 from F220: the header
+		// X-Frame-Options came back for does **not** bring this one with it.
+		AssertAbsentHeaders: []string{"Content-Security-Policy"},
+	},
+	{
+		ID: "oidc/authorization/redirect-form-content-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authorization endpoint: request validation",
+			Retrieved: "2026-09-17",
+		},
+		Status:  Implemented,
+		Fixture: "browser-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/auth",
+			Query: map[string]string{
+				"client_id":    "gloak-probe-browser",
+				"redirect_uri": "http://localhost:9999/callback",
+				"scope":        "openid",
+				"state":        "xyz123",
+			},
+			// The one media type of the three that brings
+			// Content-Security-Policy with it. Not Form: that would send a
+			// body, and the case is about the header.
+			Headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded"},
+		},
+		AssertHeaders: []string{
+			"Location", "Cache-Control", "Content-Security-Policy", "X-Frame-Options",
+		},
 	},
 	{
 		ID: "oidc/authorization/unsupported-response-type",

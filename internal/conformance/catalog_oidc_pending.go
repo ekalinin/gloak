@@ -2183,6 +2183,65 @@ var oidcPending = []Case{
 		VolatileHeaders:     []string{"Set-Cookie"},
 		AssertAbsentHeaders: []string{"X-Frame-Options", "Content-Security-Policy"},
 	},
+	// The same two cells the authorization endpoint's redirect has, on the
+	// second endpoint that sends a browser back to a client's own registered
+	// URI. They are here rather than folded into the /auth pair because the two
+	// redirects are two writers: this one's Cache-Control is `no-cache` where
+	// /auth's is `no-store, must-revalidate, max-age=0`, and a rule measured on
+	// one endpoint and assumed on the other is how "it is this endpoint's
+	// redirect" was written down in the first place. Measured 2026-09-17 across
+	// ten request media types, byte-identical Location on every row.
+	//
+	// A hintless logout with a registered target and **no session** is the 302 -
+	// see the four outcomes this endpoint has. So neither needs a login.
+	{
+		ID: "oidc/logout/redirect-json-content-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Logout endpoint: RP-initiated logout",
+			Retrieved: "2026-09-17",
+		},
+		Status:  Implemented,
+		Fixture: "browser-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/logout",
+			Query: map[string]string{
+				"client_id":                "gloak-probe-browser",
+				"post_logout_redirect_uri": "http://localhost:9999/callback",
+				"state":                    "xyz123",
+			},
+			Headers: map[string]string{"Content-Type": "application/json"},
+		},
+		AssertHeaders:   []string{"Location", "Cache-Control", "X-Frame-Options"},
+		VolatileHeaders: []string{"Set-Cookie"},
+		// X-Frame-Options came back and this did not. Two rules, one response.
+		AssertAbsentHeaders: []string{"Content-Security-Policy"},
+	},
+	{
+		ID: "oidc/logout/redirect-form-content-type",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Logout endpoint: RP-initiated logout",
+			Retrieved: "2026-09-17",
+		},
+		Status:  Implemented,
+		Fixture: "browser-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/logout",
+			Query: map[string]string{
+				"client_id":                "gloak-probe-browser",
+				"post_logout_redirect_uri": "http://localhost:9999/callback",
+				"state":                    "xyz123",
+			},
+			Headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded"},
+		},
+		AssertHeaders: []string{
+			"Location", "Cache-Control", "Content-Security-Policy", "X-Frame-Options",
+		},
+		VolatileHeaders: []string{"Set-Cookie"},
+	},
 	{
 		ID: "oidc/logout/spent-id-token-hint",
 		Doc: Doc{
