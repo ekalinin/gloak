@@ -248,8 +248,14 @@ func (h *handler) authorize(w http.ResponseWriter, r *http.Request) {
 	if hasState {
 		state = stateValues[0]
 	}
+	// The closure is what carries the request to the writer: the redirect's
+	// X-Frame-Options and Content-Security-Policy are decided by the request's
+	// media type, not by the endpoint. See httpx.WriteAuthorizationRedirect.
+	redirect := func(w http.ResponseWriter, location string) {
+		httpx.WriteAuthorizationRedirect(w, r, location)
+	}
 	reject := func(mode, code, description string) {
-		h.writeAuthorizationError(w, httpx.WriteAuthorizationRedirect,
+		h.writeAuthorizationError(w, redirect,
 			realm.Name, redirectURI, mode, code, description, state, hasState)
 	}
 

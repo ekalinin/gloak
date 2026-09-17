@@ -296,83 +296,126 @@ func TestNoTrailingNewline(t *testing.T) {
 	}
 }
 
-// TestWriteAuthorizationRedirect pins the header set measured on GET /auth's
-// 302 back to the client. The absences are the contract: the router sets all
-// five security headers before the handler runs, so an implementation that
-// simply stopped deleting X-Frame-Options would send six headers where
-// Keycloak sends four.
-func TestWriteAuthorizationRedirect(t *testing.T) {
-	w := httptest.NewRecorder()
-	// The router sets the five before any handler runs, so the test starts the
-	// way the handler is really entered.
-	httpx.SetSecurityHeaders(w)
+// redirectMediaTypeCells is the measured table both redirect writers answer,
+// and it is shared so that the two tests below cannot come to disagree about
+// what the rule is - which is how "it is this endpoint's redirect" was written
+// down twice in the first place.
+//
+// Measured 2026-09-17 on a live 26.7.1, twice, on GET /auth and GET /logout
+// alike, each on one 302 whose Location was byte-identical across every row.
+// The two headers follow **two** allow-lists: three media types for
+// X-Frame-Options and one for Content-Security-Policy, both with the
+// parameters cut and not trimmed. application/json is the row that separates
+// them and `application/json ; charset=UTF-8` is the row that says the space
+// is not trimmed away.
+var redirectMediaTypeCells = []struct {
+	contentType string
+	frame       bool
+	policy      bool
+}{
+	{contentType: "", frame: false, policy: false},
+	{contentType: "application/json", frame: true, policy: false},
+	{contentType: "application/xml", frame: true, policy: false},
+	{contentType: "application/x-www-form-urlencoded", frame: true, policy: true},
+	{contentType: "application/json;charset=UTF-8", frame: true, policy: false},
+	{contentType: "application/x-www-form-urlencoded;charset=UTF-8", frame: true, policy: true},
+	{contentType: "application/json ; charset=UTF-8", frame: false, policy: false},
+	{contentType: "application/ld+json", frame: false, policy: false},
+	{contentType: "application/yaml", frame: false, policy: false},
+	{contentType: "text/plain", frame: false, policy: false},
+	{contentType: "*/*", frame: false, policy: false},
+}
 
-	httpx.WriteAuthorizationRedirect(w, "http://localhost:9999/callback?error=invalid_request")
+// checkRedirectCells runs the table against one writer, pinning the four
+// headers that do not move as well as the two that do. The absences are as much
+// of the contract as the presences: the router sets all five security headers
+// before the handler runs, so a writer that stopped deleting X-Frame-Options
+// would send it on every row, and one that set Content-Security-Policy
+// unconditionally would too.
+func checkRedirectCells(t *testing.T, location, cacheControl string,
+	write func(http.ResponseWriter, *http.Request, string)) {
+	t.Helper()
+	for _, cell := range redirectMediaTypeCells {
+		name := cell.contentType
+		if name == "" {
+			name = "(no Content-Type)"
+		}
+		t.Run(name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/realms/master/probe", nil)
+			if cell.contentType != "" {
+				r.Header.Set("Content-Type", cell.contentType)
+			}
+			w := httptest.NewRecorder()
+			// The router sets the five before any handler runs, so the test
+			// starts the way the handler is really entered.
+			httpx.SetSecurityHeaders(w)
 
-	if w.Code != http.StatusFound {
-		t.Errorf("status = %d, want 302", w.Code)
-	}
-	present := map[string]string{
-		"Cache-Control":             "no-store, must-revalidate, max-age=0",
-		"Location":                  "http://localhost:9999/callback?error=invalid_request",
-		"Referrer-Policy":           "no-referrer",
-		"Strict-Transport-Security": "max-age=31536000; includeSubDomains",
-		"X-Content-Type-Options":    "nosniff",
-		"X-Robots-Tag":              "none",
-	}
-	for name, want := range present {
-		if got := w.Header().Get(name); got != want {
-			t.Errorf("%s = %q, want %q", name, got, want)
-		}
-	}
-	for _, name := range []string{"X-Frame-Options", "Content-Security-Policy", "Content-Type"} {
-		if got, ok := w.Header()[name]; ok {
-			t.Errorf("%s = %q, want absent", name, got)
-		}
-	}
-	if body := w.Body.String(); body != "" {
-		t.Errorf("body = %q, want empty", body)
+			write(w, r, location)
+
+			if w.Code != http.StatusFound {
+				t.Errorf("status = %d, want 302", w.Code)
+			}
+			present := map[string]string{
+				"Cache-Control":             cacheControl,
+				"Location":                  location,
+				"Referrer-Policy":           "no-referrer",
+				"Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+				"X-Content-Type-Options":    "nosniff",
+				"X-Robots-Tag":              "none",
+			}
+			if cell.frame {
+				present["X-Frame-Options"] = "SAMEORIGIN"
+			}
+			if cell.policy {
+				present["Content-Security-Policy"] = httpx.ContentSecurityPolicy
+			}
+			for header, want := range present {
+				if got := w.Header().Get(header); got != want {
+					t.Errorf("%s = %q, want %q", header, got, want)
+				}
+			}
+			absent := []string{"Content-Type"}
+			if !cell.frame {
+				absent = append(absent, "X-Frame-Options")
+			}
+			if !cell.policy {
+				absent = append(absent, "Content-Security-Policy")
+			}
+			for _, header := range absent {
+				if got, ok := w.Header()[header]; ok {
+					t.Errorf("%s = %q, want absent", header, got)
+				}
+			}
+			if body := w.Body.String(); body != "" {
+				t.Errorf("body = %q, want empty", body)
+			}
+		})
 	}
 }
 
+// TestWriteAuthorizationRedirect pins the header set measured on GET /auth's
+// 302 back to the client, across the request media types that decide two of it.
+func TestWriteAuthorizationRedirect(t *testing.T) {
+	checkRedirectCells(t, "http://localhost:9999/callback?error=invalid_request",
+		"no-store, must-revalidate, max-age=0", httpx.WriteAuthorizationRedirect)
+}
+
 // TestWriteLogoutRedirect pins the one value that separates the logout redirect
-// from the authorization redirect, and the four that do not.
+// from the authorization redirect, and everything that does not.
 //
 // Measured 2026-08-29 side by side on one container: both endpoints redirect a
-// browser to a client's own registered URI, both omit X-Frame-Options and
-// Content-Security-Policy, and they disagree about Cache-Control alone. One
-// shared writer taking that string as an argument is exactly what this test
-// exists to make fail.
+// browser to a client's own registered URI and they disagree about
+// Cache-Control alone. One shared writer taking that string as an argument is
+// exactly what this test exists to make fail.
+//
+// The **rest** of that sentence used to read "both omit X-Frame-Options and
+// Content-Security-Policy", and it was wrong on both endpoints: the omissions
+// belonged to a request with no Content-Type, not to the redirect. Re-measured
+// 2026-09-17, and the table is run twice here for that reason rather than
+// inherited from the neighbour above.
 func TestWriteLogoutRedirect(t *testing.T) {
-	w := httptest.NewRecorder()
-	httpx.SetSecurityHeaders(w)
-
-	httpx.WriteLogoutRedirect(w, "http://localhost:9999/callback?state=bye")
-
-	if w.Code != http.StatusFound {
-		t.Errorf("status = %d, want 302", w.Code)
-	}
-	present := map[string]string{
-		"Cache-Control":             "no-cache",
-		"Location":                  "http://localhost:9999/callback?state=bye",
-		"Referrer-Policy":           "no-referrer",
-		"Strict-Transport-Security": "max-age=31536000; includeSubDomains",
-		"X-Content-Type-Options":    "nosniff",
-		"X-Robots-Tag":              "none",
-	}
-	for name, want := range present {
-		if got := w.Header().Get(name); got != want {
-			t.Errorf("%s = %q, want %q", name, got, want)
-		}
-	}
-	for _, name := range []string{"X-Frame-Options", "Content-Security-Policy", "Content-Type"} {
-		if got, ok := w.Header()[name]; ok {
-			t.Errorf("%s = %q, want absent", name, got)
-		}
-	}
-	if body := w.Body.String(); body != "" {
-		t.Errorf("body = %q, want empty", body)
-	}
+	checkRedirectCells(t, "http://localhost:9999/callback?state=bye",
+		"no-cache", httpx.WriteLogoutRedirect)
 }
 
 // TestWriteThemePageCacheControl pins the disagreement between the two
