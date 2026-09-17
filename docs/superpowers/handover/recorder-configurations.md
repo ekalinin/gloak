@@ -335,27 +335,32 @@ The four refusals as they now stand:
 
 ## 6. Containers
 
-**Forty-three in total. Every one of them fresh.**
+**Forty-two whose count is known, every one of them fresh**, and an interrupted
+run whose count is not recoverable. Both halves are stated because the second is
+the more useful entry.
 
 | # | image | configuration | what it was for |
 |---|---|---|---|
-| 1 | keycloak:26.7.1 | `KC_HEALTH_ENABLED` alone | the measurement in 1.1 and section 5: the index page, the aggregate, `/health/live`, `/metrics`, the verb and `Accept` and `//health` probes, all read off a raw socket rather than through curl |
-| 2-42 | keycloak:26.7.1 | 40 both-options, 1 health-only | `make record`: one shared per configuration, plus 39 `PristineRealm` containers |
-| 43 | - | - | see below |
+| 1 | keycloak:26.7.1 | `KC_HEALTH_ENABLED` alone | the measurements in 1.1 and section 5: the index page, the aggregate, `PUT /health`, `GET /health` with an `Accept`, `//health`, `/health/ready`, `/health/live` and `/metrics`, all read off a raw socket rather than through curl |
+| 2-42 | keycloak:26.7.1 | 40 both-options, 1 health-only | `make record` |
 
-Container 1 was started and removed for the socket probes. Containers 2-42 are
-`make record`'s, counted from its own log: 41 starts, of which **40 are
-`start-dev --health-enabled --metrics-enabled`** (one shared and 39 pristine)
-and **exactly one is `start-dev --health-enabled`**, shared by all six cases
-that declare it. The previous cut's run was 40, so the second configuration cost
-one start.
+Container 1 was started for the socket probes and removed. Containers 2-42 are
+`make record`'s, counted from its own log: **41 starts, of which 40 are
+`start-dev --health-enabled --metrics-enabled`** - one shared and 39
+`PristineRealm` - **and exactly one is `start-dev --health-enabled`**, shared by
+all six cases that declare it. The previous cut's run was 40, so the second
+configuration cost one start for the whole run.
 
-The forty-third is an honest entry rather than a container: **an earlier
-`make record` was interrupted part-way and left two containers running.** They
-had served 453 cases' fixtures between them, so they were a written-to surface
-rather than a saved start, and they were removed rather than reused. The run
-reported here started from nothing. Nothing in this document rests on a
-measurement taken against them.
+**An earlier `make record` was interrupted after 453 goldens and its log did not
+survive, so how many containers it started cannot be stated and is not
+guessed.** Two of them were still running when work resumed. They had served
+those 453 cases' fixtures, so they were a written-to surface rather than a saved
+start, and they were removed rather than reused - a container a partial run has
+written to is not a clean measurement surface, and reusing one to save eight
+minutes is how F40's shape arrives. **Nothing in this document rests on anything
+that run produced**: the completed run rewrote all 1135 goldens from containers
+it started itself, and section 7's diff is against the committed tree rather
+than against that run's output.
 
 ## 7. The record diff, read file by file
 
@@ -753,7 +758,7 @@ None was re-tested and none moved.
   counters. Two of the four are barred by F113 whatever is built.
 - **The three-check aggregate is in no golden.** Section 3 says why and where the
   measurement went instead.
-- **The 43 containers are gone.** Anybody re-measuring starts fresh.
+- **Every container of this cut is gone.** Anybody re-measuring starts fresh.
 - **`README.md`'s flag table is still incomplete** and this branch may not edit
   it. `serve-management-port.md` §10 carries the two missing rows and they are
   unchanged.
