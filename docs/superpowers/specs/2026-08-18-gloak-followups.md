@@ -6078,7 +6078,19 @@ part of this cut: the request line holds the *unexpanded* path for some cases
 and the expanded one for others, so the comparison needs measuring before it can
 be written.
 
-## F220: `GET /auth` and `GET /logout` omit `X-Frame-Options` by request media type, and Gloak omits it always
+## F220: `GET /auth` and `GET /logout` omit `X-Frame-Options` by request media type, and Gloak omits it always (fixed 2026-09-17)
+
+**Fixed, and the cases were recorded before the handler moved** - which is what
+this entry asked for and the reason it stood open. Four cases:
+`oidc/{authorization,logout}/redirect-{json,form}-content-type`.
+
+Re-measured on two fresh containers, read off a **raw socket** rather than
+through `curl`, and it **agreed with this entry on everything it measured**: the
+allow-list of three, the parameters cut untrimmed, `application/ld+json` ruling
+out a "+json suffix" reading. Agreement after this many corrections to that
+bullet is worth recording.
+
+## F220 (original): the entry as filed on 2026-09-11
 
 Section 5 is the measurement. Gloak's `WriteAuthorizationRedirect` and
 `WriteLogoutRedirect` call `Del("X-Frame-Options")` unconditionally; Keycloak
@@ -6096,7 +6108,21 @@ moves - otherwise the fix is a change no test can distinguish from the bug.
 Worth doing in the same cut: the six `POST {{login_action}}` 302s carry the
 header today for the right reason by accident, and nothing says so.
 
-## F221: `Content-Security-Policy` on the client redirect is one media type wide
+## F221: `Content-Security-Policy` on the client redirect is one media type wide (fixed 2026-09-17, and its scope corrected)
+
+**The value was right and the scope was wrong.** "On the client redirect" is too
+narrow: the same one-entry allow-list decides the header on a plain admin
+`DELETE`'s 204 - no browser, no theme, no redirect. It is the **empty-body
+rule**, exactly as F220 had already corrected `X-Frame-Options` from "this
+endpoint's redirect". This entry was written in the same sentence with the same
+defect.
+
+**The two headers are distinguishable in the corpus now and were not before.**
+The two `-json` goldens are the first in the tree where they disagree, and
+widening the CSP allow-list by one entry fails **exactly those two cases and
+nothing else in 1140 goldens** - verified in review by counting the failures.
+
+## F221 (original): the entry as filed on 2026-09-11
 
 Section 5.1. `application/x-www-form-urlencoded` gets it and `application/json`
 does not, on a response whose `Location` is byte-identical either way. Gloak
@@ -6150,7 +6176,23 @@ A one-line `if len(theFiveSecurityHeaders) != 5` in `headersplit_test.go` closes
 it. It is filed rather than done because it belongs to that test's cut and this
 one had no business editing it.
 
-## F226: `createIdentityProviderMapper`'s 409 sends the five where Keycloak sends none
+## F226: `createIdentityProviderMapper`'s 409 sends the five where Keycloak sends none (fixed 2026-09-17)
+
+**Fixed, and the count in this entry was two tallies in one word.** "One call
+site of thirteen" is true of *twelve* sites emitting the body plus the bug, and
+of *thirteen* goldens carrying the body with none of the five - and the entry
+does not say which. Counted rather than assumed: **22 call sites emit the
+67-byte body** - 12 through `writeDuplicateResource`, 7 through
+`writeAuthzScopeConflict`, 3 inline.
+
+Two of the three inline sites **keep** the five deliberately and each has a
+golden recording that, so the split is two measured families rather than a
+convention nobody wrote down.
+
+Reverting the fix survives `internal/admin` and dies in `internal/conformance`,
+which is the rule about where a production mutation has to be run.
+
+## F226 (original): the entry as filed on 2026-09-11
 
 Section 4.5. The thirteenth call site of a 409 `Duplicate resource error` in
 `internal/admin`, and the only one that does not go through
@@ -7284,3 +7326,84 @@ would be a contract for one of its two states.
 ### F247, F248, F251, F252, F253, F254, F255 - unchanged
 
 None was re-tested and none moved.
+
+## F265: `Content-Security-Policy` is set at three call sites and is a rule about the request
+
+Sections 3.2 and 3.3. `internal/oidc/revoke.go:63`,
+`internal/oidc/logout.go:381` and `httpx.WriteLoginActionRedirect` each set the
+header unconditionally. The measured rule is the one `WriteNoContent` and
+`WriteEmptyStatus` already implement for `X-Frame-Options`, with
+`policyRequestMediaTypes` in place of `framedRequestMediaTypes`, and the fix is
+`setEmptyBodyRequestHeaders` gaining those writers as callers.
+
+**The three are not in the same position and the entry should not lump them.**
+
+- **`WriteLoginActionRedirect` diverges.** Its 302 was measured across ten
+  request media types and follows both allow-lists; the writer sets both
+  headers whatever the request says. This is a live divergence, not a
+  suspicion.
+- **Revocation's success and `POST /logout`'s 204 are consistent with the rule
+  and cannot be falsified.** A request to either with any other `Content-Type`
+  is a different response - a 401 with a JSON body, and the theme's 200 page -
+  because Keycloak never reads the form. There is no request that produces
+  those two empty bodies and disagrees with the call site, so the call sites
+  cannot be shown wrong and cannot be shown right either. Moving them to the
+  shared rule is a tidy-up with no observable behind it, which is the kind this
+  project has a bullet about.
+
+What the fix needs, in order, and it is filed rather than done for the reason
+F220 gives about itself - **no committed golden can tell the change from the
+bug**:
+
+- one recorded admin case: a `DELETE` with
+  `Content-Type: application/x-www-form-urlencoded`. That makes the
+  `WriteNoContent` half assertable and is the cheapest of the three, because the
+  request is legal, the response is unchanged and the measurement is already in
+  section 3.2;
+- one on `POST /login-actions/authenticate` with `application/json`. The
+  measurement is section 3.3 and the obstacle is the `Location`: a spent session
+  code restarts the flow with a fresh `tab_id`, and masking a whole `Location`
+  asserts presence and nothing else, which F46 spent a cut removing. A case
+  whose redirect goes to the client - `oidc/authorization/replayed-session-code`
+  is that shape - would not need the mask, and whether that branch survives a
+  non-form `Content-Type` is one probe;
+- the revocation and `POST /logout` call sites last or never, on the paragraph
+  above.
+
+## F266: a golden that carries a header nothing asserts is invisible in the other direction
+
+Section 2.3. `admin/protocol-mappers/add-models-duplicate-id-same-container`
+records all five security headers; Gloak sends none, because the call site it
+shares with `-other-container` deletes them unconditionally; and its case names
+only `Content-Type`, so nothing compares them.
+
+The mirror header rule closes one direction - every golden **missing** a
+security header must have a case declaring it absent. This is the other: a
+golden **carrying** one whose case does not assert it. F223 describes the gap in
+the abstract ("nothing asserts the first column"); this is a committed instance
+of it, on the pair AGENTS.md's fifth exception turns on.
+
+It is two separable pieces:
+
+- **the sweep**, which is F223's: every golden carrying one of the five must
+  have a case naming it in `AssertHeaders`. That would report this one by name
+  and would be red on the tree as it stands, so it needs the exception list the
+  mirror rule already has the pattern for;
+- **the divergence itself**, which cannot be fixed. One call site serves both
+  cells of a split nobody has explained - F147 - so Gloak can reproduce one of
+  them and not both. The entry that makes it visible is worth more than a fix
+  nobody can write.
+
+## F267: `omissionsGloakStillSends` is empty and its ratchet is now vacuous
+
+The map emptied when F226 was fixed, which is what it was designed to do. Its
+ratchet - an entry no golden uses is reported - iterates the map, so with the
+map empty it asserts nothing, and `TestTheMirrorHeaderRuleCanFail` does not
+cover it. The mutation that closes it is M9's: add an entry whose golden
+declares its omissions and check the failure. That is run in section 6 and it
+kills, so the ratchet works today; nothing in the committed tree says so.
+
+A cell in `TestTheMirrorHeaderRuleCanFail` that hands the sweep a corpus, a
+declaration set and an excuse list, and checks the stale-entry report, closes
+it without needing the map to be non-empty. One cell, the shape of the five
+already there.
