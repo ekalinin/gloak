@@ -108,7 +108,7 @@ func (h *handler) beginDeviceLogin(w http.ResponseWriter, r *http.Request, realm
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	httpx.WriteAuthorizationRedirect(w, h.realmBase(realm.Name)+"/login-actions/authenticate?"+strings.Join([]string{
+	httpx.WriteAuthorizationRedirect(w, r, h.realmBase(realm.Name)+"/login-actions/authenticate?"+strings.Join([]string{
 		"client_id=" + url.QueryEscape(client.ClientID),
 		"tab_id=" + url.QueryEscape(tab.TabID),
 		"client_data=" + deviceClientData,

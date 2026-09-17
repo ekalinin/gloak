@@ -444,7 +444,10 @@ func (h *handler) writeSSOCode(w http.ResponseWriter, r *http.Request, realm *mo
 	// 2026-09-06 against the credential POST's, which carries one on the same
 	// four inputs - so the script follows the endpoint's own URL being one a
 	// browser should not keep, not the code being handed over.
-	h.writeAuthorizationCode(w, httpx.WriteAuthorizationRedirect, realm.Name, tab, sess.Session.ID, code, "")
+	redirect := func(w http.ResponseWriter, location string) {
+		httpx.WriteAuthorizationRedirect(w, r, location)
+	}
+	h.writeAuthorizationCode(w, redirect, realm.Name, tab, sess.Session.ID, code, "")
 	return nil
 }
 

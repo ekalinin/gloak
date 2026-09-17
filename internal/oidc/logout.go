@@ -210,7 +210,7 @@ func (h *handler) logoutFrontChannel(w http.ResponseWriter, r *http.Request, rea
 		httpx.WriteThemePage(w, http.StatusOK, logoutCacheControl, title)
 		return
 	}
-	httpx.WriteLogoutRedirect(w, logoutLocation(target, params))
+	httpx.WriteLogoutRedirect(w, r, logoutLocation(target, params))
 }
 
 // confirmBeforeRedirect reports whether this request gets the `Logging out`

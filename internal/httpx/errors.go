@@ -127,29 +127,29 @@ func FrameSrcPolicy(hosts []string) string {
 // redirect-URI check takes, and the one a successful authorization will take
 // once there is a code to carry.
 //
-// Its header set is measured and is not any other response's. Swept 2026-08-29
-// across seven different rejections on GET /auth:
+// Its Cache-Control is measured and is not any other response's:
 //
 //	Cache-Control: no-store, must-revalidate, max-age=0
-//	Referrer-Policy, Strict-Transport-Security, X-Content-Type-Options,
-//	X-Robots-Tag
 //	no Content-Type, no body
-//	**no X-Frame-Options and no Content-Security-Policy**
 //
-// The two absences are the part that looks like a bug. They are not "errors
-// omit them": POST /login-actions/authenticate's error redirect, to the same
-// URI with the same status, carries all six. They are not "302s omit them",
-// for the same reason. They are not "failures omit them": prompt=none with a
-// live session redirects with a real code and omits them too. It is this
-// endpoint's redirect, and RP-initiated logout's behaves the same way.
+// **The two header absences are not this endpoint's and never were.** They were
+// swept 2026-08-29 across seven different rejections on GET /auth, and all
+// seven sent no request Content-Type - which is P2's Task 11's mistake in a
+// second place. The 302 to a client's redirect URI is an empty-bodied
+// response, so it obeys setEmptyBodyRequestHeaders' two rules like every other
+// one. Measured 2026-09-17 on a live 26.7.1, twice, across ten request media
+// types on one 302 whose Location is byte-identical on every row - see
+// framedRequestMediaTypes and policyRequestMediaTypes for the tables.
 //
-// X-Frame-Options is deleted rather than never set, because the router sets all
-// five security headers before the mux runs - the same reason
-// SetUserinfoSecurityHeaders deletes it.
-func WriteAuthorizationRedirect(w http.ResponseWriter, location string) {
+// Gloak deleted X-Frame-Options unconditionally and never set
+// Content-Security-Policy here until 2026-09-17, which was a divergence in both
+// directions at once: F220 and F221. No golden could see it, because no case
+// sent a Content-Type on a GET to this endpoint; the two that do now are
+// oidc/authorization/redirect-json-content-type and -form-content-type.
+func WriteAuthorizationRedirect(w http.ResponseWriter, r *http.Request, location string) {
 	suppressDate(w)
 	SetSecurityHeaders(w)
-	w.Header().Del("X-Frame-Options")
+	setEmptyBodyRequestHeaders(w, r)
 	w.Header().Set("Cache-Control", "no-store, must-revalidate, max-age=0")
 	w.Header().Set("Location", location)
 	w.WriteHeader(http.StatusFound)
@@ -167,15 +167,21 @@ func WriteAuthorizationRedirect(w http.ResponseWriter, location string) {
 //
 // A shared writer taking the string as an argument would put the difference one
 // call site away from being invisible, and this is the difference that a reader
-// comparing the two endpoints most easily assumes away. Everything else is
-// identical and re-measured here rather than inherited: no Content-Type, an
-// empty body, the five security headers minus X-Frame-Options, and no
-// Content-Security-Policy - the same two omissions, on the second endpoint that
-// redirects a browser to a client's own registered URI.
-func WriteLogoutRedirect(w http.ResponseWriter, location string) {
+// comparing the two endpoints most easily assumes away.
+//
+// Everything else is identical and **re-measured here rather than inherited**,
+// which is the whole reason the rule below is applied twice rather than once:
+// the same ten request media types, on this endpoint's own 302, answer exactly
+// as /auth's do. Measured 2026-09-17. Until then this deleted X-Frame-Options
+// unconditionally and never set Content-Security-Policy, the same divergence as
+// its neighbour - and the sentence above about "the same two omissions" is how
+// a rule measured on one endpoint gets assumed on the other. The two cases that
+// hold it now are oidc/logout/redirect-json-content-type and
+// -form-content-type.
+func WriteLogoutRedirect(w http.ResponseWriter, r *http.Request, location string) {
 	suppressDate(w)
 	SetSecurityHeaders(w)
-	w.Header().Del("X-Frame-Options")
+	setEmptyBodyRequestHeaders(w, r)
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Location", location)
 	w.WriteHeader(http.StatusFound)
@@ -953,6 +959,66 @@ var framedRequestMediaTypes = map[string]bool{
 	"application/json":                  true,
 	"application/xml":                   true,
 	"application/x-www-form-urlencoded": true,
+}
+
+// policyRequestMediaTypes is the same shape of allow-list for
+// Content-Security-Policy on an empty-bodied response, and it holds **one**
+// entry where framedRequestMediaTypes holds three. That is measured, not a
+// subset somebody narrowed: application/json brings X-Frame-Options and not
+// this, which is the probe that says the two are two rules rather than one.
+//
+// Measured 2026-09-17 on a live 26.7.1 across ten request media types on GET
+// /auth's and GET /logout's 302s, on each endpoint's own byte-identical
+// Location, twice:
+//
+//	application/x-www-form-urlencoded            Content-Security-Policy
+//	application/x-www-form-urlencoded;charset=UTF-8   Content-Security-Policy
+//	application/x-www-form-urlencoded ; charset=UTF-8  none  (the untrimmed space)
+//	application/json, application/xml, application/json;charset=UTF-8   none
+//	application/ld+json, application/yaml, text/plain, multipart/form-data,
+//	text/html, */*, absent                                              none
+//
+// The parameters are cut and not trimmed here too, so requestMediaType serves
+// both lists rather than each having its own parse.
+//
+// **It is not a rule about these two redirects**, although that is how F221
+// filed it. The same one-entry list decides the header on a plain admin
+// DELETE's 204, measured on the same day and as far outside the browser flow as
+// this API goes, and on POST /login-actions/authenticate's 302 - which is the
+// response WriteLoginActionRedirect's doc comment cites as the counterexample
+// proving the rule is per endpoint, and is not one.
+//
+// Gloak still sets this header at three call sites rather than by this rule.
+// One of them, WriteLoginActionRedirect, diverges for any request that is not a
+// form. The other two - revocation's success and POST /logout's 204 - answer a
+// different response entirely for any other Content-Type, so nothing can tell
+// them from the rule in either direction. See F265.
+var policyRequestMediaTypes = map[string]bool{
+	"application/x-www-form-urlencoded": true,
+}
+
+// setEmptyBodyRequestHeaders applies both rules the request's media type
+// decides on a response with no body: X-Frame-Options for the allow-list of
+// three, Content-Security-Policy for the one of them that is a form.
+//
+// X-Frame-Options is deleted rather than never set, because the router sets all
+// five security headers before the mux runs - the same reason
+// SetUserinfoSecurityHeaders deletes it - and Content-Security-Policy is set
+// rather than never deleted, because nothing sets it before the mux.
+//
+// WriteNoContent and WriteEmptyStatus deliberately do **not** call this: they
+// implement the X-Frame-Options half only. The Content-Security-Policy half
+// holds for them too - measured - but no committed golden could tell the change
+// from the bug, which is the argument F220 makes against fixing a header rule
+// that nothing can assert. See F265.
+func setEmptyBodyRequestHeaders(w http.ResponseWriter, r *http.Request) {
+	mediaType := requestMediaType(r)
+	if !framedRequestMediaTypes[mediaType] {
+		w.Header().Del("X-Frame-Options")
+	}
+	if policyRequestMediaTypes[mediaType] {
+		SetContentSecurityPolicy(w)
+	}
 }
 
 // requestMediaType is the request's Content-Type with its parameters cut and

@@ -218,7 +218,12 @@ func (h *handler) createIdentityProviderMapper(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if body.Name == "" {
-		httpx.WriteOAuthError(w, http.StatusConflict, "conflict", "Duplicate resource error")
+		// writeDuplicateResource rather than httpx.WriteOAuthError: this 409 is
+		// the `Duplicate resource error` family, so it sends **none** of the
+		// five security headers, and the helper is what deletes them. Writing
+		// the body directly sent all five for nine days - F226, invisible until
+		// the mirror header rule asked the case to declare the absence.
+		writeDuplicateResource(w)
 		return
 	}
 	m := identityProviderMapperOf(rc.realm.ID, body)
