@@ -298,10 +298,18 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `application/json ; charset=UTF-8` with a space sends no header. What is still
   unsettled is only the `OPTIONS` cell, because an `OPTIONS` 200 carrying a JSON
   body is the request nobody has sent.
-  **This bullet has been wrong six times, twice refuted by the very golden it
-  cited and once by a recount of the probe that wrote it.** The corrections of
-  2026-09-03 and 2026-09-06 are the only two that **removed** a rule rather than
-  adding one. Before writing a rule about headers, grep the goldens for a case
+  **Every correction this bullet has taken about which *requests* carry a
+  header** has been the same discovery: a family measured with one request shape
+  throughout, written up as a property of the family. Deletes with no
+  `Content-Type`, redirects with no `Content-Type`, login actions with a form.
+  Before writing that a response omits a header, check what the requests that
+  measured it had in common.
+  **This bullet has been corrected more often than any other in this file, twice
+  refuted by the very golden it cited and once by a recount of the probe that
+  wrote it.** It carries no tally on purpose - the last one written here said
+  "six times" and was stale within a fortnight, which is the defect the bullet's
+  own vanished table had. Only the corrections of 2026-09-03 and 2026-09-06
+  **removed** a rule rather than adding one. Before writing a rule about headers, grep the goldens for a case
   that would break it - and check that the script answers the question the
   sentence will claim.
 - **That rule was wrong once already.** P2's Task 11 recorded it as "a
@@ -415,14 +423,25 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   `{"error":"invalid_token","error_description":"Invalid token"}` with a 200 status
   line. The client asked for a token to stop working and it does not work.
 - **The revocation success carries `Content-Security-Policy` and no
-  `Content-Type` at all** - the body is empty. Revocation's own error responses
-  carry neither. That is why the header is set at one call site rather than
-  alongside the five security headers. **This said "the only response measured
-  so far" until 2026-08-29, and P3's sweep falsified it**: six of the seven
-  responses in the browser flow carry the header, because it is one of the
-  realm's `browserSecurityHeaders` and any response Keycloak produces through
-  the page path gets it. Revocation is the odd one on the *protocol* side, not
-  in the server.
+  `Content-Type` at all** - the body is empty. The reason written here until
+  2026-09-17 - that revocation is "the odd one on the protocol side" - is not
+  a reason: it is an empty-bodied response answering an
+  `application/x-www-form-urlencoded` request, which is the rule above and
+  predicts the header exactly. **It cannot be shown by varying the request**,
+  and that is worth writing down rather than leaving for somebody to try:
+  measured 2026-09-17, a revocation with any other `Content-Type` is a **401
+  with a 93-byte JSON body**, because Keycloak never reads the form and the
+  client is never authenticated. `POST /logout` with a refresh token is the
+  same shape - a non-form request answers the theme's 4645-byte page, 200 -
+  so both of those call sites are consistent with the rule and falsifiable by
+  nothing. `POST /login-actions/authenticate` is the one that **is**
+  falsifiable, and it diverges. See F265.
+- **`POST /login-actions/authenticate`'s 302 is not the counterexample that
+  makes `/auth`'s absences `/auth`'s.** Measured 2026-09-17 across ten request
+  media types: it follows the same two allow-lists. Its six committed goldens
+  are all form-urlencoded and `/auth`'s sixteen all send no `Content-Type`, so
+  the corpus had one endpoint at each extreme and read the endpoint as the
+  variable. That is P2's Task 11's mistake for the third time in this bullet.
 - **A public client may revoke but may not introspect.** `admin-cli` revoking
   succeeds; `admin-cli` introspecting is refused with 403
   `{"error":"invalid_request","error_description":"Client not allowed."}`.
@@ -1047,11 +1066,17 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   allow-list of three with parameters cut untrimmed. **Gloak deletes the header
   unconditionally in `WriteAuthorizationRedirect` and `WriteLogoutRedirect`,
   which is a divergence, not a copy** - F220.
-- **`Content-Security-Policy` on those redirects is a separate rule and it is
-  one media type wide.** Only `application/x-www-form-urlencoded` gets it;
-  `application/json` carries `X-Frame-Options` and not this. The two headers
-  move together in every committed golden because the corpus holds only the two
-  extreme cells - F221.
+- **`Content-Security-Policy` on an empty-bodied response is the same
+  request-side rule as `X-Frame-Options`, with an allow-list of one instead of
+  three.** Only `application/x-www-form-urlencoded` gets it, parameters cut
+  untrimmed, and `multipart/form-data` does not - so it is that media type and
+  not "a form request". Measured 2026-09-17 on `GET /auth`'s and `GET
+  /logout`'s 302s, on `POST /login-actions/authenticate`'s, and on a plain
+  admin `DELETE`'s 204, which is as far outside the browser flow as this API
+  goes. F221 filed it as a rule of those redirects, which is the same mistake
+  F220 had corrected one bullet above it. `application/json` is the probe that
+  separates the two headers, and four committed goldens hold the two cells
+  apart now - `oidc/{authorization,logout}/redirect-{json,form}-content-type`.
 - **`response_mode` moves the parameters and changes the status.** `query` and
   absent use the query, `fragment` the fragment, and `form_post` answers **200**
   with an auto-submitting form whose `Content-Type` is `text/html` with **no

@@ -253,8 +253,8 @@ operations is allocated below; none is left unassigned.
 Denominator today: **413 Admin API operations plus 264 protocol, account,
 management and theme behaviours, 677 enumerated**, plus **two** chapters (parts of P13 and P14) whose
 surface is not counted and which the report says so about - P11 left that list on
-2026-09-07 and the account API on 2026-09-08. Served: **610 of 677** after the
-recorder learns configurations, and **P2, P4 and P5 are complete** -
+2026-09-07 and the account API on 2026-09-08. Served: **614 of 681** after the
+header divergences, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -285,7 +285,49 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-17 (forty-second fold).** `make conformance` reports **610 of
+**Updated 2026-09-17 (forty-third fold).** `make conformance` reports **614 of
+681**. Both numbers moved by four and **the ratio did not**: protocol chapters
+count cases, so a recorded case moves top and bottom together. **Three
+divergences were closed and the meter cannot see any of them** - which is the
+honest way to report a cut whose subject was fidelity rather than coverage.
+
+**The re-measurement agreed with all three entries on everything they
+measured** - the allow-list of three, the parameters cut untrimmed,
+`application/ld+json` ruling out a "+json suffix" reading, the space before the
+semicolon. Read off a raw socket rather than through `curl`, on two fresh
+containers, every headline table taken twice. **Agreement after this many
+corrections to that bullet is worth recording.**
+
+**It disagreed on scope, twice, in the same way both times.** F221 filed
+`Content-Security-Policy` as a rule of *those redirects*; the same one-entry
+allow-list decides it on a plain admin `DELETE`'s 204, so it is the empty-body
+rule - **which is the mistake F220 had corrected one bullet above it**. And
+`POST /login-actions/authenticate` turns out **not** to be the counterexample
+the bullet had rested on: its six goldens are all form-urlencoded and `/auth`'s
+sixteen all send no `Content-Type`, so the corpus held one endpoint at each
+extreme and the endpoint was read as the variable. That is P2's Task 11's
+mistake for the third time in one bullet.
+
+**So the recurring shape, not any one header, is what went into the file**: every
+correction this bullet has taken about which *requests* carry a header has been a
+family measured with one request shape throughout and written up as a property of
+the family. Before writing that a response omits a header, check what the requests
+that measured it had in common.
+
+**The cases came before the fix, and that is what made the fix assertable.** F220
+said the change was unassertable because no case sent a `Content-Type` on a `GET`
+to either endpoint. Four cases were recorded first; the two `-json` goldens are
+**the first in the tree where the two headers disagree**, and widening the CSP
+allow-list by one entry fails exactly those two and nothing else in 1140 goldens.
+I verified that by counting the failures rather than taking the claim.
+
+**And a count in an entry turned out to be two tallies in one word.** F226's "one
+call site of thirteen" is true of twelve sites plus the bug, and of thirteen
+goldens carrying the body - the entry does not say which. Counted: **22 call
+sites** emit it, and two of the three inline ones keep the five deliberately with
+a golden each.
+
+**Earlier on 2026-09-17 (forty-second fold).** `make conformance` reports **610 of
 677**, denominator unmoved. Six behaviours promoted, and **not one of them is new
 code** - they were already served and the recorder could not record what Gloak
 answers.
