@@ -1850,6 +1850,29 @@ var Fixtures = map[string]Fixture{
 		`{"clientId":"gloak-probe-sso-oidc-client","protocol":"openid-connect","enabled":true,`+
 			`"attributes":{"saml_idp_initiated_sso_url_name":"gloak-probe-sso-oidc"}}`),
 
+	// The client that can actually use its IdP-initiated name: a SAML client
+	// carrying `saml_assertion_consumer_url_post`, which is the fourth rung's
+	// only input.
+	//
+	// **It registers no redirectUris on purpose**, and that is the measurement
+	// rather than a shortcut. Measured 2026-09-18: this route reads the
+	// attribute and checks it against nothing, where the endpoint one segment
+	// up checks a *named* assertion consumer URL against redirectUris and
+	// against nothing else. A client with redirectUris here would make the two
+	// sources indistinguishable and saml/idp-initiated/login-page would pass
+	// for an implementation reading the wrong one.
+	//
+	// It is a second fixture rather than an attribute added to
+	// saml-service-provider, because that client is what
+	// saml/idp-initiated/claimed-name uses to prove the attribute's **absence**
+	// is the refusal - the two cases are the 2x1 and they cannot share a
+	// client.
+	"saml-idp-initiated-consumer": samlClientsFixture(
+		`{"clientId":"gloak-probe-sso-consumer-client","protocol":"saml","enabled":true,` +
+			`"attributes":{"saml_idp_initiated_sso_url_name":"gloak-probe-sso-consumer",` +
+			`"saml.client.signature":"false",` +
+			`"saml_assertion_consumer_url_post":"http://localhost:9999/acs-post"}}`),
+
 	// --- The account API ---
 	//
 	// Every one of these ends in a **user's** access token rather than an

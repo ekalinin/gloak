@@ -415,6 +415,64 @@ var oidcPending = []Case{
 		VolatileHTMLCall:  []string{"checkAuthSession"},
 	},
 	{
+		ID: "oidc/authorization/login-page",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/oidc-layers",
+			Section:   "Authorization endpoint: a request that is honoured",
+			Retrieved: "2026-09-18",
+		},
+		// **The page this whole flow ends at, and it had no case until
+		// 2026-09-18.** Every other golden in this chapter is a rejection, a
+		// redirect or a page reached by an already-walked flow; this is the one
+		// a browser sees when nothing is wrong, and until this cut
+		// internal/httpx answered it with a hand-rolled placeholder, so no
+		// login form page was a golden anywhere in the tree.
+		//
+		// It is here rather than only in the SAML chapter because the markup is
+		// the **same markup**: measured 2026-09-18, this page and
+		// saml/endpoint/login-page are byte-identical apart from the client_id,
+		// the tab_id, the client_data, the session_code and the session hash.
+		// One template, two protocols. A case per protocol is what makes that a
+		// diff rather than a claim, and it is what catches the two of them
+		// drifting - which is the failure the SAML side is exposed to, since
+		// its own writer is a second function beside this one's.
+		//
+		// **The two disagree about headers and agree about everything else**,
+		// which is the pair worth having side by side: this page carries all
+		// five security headers and a Content-Security-Policy where the SAML
+		// one carries none of the six. AssertHeaders below and
+		// AssertAbsentHeaders there are the two halves.
+		//
+		// Three masks, one more than prompt-create beside it. That case is a
+		// 400 rendered before any session code exists; this one is the first
+		// render of a login, so it carries a session_code in its form action as
+		// well - and the action's other four parameters, their order and the
+		// execution id all stay compared.
+		//
+		// Implemented since 2026-09-18 by handler.beginLoginFromParams.
+		Status:  Implemented,
+		Fixture: "browser-client",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/master/protocol/openid-connect/auth",
+			Query: map[string]string{
+				"response_type": "code",
+				"client_id":     "gloak-probe-browser",
+				"redirect_uri":  "http://localhost:9999/callback",
+				"scope":         "openid",
+				"state":         "xyz123",
+			},
+		},
+		AssertHeaders: []string{
+			"Cache-Control", "Content-Language", "Content-Security-Policy", "Content-Type",
+			"Referrer-Policy", "Set-Cookie", "Strict-Transport-Security",
+			"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
+		},
+		VolatileHeaders:   []string{"Set-Cookie"},
+		VolatileHTMLQuery: []string{"tab_id", "session_code"},
+		VolatileHTMLCall:  []string{"checkAuthSession"},
+	},
+	{
 		// The first of F146's nine placeholder pages to become a contract, and
 		// the second consumer of F38's mechanism.
 		//
