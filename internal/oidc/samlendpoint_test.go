@@ -274,6 +274,111 @@ func TestSAMLLoginPageCarriesTheMeasuredClientData(t *testing.T) {
 	})
 }
 
+// TestSAMLPostBindingReadsItsRelayStateFromTheForm is the first of the two
+// tests this cut's mutation pass asked for, and it exists because **no golden
+// can see inside saml/endpoint/post-binding-login-redirect's Location**.
+//
+// That header carries a freshly minted tab_id, so the case masks it whole, and
+// with it go the client_id, the tab_id and the client_data. A mutation reading
+// the POST binding's RelayState out of the **query** instead of the form
+// therefore survived the entire tree: the 302's status, its Cache-Control and
+// all six absent headers are unchanged, and the one thing that moved was inside
+// the masked value.
+//
+// The request below sends **both** spellings with different values, which is
+// sharper than sending only the form's: it fails for a handler reading the
+// query, and it fails for one calling r.FormValue, which merges the two and
+// would take whichever net/http happens to prefer. readSAMLRequest takes the
+// same care with SAMLRequest for the same reason.
+func TestSAMLPostBindingReadsItsRelayStateFromTheForm(t *testing.T) {
+	h, _, realm := newHandler(t)
+	samlProbeClient(t, h, realm, &model.Client{
+		ClientID: "sp", Enabled: true, RedirectURIs: []string{"http://localhost:9999/*"},
+		Attributes: map[string]string{
+			"saml.client.signature":   "false",
+			"saml.force.post.binding": "true",
+		},
+	})
+	message := samlProbeRequest("AuthnRequest", "sp", "", "http://localhost:9999/acs")
+	form := url.Values{
+		"SAMLRequest": {base64.StdEncoding.EncodeToString([]byte(message))},
+		"RelayState":  {"from-the-form"},
+	}
+	req := httptest.NewRequest(http.MethodPost,
+		"/realms/master/protocol/saml?RelayState=from-the-query",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("realm", "master")
+	w := httptest.NewRecorder()
+	h.samlEndpoint(w, req)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", w.Code)
+	}
+	const want = `{"ru":"http://localhost:9999/acs","rt":"ID_gloak_test","rm":"post","st":"from-the-form"}`
+	if got := samlClientDataOf(t, w.Header().Get("Location")); got != want {
+		t.Errorf("client_data = %s\n           want %s", got, want)
+	}
+}
+
+// TestSAMLLoginSurvivesARestart is the second, and it covers the one path in
+// this flow that rebuilds a tab from something other than the request.
+//
+// KC_RESTART is what a browser holds when its authentication session has gone,
+// and writeRestartRedirect builds a **new** tab out of the record it names. A
+// mutation dropping the two SAML fields from that record survived the whole
+// tree: every golden here is a first request, so nothing in the catalogue ever
+// restarts a SAML login, and the rebuilt tab silently became an OIDC one whose
+// client_data says `"rt":"code"` for a login that never asked for a code.
+//
+// The assertion is the restart 302's own client_data, read out of the header
+// rather than off the record, for samlClientDataOf's reason.
+func TestSAMLLoginSurvivesARestart(t *testing.T) {
+	h, _, realm := newHandler(t)
+	samlProbeClient(t, h, realm, &model.Client{
+		ClientID: "sp", Enabled: true, RedirectURIs: []string{"http://localhost:9999/*"},
+		Attributes: map[string]string{
+			"saml.client.signature":   "false",
+			"saml.force.post.binding": "true",
+		},
+	})
+	message := samlProbeRequest("AuthnRequest", "sp", "", "http://localhost:9999/acs")
+	first := samlGet(t, h, url.Values{
+		"SAMLRequest": {samlDeflate(t, message)},
+		"RelayState":  {"gloak-relay"},
+	}.Encode())
+	if first.Code != http.StatusOK {
+		t.Fatalf("the login page is %d, want 200", first.Code)
+	}
+	restart := ""
+	for _, raw := range first.Header().Values("Set-Cookie") {
+		if name, value, ok := strings.Cut(raw, "="); ok && name == restartCookie {
+			restart, _, _ = strings.Cut(value, ";")
+		}
+	}
+	if restart == "" {
+		t.Fatalf("the login page set no %s cookie", restartCookie)
+	}
+
+	// No AUTH_SESSION_ID: the browser's authentication session is gone and the
+	// restart cookie is all it has, which is the branch writeUnusableSession
+	// takes to writeRestartRedirect.
+	req := httptest.NewRequest(http.MethodGet,
+		"/realms/master/login-actions/authenticate?client_id=sp&tab_id=gone&session_code=gone", nil)
+	req.Header.Set("Cookie", restartCookie+"="+restart)
+	req.SetPathValue("realm", "master")
+	w := httptest.NewRecorder()
+	h.loginActions(w, req)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("the restart is %d, want 302", w.Code)
+	}
+	const want = `{"ru":"http://localhost:9999/acs","rt":"ID_gloak_test","rm":"post","st":"gloak-relay"}`
+	if got := samlClientDataOf(t, w.Header().Get("Location")); got != want {
+		t.Errorf("the restarted tab's client_data = %s\n                              want %s", got, want)
+	}
+}
+
 var samlClientDataPattern = regexp.MustCompile(`client_data=([A-Za-z0-9_-]+)`)
 
 // samlClientDataOf decodes the first client_data out of a page.
