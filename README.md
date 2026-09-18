@@ -58,7 +58,9 @@ Working today:
   attachments, and the inheritance a new client gets - 22 operations
 - the authorization endpoint's rejections: both error families of `GET`/`POST
   /auth`, the ten-step order they are decided in, and the redirect URI
-  comparison. Not the login page, which needs themes
+  comparison - and, as of 2026-09-18, **the login page itself**: one `login.ftl`
+  body template serving both protocols, with the OIDC and SAML pages
+  byte-identical apart from their session parameters
 - RP-initiated logout: the redirect, the session end, and
   `post.logout.redirect.uris` - which turned out to be a filter over
   `redirectUris` rather than a separate registration
@@ -99,20 +101,21 @@ Working today:
   Gloak's responses byte-for-byte against bytes recorded from a live
   Keycloak 26.7.1
 - a parity meter whose denominator comes from Keycloak's own OpenAPI description
-  rather than from a hand-kept list: **614 of 681 enumerated behaviours served**,
+  rather than from a hand-kept list: **618 of 684 enumerated behaviours served**,
   and **every chapter now has a denominator**
 - an external oracle: `make oracle` drives Gloak with `kcadm.sh`, Keycloak's own
   admin CLI, which asks for things no recorded case asks for
 
-Not implemented yet: the login page's own markup (the flow is served, the theme
-is not), the authentication flow engine - Gloak stores the flow model and reads
+Not implemented yet: the authentication flow engine - Gloak stores the flow model and reads
 it on three bindings, but walks a hard-coded flow - CIBA, user federation,
-identity brokering, the admin console. **SAML is 25 of its 31 enumerated
+identity brokering, the admin console. **SAML is 28 of its 33 enumerated
 behaviours**: the IdP metadata descriptor, the IdP-initiated route, and the SSO
-endpoint's **whole seven-rung rejection ladder**, stopping one below the success
-path - serving that needs an authentication session carrying the SAML request id
-and a signed assertion builder, and adding those with nothing consuming them is
-machinery with no consumer. The redirect binding's signature is really verified,
+endpoint's **whole seven-rung rejection ladder plus the eighth**, which is the
+login page, on both bindings. Building it needed no cryptography: what was
+missing was the **login form markup**, which this repository had on *neither*
+protocol until 2026-09-18 - so the OIDC authorization endpoint gained its login
+page in the same cut. The ninth rung, the signed assertion, needs exclusive
+canonicalisation and is refused with its measurement - see F268. The redirect binding's signature is really verified,
 against three of the four `SigAlg`s SAML defines. The **account API** is enumerated and its gate and two
 derived reads are served, 18 of 40; the remaining refusals are eleven separate
 blockers rather than one, which F194 records so nobody plans them as one cut.
@@ -267,10 +270,10 @@ and stay out of the total rather than being dropped from it silently, which
 would inflate the percentage by hiding the parts nobody has counted. It reads:
 
 ```
-total: 614 of 681 enumerated behaviours served; 0 chapters not enumerated
+total: 618 of 684 enumerated behaviours served; 0 chapters not enumerated
 ```
 
-The denominator is 681 rather than 413 plus a fixed number because the protocol
+The denominator is 684 rather than 413 plus a fixed number because the protocol
 chapters have no OpenAPI source and are counted case by case, so they grow as
 measurements find behaviours nobody had named. It moved from 485 on 2026-08-29
 for the first time since it was set, and again the next day when the logout

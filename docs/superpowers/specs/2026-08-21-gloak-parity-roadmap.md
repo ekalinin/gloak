@@ -250,11 +250,11 @@ operations is allocated below; none is left unassigned.
 | Partial export | `partial-export` and `partialImport`, **done 2026-09-06** | P14 | `admin/realms-admin` 42->44. The export is `GET /admin/realms/{realm}` **spliced**, not transcribed, so `realmrep.go` stays the one truth. Answers F163: the parse code separates **syntax from binding**, not shapes | 2 ops |
 | Certificate remainder | The `Client Attribute Certificate` tag's last three, **done 2026-09-06** | F161, F38 | `admin/client-attribute-certificate` 4->5, and **+1 counted, +3 served**: `download` and `generate-and-download` are built and uncounted, because no golden can hold a keystore. The dependency question **inverted** - `x/crypto/pkcs12` is already direct and cannot read Keycloak's BouncyCastle BER, so `internal/keystore` was written and no module added. BCFKS is a deliberate divergence, F171 | 1 op |
 
-Denominator today: **413 Admin API operations plus 264 protocol, account,
-management and theme behaviours, 677 enumerated**, plus **two** chapters (parts of P13 and P14) whose
+Denominator today: **413 Admin API operations plus 271 protocol, account,
+management and theme behaviours, 684 enumerated**, plus **two** chapters (parts of P13 and P14) whose
 surface is not counted and which the report says so about - P11 left that list on
-2026-09-07 and the account API on 2026-09-08. Served: **614 of 681** after the
-header divergences, and **P2, P4 and P5 are complete** -
+2026-09-07 and the account API on 2026-09-08. Served: **618 of 684** after the
+SAML success path, and **P2, P4 and P5 are complete** -
 as are `admin/attack-detection`, `admin/client-initial-access`,
 `admin/component`, and
 `admin/role-mapper` and `admin/client-role-mappings`, closed by that cut's third
@@ -285,7 +285,47 @@ still wrong in the direction of the catalogue rather than the server.
 plus the third cut's 24. The allocation was checked against the description
 rather than taken on trust when the cut started, and it held to the operation.
 
-**Updated 2026-09-17 (forty-third fold).** `make conformance` reports **614 of
+**Updated 2026-09-18 (forty-fourth fold).** `make conformance` reports **618 of
+684**. The SAML endpoint's eighth rung is served on both bindings, and so is the
+OIDC authorization endpoint's login page - **which this repository had never
+recorded at all**.
+
+**That is the finding, and it is about how a reason goes stale.**
+`saml/endpoint/login-page`'s `Reason` had said for eleven days that the page
+could not be a golden because it carries a per-request `tab_id` and
+`session_code`. True, the right shape of reason, and **not the blocker**:
+`Case.VolatileHTMLQuery` and `Case.VolatileHTMLCall` had reached both since
+2026-09-03, a fortnight before that sentence was last rewritten. The real
+blocker was that `internal/httpx` served a hand-rolled placeholder for the login
+form on **both** protocols, so `grep -rl kc-form-login testdata/golden/`
+returned nothing - I ran that against `main` before merging and it does. **When
+a `Pending` reason names a mechanism, check the mechanism exists and does not
+already cover the case.**
+
+**F227 was three cuts, not one.** My own framing to the cut - that the login page
+needs no cryptography and the assertion needs canonicalisation - got the boundary
+right and missed the middle entirely: the markup. The assertion is refused with
+its measurement as F268.
+
+**And the round's sharpest lesson came from reviewing the fix rather than the
+code.** A mutation found the HTTP-POST binding reading its `RelayState` from the
+query; the test written to kill it sent the parameter in both the query and the
+body with different values, and the report claimed that also covered a merged
+`r.FormValue` read. **It did not**, and I mutated the fix to show it: `ParseForm`
+fills `r.Form` from the body first and appends the query, so the two readers
+agree on every input where the body carries the parameter. The one that
+discriminates is a POST whose body **omits** it. *A test born from a survivor
+inherits the survivor's blind spot unless somebody aims a mutation at the test's
+own claim.*
+
+The cut then measured which reader is **right**, which did not follow from Go:
+a POST whose body omits `RelayState` and whose query carries one yields **no
+`st` key at all**, so `PostFormValue` is correct. And the same question one
+parameter along was unmeasured too - a merged read of `SAMLRequest` would serve
+a login page where Keycloak refuses, a divergence at the top of the ladder
+rather than the bottom.
+
+**Earlier on 2026-09-17 (forty-third fold).** `make conformance` reports **614 of
 681**. Both numbers moved by four and **the ratio did not**: protocol chapters
 count cases, so a recorded case moves top and bottom together. **Three
 divergences were closed and the meter cannot see any of them** - which is the

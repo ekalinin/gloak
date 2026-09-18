@@ -6233,7 +6233,24 @@ lower case would make a declaration that contradicts it read as agreeing.
 
 The fix is the same one cell. It is filed rather than done for F224's reason.
 
-## F227: the SAML assertion builder and the SAML session store, which are one cut
+## F227: the SAML assertion builder and the SAML session store, which are one cut (**split** 2026-09-18)
+
+**They are not one cut and they are not two - they are three**, and the middle
+one was invisible from here. The eighth rung is a login page and needs no
+cryptography; the session store is two fields on `authTab` and two shapes on
+`clientData`; the assertion is refused and filed as F268.
+
+**What was actually missing was the markup.** `internal/httpx` served a
+hand-rolled placeholder for the login form on **both** protocols, so
+`grep -rl kc-form-login testdata/golden/` returned nothing - there was no login
+form page in this repository at all, and nothing true for a mask to be compared
+against. The blocker `saml/endpoint/login-page`'s `Reason` had named for eleven
+days - a per-request `tab_id` and `session_code` - had been covered by
+`Case.VolatileHTMLQuery` and `Case.VolatileHTMLCall` since 2026-09-03.
+
+Both routes' success paths are served now, stopping below the assertion.
+
+## F227 (original): the entry as filed on 2026-09-12
 
 Everything left in this chapter is behind one thing: Gloak can read a SAML
 request and refuse it correctly, and cannot answer one. Three behaviours need the
@@ -7407,3 +7424,209 @@ A cell in `TestTheMirrorHeaderRuleCanFail` that hands the sweep a corpus, a
 declaration set and an excuse list, and checks the stale-entry report, closes
 it without needing the map to be non-empty. One cell, the shape of the five
 already there.
+
+## F268: the ninth rung: the assertion, and exclusive canonicalisation
+
+This is what is left of F227 and it is the whole of it. Gloak can now read a
+SAML request, refuse it correctly on seven rungs, ask for credentials on the
+eighth, and **cannot answer the ninth**: Keycloak's answer is a signed
+`samlp:Response` carrying an assertion, posted back to the assertion consumer
+URL, and that is an enveloped XML signature over a canonicalised document.
+
+`completeSAMLLogin` answers the dispatcher's `HTTP 404 Not Found` there rather
+than minting an authorization code, which is what `completeLogin` beside it
+would otherwise do - see §3.3.
+
+The gap is the same one F229 records on the way **in**, and the rule at the top
+of AGENTS.md applies the way the first cut applied it to `encoding/xml`: **prove
+with bytes** that the standard library cannot do exclusive c14n, and make the
+refutation a test, in the shape of `TestEncodingXMLCannotEmitTheDescriptor`.
+Nothing in this cut reached that question, so nothing in this cut has an opinion
+about it.
+
+What has to be measured before a line of it is written, because none of it is:
+
+- what the `samlp:Response` actually contains - the `Conditions`, the
+  `AudienceRestriction`, the `AuthnStatement`, the `NameID` format, the
+  `SessionIndex`, and which of them move per request;
+- **what `rm` actually does with it.** §2.4 measured which value the session
+  carries and nothing measured what `post` and `get` then produce - the POST one
+  is presumably an auto-submitting form and the other a redirect, and
+  "presumably" is the word this project does not accept. That is the second half
+  of F228 and it stays open.
+- whether the assertion is signed when `saml.server.signature` is off, which is
+  an attribute every created client carries and nothing here sent a request to.
+
+## F269: the login page a credential failure re-serves
+
+Measured 2026-09-18 and deliberately not built: 8000 bytes against the first
+render's 6861, adding `pf-m-error` to both form controls, a
+`pf-v5-c-form-control__utilities` icon span, a `pf-v5-c-helper-text__item` block
+carrying the sentence, `aria-invalid="true"`, the username echoed, and a
+`history.replaceState` `<SCRIPT>` in the head the first render has no trace of.
+
+`WriteThemeLoginPage` keeps the placeholder for that one branch, which is F109's
+arrangement at `writeLoginActionErrorPage`. It closes when somebody records it,
+and the reason it is worth doing is that **nothing in the catalogue compares it
+today** - the credential POST's golden is a 302 - so closing it means a case as
+well as markup. The case is the interesting half: a fixture that reaches the
+page needs a wrong credential, and the page then carries the same three
+per-request values this cut's three goldens already mask.
+
+## F270: a SAML tab's route through the required actions and the consent
+
+`beginSAMLLogin` opens an ordinary authentication session, so a SAML login whose
+user carries `UPDATE_PASSWORD`, or whose client is `consentRequired`, goes
+through `/login-actions/required-action` and `/login-actions/consent` exactly as
+an OIDC one does. `writeRequiredActionRedirect` builds its `client_data` from
+the tab, so the SAML shape survives - which is measured on Gloak and **not
+measured on Keycloak at all**.
+
+Nothing here sent a SAML request for a user with a required action or a client
+requiring consent. Both are one container away, both are reachable today, and
+both are ahead of F268 in the sense that a flow that ends wrongly is worse than
+one that ends nowhere.
+
+## F271: the login page's four unrendered branches
+
+The page renders a social-provider section when the realm has identity
+providers, a registration link when registration is on, a "remember me" checkbox
+when it is enabled, and a "forgot password" link when password reset is. All
+four are off on a realm created through `POST /admin/realms` and on a default
+`master` alike, `internal/httpx` renders none of them, and the three login-page
+goldens are recorded against a realm that has none of them on.
+
+The first is the one with a consumer: `GET /realms/{realm}/broker/{alias}/login`
+is the href each button points at, and the identity-provider chapter is
+otherwise complete. The other three are realm flags nothing in this repository
+sets.
+
+What to measure first is the **order** the buttons come in and whether the list
+is deduplicated, because that is the cell §3.5's first recording accidentally
+showed and nobody read: sixteen buttons for fifteen providers.
+
+## F272: Gloak generates two client attributes where Keycloak generates fourteen
+
+`POST /admin/realms/{realm}/clients` with `{"protocol":"saml"}` answers with
+fourteen generated attributes on Keycloak - P11 §1.12 counted them - and Gloak's
+`createClient` generates `realm_client` and, for a confidential client,
+`client.secret.creation.time`. Nothing else.
+
+**No golden sees it**, which is why it survived until a case needed one of the
+twelve. The login-page fixture now spells `saml.force.post.binding` out, so the
+gap is worked around rather than closed.
+
+It is filed rather than fixed here because closing it moves every client golden
+in the tree at once: the twelve include `saml.signing.certificate` and
+`saml.signing.private.key`, which are **generated key material** and therefore a
+new volatile value in every SAML client's create response. That is a cut of its
+own and it should be taken with the certificate endpoints, not beside a login
+page.
+
+## F273: every SAML client that reaches a login page has `saml.force.post.binding` true
+
+**A corpus gap with a named cause**, which is the shape F234 and F256 already
+have.
+
+Three of this cut's twenty-one mutations are invisible to **every golden in the
+tree**, and one reason covers all three: `samlResponseBinding` always answering
+`post` (M11), `HTTP-Artifact` read as a POST binding (M12), and
+`samlAttributeIsTrue` becoming `strconv.ParseBool` (M18). Each of them died only
+in `internal/oidc`.
+
+The cause is the corpus rather than the code. Every client in the catalogue that
+walks as far as a login page carries `saml.force.post.binding: "true"` - the
+value Keycloak generates and the value `loginPagesFixture` now spells out - and
+every SAML attribute written anywhere in the fixtures is spelled `"true"` or
+`"false"`. So no case can separate `"true".equals(value)` from a boolean parse,
+no case can separate the measured grid from the constant `post`, and no case
+sends a `ProtocolBinding` at all.
+
+`TestSAMLResponseBindingIsTheMeasuredGrid` is what holds all three today, and a
+package test is the right home for the eight-cell grid: a golden per cell would
+be eight 6900-byte login pages differing in one key.
+
+What would close the corpus half, in order of what it buys:
+
+- **a case on a client with `saml.force.post.binding: "false"`**, which is the
+  one cell that changes an observable byte in `client_data` and is one fixture
+  client away. Its login page is 6875 bytes against 6877, and the diff is
+  `"rm":"get"`;
+- **a case whose `AuthnRequest` names `ProtocolBinding=HTTP-POST`** against that
+  same client, which is the cell where the *request* overrides the client and is
+  the only reason `samlMessage.ProtocolBinding` exists;
+- `HTTP-Artifact` against it, which is the cell a reader gets wrong.
+
+Three cases, one new fixture client, two new literals. It was not done here
+because this cut already added four goldens and a realm, and because the grid is
+measured and held - but the entry should say plainly that **the meter reads 618
+whether those three mutations are alive or dead**, and that is what makes it
+worth filing rather than shrugging at.
+
+## Dispositions from the SAML success path (2026-09-18)
+### F228: half closed
+
+§2.4 is the measurement F228 asked for: `saml.force.post.binding`'s comparison
+and its effect on the session, as a 2x4 plus an eight-value attribute sweep. It
+was filed because "the attribute is on by default, so whatever it does is what a
+default client gets", and that is now measured and served.
+
+**The other half is untouched and belongs to F268**: what the response binding
+does once it has been chosen. The descriptor advertises four
+`SingleSignOnService` bindings and nothing here sent a request that reaches the
+point where one is used, because that point is past the ninth rung.
+
+### F229: unchanged, and its measured input is still missing
+
+The HTTP-POST binding's XML signature is still unverified and still not refused.
+Nothing in this cut signed a POST-binding `AuthnRequest`, so what Keycloak
+answers a correctly signed one is still inference rather than measurement -
+which is the sentence F229 already carries, re-checked rather than restated.
+
+This cut does move one thing next to it: the POST binding now has a **measured
+success path**, so a signed POST from a signature-requiring client has somewhere
+to arrive if the verification ever exists. Before this it would have had nowhere
+to go but the 404 either way.
+
+### F113: narrowed, and the narrowing is the finding
+
+F113 says a page carrying a per-request value cannot be `Recorded`. That is
+still true and it is **not** what kept `saml/endpoint/login-page` `Pending`.
+
+The page's three per-request values - `tab_id`, `session_code` and the
+`checkAuthSession` argument - are reached by `Case.VolatileHTMLQuery` and
+`Case.VolatileHTMLCall`, both of which have existed since 2026-09-03. The case's
+own `Reason` named them as the blocker for eleven days and they were not one.
+What was missing was a login form markup to compare against.
+
+The entry should gain the distinction rather than a closure: **a per-request
+value bars a golden only when no frame reaches it**, and three frames now do.
+The values that still bar one are the ones inside a JSON string (F38's
+neighbourhood), the ones inside a `Set-Cookie` that nothing can capture out of,
+and an XML attribute, for which no frame is built because none has a consumer.
+
+### F230: a second instance, and it is not the recorder's instability
+
+F230 is about a golden that moved between recorder runs and a shared
+`internalId` space. §3.5 is a different mechanism with the same symptom: a
+golden whose **content** is decided by which other fixtures ran on the shared
+container, because the login page renders one element per identity provider and
+the identity-provider chapter creates fifteen of them in `master`.
+
+The cure here was a realm of its own, which is cheap and complete. The entry is
+worth extending with the general form, because it is the question to ask of any
+new golden: **does this response enumerate anything the realm accumulates?** A
+listing does obviously; a login page does not obviously, and that is why it
+took a recording to find.
+
+### F175: still refuted, and this cut needed nothing it offered
+
+P11 closed F175 with the measurement that an `AuthnRequest` needs no
+`Destination`. This cut is the first to walk past the `Destination` rung to the
+top of the ladder, which is where P11 said the argument for a run-time signer
+would have to be made if it were ever made - and it is still not needed. The
+request that reaches the eighth rung is unsigned, so the `Destination` is never
+compared and the literal works on whatever port testcontainers maps.
+
+A signed message that walks past the `Destination` rung remains unsent and
+remains without a consumer.

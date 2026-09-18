@@ -3302,6 +3302,98 @@ Fixing any of these breaks compatibility. They are measured Keycloak behaviour.
   line mandatory without `ParseGolden` having to refuse one: every committed
   file is re-formatted and the bytes are required back, which also fences F246
   - a non-standard reason phrase cannot survive the round trip.
+- **A `Pending` case's stated reason is a claim like any other, and a plausible
+  one stops being checked.** `saml/endpoint/login-page` said it could not be a
+  golden because the page carries a per-request `tab_id` and a `session_code`.
+  That was true, it was the right shape of reason, and it was **not the
+  blocker**: `Case.VolatileHTMLQuery` and `Case.VolatileHTMLCall` have reached
+  both since 2026-09-03, a fortnight before the sentence was last rewritten. The
+  actual blocker was that `internal/httpx` served a hand-rolled placeholder for
+  the login form on **both** protocols, so
+  `grep -rl kc-form-login testdata/golden/` returned nothing and there was
+  nothing true to compare a mask against. Eleven days and two cuts went past it
+  because the reason named a real obstacle that had already been removed. **When
+  a `Pending` reason names a mechanism, check the mechanism exists and does not
+  already cover the case** - the cheap version of that check is the grep the
+  reason implies, and it takes one command.
+- **A markup mask requires the value to move between two draws of Gloak, so a
+  value that is volatile on Keycloak and stable here cannot be masked at all.**
+  `TestNoHTMLMaskVariesNothing` runs a case twice against the in-process handler
+  and fails any mask whose covered bytes are equal - the login form's
+  `execution` is minted with Keycloak's database and derived from the realm id in
+  Gloak, so it churns every recording and never moves in a draw. Masking it lands
+  in `htmlMasksLeftInPlace`, whose own message says the answer for a value
+  belonging to the installation is an unconditional pass beside
+  `ReplaceThemeResource` - and there can be no unconditional pass for a bare
+  UUID, because UUIDs are contract in a hundred other goldens. **So it is a
+  fixture capture**, which is also strictly stronger: a mask asserts a value is
+  there, a capture asserts it came from somewhere named, and pointing the capture
+  at the wrong row of the flow-executions listing fails all three page goldens
+  although the UUID it yields is real and well formed.
+- **`/realms/{realm}/protocol/saml`'s two bindings diverge at the top of the
+  ladder and nowhere else.** All seven rejections answer the identical sentence
+  over either binding. The eighth answers **200 with the login page** over
+  HTTP-Redirect and a **302 into `/login-actions/authenticate`** over HTTP-POST -
+  empty body, **no `Content-Type` at all**, `Cache-Control: no-cache`, and the
+  Location carrying `client_id`, `tab_id` and `client_data` in that order with no
+  `session_code`. **The "none of the five security headers" exception is the
+  whole route rather than its error template**: it holds on that 200 with its
+  6931-byte body and on that 302 with no body, which is more than the six 400
+  pages could say. The IdP-initiated route one path segment down answers the
+  **same login page** with all five and a Content-Security-Policy, which is the
+  same split the two routes' 400 pages already have.
+- **`client_data`'s `rt` means two different things and is sometimes absent.**
+  The login form's `client_data` is base64url of `{ru, rt, rm, st}` in that key
+  order, and there are three shapes: `/auth` writes
+  `{"ru":<redirect_uri>,"rt":"code","st":<state>}`, `/protocol/saml` writes
+  `{"ru":<ACS>,"rt":<the AuthnRequest's ID>,"rm":"post","st":<RelayState>}`, and
+  `/protocol/saml/clients/{name}` writes `{"ru":<ACS>,"rm":"post"}` with **no
+  `rt` at all**, because there is no request to have an id. An implementation
+  reusing one encoder emits `"rt":""` on that third row. **An empty `RelayState`
+  counts as absent** - `RelayState=` renders no `st` key - where `/auth`'s
+  `state=` renders `"st":""`. That is the third time these two endpoints have
+  disagreed about emptiness in one parameter, after `client_id=` and `state=`.
+- **`client_data`'s `rm` on a SAML tab is `post` or `get`, and `HTTP-Artifact`
+  falls back to `get`.** It is `post` when `saml.force.post.binding` is the exact
+  string `"true"` **or** the `AuthnRequest` names
+  `ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"`, and `get`
+  otherwise. Measured as a 2x4 on one container: `HTTP-Redirect` and an absent
+  attribute are `get` as expected, and so is **`HTTP-Artifact`**, whose URI is
+  correct and whose binding the descriptor advertises - the answer is the default
+  rather than a third value or a refusal. **`saml.force.post.binding` is compared
+  to the exact string `"true"`, case-sensitively**, exactly as
+  `saml.client.signature` is: `"TRUE"`, `"True"`, `" true"`, `"0"`, `"no"`, `""`
+  and absent are all off. That is the second attribute measured with that rule,
+  so it is `samlAttributeIsTrue` rather than the literal twice - and the mutation
+  that turns it into `strconv.ParseBool` fails two tests written for two
+  different attributes, which is what a shared comparison buys.
+- **The login form page renders one `<a>` per identity provider in the realm**,
+  so its bytes depend on the realm's identity providers rather than on the
+  request. That is not a bug and it is a trap for the recorder: `master` on the
+  shared container accumulates every identity provider the catalogue's fixtures
+  create, so the first recording of `saml/endpoint/login-page` came back with
+  **sixteen** social-login buttons in it and seventeen `tab_id` occurrences
+  instead of two. Every case whose golden is a login form page is recorded
+  against a realm of its own for that reason - see `loginPageRealm`. Four
+  branches of the page go unmeasured as a result and are named rather than
+  hidden: the social-provider section, the registration link, remember-me and
+  forgot-password. F271.
+- **The login theme has five body templates in this repository and the fifth is
+  `login.ftl`.** It arrived on 2026-09-18 and it is the first one any protocol's
+  **success** path reaches. The OIDC authorization endpoint's login page and the
+  SAML endpoint's are **byte-identical** apart from the `client_id`, `tab_id`,
+  `client_data`, `session_code` and authentication session hash - one template,
+  two protocols - which is why building it was not SAML's work and why there is a
+  case per protocol: two goldens make "the two agree" a diff rather than a claim.
+  The page carries **eight** `/resources/` segments where the four error-shaped
+  templates carry seven, because it is rendered from inside an authentication
+  flow and therefore has a session to poll. **The page a credential failure
+  re-serves is a different page** - 8000 bytes against 6861, with `pf-m-error` on
+  both form controls, a status icon span, a helper-text block and a
+  `history.replaceState` in the head - and it is deliberately still a
+  placeholder. F269.
+- 
+
 ## Boundaries
 
 | Package | Owns | Must not |
@@ -3803,6 +3895,40 @@ implementation satisfies entirely.
   check count - pinned against socket-read bytes with the socket's own
   `content-length`. Ask of any declaration-versus-declaration test which of the
   two it would notice being wrong.
+
+- **A masked header is a blind spot with a shape, and the shape is "everything
+  inside the value".** `saml/endpoint/post-binding-login-redirect` masks its
+  `Location` whole, because the header carries a per-request `tab_id` and no
+  header mask in this harness reaches inside a query parameter - `MaskURLTail`
+  covers a final path segment. A mutation changing which parameter the handler
+  read the RelayState from therefore survived the entire tree: the status, the
+  `Cache-Control` and all eight absent headers were unchanged and the whole of
+  what moved was inside the mask. Before accepting a whole-header mask, ask what
+  a package test has to assert in its place, and write that test in the same
+  cut - `TestSAMLPostBindingReadsItsRelayStateFromTheForm` is what that looks
+  like. Note what it took to get right: see the mutation bullet below, because the
+  first version of that test was one input short.
+- **A capture can be named wrong and it still dies, which is the difference
+  between a capture and a mask.** Pointing the login-page fixture's `execution`
+  capture at index 12 rather than 8 yields a real, well-formed UUID off a real
+  row, `ReplaceCaptured` rewrites it on both sides, and nothing about the
+  golden's shape changes - and all three page goldens fail anyway, because the
+  two sides then disagree about which id the page carried. A mask asserts a value
+  is there; a capture asserts it came from somewhere named.
+- **Mutate the test a mutation asked for, not only the code it survived in.**
+  The pass found a handler reading the HTTP-POST binding's `RelayState` from the
+  query; the test written to kill it sent the parameter in **both** the query and
+  the body with different values, and the sentence beside it claimed that also
+  covered a merged `r.FormValue` read. It did not. `ParseForm` fills `r.Form`
+  with the body's values first and appends the query's, so `FormValue` and
+  `PostFormValue` agree on every input where the body carries the parameter and
+  differ on exactly one - a POST whose **body omits it and whose query carries
+  one**. The fix was one input short, and the input it was short of is the only
+  one that discriminates: "a set of assertions an incorrect implementation
+  satisfies entirely" arriving on the test written to enforce that rule. It was
+  found by review mutating the fix rather than by the pass, which is the general
+  lesson: a test born from a survivor inherits the survivor's blind spot unless
+  somebody aims a mutation at the test's own claim.
 
 **Run each package separately.** A filtered `-run` has twice reported a survivor
 that a test outside the filter was killing, and once hidden a real survivor
