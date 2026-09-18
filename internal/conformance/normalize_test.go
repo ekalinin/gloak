@@ -708,10 +708,16 @@ func TestThemeResourceAppearsOnlyInTheThemePages(t *testing.T) {
 		// The second page with the block, and the first of F146's nine to carry
 		// a golden at all.
 		"oidc/authorization/session-code-wrong-execution": 8,
-		"oidc/logout/invalid-post-logout-redirect-uri":    7,
-		"oidc/logout/invalid-id-token-hint":               7,
-		"oidc/device/verification-page":                   7,
-		"oidc/device/status-page":                         7,
+		// **The login form page, and the first of them to be a golden at all.**
+		// It carries the block, so it is eight, and the count is the head's
+		// rather than the body's - which is the whole point of this table: a
+		// fifth body template arrived on 2026-09-18 and the number did not
+		// move.
+		"oidc/authorization/login-page":                8,
+		"oidc/logout/invalid-post-logout-redirect-uri": 7,
+		"oidc/logout/invalid-id-token-hint":            7,
+		"oidc/device/verification-page":                7,
+		"oidc/device/status-page":                      7,
 		// The tenth, and the device verification page served for a realm that
 		// is not master. Seven again, for the ninth's reason: the count is a
 		// property of the head, which every one of these pages shares.
@@ -775,6 +781,14 @@ func TestThemeResourceAppearsOnlyInTheThemePages(t *testing.T) {
 		"saml/idp-initiated/claimed-name":                               7,
 		"saml/idp-initiated/disabled-client":                            7,
 		"saml/idp-initiated/wrong-protocol":                             7,
+		// The three login form pages. **Eight, where every SAML page above is
+		// seven**, and the difference is the checkAuthSession import: these
+		// three are the only answers either SAML route gives from **inside** an
+		// authentication flow, so they are the only ones with a session to
+		// poll. The rule ThemeChrome.AuthSessionHash states, met on a third
+		// endpoint.
+		"saml/endpoint/login-page":      8,
+		"saml/idp-initiated/login-page": 8,
 		// The account console, and it is **not** a theme page in the sense the
 		// eleven above are: it is not the login theme's error template, it
 		// carries no chrome, no message and no form, and its whole body is a

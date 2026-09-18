@@ -6570,9 +6570,22 @@ func loginPagesFixture() Fixture {
 		clientInRealmStep(loginPageRealm, browserClientBody("gloak-probe-browser", "")),
 		// The endpoint's client: signature off, and redirectUris covering the
 		// assertion consumer URL the literal AuthnRequest names.
+		//
+		// **`saml.force.post.binding` is spelled out although Keycloak
+		// generates it**, and that is a divergence written down rather than
+		// worked around. `POST /admin/realms/{realm}/clients` with
+		// `{"protocol":"saml"}` generates fourteen attributes on Keycloak and
+		// none at all on Gloak, so a client created without this one reads
+		// `saml.force.post.binding: "true"` on one server and absent on the
+		// other - and client_data's `rm` then comes out `post` in the recording
+		// and `get` in the replay. Measured: that is exactly how the second
+		// recording failed. Setting it makes both servers agree about the input
+		// so the case can be about the **rule**; the generation gap itself is
+		// F272 and is not this cut's.
 		clientInRealmStep(loginPageRealm, `{"clientId":"gloak-probe-saml-unsigned","protocol":"saml",`+
 			`"enabled":true,"redirectUris":["http://localhost:9999/*"],`+
-			`"attributes":{"saml.client.signature":"false"}}`),
+			`"attributes":{"saml.client.signature":"false",`+
+			`"saml.force.post.binding":"true"}}`),
 		// The IdP-initiated route's client, which registers **no redirectUris
 		// on purpose**: this route reads saml_assertion_consumer_url_post and
 		// checks it against nothing, where the endpoint one segment up checks a
@@ -6583,7 +6596,7 @@ func loginPagesFixture() Fixture {
 		clientInRealmStep(loginPageRealm, `{"clientId":"gloak-probe-sso-consumer-client",`+
 			`"protocol":"saml","enabled":true,`+
 			`"attributes":{"saml_idp_initiated_sso_url_name":"gloak-probe-sso-consumer",`+
-			`"saml.client.signature":"false",`+
+			`"saml.client.signature":"false","saml.force.post.binding":"true",`+
 			`"saml_assertion_consumer_url_post":"http://localhost:9999/acs-post"}}`),
 		Step{
 			Request: Request{
