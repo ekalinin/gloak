@@ -10,8 +10,8 @@ builder". **That sentence contains the split, and it has three parts rather than
 two.** The brief guessed two; the third is what actually kept the case `Pending`
 for eleven days, and nobody had filed it.
 
-Both routes' success paths are served now. `saml/endpoint` is 20 of 22 and
-`saml/idp-initiated` is 6 of 6.
+Both routes' success paths are served now. `saml/endpoint` is 19 of 21 and
+`saml/idp-initiated` is 6 of 6. Parity 614 -> 618 of 684.
 
 ---
 
@@ -464,36 +464,542 @@ browser flow's fifteen rows and their order are what
 `admin/authentication-management/browser-executions` pins, on a realm of exactly
 this fixture's kind.
 
-### 4.3 Run 2
+### 4.3 Runs 2 and 3: the same four, and one of them was still wrong
 
-<!-- RUN2 -->
+Run 2, after the realm change and the capture:
+
+```
+oidc/authorization/login-page.http                  new
+saml/endpoint/login-page.http                       new
+saml/endpoint/post-binding-login-redirect.http      new
+saml/idp-initiated/login-page.http                  new
+```
+
+with the placeholder counts the page actually has - two `{{tab_id}}`, one
+`{{session_code}}`, one `{{execution}}`, eight `{{theme_resource}}` and four
+`{{volatile}}` - and nothing else moved.
+
+**Two of the four still failed `TestConformance`, on one key.** The recording
+said `"rm":"post"` and Gloak said `"rm":"get"`, and reading the two bodies says
+why: `POST /admin/realms/{realm}/clients` with `{"protocol":"saml"}` generates
+**fourteen** attributes on Keycloak, `saml.force.post.binding: "true"` among
+them, and **two** on Gloak - `realm_client` and `client.secret.creation.time`.
+So the fixture created a client that was configured on one server and not on the
+other, and the case was measuring the generation gap rather than the rule.
+
+The fixture now spells the attribute out. That makes the input the same on both
+servers so the case can be about `rm`; the generation gap itself is F272 and is
+not this cut's - closing it would move every client golden in the tree.
+
+Run 3, after that change: **no diff at all.** The attribute Keycloak already
+generated, spelled out, changes none of its bytes - so the four goldens in the
+tree are run 2's and run 3 reproduced them on a different container. That is the
+draw F176 asks for and it is the reason it is worth stating: two containers, two
+databases, identical bytes.
 
 ---
 
 ## 5. The mutation pass
 
-<!-- MUTATIONS -->
+Twenty-one mutations. The tree was committed and clean before the pass began,
+each mutation was applied to the tree, `go build ./...` was checked to succeed,
+**the whole package was run with no `-run` filter anywhere**, the revert is on a
+`trap ... EXIT INT TERM` rather than on the happy path, and `git status
+--porcelain internal/` was checked after every single revert. Nothing was
+written to the tree while it ran - including this document, which is the rule
+P11 earned by aborting its own pass at M1.
+
+Every production mutation was run against **both** `internal/oidc` (or
+`internal/httpx`) and `internal/conformance`, because contracts live in goldens
+here, and the two columns are reported separately below precisely because they
+disagree six times.
+
+**Two survived the whole tree. Both are fixed and both are now killed; there are
+no standing survivors.**
+
+### The markup
+
+| # | Mutation | Result |
+|---|---|---|
+| M1 | the heading loses the blank line after its template comment | killed by `TestLoginPageBodyIsTheMeasuredMarkup` and all three page goldens |
+| M2 | the trailing-whitespace run after `autofocus` is dropped | killed by the same four |
+| M3 | `data-page-id="login-login"` becomes `"login"` | killed by the same four |
+| M4 | the inner footer's three newlines become one - **the device page's spelling** | killed by the same four |
+
+M4 is the one worth having. The two templates' footers differ by two newlines
+and nothing but a separate reading of each finds that, so this is the mutation
+that asks whether `themeDeviceVerifyBody` was copied or `login.ftl` was read.
+
+### The header sets and the redirect
+
+| # | Mutation | Result |
+|---|---|---|
+| M5 | the SAML login page keeps the five - `SetSecurityHeaders` **added after** `ClearSecurityHeaders`, so the guard is still present | killed by `saml/endpoint/login-page` and `TestLoginPageHeaderSetsAreTheTwoMeasuredOnes/saml` |
+| M6 | the POST binding's 302 sends the GET verb's `Cache-Control` | killed by `saml/endpoint/post-binding-login-redirect` and `TestSAMLLoginRedirectSendsNoneOfTheSix` |
+| M7 | the POST binding's 302 names a `Content-Type` | killed by the same two |
+| M8 | the first render takes the placeholder branch too | **survived `internal/httpx`**; killed by `oidc/authorization/login-page` and `saml/idp-initiated/login-page` |
+
+**M8 is the pass's clearest lesson and it is about this repository's own rule.**
+Two package tests cover this page and neither catches it:
+`TestLoginPageBodyIsTheMeasuredMarkup` calls `themeLoginPageBody` **directly**,
+so a writer that never calls it is invisible to the test that checks it; and
+`TestLoginPageHeaderSetsAreTheTwoMeasuredOnes` asks only about headers. The
+goldens are what fail. That is "a production mutation has to be run against the
+package that can kill it" firing on the first cut that could have hidden it.
+
+### The session and its three shapes
+
+| # | Mutation | Result |
+|---|---|---|
+| M9 | `rt` is emitted whatever `hasResponseType` says | killed by `saml/idp-initiated/login-page` and `TestSAMLLoginPageCarriesTheMeasuredClientData` |
+| M10 | a SAML tab renders the OIDC shape | killed by both SAML page goldens and four subtests |
+| M13 | an empty RelayState counts as present, which is `/auth`'s rule | killed by `saml/idp-initiated/login-page` and three subtests |
+| M17 | `rt` carries the `Issuer` rather than the `ID` | killed by `saml/endpoint/login-page` and three subtests |
+| M20 | the restart record drops the tab's SAML fields | **survived; fixed** - see §5.6 |
+
+M17 is the additive form of "a guard written from the value the thing under test
+was built from cannot catch that thing being built wrong": the Issuer is a value
+the request really sends, so `rt` stays present and non-empty and only its
+contents are wrong. `samlClientDataOf` reads it back out of the rendered page
+rather than calling `authTab.clientData`, which is what makes that catchable.
+
+### The binding grid
+
+| # | Mutation | Result |
+|---|---|---|
+| M11 | `samlResponseBinding` always answers `post` | **survived `internal/conformance`**; killed by `TestSAMLResponseBindingIsTheMeasuredGrid` |
+| M12 | `HTTP-Artifact` is read as a POST binding | **survived `internal/conformance`**; killed by the same |
+| M18 | `samlAttributeIsTrue` becomes `strconv.ParseBool` | **survived `internal/conformance`**; killed by that grid **and** by `TestClientRequiresSignatureComparesTheExactString` |
+
+**Three mutations no golden can see, and one reason for all three.** Every client
+in the catalogue that reaches a login page carries
+`saml.force.post.binding: "true"` and every attribute in the tree is spelled
+`"true"` or `"false"`, so a catalogue cannot separate `"true".equals(value)` from
+a boolean parse and cannot separate the grid from the constant `post`. That is
+P11's own M14/M15/M25 shape - "every case in this chapter is a rejection" -
+arriving on a chapter that now has three successes and still cannot see this.
+The grid test is why it exists and §7's argument for a package test beside a
+golden is exactly this.
+
+M18 is also the one that says a shared helper pays for itself: **one edit to one
+function failed two tests written for two different attributes**, which is what
+the `samlAttributeIsTrue` extraction was for.
+
+### The ladder and the ending
+
+| # | Mutation | Result |
+|---|---|---|
+| M14 | both bindings render the login page | **survived `internal/oidc`**; killed by `saml/endpoint/post-binding-login-redirect` |
+| M15 | both SAML routes use the bare writer | killed by `saml/idp-initiated/login-page` and `TestSAMLLoginPageSendsNoneOfTheSixAndTheIdPInitiatedOneSendsThemAll` |
+| M16 | the RelayState is read from the query on both bindings | **survived; fixed** - see §5.6 |
+| M19 | `finishFlow` drops the SAML branch | **survived `internal/conformance`**; killed by `TestSAMLLoginDoesNotEndInAnAuthorizationCode` |
+
+M19's column split is the one §3.3 predicted: no golden can reach the ninth rung,
+because reaching it needs credentials, so the test that holds the refusal is the
+only thing standing between a SAML service provider and an OIDC authorization
+code at its assertion consumer URL.
+
+### The harness
+
+| # | Mutation | Result |
+|---|---|---|
+| M21 | the fixture captures index **12** rather than 8 - a real execution id off the wrong row | killed by all three page goldens |
+
+M21 is the one that asks whether a **capture** can be silently wrong. It yields a
+well-formed UUID that `ReplaceCaptured` rewrites on both sides, so nothing about
+the golden's *shape* changes - and it dies anyway, because the two sides then
+disagree about which id the page carried. A capture is not a mask: it asserts
+the value came from somewhere, and naming the wrong somewhere is a diff.
+
+### 5.6 The two survivors, and what was done about each
+
+**M16 - the HTTP-POST binding's RelayState, and a masked header is a blind
+spot.** Reading it out of the query instead of the form survived
+`internal/oidc` and `internal/conformance` both. Reading the mutated lines says
+why: `saml/endpoint/post-binding-login-redirect` masks its `Location` **whole**,
+because the header carries a freshly minted tab_id and no header mask in this
+harness reaches inside a query parameter - so the client_id, the tab_id and the
+client_data go with it, and the whole of what that mutation changed lives inside
+the masked value. The 302's status, its `Cache-Control` and all eight absent
+headers are unaffected.
+
+That is §3.6's cost, named there as a cost and found here to be a real one.
+`TestSAMLPostBindingReadsItsRelayStateFromTheForm` sends **both** spellings with
+different values, which is sharper than sending only the form's: it fails for a
+handler reading the query, and it fails for one calling `r.FormValue`, which
+merges the two and would take whichever `net/http` happens to prefer. M16 is now
+killed by it.
+
+**M20 - nothing in the catalogue restarts a SAML login.** Dropping the tab's two
+SAML fields from the `restartRecord` survived the whole tree. Every golden in
+this chapter is a **first** request, so `writeRestartRedirect` is never reached
+with a SAML record, and the rebuilt tab silently became an OIDC one whose
+client_data says `"rt":"code"` for a login that never asked for a code.
+
+`TestSAMLLoginSurvivesARestart` walks it: the login page's `KC_RESTART` cookie
+is presented back with no `AUTH_SESSION_ID`, which is the branch
+`writeUnusableSession` takes, and the restart 302's own client_data is read out
+of the header. M20 is now killed by it.
+
+The two share a shape worth keeping: **both are paths the catalogue cannot
+reach**, one because a mask covers the evidence and one because no case ever
+gets there. Neither is a coverage hole a golden could close.
 
 ---
 
 ## 6. Containers
 
-<!-- CONTAINERS -->
+Docker through colima, `DOCKER_HOST=unix:///Users/shorrty/.colima/default/docker.sock`.
+
+```
+kc-saml-f227      one, fresh, port 18091     every measurement in section 2
+make record       three runs                 sections 4.1, 4.3
+```
+
+`kc-saml-f227` was started fresh from the image, had the three probe clients and
+the `nopost` client created on it by the probes themselves, and was not reused
+between sections - the whole of §2 is one container, one database, which is what
+lets the eight-cell `rm` grid and the eight-value attribute sweep be compared
+with each other.
+
+Each `make record` run is **many** fresh containers rather than one, and it is
+worth stating exactly: the recorder starts one shared container per
+`Configuration` - two, the default and `StartDevHealth` - plus one throwaway per
+`PristineRealm` case, of which the catalogue declares forty. Every one of them
+is created by `testcontainers.GenericContainer` and terminated on cleanup, so
+none is reused across runs and none carries state from a previous one. Three
+runs.
+
+The recorder's shared default container is the one §3.5 is about: it is shared
+*within* a run, in catalogue order, which is exactly why `master` on it has
+fifteen identity providers.
 
 ---
 
 ## 7. Parity
 
-<!-- PARITY -->
+Measured with `cmd/parity` **built** rather than `go run`, for the reason
+AGENTS.md gives - `go run` collapses exit 2 down to 1 and would make a real
+parity decrease indistinguishable from a report it could not read.
+
+```
+Parity: 614 -> 618 of 684 (+4)
+
+chapter                         before  after  delta
+oidc/authorization                  29     30     +1
+saml/endpoint                       17     19     +2
+saml/idp-initiated                   5      6     +1
+```
+
+The chapter table:
+
+```
+chapter                              served  recorded  documented  source
+saml/descriptor                           3         1           4  catalogue
+saml/endpoint                            19         2          21  catalogue
+saml/idp-initiated                        6         0           6  catalogue
+saml/artifact-resolution                  0         1           2  catalogue
+oidc/authorization                       30         0          30  catalogue
+
+total: 618 of 684 enumerated behaviours served; 0 chapters not enumerated
+```
+
+The arithmetic: **one promotion** from `Pending` to `Implemented`
+(`saml/endpoint/login-page`), which moves the numerator alone, and **three new
+served cases**, which move both. 1 + 3 = 4 on the numerator, 3 on the
+denominator.
+
+`saml/idp-initiated` is 6 of 6. `saml/endpoint` is 19 of 21, and the two left
+are the LogoutRequest 500s - `Recorded` with their measurement, unchanged, and
+not this cut's.
+
+**A thing this cut adds that the meter does not count.** Three of the twenty-one
+mutations - M11, M12 and M18 - are invisible to every golden in the tree, and a
+fourth, M19, is invisible to any golden that could ever exist. The meter reads
+618 either way. The four package tests that hold them are not parity and are the
+reason the number means anything.
 
 ---
 
 ## 8. Entries for AGENTS.md
 
-<!-- AGENTS -->
+### A new bullet, for the SAML endpoint's eighth rung
+
+> **`/realms/{realm}/protocol/saml`'s two bindings diverge at the top of the
+> ladder and nowhere else.** All seven rejections answer the identical sentence
+> over either binding. The eighth answers **200 with the login page** over
+> HTTP-Redirect and a **302 into `/login-actions/authenticate`** over HTTP-POST -
+> empty body, **no `Content-Type` at all**, `Cache-Control: no-cache`, and the
+> Location carrying `client_id`, `tab_id` and `client_data` in that order with no
+> `session_code`. **The "none of the five security headers" exception is the
+> whole route rather than its error template**: it holds on that 200 with its
+> 6931-byte body and on that 302 with no body, which is more than the six 400
+> pages could say. The IdP-initiated route one path segment down answers the
+> **same login page** with all five and a Content-Security-Policy, which is the
+> same split the two routes' 400 pages already have.
+
+### A new bullet, for `client_data`
+
+> **`client_data`'s `rt` means two different things and is sometimes absent.**
+> The login form's `client_data` is base64url of `{ru, rt, rm, st}` in that key
+> order, and there are three shapes: `/auth` writes
+> `{"ru":<redirect_uri>,"rt":"code","st":<state>}`, `/protocol/saml` writes
+> `{"ru":<ACS>,"rt":<the AuthnRequest's ID>,"rm":"post","st":<RelayState>}`, and
+> `/protocol/saml/clients/{name}` writes `{"ru":<ACS>,"rm":"post"}` with **no
+> `rt` at all**, because there is no request to have an id. An implementation
+> reusing one encoder emits `"rt":""` on that third row. **An empty `RelayState`
+> counts as absent** - `RelayState=` renders no `st` key - where `/auth`'s
+> `state=` renders `"st":""`. That is the third time these two endpoints have
+> disagreed about emptiness in one parameter, after `client_id=` and `state=`.
+
+### A new bullet, for the response binding
+
+> **`client_data`'s `rm` on a SAML tab is `post` or `get`, and `HTTP-Artifact`
+> falls back to `get`.** It is `post` when `saml.force.post.binding` is the exact
+> string `"true"` **or** the `AuthnRequest` names
+> `ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"`, and `get`
+> otherwise. Measured as a 2x4 on one container: `HTTP-Redirect` and an absent
+> attribute are `get` as expected, and so is **`HTTP-Artifact`**, whose URI is
+> correct and whose binding the descriptor advertises - the answer is the default
+> rather than a third value or a refusal. **`saml.force.post.binding` is compared
+> to the exact string `"true"`, case-sensitively**, exactly as
+> `saml.client.signature` is: `"TRUE"`, `"True"`, `" true"`, `"0"`, `"no"`, `""`
+> and absent are all off. That is the second attribute measured with that rule,
+> so it is `samlAttributeIsTrue` rather than the literal twice - and the mutation
+> that turns it into `strconv.ParseBool` fails two tests written for two
+> different attributes, which is what a shared comparison buys.
+
+### For the "things that look like bugs" list
+
+> **The login form page renders one `<a>` per identity provider in the realm**,
+> so its bytes depend on the realm's identity providers rather than on the
+> request. That is not a bug and it is a trap for the recorder: `master` on the
+> shared container accumulates every identity provider the catalogue's fixtures
+> create, so the first recording of `saml/endpoint/login-page` came back with
+> **sixteen** social-login buttons in it and seventeen `tab_id` occurrences
+> instead of two. Every case whose golden is a login form page is recorded
+> against a realm of its own for that reason - see `loginPageRealm`. Four
+> branches of the page go unmeasured as a result and are named rather than
+> hidden: the social-provider section, the registration link, remember-me and
+> forgot-password. F271.
+
+### For the build section, extending the theme-page bullet
+
+> **The login theme has five body templates in this repository and the fifth is
+> `login.ftl`.** It arrived on 2026-09-18 and it is the first one any protocol's
+> **success** path reaches. The OIDC authorization endpoint's login page and the
+> SAML endpoint's are **byte-identical** apart from the `client_id`, `tab_id`,
+> `client_data`, `session_code` and authentication session hash - one template,
+> two protocols - which is why building it was not SAML's work and why there is a
+> case per protocol: two goldens make "the two agree" a diff rather than a claim.
+> The page carries **eight** `/resources/` segments where the four error-shaped
+> templates carry seven, because it is rendered from inside an authentication
+> flow and therefore has a session to poll. **The page a credential failure
+> re-serves is a different page** - 8000 bytes against 6861, with `pf-m-error` on
+> both form controls, a status icon span, a helper-text block and a
+> `history.replaceState` in the head - and it is deliberately still a
+> placeholder. F269.
+
+### For the mutation-discipline paragraph
+
+> **A masked header is a blind spot with a shape, and the shape is "everything
+> inside the value".** `saml/endpoint/post-binding-login-redirect` masks its
+> `Location` whole, because the header carries a per-request `tab_id` and no
+> header mask in this harness reaches inside a query parameter - `MaskURLTail`
+> covers a final path segment. A mutation changing which parameter the handler
+> read the RelayState from therefore survived the entire tree: the status, the
+> `Cache-Control` and all eight absent headers were unchanged and the whole of
+> what moved was inside the mask. Before accepting a whole-header mask, ask what
+> a package test has to assert in its place, and write that test in the same
+> cut - `TestSAMLPostBindingReadsItsRelayStateFromTheForm` is what that looks
+> like, and it sends **both** spellings with different values so that a merged
+> read fails too.
+
+> **A capture can be named wrong and it still dies, which is the difference
+> between a capture and a mask.** Pointing the login-page fixture's `execution`
+> capture at index 12 rather than 8 yields a real, well-formed UUID off a real
+> row, `ReplaceCaptured` rewrites it on both sides, and nothing about the
+> golden's shape changes - and all three page goldens fail anyway, because the
+> two sides then disagree about which id the page carried. A mask asserts a value
+> is there; a capture asserts it came from somewhere named.
+
+### A correction to the SAML client bullet, and a new one beside it
+
+> `POST /admin/realms/{realm}/clients` with `{"protocol":"saml"}` generates
+> fourteen attributes on Keycloak and **two on Gloak** - `realm_client` and
+> `client.secret.creation.time`. The twelve SAML ones, `saml.client.signature`
+> and `saml.force.post.binding` among them, are not generated at all, so a client
+> created identically on the two servers is configured on one and not on the
+> other. That is F272, and it is why the login-page fixture spells
+> `saml.force.post.binding` out: the second recording of two of its goldens
+> failed on `"rm":"post"` against `"rm":"get"` and the difference was the
+> fixture's client, not the rule the case is about.
 
 ---
 
 ## 9. Follow-ups, numbered from F268
 
-<!-- FOLLOWUPS -->
+### F268 - the ninth rung: the assertion, and exclusive canonicalisation
+
+This is what is left of F227 and it is the whole of it. Gloak can now read a
+SAML request, refuse it correctly on seven rungs, ask for credentials on the
+eighth, and **cannot answer the ninth**: Keycloak's answer is a signed
+`samlp:Response` carrying an assertion, posted back to the assertion consumer
+URL, and that is an enveloped XML signature over a canonicalised document.
+
+`completeSAMLLogin` answers the dispatcher's `HTTP 404 Not Found` there rather
+than minting an authorization code, which is what `completeLogin` beside it
+would otherwise do - see §3.3.
+
+The gap is the same one F229 records on the way **in**, and the rule at the top
+of AGENTS.md applies the way the first cut applied it to `encoding/xml`: **prove
+with bytes** that the standard library cannot do exclusive c14n, and make the
+refutation a test, in the shape of `TestEncodingXMLCannotEmitTheDescriptor`.
+Nothing in this cut reached that question, so nothing in this cut has an opinion
+about it.
+
+What has to be measured before a line of it is written, because none of it is:
+
+- what the `samlp:Response` actually contains - the `Conditions`, the
+  `AudienceRestriction`, the `AuthnStatement`, the `NameID` format, the
+  `SessionIndex`, and which of them move per request;
+- **what `rm` actually does with it.** §2.4 measured which value the session
+  carries and nothing measured what `post` and `get` then produce - the POST one
+  is presumably an auto-submitting form and the other a redirect, and
+  "presumably" is the word this project does not accept. That is the second half
+  of F228 and it stays open.
+- whether the assertion is signed when `saml.server.signature` is off, which is
+  an attribute every created client carries and nothing here sent a request to.
+
+### F269 - the login page a credential failure re-serves
+
+Measured 2026-09-18 and deliberately not built: 8000 bytes against the first
+render's 6861, adding `pf-m-error` to both form controls, a
+`pf-v5-c-form-control__utilities` icon span, a `pf-v5-c-helper-text__item` block
+carrying the sentence, `aria-invalid="true"`, the username echoed, and a
+`history.replaceState` `<SCRIPT>` in the head the first render has no trace of.
+
+`WriteThemeLoginPage` keeps the placeholder for that one branch, which is F109's
+arrangement at `writeLoginActionErrorPage`. It closes when somebody records it,
+and the reason it is worth doing is that **nothing in the catalogue compares it
+today** - the credential POST's golden is a 302 - so closing it means a case as
+well as markup. The case is the interesting half: a fixture that reaches the
+page needs a wrong credential, and the page then carries the same three
+per-request values this cut's three goldens already mask.
+
+### F270 - a SAML tab's route through the required actions and the consent
+
+`beginSAMLLogin` opens an ordinary authentication session, so a SAML login whose
+user carries `UPDATE_PASSWORD`, or whose client is `consentRequired`, goes
+through `/login-actions/required-action` and `/login-actions/consent` exactly as
+an OIDC one does. `writeRequiredActionRedirect` builds its `client_data` from
+the tab, so the SAML shape survives - which is measured on Gloak and **not
+measured on Keycloak at all**.
+
+Nothing here sent a SAML request for a user with a required action or a client
+requiring consent. Both are one container away, both are reachable today, and
+both are ahead of F268 in the sense that a flow that ends wrongly is worse than
+one that ends nowhere.
+
+### F271 - the login page's four unrendered branches
+
+The page renders a social-provider section when the realm has identity
+providers, a registration link when registration is on, a "remember me" checkbox
+when it is enabled, and a "forgot password" link when password reset is. All
+four are off on a realm created through `POST /admin/realms` and on a default
+`master` alike, `internal/httpx` renders none of them, and the three login-page
+goldens are recorded against a realm that has none of them on.
+
+The first is the one with a consumer: `GET /realms/{realm}/broker/{alias}/login`
+is the href each button points at, and the identity-provider chapter is
+otherwise complete. The other three are realm flags nothing in this repository
+sets.
+
+What to measure first is the **order** the buttons come in and whether the list
+is deduplicated, because that is the cell §3.5's first recording accidentally
+showed and nobody read: sixteen buttons for fifteen providers.
+
+### F272 - Gloak generates two client attributes where Keycloak generates fourteen
+
+`POST /admin/realms/{realm}/clients` with `{"protocol":"saml"}` answers with
+fourteen generated attributes on Keycloak - P11 §1.12 counted them - and Gloak's
+`createClient` generates `realm_client` and, for a confidential client,
+`client.secret.creation.time`. Nothing else.
+
+**No golden sees it**, which is why it survived until a case needed one of the
+twelve. The login-page fixture now spells `saml.force.post.binding` out, so the
+gap is worked around rather than closed.
+
+It is filed rather than fixed here because closing it moves every client golden
+in the tree at once: the twelve include `saml.signing.certificate` and
+`saml.signing.private.key`, which are **generated key material** and therefore a
+new volatile value in every SAML client's create response. That is a cut of its
+own and it should be taken with the certificate endpoints, not beside a login
+page.
+
+### F228 - half closed
+
+§2.4 is the measurement F228 asked for: `saml.force.post.binding`'s comparison
+and its effect on the session, as a 2x4 plus an eight-value attribute sweep. It
+was filed because "the attribute is on by default, so whatever it does is what a
+default client gets", and that is now measured and served.
+
+**The other half is untouched and belongs to F268**: what the response binding
+does once it has been chosen. The descriptor advertises four
+`SingleSignOnService` bindings and nothing here sent a request that reaches the
+point where one is used, because that point is past the ninth rung.
+
+### F229 - unchanged, and its measured input is still missing
+
+The HTTP-POST binding's XML signature is still unverified and still not refused.
+Nothing in this cut signed a POST-binding `AuthnRequest`, so what Keycloak
+answers a correctly signed one is still inference rather than measurement -
+which is the sentence F229 already carries, re-checked rather than restated.
+
+This cut does move one thing next to it: the POST binding now has a **measured
+success path**, so a signed POST from a signature-requiring client has somewhere
+to arrive if the verification ever exists. Before this it would have had nowhere
+to go but the 404 either way.
+
+### F113 - narrowed, and the narrowing is the finding
+
+F113 says a page carrying a per-request value cannot be `Recorded`. That is
+still true and it is **not** what kept `saml/endpoint/login-page` `Pending`.
+
+The page's three per-request values - `tab_id`, `session_code` and the
+`checkAuthSession` argument - are reached by `Case.VolatileHTMLQuery` and
+`Case.VolatileHTMLCall`, both of which have existed since 2026-09-03. The case's
+own `Reason` named them as the blocker for eleven days and they were not one.
+What was missing was a login form markup to compare against.
+
+The entry should gain the distinction rather than a closure: **a per-request
+value bars a golden only when no frame reaches it**, and three frames now do.
+The values that still bar one are the ones inside a JSON string (F38's
+neighbourhood), the ones inside a `Set-Cookie` that nothing can capture out of,
+and an XML attribute, for which no frame is built because none has a consumer.
+
+### F230 - a second instance, and it is not the recorder's instability
+
+F230 is about a golden that moved between recorder runs and a shared
+`internalId` space. §3.5 is a different mechanism with the same symptom: a
+golden whose **content** is decided by which other fixtures ran on the shared
+container, because the login page renders one element per identity provider and
+the identity-provider chapter creates fifteen of them in `master`.
+
+The cure here was a realm of its own, which is cheap and complete. The entry is
+worth extending with the general form, because it is the question to ask of any
+new golden: **does this response enumerate anything the realm accumulates?** A
+listing does obviously; a login page does not obviously, and that is why it
+took a recording to find.
+
+### F175 - still refuted, and this cut needed nothing it offered
+
+P11 closed F175 with the measurement that an `AuthnRequest` needs no
+`Destination`. This cut is the first to walk past the `Destination` rung to the
+top of the ladder, which is where P11 said the argument for a run-time signer
+would have to be made if it were ever made - and it is still not needed. The
+request that reaches the eighth rung is unsigned, so the `Destination` is never
+compared and the literal works on whatever port testcontainers maps.
+
+A signed message that walks past the `Destination` rung remains unsent and
+remains without a consumer.
