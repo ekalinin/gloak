@@ -285,11 +285,43 @@ func TestSAMLLoginPageCarriesTheMeasuredClientData(t *testing.T) {
 // all six absent headers are unchanged, and the one thing that moved was inside
 // the masked value.
 //
-// The request below sends **both** spellings with different values, which is
-// sharper than sending only the form's: it fails for a handler reading the
-// query, and it fails for one calling r.FormValue, which merges the two and
-// would take whichever net/http happens to prefer. readSAMLRequest takes the
-// same care with SAMLRequest for the same reason.
+// # Three inputs, because two of them are one input short
+//
+// This test sent **both** spellings with different values when it was first
+// written, and the sentence beside it claimed that covered a handler calling
+// `r.FormValue` as well as one reading the query. **That was wrong**, and the
+// mutation that says so is `func samlRelayState(r) { return
+// r.FormValue("RelayState") }`, which passed the whole tree.
+//
+// Go's own semantics say why. `ParseForm` fills `r.Form` with the **body's**
+// values first and appends the query's, and `FormValue` returns `r.Form[k][0]`:
+//
+//	body            query            FormValue        PostFormValue
+//	from-the-form   from-the-query   "from-the-form"  "from-the-form"
+//	from-the-form   -                "from-the-form"  "from-the-form"
+//	-               from-the-query   "from-the-query" ""
+//
+// So the two readers agree on every input where the body carries the parameter,
+// and differ on exactly one: **a POST whose body omits it and whose query
+// carries one.** Sending both spellings is therefore the input that cannot
+// separate them, which is this project's standing failure shape - a set of
+// assertions an incorrect implementation satisfies entirely - met on the test
+// written to close that very shape.
+//
+// # And the third row's answer is measured, not derived
+//
+// Which reader is *right* does not follow from Go. Measured 2026-09-18 on a
+// fresh container, the same client, four inputs:
+//
+//	body RelayState   query RelayState   client_data's st
+//	from-the-form     from-the-query     "from-the-form"
+//	from-the-form     -                  "from-the-form"
+//	-                 from-the-query     **no st key at all**
+//	-                 -                  no st key
+//
+// **The HTTP-POST binding reads its RelayState from the body alone and ignores
+// the query.** So PostFormValue is right and FormValue is wrong, and the third
+// row is what says so.
 func TestSAMLPostBindingReadsItsRelayStateFromTheForm(t *testing.T) {
 	h, _, realm := newHandler(t)
 	samlProbeClient(t, h, realm, &model.Client{
@@ -300,24 +332,108 @@ func TestSAMLPostBindingReadsItsRelayStateFromTheForm(t *testing.T) {
 		},
 	})
 	message := samlProbeRequest("AuthnRequest", "sp", "", "http://localhost:9999/acs")
-	form := url.Values{
-		"SAMLRequest": {base64.StdEncoding.EncodeToString([]byte(message))},
-		"RelayState":  {"from-the-form"},
-	}
-	req := httptest.NewRequest(http.MethodPost,
-		"/realms/master/protocol/saml?RelayState=from-the-query",
-		strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetPathValue("realm", "master")
-	w := httptest.NewRecorder()
-	h.samlEndpoint(w, req)
+	encoded := base64.StdEncoding.EncodeToString([]byte(message))
+	const base = `{"ru":"http://localhost:9999/acs","rt":"ID_gloak_test","rm":"post"`
 
-	if w.Code != http.StatusFound {
-		t.Fatalf("status = %d, want 302", w.Code)
+	for _, tc := range []struct {
+		name  string
+		query string
+		form  url.Values
+		want  string
+	}{
+		{
+			// Kills a handler reading the query: it would answer
+			// "from-the-query".
+			name:  "the body and the query disagree",
+			query: "RelayState=from-the-query",
+			form:  url.Values{"SAMLRequest": {encoded}, "RelayState": {"from-the-form"}},
+			want:  base + `,"st":"from-the-form"}`,
+		},
+		{
+			name:  "the body alone",
+			query: "",
+			form:  url.Values{"SAMLRequest": {encoded}, "RelayState": {"from-the-form"}},
+			want:  base + `,"st":"from-the-form"}`,
+		},
+		{
+			// **The row that separates PostFormValue from FormValue**, and the
+			// only one that does. A merged read answers "from-the-query" here
+			// and Keycloak answers no `st` at all.
+			name:  "the query alone, which the body does not carry",
+			query: "RelayState=from-the-query",
+			form:  url.Values{"SAMLRequest": {encoded}},
+			want:  base + `}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := "/realms/master/protocol/saml"
+			if tc.query != "" {
+				path += "?" + tc.query
+			}
+			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(tc.form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.SetPathValue("realm", "master")
+			w := httptest.NewRecorder()
+			h.samlEndpoint(w, req)
+
+			if w.Code != http.StatusFound {
+				t.Fatalf("status = %d, want 302", w.Code)
+			}
+			if got := samlClientDataOf(t, w.Header().Get("Location")); got != tc.want {
+				t.Errorf("client_data = %s\n           want %s", got, tc.want)
+			}
+		})
 	}
-	const want = `{"ru":"http://localhost:9999/acs","rt":"ID_gloak_test","rm":"post","st":"from-the-form"}`
-	if got := samlClientDataOf(t, w.Header().Get("Location")); got != want {
-		t.Errorf("client_data = %s\n           want %s", got, want)
+}
+
+// TestSAMLPostBindingReadsItsMessageFromTheFormToo is the same question one
+// parameter along, and it was unmeasured until 2026-09-18 as well.
+//
+// readSAMLRequest has always used PostFormValue for a POST, so Gloak gets this
+// right by construction - but nothing said what the right answer was, and the
+// input that asks is the same one: a POST whose **body carries no SAMLRequest
+// and whose query does**.
+//
+// Measured on a fresh container, both spellings of the parameter:
+//
+//	POST ?SAMLRequest=<base64 of the XML>       400, 3572 bytes, Invalid Request
+//	POST ?SAMLRequest=<deflated, base64>        400, 3572 bytes, Invalid Request
+//
+// 3572 is the ladder's floor - the page a request with no parameters at all
+// gets - so the POST binding reads **nothing** from the query. A handler
+// reaching for r.FormValue here would serve a login page to a request Keycloak
+// refuses, which is a divergence at the top of the ladder rather than the
+// bottom.
+func TestSAMLPostBindingReadsItsMessageFromTheFormToo(t *testing.T) {
+	h, _, realm := newHandler(t)
+	samlProbeClient(t, h, realm, &model.Client{
+		ClientID: "sp", Enabled: true, RedirectURIs: []string{"http://localhost:9999/*"},
+		Attributes: map[string]string{
+			"saml.client.signature":   "false",
+			"saml.force.post.binding": "true",
+		},
+	})
+	message := samlProbeRequest("AuthnRequest", "sp", "", "http://localhost:9999/acs")
+	for _, tc := range []struct{ name, encoded string }{
+		{"the POST binding's spelling", base64.StdEncoding.EncodeToString([]byte(message))},
+		{"the redirect binding's spelling", samlDeflate(t, message)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost,
+				"/realms/master/protocol/saml?SAMLRequest="+url.QueryEscape(tc.encoded),
+				strings.NewReader(""))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.SetPathValue("realm", "master")
+			w := httptest.NewRecorder()
+			h.samlEndpoint(w, req)
+
+			status, instruction := samlAnswer(t, w)
+			if status != http.StatusBadRequest || instruction != pageInvalidRequest {
+				t.Errorf("a POST carrying its message in the query answered %d %q, "+
+					"want %d %q - the query is not one of this binding's sources",
+					status, instruction, http.StatusBadRequest, pageInvalidRequest)
+			}
+		})
 	}
 }
 

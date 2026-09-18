@@ -624,11 +624,65 @@ the masked value. The 302's status, its `Cache-Control` and all eight absent
 headers are unaffected.
 
 That is §3.6's cost, named there as a cost and found here to be a real one.
-`TestSAMLPostBindingReadsItsRelayStateFromTheForm` sends **both** spellings with
-different values, which is sharper than sending only the form's: it fails for a
-handler reading the query, and it fails for one calling `r.FormValue`, which
-merges the two and would take whichever `net/http` happens to prefer. M16 is now
-killed by it.
+`TestSAMLPostBindingReadsItsRelayStateFromTheForm` is the fix, and **its first
+version was wrong in a way worth writing down, because it is this project's own
+failure shape met on the test written to close that shape.**
+
+### 5.7 R2: the fix was one input short, and review caught it
+
+The first version sent **both** spellings with different values, and the
+sentence beside it claimed that also covered a handler calling `r.FormValue`.
+Review put that claim under a mutation - `return r.FormValue("RelayState")`,
+the whole function body - and **it survived the tree**.
+
+Go's own semantics say why, measured rather than read off the documentation:
+
+```
+body            query            FormValue         PostFormValue
+from-the-form   from-the-query   "from-the-form"   "from-the-form"
+from-the-form   -                "from-the-form"   "from-the-form"
+-               from-the-query   "from-the-query"  ""
+```
+
+`ParseForm` fills `r.Form` with the **body's** values first and appends the
+query's, and `FormValue` returns `r.Form[k][0]`. So the two readers agree on
+every input where the body carries the parameter and differ on exactly one: **a
+POST whose body omits it and whose query carries one.** Sending both spellings
+is precisely the input that cannot separate them - a set of assertions an
+incorrect implementation satisfies entirely, which is the rule the test existed
+to enforce.
+
+**And which reader is right does not follow from Go.** It was measured on a
+fresh container, 2026-09-18, four inputs on one client:
+
+```
+body RelayState   query RelayState   client_data's st
+from-the-form     from-the-query     "from-the-form"
+from-the-form     -                  "from-the-form"
+-                 from-the-query     **no st key at all**
+-                 -                  no st key
+```
+
+**The HTTP-POST binding reads its RelayState from the body alone and ignores the
+query.** The third row is the whole of the evidence, and it is now the third
+subtest. M16 and R2 are both killed by it, and the two subtests that were there
+before pass under R2 - which is what made the old version look sufficient.
+
+**The same question one parameter along was unmeasured too**, and it is a bigger
+divergence. `readSAMLRequest` has always used `PostFormValue` for the POST
+binding's `SAMLRequest`, correctly, but nothing said so:
+
+```
+POST /protocol/saml ?SAMLRequest=<base64 of the XML>   400, 3572, Invalid Request
+POST /protocol/saml ?SAMLRequest=<deflated, base64>    400, 3572, Invalid Request
+```
+
+3572 is the ladder's **floor** - the page a request with no parameters at all
+gets - so the POST binding reads nothing from the query in either spelling. A
+merged read there answers the login page's **302** where Keycloak refuses, which
+is a divergence at the top of the ladder rather than the bottom.
+`TestSAMLPostBindingReadsItsMessageFromTheFormToo` holds it and kills that
+mutation (R3), which nothing in the tree could see before.
 
 **M20 - nothing in the catalogue restarts a SAML login.** Dropping the tab's two
 SAML fields from the `restartRecord` survived the whole tree. Every golden in
@@ -644,6 +698,13 @@ of the header. M20 is now killed by it.
 The two share a shape worth keeping: **both are paths the catalogue cannot
 reach**, one because a mask covers the evidence and one because no case ever
 gets there. Neither is a coverage hole a golden could close.
+
+And R2 adds a third: **a test written to close a blind spot can inherit the
+blind spot's shape.** The pass found M16 and the fix for M16 was itself one
+input short, and only a second mutation aimed at the fix found that. The general
+form is worth the sentence: when a test is written *because* a mutation
+survived, mutate the thing the test now claims to cover, not only the thing that
+survived.
 
 ---
 
@@ -722,6 +783,40 @@ reason the number means anything.
 ---
 
 ## 8. Entries for AGENTS.md
+
+### The one to fold first, because it is about how a reason goes stale
+
+> **A `Pending` case's stated reason is a claim like any other, and a plausible
+> one stops being checked.** `saml/endpoint/login-page` said it could not be a
+> golden because the page carries a per-request `tab_id` and a `session_code`.
+> That was true, it was the right shape of reason, and it was **not the
+> blocker**: `Case.VolatileHTMLQuery` and `Case.VolatileHTMLCall` have reached
+> both since 2026-09-03, a fortnight before the sentence was last rewritten. The
+> actual blocker was that `internal/httpx` served a hand-rolled placeholder for
+> the login form on **both** protocols, so
+> `grep -rl kc-form-login testdata/golden/` returned nothing and there was
+> nothing true to compare a mask against. Eleven days and two cuts went past it
+> because the reason named a real obstacle that had already been removed. **When
+> a `Pending` reason names a mechanism, check the mechanism exists and does not
+> already cover the case** - the cheap version of that check is the grep the
+> reason implies, and it takes one command.
+
+### A value volatile on Keycloak and stable on Gloak has to be captured
+
+> **A markup mask requires the value to move between two draws of Gloak, so a
+> value that is volatile on Keycloak and stable here cannot be masked at all.**
+> `TestNoHTMLMaskVariesNothing` runs a case twice against the in-process handler
+> and fails any mask whose covered bytes are equal - the login form's
+> `execution` is minted with Keycloak's database and derived from the realm id in
+> Gloak, so it churns every recording and never moves in a draw. Masking it lands
+> in `htmlMasksLeftInPlace`, whose own message says the answer for a value
+> belonging to the installation is an unconditional pass beside
+> `ReplaceThemeResource` - and there can be no unconditional pass for a bare
+> UUID, because UUIDs are contract in a hundred other goldens. **So it is a
+> fixture capture**, which is also strictly stronger: a mask asserts a value is
+> there, a capture asserts it came from somewhere named, and pointing the capture
+> at the wrong row of the flow-executions listing fails all three page goldens
+> although the UUID it yields is real and well formed.
 
 ### A new bullet, for the SAML endpoint's eighth rung
 
@@ -822,6 +917,21 @@ reason the number means anything.
 > golden's shape changes - and all three page goldens fail anyway, because the
 > two sides then disagree about which id the page carried. A mask asserts a value
 > is there; a capture asserts it came from somewhere named.
+
+> **Mutate the test a mutation asked for, not only the code it survived in.**
+> The pass found a handler reading the HTTP-POST binding's `RelayState` from the
+> query; the test written to kill it sent the parameter in **both** the query and
+> the body with different values, and the sentence beside it claimed that also
+> covered a merged `r.FormValue` read. It did not. `ParseForm` fills `r.Form`
+> with the body's values first and appends the query's, so `FormValue` and
+> `PostFormValue` agree on every input where the body carries the parameter and
+> differ on exactly one - a POST whose **body omits it and whose query carries
+> one**. The fix was one input short, and the input it was short of is the only
+> one that discriminates: "a set of assertions an incorrect implementation
+> satisfies entirely" arriving on the test written to enforce that rule. It was
+> found by review mutating the fix rather than by the pass, which is the general
+> lesson: a test born from a survivor inherits the survivor's blind spot unless
+> somebody aims a mutation at the test's own claim.
 
 ### A correction to the SAML client bullet, and a new one beside it
 
@@ -936,6 +1046,46 @@ in the tree at once: the twelve include `saml.signing.certificate` and
 new volatile value in every SAML client's create response. That is a cut of its
 own and it should be taken with the certificate endpoints, not beside a login
 page.
+
+### F273 - every SAML client that reaches a login page has `saml.force.post.binding` true
+
+**A corpus gap with a named cause**, which is the shape F234 and F256 already
+have.
+
+Three of this cut's twenty-one mutations are invisible to **every golden in the
+tree**, and one reason covers all three: `samlResponseBinding` always answering
+`post` (M11), `HTTP-Artifact` read as a POST binding (M12), and
+`samlAttributeIsTrue` becoming `strconv.ParseBool` (M18). Each of them died only
+in `internal/oidc`.
+
+The cause is the corpus rather than the code. Every client in the catalogue that
+walks as far as a login page carries `saml.force.post.binding: "true"` - the
+value Keycloak generates and the value `loginPagesFixture` now spells out - and
+every SAML attribute written anywhere in the fixtures is spelled `"true"` or
+`"false"`. So no case can separate `"true".equals(value)` from a boolean parse,
+no case can separate the measured grid from the constant `post`, and no case
+sends a `ProtocolBinding` at all.
+
+`TestSAMLResponseBindingIsTheMeasuredGrid` is what holds all three today, and a
+package test is the right home for the eight-cell grid: a golden per cell would
+be eight 6900-byte login pages differing in one key.
+
+What would close the corpus half, in order of what it buys:
+
+- **a case on a client with `saml.force.post.binding: "false"`**, which is the
+  one cell that changes an observable byte in `client_data` and is one fixture
+  client away. Its login page is 6875 bytes against 6877, and the diff is
+  `"rm":"get"`;
+- **a case whose `AuthnRequest` names `ProtocolBinding=HTTP-POST`** against that
+  same client, which is the cell where the *request* overrides the client and is
+  the only reason `samlMessage.ProtocolBinding` exists;
+- `HTTP-Artifact` against it, which is the cell a reader gets wrong.
+
+Three cases, one new fixture client, two new literals. It was not done here
+because this cut already added four goldens and a realm, and because the grid is
+measured and held - but the entry should say plainly that **the meter reads 618
+whether those three mutations are alive or dead**, and that is what makes it
+worth filing rather than shrugging at.
 
 ### F228 - half closed
 

@@ -242,10 +242,23 @@ func (h *handler) beginSAMLLogin(w http.ResponseWriter, r *http.Request, realm *
 // samlRelayState reads the RelayState off whichever binding carried it: the
 // query on HTTP-Redirect, the form on HTTP-POST.
 //
-// It is not r.FormValue, which merges the two. This endpoint is measured to
-// read its message from exactly one of them per verb - readSAMLRequest takes
-// the same care with SAMLRequest - and a merged read would let a POST's query
-// string supply a relay state the POST body did not.
+// **It is not r.FormValue, and the difference is one input wide.** ParseForm
+// fills r.Form with the body's values first and appends the query's, so
+// FormValue and PostFormValue return the same thing on every request whose body
+// carries the parameter. They differ on exactly one: a POST whose **body omits
+// RelayState and whose query carries one**.
+//
+// Measured 2026-09-18 on a fresh container, that input renders **no `st` key at
+// all** - the POST binding reads its RelayState from the body alone and ignores
+// the query, so PostFormValue is right and a merged read is wrong there and
+// nowhere else. readSAMLRequest takes the same care with SAMLRequest, and that
+// is measured too: a POST carrying its message in the query answers
+// `Invalid Request` at the ladder's floor in both encodings.
+//
+// The pair is worth stating because a test sending both spellings with
+// different values cannot tell the two readers apart - it is the input that
+// looks discriminating and is not. See
+// TestSAMLPostBindingReadsItsRelayStateFromTheForm's third subtest.
 func samlRelayState(r *http.Request) string {
 	if r.Method == http.MethodPost {
 		return r.PostFormValue("RelayState")
@@ -387,6 +400,16 @@ func (h *handler) clientByIdPInitiatedName(r *http.Request, realm *model.Realm,
 // **`SAMLRequest` wins over `SAMLResponse`**, measured: a lone `SAMLResponse`
 // carrying a perfectly good AuthnRequest is `Invalid Request`, and a request
 // carrying both parameters is served from the `SAMLRequest`.
+//
+// **Each binding reads exactly one source, and that is measured rather than
+// assumed.** The POST branch is PostFormValue and not FormValue: a POST
+// carrying its `SAMLRequest` in the **query** answers `Invalid Request` at
+// 3572 bytes - the ladder's floor, the page a request with no parameters at all
+// gets - in both the POST encoding and the redirect one. So the query is not
+// one of this binding's sources, and a merged read would serve a login page to
+// a request Keycloak refuses. Measured 2026-09-18; see
+// TestSAMLPostBindingReadsItsMessageFromTheFormToo and samlRelayState, which is
+// the same rule on the parameter beside it.
 func (h *handler) readSAMLRequest(r *http.Request) (*samlMessage, string, bool) {
 	var encoded string
 	var doc []byte
