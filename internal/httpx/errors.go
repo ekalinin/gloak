@@ -213,6 +213,29 @@ func WriteLoginActionRedirect(w http.ResponseWriter, location string) {
 	w.WriteHeader(http.StatusFound)
 }
 
+// WriteSAMLLoginRedirect writes the HTTP-POST binding's answer to an
+// AuthnRequest that passed every rung: a 302 into the authentication flow.
+//
+// It is the third redirect in this file and it shares its header set with
+// neither of the other two. Measured 2026-09-18 at socket level:
+//
+//	POST /protocol/saml   302   Cache-Control: no-cache, no security headers,
+//	                            no Content-Security-Policy, **no Content-Type**
+//	POST /login-actions   302   Cache-Control: no-store, …, all six
+//	GET  /auth            302   Cache-Control: no-store, …, four of the six
+//
+// So the "none of the five" rule on `/realms/{realm}/protocol/saml` is not a
+// fact about that route's *pages*, which is all the 400s could say: it reaches
+// a redirect with no body at all. And the Cache-Control is the verb's -
+// `no-cache` on a POST, as on every other POST answer this endpoint gives.
+func WriteSAMLLoginRedirect(w http.ResponseWriter, location string) {
+	suppressDate(w)
+	ClearSecurityHeaders(w)
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Location", location)
+	w.WriteHeader(http.StatusFound)
+}
+
 // WriteFormPost writes response_mode=form_post's answer: a 200 carrying an
 // auto-submitting HTML form, where query and fragment carry a 302.
 //
@@ -372,35 +395,88 @@ func SetKeycloakCookie(w http.ResponseWriter, c Cookie) {
 }
 
 // LoginPageTitle is the heading Keycloak's login page carries, and the one
-// WriteThemeLoginPage renders. Measured: the page's <title> is "Sign in to
-// Keycloak" and its kc-page-title heading is "Sign in to your account". The
-// heading is what the other theme pages differ in, so it is the heading Gloak's
-// placeholder reproduces - the same choice ThemeErrorTitle already makes.
+// themeLoginPageBody renders. Measured: the page's <title> is "Sign in to
+// Keycloak" - which is the realm's display name and comes out of the chrome -
+// and its kc-page-title heading is "Sign in to your account".
 const LoginPageTitle = "Sign in to your account"
+
+// loginPageCacheControl is what both bindings' login page sends. Measured on
+// the OIDC authorization endpoint and on the SAML endpoint alike; the two pages
+// disagree about the security headers and agree about this.
+const loginPageCacheControl = "no-store, must-revalidate, max-age=0"
 
 // ExpiredPageTitle is the heading of the page an unknown or absent `execution`
 // answers: 200, "Page has expired". It is a third theme page, distinct from the
 // login page and from the error page, and it is a 200 rather than a 400.
 const ExpiredPageTitle = "Page has expired"
 
-// WriteThemeLoginPage writes the login page: the one response in this flow
-// whose body a fixture actually reads.
+// WriteThemeLoginPage writes the login form page with the ordinary header set:
+// all five security headers and a Content-Security-Policy. That is what the
+// **OIDC** authorization endpoint's login page carries, measured 2026-09-18;
+// the SAML endpoint's is the identical body with none of the six, and
+// WriteThemeLoginPageBare is what serves that.
 //
-// Everything else Gloak serves through this package is a placeholder nobody
-// parses. This one is parsed - `internal/conformance`'s CaptureForm tokenises
-// the first <form> out of it and takes its action - so the form is real even
-// though the styling is not. Measured, the page holds exactly one form, and its
-// only inputs are username (text), password (password) and credentialId
-// (hidden, with **no value attribute at all**).
+// # The first render is measured and the re-render is not
 //
 // message is the feedback line a re-served page carries: "Invalid username or
 // password." after a wrong credential, "Account is disabled, contact your
-// administrator." for a disabled user, and empty on the first render. username
-// is echoed back into the input the way the measured page echoes it.
+// administrator." for a disabled user, and empty on the first render. **The
+// page a message goes on is a different page**, measured: 8000 bytes against
+// 6861, with pf-m-error on both form controls, a status icon span, a
+// helper-text block naming the sentence, and a history.replaceState block in
+// the head that the first render has no trace of. Copying login.ftl's error
+// markup is not a line change, nothing in the catalogue compares it, and
+// guessing it would put unmeasured bytes under a page that now has real ones.
 //
-// The action is written with the raw ampersands the tokeniser expects to
-// unescape, so it is HTML-escaped here exactly once.
-func WriteThemeLoginPage(w http.ResponseWriter, action, username, message string) {
+// So this keeps the placeholder body for exactly that branch and serves the
+// measured markup for every other. It is the arrangement F109 already has at
+// writeLoginActionErrorPage - a real body where it was measured and a declared
+// placeholder where it was not - rather than one page half measured. See F269.
+//
+// username is echoed into the input's value attribute on both branches, which
+// is measured on the re-render and is what a GET back to
+// /login-actions/authenticate gets with no message at all.
+//
+// The action is written with raw ampersands, which internal/conformance's
+// CaptureForm tokeniser unescapes, so it is HTML-escaped here exactly once.
+func WriteThemeLoginPage(w http.ResponseWriter, c ThemeChrome, action, username, message string) {
+	if message != "" {
+		writeThemeHTML(w, http.StatusOK, loginPageCacheControl,
+			loginPagePlaceholder(action, username, message))
+		return
+	}
+	writeThemeHTML(w, http.StatusOK, loginPageCacheControl, themeLoginPageBody(c, action, username))
+}
+
+// WriteThemeLoginPageBare writes the login form page **without** the five
+// security headers and without a Content-Security-Policy.
+//
+// That set is not a variant anybody would invent, and it is the same one
+// WriteThemeErrorPageBare serves: `/realms/{realm}/protocol/saml` sends a
+// Cache-Control, a Content-Language and a Content-Type and nothing else on
+// every answer it gives. Until 2026-09-18 that was measured only on the
+// endpoint's six 400 pages; the 200 login page carries it too, so the exception
+// really is the whole route rather than its rejections. The IdP-initiated route
+// one path segment down answers the same body with all six, which is
+// WriteThemeLoginPage's set.
+func WriteThemeLoginPageBare(w http.ResponseWriter, c ThemeChrome, action, username, message string) {
+	suppressDate(w)
+	ClearSecurityHeaders(w)
+	body := themeLoginPageBody(c, action, username)
+	if message != "" {
+		body = loginPagePlaceholder(action, username, message)
+	}
+	writeThemeHTMLBody(w, http.StatusOK, loginPageCacheControl, body)
+}
+
+// loginPagePlaceholder is the body this package served for every login page
+// until 2026-09-18 and now serves for one branch of one: the re-render after a
+// credential was refused, whose markup is measured and deliberately not built.
+//
+// It is a real form rather than prose because it is parsed - CaptureForm
+// tokenises the first <form> out of it and takes its action - so the flow still
+// walks through it. See WriteThemeLoginPage and F269.
+func loginPagePlaceholder(action, username, message string) string {
 	var body strings.Builder
 	body.WriteString(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
 		`<title>Sign in to Keycloak</title></head><body>` +
@@ -415,7 +491,7 @@ func WriteThemeLoginPage(w http.ResponseWriter, action, username, message string
 		`<input id="password" name="password" value="" type="password" autocomplete="current-password"/>` +
 		`<input type="hidden" id="id-hidden-input" name="credentialId"/>` +
 		`</form></body></html>`)
-	writeThemeHTML(w, http.StatusOK, "no-store, must-revalidate, max-age=0", body.String())
+	return body.String()
 }
 
 // The headings the three pages this flow gained on 2026-08-30 carry. All three

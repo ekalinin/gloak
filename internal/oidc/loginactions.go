@@ -106,7 +106,7 @@ func (h *handler) loginActions(w http.ResponseWriter, r *http.Request) {
 	// the login page. It is checked after the client so that a landing naming
 	// the wrong client is still the client page.
 	if q.Get("session_code") == "" {
-		h.serveLoginPage(r.Context(), w, realm, sess, tab, tab.Username, "")
+		h.serveLoginPage(r.Context(), w, realm, client, sess, tab, tab.Username, "")
 		return
 	}
 
@@ -223,6 +223,8 @@ func (h *handler) writeRestartRedirect(w http.ResponseWriter, r *http.Request, r
 		CodeChallenge:       rec.CodeChallenge,
 		CodeChallengeMethod: rec.CodeChallengeMethod,
 		DeviceUserCode:      rec.DeviceUserCode,
+		SAMLBinding:         rec.SAMLBinding,
+		SAMLRequestID:       rec.SAMLRequestID,
 	}
 	k := h.realmKeys(w, r, realm)
 	if k == nil {
@@ -233,7 +235,11 @@ func (h *handler) writeRestartRedirect(w http.ResponseWriter, r *http.Request, r
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	data, err := encodeClientData(rec.RedirectURI, responseTypeCode, rec.ResponseMode, rec.State, rec.HasState)
+	// The tab's own renderer rather than a second call to encodeClientData
+	// beside it: the restart tab is built from the record one line above, so
+	// two encoders here would be two chances to disagree about which protocol's
+	// shape this login is - and the SAML shapes are not the OIDC one.
+	data, err := tab.clientData()
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
@@ -313,7 +319,7 @@ func (h *handler) attemptLogin(w http.ResponseWriter, r *http.Request, realm *mo
 		// Measured: a failed credential re-serves the login page with a rotated
 		// session_code while execution, tab_id and client_data stay the same,
 		// and the retry with the rotated code succeeds.
-		h.serveLoginPage(r.Context(), w, realm, sess, tab, username, message)
+		h.serveLoginPage(r.Context(), w, realm, client, sess, tab, username, message)
 		return
 	}
 
@@ -539,25 +545,64 @@ func (h *handler) authorizationCodeLocation(realm string, tab *authTab, sessionS
 	return tab.RedirectURI + separator + strings.Join(parts, "&")
 }
 
-// serveLoginPage renders the form, minting the tab a fresh session code.
+// serveLoginPage renders the form with the header set every endpoint but one
+// sends: all five security headers and a Content-Security-Policy.
+//
+// The exception is `/realms/{realm}/protocol/saml`, which sends none of the six
+// on this page as on every other answer it gives - see serveSAMLLoginPage. The
+// **IdP-initiated** route one path segment down comes through here, because its
+// header set is the ordinary one; that is measured, and it is the same split
+// the two routes' 400 pages already have.
+//
+// client is the tab's own, and it is what the head's restart URL names. The
+// login page renders no "Back to Application" link whatever the client's
+// baseUrl is - that element belongs to the error body - so passing a client
+// here adds the chrome the page does carry and nothing it does not.
+func (h *handler) serveLoginPage(ctx context.Context, w http.ResponseWriter, realm *model.Realm,
+	client *model.Client, sess *authSession, tab *authTab, username, message string) {
+	action, ok := h.loginPageAction(ctx, w, realm, sess, tab, username)
+	if !ok {
+		return
+	}
+	httpx.WriteThemeLoginPage(w, h.flowChrome(realm, client, sess, tab), action, username, message)
+}
+
+// serveSAMLLoginPage is serveLoginPage for the one route measured to send none
+// of the five security headers and no Content-Security-Policy.
+//
+// It takes no username and no message because nothing can reach it with
+// either: this is the eighth rung of /protocol/saml's ladder, which is the
+// first render of a login that has just begun. Every later render in that login
+// arrives at /login-actions/authenticate, whose header set is its own.
+func (h *handler) serveSAMLLoginPage(ctx context.Context, w http.ResponseWriter, realm *model.Realm,
+	client *model.Client, sess *authSession, tab *authTab) {
+	action, ok := h.loginPageAction(ctx, w, realm, sess, tab, "")
+	if !ok {
+		return
+	}
+	httpx.WriteThemeLoginPageBare(w, h.flowChrome(realm, client, sess, tab), action, "", "")
+}
+
+// loginPageAction mints the tab a fresh session code and builds the form's
+// action from it, answering false when it has already written a 500.
 //
 // Every render mints one, which is what makes the measured rotation fall out
 // rather than being a special case: the first render after /auth and the
 // re-render after a wrong password both get a new code, and the old one stops
 // working either way.
-func (h *handler) serveLoginPage(ctx context.Context, w http.ResponseWriter, realm *model.Realm,
-	sess *authSession, tab *authTab, username, message string) {
+func (h *handler) loginPageAction(ctx context.Context, w http.ResponseWriter, realm *model.Realm,
+	sess *authSession, tab *authTab, username string) (string, bool) {
 	code, err := h.auth.rotateSessionCode(sess, tab, username)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
-		return
+		return "", false
 	}
 	action, err := h.loginActionURL(ctx, realm, tab, code)
 	if err != nil {
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
-		return
+		return "", false
 	}
-	httpx.WriteThemeLoginPage(w, action, username, message)
+	return action, true
 }
 
 // loginActionURL is the form's action, and its five parameters are in the

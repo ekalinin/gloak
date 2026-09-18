@@ -92,6 +92,17 @@ type samlMessage struct {
 	// message names none. An absent one is not a refusal: the client's
 	// saml_assertion_consumer_url_post attribute answers for it.
 	ACSURL string
+	// ProtocolBinding is the request's ProtocolBinding attribute, and it is one
+	// of the two inputs to client_data's `rm` - see samlResponseBinding.
+	//
+	// The comment above says ProtocolBinding="…SOAP" reaches the login page
+	// unchanged, and that is still true of the *ladder*. It is not true of the
+	// **page**: measured 2026-09-18, a request naming HTTP-POST against a
+	// client with saml.force.post.binding off renders `"rm":"post"` where the
+	// same request without it renders `"rm":"get"`, so the attribute is read
+	// after all and the first cut could not see it because nothing it sent
+	// reached a page.
+	ProtocolBinding string
 }
 
 // decodeSAMLRedirect decodes the HTTP-Redirect binding's SAMLRequest parameter:
@@ -157,6 +168,8 @@ func parseSAMLMessage(doc []byte) (*samlMessage, bool) {
 			msg.Destination, msg.HasDestination = attr.Value, true
 		case "AssertionConsumerServiceURL":
 			msg.ACSURL = attr.Value
+		case "ProtocolBinding":
+			msg.ProtocolBinding = attr.Value
 		}
 	}
 	if msg.ID == "" || version != samlRequestVersion || issueInstant == "" {

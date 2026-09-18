@@ -32,8 +32,12 @@ func newHandler(t *testing.T) (*handler, store.Store, *model.Realm) {
 	if err != nil {
 		t.Fatalf("ByName: %v", err)
 	}
+	// The authentication store is built here and not only by the router,
+	// because a handler without one panics the moment anything reaches a login
+	// page rather than failing an assertion - which is how the SAML endpoint's
+	// success path arrived on 2026-09-18.
 	return &handler{store: s, keys: keys.NewManager(s), issuerBase: "http://localhost:8080",
-		proofs: newProofStore()}, s, realm
+		proofs: newProofStore(), auth: newAuthStore()}, s, realm
 }
 
 func TestAuthenticateClientAcceptsAPublicClientWithNoSecret(t *testing.T) {

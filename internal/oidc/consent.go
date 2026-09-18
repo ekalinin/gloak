@@ -313,10 +313,37 @@ func (h *handler) denyConsent(w http.ResponseWriter, r *http.Request, realm *mod
 // shared and the redirect is not.
 func (h *handler) finishFlow(w http.ResponseWriter, r *http.Request, realm *model.Realm,
 	client *model.Client, sess *authSession, tab *authTab, user *model.User, k *keys.RealmKeys) error {
+	if tab.SAMLBinding != "" {
+		return completeSAMLLogin(w)
+	}
 	if tab.DeviceUserCode != "" {
 		return h.completeDeviceApproval(w, r, realm, client, sess, tab, user, k)
 	}
 	return h.completeLogin(w, r, realm, client, sess, tab, user, k)
+}
+
+// completeSAMLLogin is the ninth rung of the SAML ladder, and it is the one
+// this project still cannot answer.
+//
+// Keycloak's answer is a **signed `samlp:Response`** carrying an assertion,
+// posted back to the assertion consumer URL - an enveloped XML signature over a
+// canonicalised document, which is the same wall F229 records on the way in:
+// nothing in the standard library canonicalises XML.
+//
+// What it must not do is mint an authorization code. completeLogin beside it
+// would do exactly that: a SAML tab carries a redirect URI and a state, so
+// every line of the OIDC ending runs to completion and hands a SAML service
+// provider `?code=…&state=…` at its assertion consumer URL. That is a response
+// no measurement supports, sent to an endpoint that will not understand it, and
+// it is a worse divergence than answering nothing - which is the judgement
+// samlEndpoint's block comment already makes one rung down.
+//
+// So it answers the dispatcher's sentence, the way every unservable cell on
+// this route does. **The eight rungs below are served and this one is not**,
+// and the divergence is confined to it. See F227's remainder and F270.
+func completeSAMLLogin(w http.ResponseWriter) error {
+	httpx.WriteMessageError(w, http.StatusNotFound, "HTTP 404 Not Found")
+	return nil
 }
 
 // writeRequiredActionRedirect is the 302 a login answers when the flow still

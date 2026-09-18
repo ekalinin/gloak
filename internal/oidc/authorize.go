@@ -419,7 +419,7 @@ func (h *handler) beginLoginFromParams(w http.ResponseWriter, r *http.Request, r
 		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
 		return
 	}
-	h.serveLoginPage(r.Context(), w, realm, sess, tab, "", "")
+	h.serveLoginPage(r.Context(), w, realm, client, sess, tab, "", "")
 }
 
 // beginAuthSession puts a tab into an authentication session - **the browser's

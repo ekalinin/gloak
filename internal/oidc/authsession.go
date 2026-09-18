@@ -174,6 +174,35 @@ type authTab struct {
 	// code and not the device code because the device code never leaves the
 	// device.
 	DeviceUserCode string
+	// SAMLBinding is the binding the assertion would go back over, and it is
+	// **the discriminator for this whole family**: it is "post" or "get" on
+	// every tab either SAML route opens and empty on every other tab, the way
+	// DeviceUserCode discriminates the device flow.
+	//
+	// It is client_data's `rm`. Measured 2026-09-18 across the grid:
+	//
+	//	saml.force.post.binding   the request's ProtocolBinding   rm
+	//	"true"                    absent, Redirect, POST, Artifact  post
+	//	anything else             absent                            get
+	//	anything else             HTTP-Redirect                     get
+	//	anything else             HTTP-POST                         post
+	//	anything else             HTTP-Artifact                     get
+	//
+	// **HTTP-Artifact falls back to `get`**, which is the cell a reader gets
+	// wrong: it is neither of the two bindings `rm` can name, and the answer is
+	// the default rather than a refusal. And the attribute is compared to the
+	// exact string "true" case-sensitively, exactly as saml.client.signature
+	// is - "TRUE", "True", " true", "0", "no", "" and absent are all off.
+	SAMLBinding string
+	// SAMLRequestID is the AuthnRequest's ID attribute, and it is client_data's
+	// `rt` on a tab the SAML **endpoint** opened.
+	//
+	// On an OIDC tab `rt` is the response type, measured "code". On an
+	// **IdP-initiated** SAML tab there is no request and therefore no id, and
+	// the key is measured **absent** rather than empty:
+	// `{"ru":"…/acs-post","rm":"post"}` is the whole of it. That is why
+	// clientData.ResponseType is a pointer.
+	SAMLRequestID string
 }
 
 // restartRecord is what KC_RESTART holds: enough of the original authorization
@@ -202,7 +231,13 @@ type restartRecord struct {
 	// browser whose device login timed out restarts into the same approval
 	// rather than into an authorization request that has no client to answer.
 	DeviceUserCode string
-	ExpiresAt      time.Time
+	// SAMLBinding and SAMLRequestID carry a SAML login across a restart, for
+	// DeviceUserCode's reason one protocol along: a restart that dropped them
+	// would rebuild the tab as an **OIDC** one, and its client_data would then
+	// say `"rt":"code"` for a login that never asked for a code.
+	SAMLBinding   string
+	SAMLRequestID string
+	ExpiresAt     time.Time
 }
 
 // authCode is a minted authorization code and everything the token endpoint
@@ -520,18 +555,42 @@ func keycloakSessionValue(hash string) string {
 // **Its key order is measured**: ru, rt, rm, st. `rm` is present only when the
 // authorization request named a response_mode, and `st` follows /auth's own
 // state rule exactly - absent when no state was sent, present and empty when
-// `state=` was. So the two pointers are not tidiness: a `json:",omitempty"` on
-// State would emit three keys where Keycloak emits four for `state=`.
+// `state=` was. So the three pointers are not tidiness: a `json:",omitempty"`
+// on State would emit three keys where Keycloak emits four for `state=`.
+//
+// # One shape per protocol, and there are three
+//
+// Measured 2026-09-18, one container:
+//
+//	OIDC /auth                {"ru":<redirect_uri>,"rt":"code","st":"xyz123"}
+//	SAML /protocol/saml       {"ru":<ACS>,"rt":<the AuthnRequest's ID>,"rm":"post","st":<RelayState>}
+//	SAML .../clients/{name}   {"ru":<ACS>,"rm":"post"}
+//	the device flow           {} - see deviceClientData
+//
+// So `rt` holds a **response type** on one protocol and a **request id** on the
+// other, and on the IdP-initiated route it is absent entirely because there is
+// no request to have one. ResponseType is therefore a pointer: a `"rt":""` on
+// that third row would be one key too many.
 type clientData struct {
 	RedirectURI  string  `json:"ru"`
-	ResponseType string  `json:"rt"`
+	ResponseType *string `json:"rt,omitempty"`
 	ResponseMode *string `json:"rm,omitempty"`
 	State        *string `json:"st,omitempty"`
 }
 
 // encodeClientData renders it the way the measured action URL carries it.
-func encodeClientData(redirectURI, responseType, responseMode, state string, hasState bool) (string, error) {
-	cd := clientData{RedirectURI: redirectURI, ResponseType: responseType}
+//
+// hasResponseType is separate from responseType being empty because the
+// IdP-initiated SAML route omits the key and nothing else does, and an
+// implementation keyed on emptiness would omit it for an AuthnRequest whose ID
+// attribute is the empty string - which parseSAMLMessage refuses, so the cell
+// is unreachable today and would stop being so the moment that check moved.
+func encodeClientData(redirectURI, responseType string, hasResponseType bool,
+	responseMode, state string, hasState bool) (string, error) {
+	cd := clientData{RedirectURI: redirectURI}
+	if hasResponseType {
+		cd.ResponseType = &responseType
+	}
 	if responseMode != "" {
 		cd.ResponseMode = &responseMode
 	}
@@ -555,13 +614,27 @@ func encodeClientData(redirectURI, responseType, responseMode, state string, has
 // and the consent page's action - and it is `e30` on every one.
 const deviceClientData = "e30"
 
-// clientData renders the tab's own client_data, which is the empty object for a
-// device authorization and the four-key encoding for everything else.
+// clientData renders the tab's own client_data, one shape per protocol.
+//
+// The three discriminators are the tab's own fields and each is set by exactly
+// one route: DeviceUserCode by the device verification landing, SAMLBinding by
+// the two SAML routes, and neither by /auth.
+//
+// **The SAML tab's `rm` is not the OIDC tab's ResponseMode** and the two are
+// deliberately different fields. `rm` is a response *mode* on one protocol and
+// a response *binding* on the other, and they share a JSON key and nothing
+// else: an OIDC tab carrying rm=post would put its parameters in a form and a
+// SAML tab carrying it would post an assertion.
 func (t *authTab) clientData() (string, error) {
 	if t.DeviceUserCode != "" {
 		return deviceClientData, nil
 	}
-	return encodeClientData(t.RedirectURI, responseTypeCode, t.ResponseMode, t.State, t.HasState)
+	if t.SAMLBinding != "" {
+		return encodeClientData(t.RedirectURI, t.SAMLRequestID, t.SAMLRequestID != "",
+			t.SAMLBinding, t.State, t.HasState)
+	}
+	return encodeClientData(t.RedirectURI, responseTypeCode, true,
+		t.ResponseMode, t.State, t.HasState)
 }
 
 // decodeClientData parses one, for the single caller that is allowed to read

@@ -2,6 +2,8 @@ package oidc
 
 import (
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/ekalinin/gloak/internal/httpx"
 	"github.com/ekalinin/gloak/internal/model"
@@ -105,15 +107,184 @@ func (h *handler) samlEndpoint(w http.ResponseWriter, r *http.Request) {
 		h.writeSAMLPage(w, r, h.themeChromeFor(realm, client), pageInvalidRequest)
 		return
 	}
-	if message.Kind == samlAuthnRequest && samlAssertionConsumerURL(client, message) == "" {
+	acs := samlAssertionConsumerURL(client, message)
+	if message.Kind == samlAuthnRequest && acs == "" {
 		h.writeSAMLPage(w, r, h.themeChromeFor(realm, client), pageInvalidLogoutRedirect)
 		return
 	}
-	// Every rung passed. See the block comment: there is no assertion builder
-	// behind this, so the request is left to answer what this endpoint answered
-	// before the ladder existed.
-	httpx.WriteMessageError(w, http.StatusNotFound, "HTTP 404 Not Found")
+	if message.Kind != samlAuthnRequest {
+		// A LogoutRequest that passes every rung is Keycloak failing to end a
+		// session that does not exist, which is a 500 that must not be sent
+		// unconditionally. See the block comment and
+		// saml/endpoint/logout-request-redirect.
+		httpx.WriteMessageError(w, http.StatusNotFound, "HTTP 404 Not Found")
+		return
+	}
+	h.beginSAMLLogin(w, r, realm, client, samlLogin{
+		ACSURL:      acs,
+		RequestID:   message.ID,
+		Binding:     samlResponseBinding(client, message.ProtocolBinding),
+		RelayState:  samlRelayState(r),
+		BareHeaders: true,
+	})
 }
+
+// samlLogin is what the eighth rung of either route has to know, gathered into
+// one value because the two routes fill it differently in every field and a
+// six-argument call would put the differences where nobody reads them.
+type samlLogin struct {
+	// ACSURL is the resolved assertion consumer URL, which is client_data's
+	// `ru` and is the tab's RedirectURI.
+	ACSURL string
+	// RequestID is the AuthnRequest's ID, and it is **empty on the
+	// IdP-initiated route**, where client_data is measured to carry no `rt` at
+	// all rather than an empty one.
+	RequestID string
+	// Binding is client_data's `rm`; see samlResponseBinding.
+	Binding string
+	// RelayState becomes `st`, and an empty one is measured **absent** where
+	// /auth's `state=` is present and empty.
+	RelayState string
+	// BareHeaders says the answer carries none of the five security headers and
+	// no Content-Security-Policy, which is measured true of
+	// `/realms/{realm}/protocol/saml` and false of
+	// `/realms/{realm}/protocol/saml/clients/{name}` one segment down. The two
+	// routes' 400 pages already split the same way.
+	BareHeaders bool
+}
+
+// beginSAMLLogin is the eighth rung: a request that passed every check opens an
+// authentication session and is asked for credentials.
+//
+// # The two bindings answer differently and neither is the other's shape
+//
+// Measured 2026-09-18 on one container, the same client and the same message
+// over each:
+//
+//	GET  /protocol/saml   200, the login page, three Set-Cookie,
+//	                      Cache-Control: no-store, must-revalidate, max-age=0,
+//	                      **none** of the five security headers and no CSP
+//	POST /protocol/saml   302 into /login-actions/authenticate, empty body,
+//	                      three Set-Cookie, Cache-Control: no-cache,
+//	                      none of the six, and **no Content-Type at all**
+//
+// So the verb split this endpoint already has on Cache-Control reaches the
+// whole response: one binding renders the page and the other sends the browser
+// to the endpoint that will.
+//
+// # What the session carries, and why every field of it is observable
+//
+// The tab's four SAML facts all come back out in client_data, which the login
+// page carries twice - in the head's restart URL and in the form's action - and
+// which the 302 carries in its Location. Measured shapes are on
+// authTab.SAMLBinding and on clientData.
+//
+// # The browser's second request is the ordinary flow's
+//
+// Both answers hand the browser to `/login-actions/authenticate`, which is the
+// same endpoint an OIDC login goes through, so nothing below this is SAML's.
+// What *is* SAML's is the ending, and there is not one: finishFlow declines a
+// SAML tab rather than minting an authorization code for it, because a code is
+// what an OIDC client asked for and this client asked for an assertion. See
+// F227's remainder and completeSAMLLogin.
+func (h *handler) beginSAMLLogin(w http.ResponseWriter, r *http.Request, realm *model.Realm,
+	client *model.Client, login samlLogin) {
+	k := h.realmKeys(w, r, realm)
+	if k == nil {
+		return
+	}
+	tab := &authTab{
+		ClientID:      client.ClientID,
+		ClientUUID:    client.ID,
+		RedirectURI:   login.ACSURL,
+		State:         login.RelayState,
+		HasState:      login.RelayState != "",
+		SAMLBinding:   login.Binding,
+		SAMLRequestID: login.RequestID,
+	}
+	sess, err := h.beginAuthSession(w, r, realm, k, tab, &restartRecord{
+		Realm:         realm.Name,
+		ClientID:      client.ClientID,
+		RedirectURI:   login.ACSURL,
+		State:         login.RelayState,
+		HasState:      login.RelayState != "",
+		SAMLBinding:   login.Binding,
+		SAMLRequestID: login.RequestID,
+	})
+	if err != nil {
+		httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+		return
+	}
+	if r.Method == http.MethodPost {
+		data, err := tab.clientData()
+		if err != nil {
+			httpx.WriteMessageError(w, http.StatusInternalServerError, "Internal Server Error")
+			return
+		}
+		// The measured key order is client_id, tab_id, client_data, and there
+		// is no session_code: the landing request is what mints one. It is the
+		// restart landing's order exactly, one endpoint along.
+		httpx.WriteSAMLLoginRedirect(w, h.realmBase(realm.Name)+
+			"/login-actions/authenticate?"+strings.Join([]string{
+			"client_id=" + url.QueryEscape(client.ClientID),
+			"tab_id=" + url.QueryEscape(tab.TabID),
+			"client_data=" + url.QueryEscape(data),
+		}, "&"))
+		return
+	}
+	if login.BareHeaders {
+		h.serveSAMLLoginPage(r.Context(), w, realm, client, sess, tab)
+		return
+	}
+	h.serveLoginPage(r.Context(), w, realm, client, sess, tab, "", "")
+}
+
+// samlRelayState reads the RelayState off whichever binding carried it: the
+// query on HTTP-Redirect, the form on HTTP-POST.
+//
+// It is not r.FormValue, which merges the two. This endpoint is measured to
+// read its message from exactly one of them per verb - readSAMLRequest takes
+// the same care with SAMLRequest - and a merged read would let a POST's query
+// string supply a relay state the POST body did not.
+func samlRelayState(r *http.Request) string {
+	if r.Method == http.MethodPost {
+		return r.PostFormValue("RelayState")
+	}
+	return r.URL.Query().Get("RelayState")
+}
+
+// samlResponseBinding is client_data's `rm`, and its grid is measured rather
+// than derived from the request.
+//
+//	saml.force.post.binding == "true"          post, whatever the request says
+//	otherwise, ProtocolBinding is HTTP-POST    post
+//	otherwise                                  get
+//
+// **HTTP-Artifact is `get`**, which is the cell a reader gets wrong: the
+// descriptor advertises an artifact binding, the attribute names it, and the
+// answer is the default rather than a third value or a refusal. HTTP-Redirect
+// and an absent attribute are `get` too, so only one of the four spellings
+// moves the answer.
+//
+// The attribute is compared to the exact string "true", case-sensitively -
+// measured across "true", "TRUE", "True", " true", "false", "", "0" and "no",
+// and only the first is on. That is clientRequiresSignature's rule met on a
+// second attribute, so the comparison is shared rather than written twice.
+func samlResponseBinding(client *model.Client, protocolBinding string) string {
+	if samlAttributeIsTrue(client, "saml.force.post.binding") ||
+		protocolBinding == samlHTTPPOSTBinding {
+		return samlBindingPost
+	}
+	return samlBindingGet
+}
+
+// The two values client_data's `rm` is measured to carry on a SAML tab, and the
+// one ProtocolBinding spelling that decides between them.
+const (
+	samlBindingPost     = "post"
+	samlBindingGet      = "get"
+	samlHTTPPOSTBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+)
 
 // samlIdPInitiated serves GET /realms/{realm}/protocol/saml/clients/{name}.
 //
@@ -166,12 +337,26 @@ func (h *handler) samlIdPInitiated(w http.ResponseWriter, r *http.Request) {
 		h.writeIdPInitiatedPage(w, h.themeChrome(realm), pageWrongClientProtocol)
 		return
 	}
-	if samlAssertionConsumerURL(client, nil) == "" {
+	acs := samlAssertionConsumerURL(client, nil)
+	if acs == "" {
 		h.writeIdPInitiatedPage(w, h.themeChromeFor(realm, client), pageInvalidLogoutRedirect)
 		return
 	}
-	// As on the endpoint above: the success path needs an assertion builder.
-	httpx.WriteMessageError(w, http.StatusNotFound, "HTTP 404 Not Found")
+	// **The fourth rung is the login page with the ordinary header set**, which
+	// is the one place these two routes agree with the rest of the server and
+	// disagree with each other. Measured 2026-09-18: 200, all five security
+	// headers and a Content-Security-Policy, where /protocol/saml's own login
+	// page one segment up sends none of the six.
+	//
+	// Its client_data is a **third** shape: `{"ru":<ACS>,"rm":"post"}`, with no
+	// `rt` at all, because there is no request and therefore no request id. A
+	// RelayState may still be sent, as a query parameter, and it becomes `st`
+	// under the same empty-is-absent rule the endpoint has.
+	h.beginSAMLLogin(w, r, realm, client, samlLogin{
+		ACSURL:     acs,
+		Binding:    samlResponseBinding(client, ""),
+		RelayState: samlRelayState(r),
+	})
 }
 
 // clientByIdPInitiatedName finds the client claiming an IdP-initiated SSO name.

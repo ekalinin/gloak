@@ -30,13 +30,22 @@ import (
 // measured contract belongs. Three things are not, and they are what this file
 // is for:
 //
-//   - **the rung above the last golden.** A request that passes every check is
-//     answered by Keycloak with a login page, which carries a per-request tab_id
-//     and therefore cannot be a golden (F113). Gloak answers the protocol
-//     dispatcher's 404 there. Without a test, a handler that refused **every**
-//     assertion consumer URL would satisfy every case in the chapter - all of
-//     which are rejections - which is the exact shape AGENTS.md names as a set
-//     of assertions an incorrect implementation satisfies entirely.
+//   - **the rung the chapter's goldens could not reach until 2026-09-18.** A
+//     request that passes every check is answered with the login page, and the
+//     page carries a per-request tab_id, a session_code and a session hash.
+//     saml/endpoint/login-page is a golden now - the three mask frames reach all
+//     three values - but the guard below is kept and sharpened rather than
+//     deleted: it is the one assertion that fails first if the ladder ever
+//     starts refusing what it should serve, and it does not depend on the
+//     recorder. Without it, a handler that refused **every** assertion consumer
+//     URL would satisfy every rejection in the chapter, which is the exact shape
+//     AGENTS.md names as a set of assertions an incorrect implementation
+//     satisfies entirely.
+//   - **the two header sets and the three client_data shapes.** One golden sees
+//     one side of each, so the pairs are held here where both sides are in one
+//     assertion.
+//   - **the ninth rung's refusal.** finishFlow must not mint an authorization
+//     code for a SAML tab, and no golden can send a request that gets that far.
 //   - **the signature verifier against a key generated here**, so that "it
 //     verifies" is checked against a second key and not only against the one
 //     pinned literal the catalogue carries.
@@ -118,18 +127,18 @@ func samlAnswer(t *testing.T, w *httptest.ResponseRecorder) (int, string) {
 }
 
 // TestSAMLEndpointDoesNotRefuseARequestItCannotServe is the test the catalogue
-// cannot be.
+// could not be until 2026-09-18, and is still the one that fails first.
 //
-// Every SAML case in the catalogue is a rejection, so a handler that answered
+// Every SAML case in the catalogue was a rejection, so a handler that answered
 // `Invalid redirect uri` to **every** request would pass all of them. The
 // request below passes every rung - an unsigned client that requires no
 // signature, no Destination, and an assertion consumer URL the client's
 // redirectUris cover - and Keycloak answers it 200 with the login page.
 //
-// Gloak has no assertion builder, so what it must not do is send one of the
-// ladder's sentences. It answers the protocol dispatcher's 404 instead, which
-// is what it answered before the ladder existed: the divergence stays on the one
-// behaviour that is not built.
+// **It now answers 200 with the login page**, where it answered the protocol
+// dispatcher's 404 from 2026-09-11 until this cut. The assertion kept below is
+// the one that was always the point: whatever this endpoint answers here, it
+// must not be one of the ladder's sentences.
 func TestSAMLEndpointDoesNotRefuseARequestItCannotServe(t *testing.T) {
 	h, _, realm := newHandler(t)
 	samlProbeClient(t, h, realm, &model.Client{
@@ -138,14 +147,230 @@ func TestSAMLEndpointDoesNotRefuseARequestItCannotServe(t *testing.T) {
 	})
 
 	message := samlProbeRequest("AuthnRequest", "sp", "", "http://localhost:9999/acs")
-	status, instruction := samlAnswer(t, samlGet(t, h,
-		url.Values{"SAMLRequest": {samlDeflate(t, message)}}.Encode()))
+	w := samlGet(t, h, url.Values{"SAMLRequest": {samlDeflate(t, message)}}.Encode())
+	status, instruction := samlAnswer(t, w)
 
 	if instruction != "" {
 		t.Fatalf("a request that passes every rung was refused with %q", instruction)
 	}
-	if status != http.StatusNotFound {
-		t.Fatalf("status = %d, want the dispatcher's 404", status)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want the login page's 200", status)
+	}
+	if !strings.Contains(w.Body.String(), `id="kc-form-login"`) {
+		t.Fatalf("the answer is a 200 carrying no login form:\n%s", w.Body.String())
+	}
+}
+
+// TestSAMLLoginPageSendsNoneOfTheSixAndTheIdPInitiatedOneSendsThemAll is the
+// header split, held where a golden can see only one side of it at a time.
+//
+// Measured 2026-09-18: `/realms/{realm}/protocol/saml`'s login page carries a
+// Cache-Control, a Content-Language and a Content-Type and nothing else; the
+// IdP-initiated route one path segment down answers the same body with all five
+// security headers and a Content-Security-Policy. Until this cut the exception
+// was measured on six 400 pages alone, so a reader could take it for a property
+// of that template rather than of the route.
+func TestSAMLLoginPageSendsNoneOfTheSixAndTheIdPInitiatedOneSendsThemAll(t *testing.T) {
+	h, _, realm := newHandler(t)
+	samlProbeClient(t, h, realm, &model.Client{
+		ClientID: "sp", Enabled: true, RedirectURIs: []string{"http://localhost:9999/*"},
+		Attributes: map[string]string{
+			"saml.client.signature":            "false",
+			"saml.force.post.binding":          "true",
+			"saml_idp_initiated_sso_url_name":  "sp-sso",
+			"saml_assertion_consumer_url_post": "http://localhost:9999/acs",
+		},
+	})
+	six := []string{
+		"Content-Security-Policy", "Referrer-Policy", "Strict-Transport-Security",
+		"X-Content-Type-Options", "X-Frame-Options", "X-Robots-Tag",
+	}
+
+	message := samlProbeRequest("AuthnRequest", "sp", "", "http://localhost:9999/acs")
+	endpoint := samlGet(t, h, url.Values{"SAMLRequest": {samlDeflate(t, message)}}.Encode())
+	if endpoint.Code != http.StatusOK {
+		t.Fatalf("the endpoint's login page is %d, want 200", endpoint.Code)
+	}
+	for _, name := range six {
+		if got := endpoint.Header().Get(name); got != "" {
+			t.Errorf("the endpoint's login page sends %s = %q and must send none of the six", name, got)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/realms/master/protocol/saml/clients/sp-sso", nil)
+	req.SetPathValue("realm", "master")
+	req.SetPathValue("name", "sp-sso")
+	idp := httptest.NewRecorder()
+	h.samlIdPInitiated(idp, req)
+	if idp.Code != http.StatusOK {
+		t.Fatalf("the IdP-initiated login page is %d, want 200", idp.Code)
+	}
+	for _, name := range six {
+		if idp.Header().Get(name) == "" {
+			t.Errorf("the IdP-initiated login page omits %s and must send all six", name)
+		}
+	}
+}
+
+// TestSAMLLoginPageCarriesTheMeasuredClientData holds the three shapes
+// client_data has, which is the whole of what the authentication session a SAML
+// request opens makes observable.
+//
+// Measured 2026-09-18, base64url of:
+//
+//	/protocol/saml, RelayState=gloak-relay  {"ru":<ACS>,"rt":<the ID>,"rm":"post","st":"gloak-relay"}
+//	the same, RelayState= or absent         {"ru":<ACS>,"rt":<the ID>,"rm":"post"}
+//	.../clients/{name}                      {"ru":<ACS>,"rm":"post"}
+//
+// **`rt` is a response type on OIDC and a request id here**, and on the
+// IdP-initiated route it is absent rather than empty - there is no request to
+// have one. **An empty RelayState is absent** where /auth's `state=` is present
+// and empty, which is the third time these two endpoints have disagreed about
+// emptiness in one parameter.
+func TestSAMLLoginPageCarriesTheMeasuredClientData(t *testing.T) {
+	h, _, realm := newHandler(t)
+	samlProbeClient(t, h, realm, &model.Client{
+		ClientID: "sp", Enabled: true, RedirectURIs: []string{"http://localhost:9999/*"},
+		Attributes: map[string]string{
+			"saml.client.signature":            "false",
+			"saml.force.post.binding":          "true",
+			"saml_idp_initiated_sso_url_name":  "sp-sso",
+			"saml_assertion_consumer_url_post": "http://localhost:9999/acs-post",
+		},
+	})
+	message := samlProbeRequest("AuthnRequest", "sp", "", "http://localhost:9999/acs")
+	deflated := samlDeflate(t, message)
+
+	for _, tc := range []struct {
+		name  string
+		query url.Values
+		want  string
+	}{
+		{"a relay state", url.Values{"SAMLRequest": {deflated}, "RelayState": {"gloak-relay"}},
+			`{"ru":"http://localhost:9999/acs","rt":"ID_gloak_test","rm":"post","st":"gloak-relay"}`},
+		{"an empty relay state", url.Values{"SAMLRequest": {deflated}, "RelayState": {""}},
+			`{"ru":"http://localhost:9999/acs","rt":"ID_gloak_test","rm":"post"}`},
+		{"no relay state", url.Values{"SAMLRequest": {deflated}},
+			`{"ru":"http://localhost:9999/acs","rt":"ID_gloak_test","rm":"post"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := samlClientDataOf(t, samlGet(t, h, tc.query.Encode()).Body.String())
+			if got != tc.want {
+				t.Errorf("client_data = %s\n           want %s", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("the IdP-initiated route carries no rt", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/realms/master/protocol/saml/clients/sp-sso", nil)
+		req.SetPathValue("realm", "master")
+		req.SetPathValue("name", "sp-sso")
+		w := httptest.NewRecorder()
+		h.samlIdPInitiated(w, req)
+		const want = `{"ru":"http://localhost:9999/acs-post","rm":"post"}`
+		if got := samlClientDataOf(t, w.Body.String()); got != want {
+			t.Errorf("client_data = %s\n           want %s", got, want)
+		}
+	})
+}
+
+var samlClientDataPattern = regexp.MustCompile(`client_data=([A-Za-z0-9_-]+)`)
+
+// samlClientDataOf decodes the first client_data out of a page.
+//
+// It reads the page rather than calling authTab.clientData, which is the rule
+// this project has earned twice: a guard written from the value the thing under
+// test was built from cannot catch that thing being built wrong.
+func samlClientDataOf(t *testing.T, body string) string {
+	t.Helper()
+	m := samlClientDataPattern.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("no client_data in the body:\n%s", body)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(m[1])
+	if err != nil {
+		t.Fatalf("client_data %q does not decode: %v", m[1], err)
+	}
+	return string(raw)
+}
+
+// TestSAMLResponseBindingIsTheMeasuredGrid holds client_data's `rm`, which is
+// the one thing about the SAML session that F228 asked to be measured before
+// anything was built on it.
+//
+// Measured 2026-09-18 on one container, eight cells of a 2x4:
+//
+//	saml.force.post.binding "true"   ProtocolBinding absent / any of three   post
+//	otherwise                        absent                                   get
+//	otherwise                        HTTP-Redirect                            get
+//	otherwise                        HTTP-POST                                post
+//	otherwise                        HTTP-Artifact                            get
+//
+// **HTTP-Artifact is the cell a reader gets wrong**: the descriptor advertises
+// an artifact binding, the request names it, and the answer is the default
+// rather than a third value. And the attribute's own comparison is the exact
+// string "true", case-sensitively, swept across the same nine values
+// saml.client.signature was.
+func TestSAMLResponseBindingIsTheMeasuredGrid(t *testing.T) {
+	const (
+		redirectBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+		artifactBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Artifact"
+	)
+	for _, tc := range []struct {
+		force   string
+		binding string
+		want    string
+	}{
+		{"true", "", "post"},
+		{"true", redirectBinding, "post"},
+		{"true", samlHTTPPOSTBinding, "post"},
+		{"true", artifactBinding, "post"},
+		{"false", "", "get"},
+		{"false", redirectBinding, "get"},
+		{"false", samlHTTPPOSTBinding, "post"},
+		{"false", artifactBinding, "get"},
+		// The nine spellings of the attribute, all but one of them off.
+		{"TRUE", "", "get"},
+		{"True", "", "get"},
+		{" true", "", "get"},
+		{"", "", "get"},
+		{"0", "", "get"},
+		{"no", "", "get"},
+	} {
+		client := &model.Client{Attributes: map[string]string{"saml.force.post.binding": tc.force}}
+		if got := samlResponseBinding(client, tc.binding); got != tc.want {
+			t.Errorf("force=%q binding=%q -> %q, want %q", tc.force, tc.binding, got, tc.want)
+		}
+	}
+	// The attribute absent entirely, which is not the same input as "".
+	if got := samlResponseBinding(&model.Client{}, ""); got != "get" {
+		t.Errorf("the attribute absent -> %q, want %q", got, "get")
+	}
+}
+
+// TestSAMLLoginDoesNotEndInAnAuthorizationCode is the ninth rung's guard, and
+// it is the one assertion in this file that is about a response Gloak refuses
+// to invent.
+//
+// A SAML tab carries a redirect URI and a state, so every line of the OIDC
+// ending runs on it to completion: completeLogin would mint an authorization
+// code and send a SAML service provider `?code=…&state=…` at its assertion
+// consumer URL. Nothing measures that, no SAML client would understand it, and
+// it is a worse divergence than answering nothing. See completeSAMLLogin.
+func TestSAMLLoginDoesNotEndInAnAuthorizationCode(t *testing.T) {
+	h, _, realm := newHandler(t)
+	_ = realm
+	w := httptest.NewRecorder()
+	if err := h.finishFlow(w, httptest.NewRequest(http.MethodGet, "/", nil), nil, nil, nil,
+		&authTab{SAMLBinding: "post", RedirectURI: "http://localhost:9999/acs", State: "r"},
+		nil, nil); err != nil {
+		t.Fatalf("finishFlow: %v", err)
+	}
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want the dispatcher's 404", w.Code)
+	}
+	if strings.Contains(w.Header().Get("Location"), "code=") {
+		t.Fatalf("a SAML login ended in an authorization code: %q", w.Header().Get("Location"))
 	}
 }
 
