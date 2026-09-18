@@ -443,18 +443,28 @@ var oidcPending = []Case{
 		// one carries none of the six. AssertHeaders below and
 		// AssertAbsentHeaders there are the two halves.
 		//
-		// Three masks, one more than prompt-create beside it. That case is a
-		// 400 rendered before any session code exists; this one is the first
-		// render of a login, so it carries a session_code in its form action as
-		// well - and the action's other four parameters, their order and the
-		// execution id all stay compared.
+		// Two masks plus a fixture capture, where prompt-create beside it has
+		// two masks. That case is a 400 rendered before any session code
+		// exists; this one is the first render of a login, so it carries a
+		// session_code in its form action as well - and the action's other four
+		// parameters and their order stay compared. The `execution` is captured
+		// rather than masked, because it is minted with the **database** and a
+		// mask on it would be a mask that does not move between two draws of
+		// one server; loginPagesFixture is where that argument lives.
+		//
+		// **It is recorded in a realm of its own and not in master.** The login
+		// page renders one `<a>` per identity provider, and the recorder's
+		// master carries fifteen of them from another chapter's fixtures, so
+		// the golden would be decided by which fixtures happened to run. That
+		// is also why this case does not use `browser-client`, which every
+		// other case in this block does.
 		//
 		// Implemented since 2026-09-18 by handler.beginLoginFromParams.
 		Status:  Implemented,
-		Fixture: "browser-client",
+		Fixture: "login-pages",
 		Request: Request{
 			Method: http.MethodGet,
-			Path:   "/realms/master/protocol/openid-connect/auth",
+			Path:   "/realms/" + loginPageRealm + "/protocol/openid-connect/auth",
 			Query: map[string]string{
 				"response_type": "code",
 				"client_id":     "gloak-probe-browser",

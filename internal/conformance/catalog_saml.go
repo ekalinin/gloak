@@ -582,13 +582,22 @@ var samlCases = []Case{
 		// TestSAMLLoginPageCarriesTheMeasuredClientData, because two goldens
 		// differing in one key would be two 6900-byte files for one fact.
 		//
+		// **It is recorded in a realm of its own and not in master**, which is
+		// a finding rather than housekeeping: the first recording came back
+		// with sixteen identity-provider buttons in it, because the login page
+		// renders one per identity provider and the recorder's master carries
+		// fifteen from another chapter's fixtures. loginPagesFixture has the
+		// whole argument, and the realm name in the golden is a bonus - P13's
+		// mutation 18 showed that a value derived from the realm is invisible
+		// to a catalogue every case of which addresses master.
+		//
 		// Implemented since 2026-09-18 by handler.samlEndpoint and
 		// handler.beginSAMLLogin.
 		Status:  Implemented,
-		Fixture: "saml-service-provider-unsigned",
+		Fixture: "login-pages",
 		Request: Request{
 			Method: http.MethodGet,
-			Path:   "/realms/master/protocol/saml",
+			Path:   "/realms/" + loginPageRealm + "/protocol/saml",
 			RawQuery: "SAMLRequest=" + probeAuthnRequestLoginPage +
 				"&RelayState=gloak-probe-relay-state",
 		},
@@ -644,10 +653,10 @@ var samlCases = []Case{
 		//
 		// Implemented since 2026-09-18 by handler.beginSAMLLogin.
 		Status:  Implemented,
-		Fixture: "saml-service-provider-unsigned",
+		Fixture: "login-pages",
 		Request: Request{
 			Method: http.MethodPost,
-			Path:   "/realms/master/protocol/saml",
+			Path:   "/realms/" + loginPageRealm + "/protocol/saml",
 			Form: map[string]string{
 				"SAMLRequest": probeAuthnRequestPOSTLoginPage,
 				"RelayState":  "gloak-probe-relay-state",
@@ -1341,10 +1350,10 @@ var samlCases = []Case{
 		//
 		// Implemented since 2026-09-18 by handler.samlIdPInitiated.
 		Status:  Implemented,
-		Fixture: "saml-idp-initiated-consumer",
+		Fixture: "login-pages",
 		Request: Request{
 			Method: http.MethodGet,
-			Path:   "/realms/master/protocol/saml/clients/gloak-probe-sso-consumer",
+			Path:   "/realms/" + loginPageRealm + "/protocol/saml/clients/gloak-probe-sso-consumer",
 		},
 		AssertHeaders: []string{
 			"Cache-Control",
