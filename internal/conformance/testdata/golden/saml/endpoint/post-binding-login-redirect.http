@@ -1,0 +1,10 @@
+# POST /realms/gloak-probe-login/protocol/saml
+# recorded-with: start-dev --health-enabled --metrics-enabled
+HTTP/1.1 302 Found
+Cache-Control: no-cache
+Content-Length: {{volatile}}
+Location: {{volatile}}
+Set-Cookie: {{volatile}}
+Set-Cookie: {{volatile}}
+Set-Cookie: {{volatile}}
+

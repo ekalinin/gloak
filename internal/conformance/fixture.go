@@ -1850,6 +1850,10 @@ var Fixtures = map[string]Fixture{
 		`{"clientId":"gloak-probe-sso-oidc-client","protocol":"openid-connect","enabled":true,`+
 			`"attributes":{"saml_idp_initiated_sso_url_name":"gloak-probe-sso-oidc"}}`),
 
+	// The four login-page cases, in a realm of their own. See
+	// loginPagesFixture, which is where the reason lives.
+	"login-pages": loginPagesFixture(),
+
 	// --- The account API ---
 	//
 	// Every one of these ends in a **user's** access token rather than an
@@ -6500,6 +6504,109 @@ func secondRealmBrowserFixture() Fixture {
 	f := realmFixture(secondRealmName)
 	f.Steps = append(f.Steps, clientInRealmStep(secondRealmName,
 		browserClientBody("gloak-probe-second-browser", "")))
+	return f
+}
+
+// loginPageRealm is where the four login-page cases are recorded, and it is
+// **not master** for a reason this cut found by recording into master first.
+//
+// The login form page renders one `<a>` per identity provider in the realm.
+// master on the recorder's shared container carries fifteen of them, put there
+// by the identity-provider chapter's fixtures, so the first recording of
+// saml/endpoint/login-page came back with sixteen social-login buttons in it -
+// a golden whose content is decided by which other fixtures happened to run.
+// That is F230's disease with a second instance, and the cure here is cheap: a
+// realm nothing else touches has no identity providers, which is also the state
+// a default 26.7.1 master is in.
+//
+// **Four branches of this page go unmeasured as a result**, and they are named
+// rather than hidden: the social-provider section, the registration link, the
+// "remember me" checkbox and the "forgot password" link. All four are off on a
+// realm created through POST /admin/realms and on a default master alike, and
+// internal/httpx renders none of them. See F271.
+const loginPageRealm = "gloak-probe-login"
+
+// loginPagesFixture builds that realm, the three clients the four cases need,
+// and the one value neither server can agree on by itself.
+//
+// # The execution id has to be captured and cannot be masked
+//
+// The login form's action carries `execution=<uuid>`, which is the id of the
+// realm's `auth-username-password-form` row. Measured across two containers on
+// 2026-09-18: `8f74661e-…` on one and `931121ad-…` on the other, so it is
+// minted with the database and a golden holding it would churn on every
+// `make record`.
+//
+// A mask was the obvious alternative and it is the wrong one. Case's markup
+// masks are watched by TestNoHTMLMaskVariesNothing, which runs a case twice
+// against Gloak and requires each masked value to move; Gloak's execution id is
+// a stable per-realm derivation, so the mask would land in
+// htmlMasksLeftInPlace - and that list's own error message says what to do with
+// a value belonging to the installation rather than the request, which is an
+// unconditional pass. There can be no unconditional pass here: the value is a
+// bare UUID and UUIDs are contract in a hundred other goldens.
+//
+// So it is a capture, which is what browserExpiredPageFixture already does with
+// the same value for the same reason.
+//
+// # The capture comes off the Admin API and not off a login page
+//
+// browserExpiredPageFixture captures it from a `GET /auth`, and that would cost
+// this fixture the thing its cases are for: the harness resends every cookie a
+// step collected, so a login page in the fixture leaves the case's own request
+// holding a live AUTH_SESSION_ID - and a second request in one jar is measured
+// to set **one** cookie where a first sets three. The admin listing sets none.
+//
+// **Index 8 is `auth-username-password-form`**, and it is not a guess: the
+// seeded browser flow's fifteen rows and their order are what
+// admin/authentication-management/browser-executions pins, on a realm this
+// fixture's own kind. If that flow ever changes shape, that golden moves and
+// this index moves with it rather than this fixture failing silently - the
+// capture is by index and a wrong row yields a real id of the wrong execution,
+// which the login-page goldens would then show as a diff.
+func loginPagesFixture() Fixture {
+	f := realmFixture(loginPageRealm)
+	f.Steps = append(f.Steps,
+		clientInRealmStep(loginPageRealm, browserClientBody("gloak-probe-browser", "")),
+		// The endpoint's client: signature off, and redirectUris covering the
+		// assertion consumer URL the literal AuthnRequest names.
+		//
+		// **`saml.force.post.binding` is spelled out although Keycloak
+		// generates it**, and that is a divergence written down rather than
+		// worked around. `POST /admin/realms/{realm}/clients` with
+		// `{"protocol":"saml"}` generates fourteen attributes on Keycloak and
+		// none at all on Gloak, so a client created without this one reads
+		// `saml.force.post.binding: "true"` on one server and absent on the
+		// other - and client_data's `rm` then comes out `post` in the recording
+		// and `get` in the replay. Measured: that is exactly how the second
+		// recording failed. Setting it makes both servers agree about the input
+		// so the case can be about the **rule**; the generation gap itself is
+		// F272 and is not this cut's.
+		clientInRealmStep(loginPageRealm, `{"clientId":"gloak-probe-saml-unsigned","protocol":"saml",`+
+			`"enabled":true,"redirectUris":["http://localhost:9999/*"],`+
+			`"attributes":{"saml.client.signature":"false",`+
+			`"saml.force.post.binding":"true"}}`),
+		// The IdP-initiated route's client, which registers **no redirectUris
+		// on purpose**: this route reads saml_assertion_consumer_url_post and
+		// checks it against nothing, where the endpoint one segment up checks a
+		// *named* assertion consumer URL against redirectUris and against
+		// nothing else. A client with redirect URIs here would make the two
+		// sources indistinguishable and saml/idp-initiated/login-page would pass
+		// for an implementation reading the wrong one.
+		clientInRealmStep(loginPageRealm, `{"clientId":"gloak-probe-sso-consumer-client",`+
+			`"protocol":"saml","enabled":true,`+
+			`"attributes":{"saml_idp_initiated_sso_url_name":"gloak-probe-sso-consumer",`+
+			`"saml.client.signature":"false","saml.force.post.binding":"true",`+
+			`"saml_assertion_consumer_url_post":"http://localhost:9999/acs-post"}}`),
+		Step{
+			Request: Request{
+				Method:  http.MethodGet,
+				Path:    "/admin/realms/" + loginPageRealm + "/authentication/flows/browser/executions",
+				Headers: map[string]string{"Authorization": "Bearer {{access_token}}"},
+			},
+			Capture: map[string]string{"execution": "8/id"},
+		},
+	)
 	return f
 }
 

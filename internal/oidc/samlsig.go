@@ -135,7 +135,19 @@ func newSigAlgHash(h crypto.Hash) hash.Hash {
 // an implementation reaching for strconv.ParseBool here is wrong on exactly
 // that input.
 func clientRequiresSignature(client *model.Client) bool {
-	return client.Attributes["saml.client.signature"] == "true"
+	return samlAttributeIsTrue(client, "saml.client.signature")
+}
+
+// samlAttributeIsTrue is that comparison, shared because a **second** SAML
+// attribute has now been measured with the identical rule.
+//
+// saml.force.post.binding was swept the same way on 2026-09-18 - "true",
+// "TRUE", "True", " true", "false", "", "0", "no" - and only "true" turned it
+// on, exactly as saml.client.signature does. Two attributes and one rule, so
+// one function: the alternative is the same literal in two places, and the
+// place a `strconv.ParseBool` creeps back in is the second one.
+func samlAttributeIsTrue(client *model.Client, name string) bool {
+	return client.Attributes[name] == "true"
 }
 
 // verifyRedirectSignature checks the signature on an HTTP-Redirect binding

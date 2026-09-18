@@ -542,35 +542,137 @@ var samlCases = []Case{
 			Section:   "SAML endpoint: an AuthnRequest that is honoured",
 			Retrieved: "2026-09-07",
 		},
-		Status:  Pending,
-		Fixture: "saml-service-provider-unsigned",
-		Reason: "**Measured, sendable since 2026-09-11, and still unrecordable.** An " +
-			"AuthnRequest from a client with saml.client.signature off, naming an " +
-			"assertion consumer URL its redirectUris cover, answers 200 with the login " +
-			"page - and the request below is that request, which it could not have been " +
-			"before this cut. " +
-			"**The blocker this case used to carry first is gone and was wrong.** It " +
-			"said the Destination is validated and has to be the base URL the server is " +
-			"reachable on, so no literal could work on the recorder's mapped port. " +
-			"Re-measured one cell at a time: an AuthnRequest with **no Destination " +
-			"attribute at all** reaches the login page, and so does one with " +
-			"Destination=\"\". Only a *present and non-empty* Destination is compared, " +
-			"and only a request carrying a Signature parameter is required to have one. " +
-			"So the port comes out of the message and the literal works everywhere - " +
-			"which is why F175's Fixture.SAMLRequests was not built. " +
-			"What remains is the second blocker, unchanged: the page carries a " +
-			"per-request tab_id and a session_code in its form action, so it cannot be " +
-			"Recorded - F113 - and it is the tenth page of the family AGENTS.md already " +
-			"records nine of. " +
-			"Gloak answers this request with the protocol dispatcher's `HTTP 404 Not " +
-			"Found`, deliberately: handler.samlEndpoint walks every rung of the ladder " +
-			"and, having no assertion builder behind it, declines to invent an answer " +
-			"for the one request that would succeed rather than refusing it with a " +
-			"sentence that would be false.",
+		// **The eighth rung, and the first 200 this endpoint has ever served.**
+		// Pending from 2026-09-07 until 2026-09-18 for two blockers, of which
+		// the first was refuted and the second turned out to be the wrong
+		// sentence for the right problem.
+		//
+		// The first said the Destination has to name the server's own base URL,
+		// so no literal could work on the recorder's mapped port. Re-measured
+		// 2026-09-11 one cell at a time: an AuthnRequest with **no Destination
+		// attribute at all** reaches the login page, and only a request
+		// carrying a Signature parameter is required to have one. So the port
+		// comes out of the message and the literal below works everywhere,
+		// which is why F175's Fixture.SAMLRequests was never built.
+		//
+		// The second said the page carries a per-request tab_id and a
+		// session_code and therefore cannot be a golden. **The values are not
+		// the blocker**: Case.VolatileHTMLQuery reaches a query parameter
+		// wherever it appears in markup and Case.VolatileHTMLCall reaches the
+		// checkAuthSession argument, and all three frames predate this cut by a
+		// fortnight. What actually stopped it was that **Gloak had no login
+		// form markup at all** - internal/httpx served a hand-rolled
+		// placeholder here and on `/auth` alike, so no login form page was a
+		// golden anywhere in the tree on either protocol, and there was nothing
+		// true to compare. themeLoginPageBody is that markup now.
+		//
+		// What the three masks cost and what they leave: 6900-odd bytes of
+		// keycloak.v2 markup asserted to hide an 11-character tab id, a
+		// 43-character session code and a 64-character hash. The form's action
+		// still asserts its five parameters and their order - session_code,
+		// execution, client_id, tab_id, client_data - the execution id, the
+		// head's restart URL and its skip_logout=true, and **client_data**,
+		// which is where the whole of the authentication session's SAML content
+		// becomes observable: `{"ru":<ACS>,"rt":<the AuthnRequest's ID>,
+		// "rm":"post","st":<the RelayState>}`.
+		//
+		// The RelayState in the query is this cut's addition and it is what
+		// pins `st`. An **empty** one is measured absent rather than empty -
+		// the opposite of /auth's `state=` - and that cell is in
+		// TestSAMLLoginPageCarriesTheMeasuredClientData, because two goldens
+		// differing in one key would be two 6900-byte files for one fact.
+		//
+		// **It is recorded in a realm of its own and not in master**, which is
+		// a finding rather than housekeeping: the first recording came back
+		// with sixteen identity-provider buttons in it, because the login page
+		// renders one per identity provider and the recorder's master carries
+		// fifteen from another chapter's fixtures. loginPagesFixture has the
+		// whole argument, and the realm name in the golden is a bonus - P13's
+		// mutation 18 showed that a value derived from the realm is invisible
+		// to a catalogue every case of which addresses master.
+		//
+		// Implemented since 2026-09-18 by handler.samlEndpoint and
+		// handler.beginSAMLLogin.
+		Status:  Implemented,
+		Fixture: "login-pages",
 		Request: Request{
-			Method:   http.MethodGet,
-			Path:     "/realms/master/protocol/saml",
-			RawQuery: "SAMLRequest=" + probeAuthnRequestLoginPage,
+			Method: http.MethodGet,
+			Path:   "/realms/" + loginPageRealm + "/protocol/saml",
+			RawQuery: "SAMLRequest=" + probeAuthnRequestLoginPage +
+				"&RelayState=gloak-probe-relay-state",
+		},
+		// **None of the six, on a 200.** Until this cut the exception was
+		// measured on this endpoint's six 400 pages alone, so a reader could
+		// take it for a property of the error template. It is the route's.
+		AssertHeaders:   []string{"Cache-Control", "Content-Language", "Content-Type", "Set-Cookie"},
+		VolatileHeaders: []string{"Set-Cookie"},
+		AssertAbsentHeaders: []string{
+			"Content-Security-Policy",
+			"Referrer-Policy",
+			"Strict-Transport-Security",
+			"X-Content-Type-Options",
+			"X-Frame-Options",
+			"X-Robots-Tag",
+		},
+		VolatileHTMLQuery: []string{"tab_id", "session_code"},
+		VolatileHTMLCall:  []string{"checkAuthSession"},
+	},
+
+	{
+		ID: "saml/endpoint/post-binding-login-redirect",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/saml/index",
+			Section:   "SAML endpoint: the HTTP-POST binding's answer to an honoured AuthnRequest",
+			Retrieved: "2026-09-18",
+		},
+		// **The two bindings diverge at the top of the ladder and nowhere
+		// else.** Every one of the seven rungs below answers the identical
+		// sentence over either binding; the eighth answers a 200 with the login
+		// page over HTTP-Redirect and a **302 into
+		// /login-actions/authenticate** over HTTP-POST. Measured 2026-09-18
+		// with the same client and the same message over each.
+		//
+		// Three things this pins that the page beside it cannot:
+		//
+		//   - the route's "none of the five" reaches a response with **no body
+		//     at all**, so it is not a fact about the theme template;
+		//   - there is **no Content-Type**, where every other answer this
+		//     endpoint gives names one;
+		//   - the Cache-Control is `no-cache`, the POST value, which is the
+		//     verb split this endpoint has on every answer.
+		//
+		// Location is masked because it carries a freshly minted tab_id, and
+		// masking it gives up the client_id, the tab_id, the client_data and
+		// their order. That is a real cost and it is paid once: the same three
+		// parameters in the same order are compared unmasked in the golden
+		// beside this one, where they sit in the page's form action, and the
+		// Location's own shape is held by
+		// TestSAMLLoginPageCarriesTheMeasuredClientData. No header mask in this
+		// harness reaches inside a query parameter - MaskURLTail covers a final
+		// path segment - so the alternative was no case at all.
+		//
+		// Implemented since 2026-09-18 by handler.beginSAMLLogin.
+		Status:  Implemented,
+		Fixture: "login-pages",
+		Request: Request{
+			Method: http.MethodPost,
+			Path:   "/realms/" + loginPageRealm + "/protocol/saml",
+			Form: map[string]string{
+				"SAMLRequest": probeAuthnRequestPOSTLoginPage,
+				"RelayState":  "gloak-probe-relay-state",
+			},
+		},
+		AssertHeaders:   []string{"Cache-Control", "Location", "Set-Cookie"},
+		VolatileHeaders: []string{"Location", "Set-Cookie"},
+		AssertAbsentHeaders: []string{
+			"Content-Type",
+			"Content-Language",
+			"Content-Security-Policy",
+			"Referrer-Policy",
+			"Strict-Transport-Security",
+			"X-Content-Type-Options",
+			"X-Frame-Options",
+			"X-Robots-Tag",
 		},
 	},
 	{
@@ -1214,6 +1316,61 @@ var samlCases = []Case{
 			"X-Robots-Tag",
 		},
 	},
+	{
+		ID: "saml/idp-initiated/login-page",
+		Doc: Doc{
+			URL:       "https://www.keycloak.org/securing-apps/saml/index",
+			Section:   "IdP-initiated SSO: a name whose client has an assertion consumer URL",
+			Retrieved: "2026-09-18",
+		},
+		// **The fourth rung of this route, and it disagrees with the endpoint's
+		// eighth about everything but the body.** Measured 2026-09-18 on one
+		// container:
+		//
+		//	/protocol/saml               200, the login page, **none** of the six
+		//	/protocol/saml/clients/{n}   200, the same body, **all** of the six
+		//
+		// which is the split the two routes' 400 pages already have, met on the
+		// answer that is not a refusal. saml/idp-initiated/claimed-name beside
+		// this one is the same client's state with the attribute absent, so the
+		// pair is a 2x1 on exactly the value this route reads.
+		//
+		// **Its client_data is a third shape and the sharp cell is a key that
+		// is not there**: `{"ru":<ACS>,"rm":"post"}`, with **no `rt`**, because
+		// there is no request and so no request id. An implementation reusing
+		// the endpoint's encoder emits `"rt":""` and is wrong on this case
+		// alone - which is why ResponseType is a pointer in internal/oidc's
+		// clientData and not a string.
+		//
+		// The `ru` is the **attribute's** URL and this client registers no
+		// redirectUris at all, which is the other half of the measurement
+		// saml/endpoint/unregistered-assertion-consumer-url pins from the other
+		// side: a named ACS is checked against redirectUris and an absent one
+		// falls back to the attribute, checked against nothing.
+		//
+		// Implemented since 2026-09-18 by handler.samlIdPInitiated.
+		Status:  Implemented,
+		Fixture: "login-pages",
+		Request: Request{
+			Method: http.MethodGet,
+			Path:   "/realms/" + loginPageRealm + "/protocol/saml/clients/gloak-probe-sso-consumer",
+		},
+		AssertHeaders: []string{
+			"Cache-Control",
+			"Content-Language",
+			"Content-Security-Policy",
+			"Content-Type",
+			"Referrer-Policy",
+			"Set-Cookie",
+			"Strict-Transport-Security",
+			"X-Content-Type-Options",
+			"X-Frame-Options",
+			"X-Robots-Tag",
+		},
+		VolatileHeaders:   []string{"Set-Cookie"},
+		VolatileHTMLQuery: []string{"tab_id", "session_code"},
+		VolatileHTMLCall:  []string{"checkAuthSession"},
+	},
 
 	// -------------------------------------------------------- artifact resolution
 
@@ -1462,6 +1619,30 @@ const probeAuthnRequestPOSTBinding = "PHNhbWxwOkF1dGhuUmVxdWVzdCB4bWxuczpzYW1scD
 	"ZWFsbXMvbWFzdGVyL3Byb3RvY29sL3NhbWwiIEFzc2VydGlvbkNvbnN1bWVyU2VydmljZVVSTD0i" +
 	"aHR0cDovL2xvY2FsaG9zdDo5OTk5L2FjcyI+PHNhbWw6SXNzdWVyPmdsb2FrLXByb2JlLXNhbWwt" +
 	"c3A8L3NhbWw6SXNzdWVyPjwvc2FtbHA6QXV0aG5SZXF1ZXN0Pg=="
+
+// probeAuthnRequestPOSTLoginPage is the request that walks to the **top** of
+// the ladder over the HTTP-POST binding: the unsigned client's Issuer, an
+// assertion consumer URL its redirectUris cover, and **no Destination**.
+//
+// It is not probeAuthnRequestPOSTBinding with the Issuer changed, and the
+// difference is the Destination. That one names port 8080 on purpose - it stops
+// at the signature rung, so the Destination is never compared - and this one
+// must not carry it at all, because a request that reaches the Destination rung
+// on the recorder's mapped port would be refused by a literal naming any port
+// at all. The plaintext is
+//
+//	<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+//	    xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+//	    ID="ID_gloak_probe" Version="2.0" IssueInstant="2026-09-18T12:00:00Z"
+//	    AssertionConsumerServiceURL="http://localhost:9999/acs">
+//	  <saml:Issuer>gloak-probe-saml-unsigned</saml:Issuer>
+//	</samlp:AuthnRequest>
+const probeAuthnRequestPOSTLoginPage = "PHNhbWxwOkF1dGhuUmVxdWVzdCB4bWxuczpzYW1scD0idXJuOm9hc2lzOm5hbWVzOnRjOlNBTU" +
+	"w6Mi4wOnByb3RvY29sIiB4bWxuczpzYW1sPSJ1cm46b2FzaXM6bmFtZXM6dGM6U0FNTDoyLjA6" +
+	"YXNzZXJ0aW9uIiBJRD0iSURfZ2xvYWtfcHJvYmUiIFZlcnNpb249IjIuMCIgSXNzdWVJbnN0YW" +
+	"50PSIyMDI2LTA5LTE4VDEyOjAwOjAwWiIgQXNzZXJ0aW9uQ29uc3VtZXJTZXJ2aWNlVVJMPSJo" +
+	"dHRwOi8vbG9jYWxob3N0Ojk5OTkvYWNzIj48c2FtbDpJc3N1ZXI+Z2xvYWstcHJvYmUtc2FtbC" +
+	"11bnNpZ25lZDwvc2FtbDpJc3N1ZXI+PC9zYW1scDpBdXRoblJlcXVlc3Q+"
 
 // probeArtifactResolve is a SOAP 1.1 envelope carrying a SAML ArtifactResolve,
 // which is what the artifact resolution service reads. The artifact is not a

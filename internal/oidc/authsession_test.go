@@ -230,7 +230,7 @@ func TestExecutionIDIsStableAndPerRealm(t *testing.T) {
 // that makes client_data a hint rather than an input: dropping it succeeds, and
 // corrupting it is a 400.
 func TestValidClientDataAcceptsAbsentAndRejectsRubbish(t *testing.T) {
-	good, err := encodeClientData("http://localhost:9999/callback", "code", "", "xyz", true)
+	good, err := encodeClientData("http://localhost:9999/callback", "code", true, "", "xyz", true)
 	if err != nil {
 		t.Fatalf("encodeClientData: %v", err)
 	}

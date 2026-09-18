@@ -463,6 +463,137 @@ func themeExpiredPageBody(c ThemeChrome, restartURL, continueURL string) string 
 		"        "+html.EscapeString(ExpiredPageTitle), "", main, "")
 }
 
+// loginTemplateComment is the FTL comment keycloak.v2 emits three times on the
+// login form page - inside the <h1>, above the form and inside the inner
+// footer. It is a comment and it is contract, the same way the device page's is.
+const loginTemplateComment = `<!-- template: login.ftl -->`
+
+// themeLoginPageBody is the login.ftl template, the fifth body this file serves
+// and the first one any protocol's **success** path reaches.
+//
+// Measured 2026-09-18 on one container, off two endpoints at once:
+// GET /realms/master/protocol/openid-connect/auth with a request that survives
+// every check, and GET /realms/master/protocol/saml with an AuthnRequest that
+// does. **The two pages are the same markup byte for byte** - they differ only
+// in the client_id, tab_id, client_data, session_code and authentication
+// session hash the shell and the action carry - which is the measurement this
+// function rests on: one template, two protocols, and the SAML success path
+// needs no markup of its own.
+//
+// Everything this project served here until 2026-09-18 was a hand-rolled
+// placeholder in errors.go, so **no login form page was a golden anywhere in
+// the tree**, on either protocol. That is why the SAML endpoint's eighth rung
+// could not be a contract before this: the blocker was not the tab_id, which
+// three mask frames already reach, it was that there was nothing true to
+// compare.
+//
+// Two runs of trailing whitespace are Keycloak's own and are Freemarker
+// directives that expanded to nothing - the one after `autofocus` on the
+// username input and the one after `autocomplete="current-password"` on the
+// password input. They are bytes like any other, and they are spelled as their
+// own concatenated literals so gofmt cannot eat them, which is what
+// themeDeviceVerifyBody already does.
+//
+// **The username label is `Username or email` on a realm whose
+// loginWithEmailAllowed is on**, which is what a default 26.7.1 realm has and
+// what every realm in this project is. A realm with it off renders `Username`;
+// nothing here measures that cell, because nothing here can reach it.
+//
+// username is echoed into the input's value attribute, measured: a re-served
+// page after a wrong credential carries `value="nobody"` for a request that
+// sent `username=nobody`. That page is **not** this one - it is 8000 bytes
+// against 6861, with pf-m-error classes on both fields, an icon span, a
+// helper-text block and a history.replaceState in the head - and it is
+// deliberately not built here. See WriteThemeLoginPage and F269.
+func themeLoginPageBody(c ThemeChrome, action, username string) string {
+	main := loginTemplateComment + `
+
+        <div id="kc-form">
+          <div id="kc-form-wrapper">
+                <form id="kc-form-login" class="pf-v5-c-form pf-v5-u-w-100" onsubmit="login.disabled = true; return true;" action="` +
+		html.EscapeString(action) + `" method="post" novalidate="novalidate">
+
+<div class="pf-v5-c-form__group">
+    <div class="pf-v5-c-form__group-label pf-v5-u-pb-xs">
+        <label for="username" class="pf-v5-c-form__label">
+        <span class="pf-v5-c-form__label-text">
+                                        Username or email
+
+        </span>
+        </label>
+    </div>
+
+    <span class="pf-v5-c-form-control ">
+        <input id="username" name="username" value="` + html.EscapeString(username) +
+		`" type="text" autocomplete="username" autofocus
+                ` + `
+                aria-invalid=""/>
+    </span>
+
+    <div id="input-error-container-username">
+    </div>
+</div>
+
+
+<div class="pf-v5-c-form__group">
+    <div class="pf-v5-c-form__group-label pf-v5-u-pb-xs">
+        <label for="password" class="pf-v5-c-form__label">
+        <span class="pf-v5-c-form__label-text">
+            Password
+        </span>
+        </label>
+    </div>
+
+    <div class="pf-v5-c-input-group">
+      <div class="pf-v5-c-input-group__item pf-m-fill">
+        <span class="pf-v5-c-form-control ">
+          <input id="password" name="password" value="" type="password" autocomplete="current-password" ` + `
+                  aria-invalid=""/>
+        </span>
+      </div>
+      <div class="pf-v5-c-input-group__item">
+        <button class="pf-v5-c-button pf-m-control" type="button" aria-label="Show password"
+                aria-controls="password" data-password-toggle
+                data-icon-show="fa-eye fas" data-icon-hide="fa-eye-slash fas"
+                data-label-show="Show password" data-label-hide="Hide password" id="password-show-password">
+            <i class="fa-eye fas" aria-hidden="true"></i>
+        </button>
+      </div>
+    </div>
+    <div class="pf-v5-c-form__helper-text" aria-live="polite">
+        <div class="pf-v5-c-helper-text pf-v5-u-display-flex pf-v5-u-justify-content-space-between">
+        </div>
+    </div>
+
+
+    <div id="input-error-container-password">
+    </div>
+</div>
+
+
+                    <input type="hidden" id="id-hidden-input" name="credentialId" />
+  <div class="pf-v5-c-form__group">
+    <div class="pf-v5-c-form__actions pf-v5-u-pt-xs pf-v5-u-flex-wrap">
+  <button class="pf-v5-c-button pf-m-primary pf-m-block" name="login" id="kc-login"
+          type="submit" >
+  Sign In
+  </button>
+    </div>
+  </div>
+                </form>
+            </div>
+        </div>
+`
+	// The heading, the block above the form and the inner footer each carry the
+	// template comment, and no two of them are indented or spaced alike: the
+	// heading puts a blank line after the comment where the device page puts
+	// none, the main block's ends with a blank line, and the footer's is
+	// followed by three. Building any of them from the others is the tidy-up
+	// that breaks it.
+	heading := loginTemplateComment + "\n\n        " + LoginPageTitle + "\n"
+	return themeShell(c, "", "login-login", heading, "", main, loginTemplateComment+"\n\n\n")
+}
+
 // deviceVerifyTemplateComment is the FTL comment keycloak.v2 emits three times
 // on the device verification page - inside the <h1>, above the form and inside
 // the inner footer. It is a comment and it is contract.
